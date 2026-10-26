@@ -72,7 +72,7 @@ case class GemVaultState(
         Choice("LeaveGv", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(ItemMenu.NavRow + 1))
       )
       val text = content.format("home.gems.text", "n" -> home.gems.size.toString, "max" -> HomeRates.GemVault.toString,
-        "charges" -> home.charges.toString, "chargesMax" -> HomeRates.AltarMaxCharges.toString)
+        "charges" -> home.charges.toString, "chargesMax" -> home.altarMax.toString)
       renderer.show(user, Screen(text, buttons ++ nav ++ tail)).as(StateType.GemVault)
     }
 

@@ -22,19 +22,23 @@ sealed abstract class House(
   /** Сколько спать на своей кровати, чтобы травмы прошли и силы вернулись. */
   val sleepMs: Long,
   /** Сколько после сна держится «выспался» — прибавка к опыту (см. [[HomeRates.RestedExpPct]]). */
-  val restedMs: Long
+  val restedMs: Long,
+  /** Потолок энергии личного алтаря Азата; 0 — алтаря в доме нет. */
+  val altarCharges: Int
 )
 
 object House {
 
   /** Домик в две комнаты: всё нужное и ничего сверх. Сон — 2 часа, «выспался» — 4. */
-  case object Cottage extends House(1, "cottage", 100L, 2L * 3600000L, 4L * 3600000L)
+  case object Cottage extends House(1, "cottage", 100L, 2L * 3600000L, 4L * 3600000L, 0)
 
-  /** Добротный дом: свой алтарь Азата, верстак травника, библиотека. Сон — 1,5 часа, «выспался» — 8. */
-  case object Townhouse extends House(2, "townhouse", 800L, 5400000L, 8L * 3600000L)
+  /** Добротный дом: свой алтарь Азата на 100 энергии, верстак травника,
+    * библиотека. Сон — 1,5 часа, «выспался» — 8. */
+  case object Townhouse extends House(2, "townhouse", 800L, 5400000L, 8L * 3600000L, 100)
 
-  /** Дом на парящем острове, куда ведёт ключ-портал. Сон — 1 час, «выспался» — 12. */
-  case object Island extends House(3, "island", 2000L, 3600000L, 12L * 3600000L)
+  /** Дом на парящем острове, куда ведёт ключ-портал; алтарь Азата — на 300
+    * энергии. Сон — 1 час, «выспался» — 12. */
+  case object Island extends House(3, "island", 2000L, 3600000L, 12L * 3600000L, 300)
 
   val values: List[House] = List(Cottage, Townhouse, Island)
 
@@ -78,9 +82,6 @@ object HomeRates {
   /** Хранилище камней на острове. */
   val GemVault: Int = 50
 
-  /** Личный алтарь Азата: потолок энергии дома. Дом с алтарём приходит с ним полным. */
-  val AltarMaxCharges: Int = 100
-
   /** Пополнение алтаря: столько энергии за столько серебра — как в храме. */
   val AltarRefillCharges: Int = 50
   val AltarRefillSilver: Long = 10000L
@@ -106,6 +107,9 @@ final case class HomeData(
   gems:      List[Item]        = Nil
 ) {
   def house: Option[House] = House.byTier(tier)
+
+  /** Потолок энергии дома — алтарь Азата этого дома (см. [[House.altarCharges]]). */
+  def altarMax: Int = house.fold(0)(_.altarCharges)
 
   def owns: Boolean = house.isDefined
 

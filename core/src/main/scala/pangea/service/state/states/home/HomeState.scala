@@ -159,10 +159,9 @@ case class HomeState(
               renderer.show(user, Screen(content.format("home.office.lack", "lack" -> priceText(lack, pay)), Nil)) *>
                 office(user, renderer)
             case Right(_) =>
-              // Дом с алтарём Азата приходит с полным алтарём — один раз, при
-              // первом таком доме: дальше энергию дома пополняют сами.
-              val charges = if (h.tier >= House.Townhouse.tier && home.tier < House.Townhouse.tier) HomeRates.AltarMaxCharges
-                            else home.charges
+              // Алтарь Азата больше прежнего — первый дом с алтарём или переезд
+              // на остров — приходит полным. Дальше энергию дома пополняют сами.
+              val charges = if (h.altarCharges > home.altarMax) h.altarCharges else home.charges
               saveHome(user, home.copy(tier = h.tier, metJunona = true, charges = charges)) *>
                 renderer.show(user, Screen(content.text(s"home.houses.${h.key}.bought"), Nil)) *>
                 showHouse(user, renderer)
@@ -240,7 +239,7 @@ case class HomeState(
     loadHome(user).flatMap { home =>
       if (!home.house.exists(_.tier >= House.Townhouse.tier)) showHouse(user, renderer)
       else renderer.show(user, Screen(content.format("home.azat.text",
-          "n" -> home.charges.toString, "max" -> HomeRates.AltarMaxCharges.toString), List(
+          "n" -> home.charges.toString, "max" -> home.altarMax.toString), List(
           Choice("HomeAzatUp", content.format("home.azat.refill", "charges" -> HomeRates.AltarRefillCharges.toString,
             "price" -> money(HomeRates.AltarRefillSilver)), color = ChoiceColor.Positive, row = Some(0)),
           backToHouse.copy(row = Some(1))
@@ -253,17 +252,17 @@ case class HomeState(
       hero <- getHero(user)
       home <- loadHome(user)
       res  <- if (!home.house.exists(_.tier >= House.Townhouse.tier)) showHouse(user, renderer)
-              else if (home.charges >= HomeRates.AltarMaxCharges)
+              else if (home.charges >= home.altarMax)
                 renderer.show(user, Screen(content.format("home.azat.full",
-                  "n" -> home.charges.toString, "max" -> HomeRates.AltarMaxCharges.toString), Nil)) *> azat(user, renderer)
+                  "n" -> home.charges.toString, "max" -> home.altarMax.toString), Nil)) *> azat(user, renderer)
               else charge(hero, PaySilver, HomeRates.AltarRefillSilver).flatMap {
                 case Left(lack) =>
                   renderer.show(user, Screen(content.format("home.azat.lack", "lack" -> money(lack)), Nil)) *> azat(user, renderer)
                 case Right(_) =>
-                  val next = (home.charges + HomeRates.AltarRefillCharges).min(HomeRates.AltarMaxCharges)
+                  val next = (home.charges + HomeRates.AltarRefillCharges).min(home.altarMax)
                   saveHome(user, home.copy(charges = next)) *>
                     renderer.show(user, Screen(content.format("home.azat.refilled",
-                      "n" -> next.toString, "max" -> HomeRates.AltarMaxCharges.toString), Nil)) *>
+                      "n" -> next.toString, "max" -> home.altarMax.toString), Nil)) *>
                     azat(user, renderer)
               }
     } yield res

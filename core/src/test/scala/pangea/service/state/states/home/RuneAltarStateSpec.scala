@@ -31,6 +31,11 @@ object RuneAltarStateSpec extends ZIOSpecDefault {
     Item(id, s"Меч $id", 1L, Rarity.Gray, ItemType.Weapon, attack = 1, accuracy = 0, energy = 0, armor = 0, defence = 0,
       evasion = 0, details = ItemDetails.Weapon(Skill.CunningStrike))
 
+  /** Кольцо с пассивкой «Целитель»: пассивная руна. */
+  private def ring(id: Long, rarity: Rarity): Item =
+    Item(id, s"Кольцо $id", 1L, rarity, ItemType.Ring, attack = 0, accuracy = 0, energy = 0, armor = 0, defence = 0,
+      evasion = 0, details = ItemDetails.Passive(PassiveKind.Healer))
+
   private def hero(lvl: Long = 1L, runes: RuneData = RuneData.empty) =
     TestFixtures.hero(userId, StateType.RuneAltar).copy(lvl = lvl, runes = runes)
 
@@ -51,6 +56,61 @@ object RuneAltarStateSpec extends ZIOSpecDefault {
   private val cottage = HomeData(tier = 1, metJunona = true)
 
   override def spec = suite("Рунический алтарь")(
+
+    test("«Сдать вещи»: вещи с рунами отмеченных редкостей — узорами по редкости; камни и неотмеченные остаются") {
+      // по умолчанию отмечены серые и белые — та же настройка, что у Казимира
+      val items = List(sword(201L), sword(202L).copy(rarity = Rarity.White), sword(203L).copy(rarity = Rarity.Blue),
+        ring(204L, Rarity.Gray), stone(205L, cunning, RuneStoneSize.Small))
+      for {
+        t <- make(hero(), items, cottage.copy(runes = Map(cunning.key -> 3L)))
+        (state, dao, inv, r) = t
+        _      <- state.enter(testUser, r)
+        menu   <- last(r)
+        _      <- state.action(testUser, tap("AltarGive"), r)
+        ask    <- last(r)
+        before <- homeOf(dao)
+        _      <- state.action(testUser, tap("AltarGiveYes"), r)
+        home   <- homeOf(dao)
+        said   <- texts(r)
+      } yield assertTrue(menu.choices.map(_.id).containsSlice(List("AltarPutAll", "AltarGive", "AltarSettings", "LeaveAltar"))) &&
+              // сперва — вопрос: сколько уйдёт, и ничего ещё не тронуто
+              assertTrue(ask.text.contains("3 шт.") && ask.choices.map(_.id) == List("AltarGiveYes", "AltarMenu")) &&
+              assertTrue(before.runeCount(cunning.key) == 3L && before.runeCount(healer.key) == 0L) &&
+              // два серо-белых меча — по узору «Хитрому удару», серое кольцо — узор «Целителю»
+              assertTrue(home.runeCount(cunning.key) == 3L + 2L && home.runeCount(healer.key) == 1L) &&
+              // синий меч не отмечен, камень — для «Положить все руны»
+              assertTrue(inv.snapshot.map(_.id).sorted == List(203L, 205L)) &&
+              assertTrue(said.contains("Вещи рассыпаются узорами по алтарю (3 шт.)"))
+    },
+
+    test("«Что сдавать» — та же настройка, что у Казимира: включили синие и оранжевые — 2 и 5 узоров") {
+      for {
+        t <- make(hero(), List(sword(301L).copy(rarity = Rarity.Blue), ring(302L, Rarity.Orange)), cottage)
+        (state, dao, inv, r) = t
+        _      <- state.action(testUser, tap("AltarSettings"), r)
+        screen <- last(r)
+        _      <- state.action(testUser, tap("AltarBurnRarity", "g" -> "Blue"), r)
+        _      <- state.action(testUser, tap("AltarBurnRarity", "g" -> "Orange"), r)
+        h      <- dao.getHeroByUserId(userId).map(_.get)
+        _      <- state.action(testUser, tap("AltarGiveYes"), r)
+        home   <- homeOf(dao)
+      } yield assertTrue(screen.text.contains("та же настройка, что у Казимира") && screen.choices.size == 7) &&
+              assertTrue(h.runes.burns(Rarity.Blue) && h.runes.burns(Rarity.Orange) && h.runes.burns(Rarity.Gray)) &&
+              assertTrue(home.runeCount(cunning.key) == 2L && home.runeCount(healer.key) == 5L && inv.snapshot.isEmpty)
+    },
+
+    test("«Сдать вещи»: подходящих нет — так и говорит, ничего не трогает") {
+      val items = List(sword(401L).copy(rarity = Rarity.Blue), stone(402L, cunning, RuneStoneSize.Big))
+      for {
+        t <- make(hero(), items, cottage)
+        (state, dao, inv, r) = t
+        _    <- state.action(testUser, tap("AltarGive"), r)
+        _    <- state.action(testUser, tap("AltarGiveYes"), r)
+        home <- homeOf(dao)
+        said <- texts(r)
+      } yield assertTrue(said.contains("В сумке нет вещей с рунами")) &&
+              assertTrue(home.runes.isEmpty && inv.snapshot.map(_.id) == List(401L, 402L))
+    },
 
     test("«Положить все руны»: камни уходят из сумки, на алтаре — счёт по рунам; вещи с рунами остаются") {
       val items = List(stone(101L, cunning, RuneStoneSize.Big), stone(102L, cunning, RuneStoneSize.Small),

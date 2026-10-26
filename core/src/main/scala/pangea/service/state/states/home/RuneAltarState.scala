@@ -6,12 +6,13 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.hero.Hero
 import pangea.model.home.HomeData
-import pangea.model.item.Item
+import pangea.model.item.{Item, Rarity}
 import pangea.model.rune.{Rune, RuneStone, RuneStoneSize}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
+import pangea.service.state.states.merchant.MerchantState
 import pangea.service.state.{ItemMenu, State, UserAction}
 import zio.{Task, ZIO}
 
@@ -19,7 +20,11 @@ import zio.{Task, ZIO}
   * домика, а в домах выше он переезжает вместе с героем). Рунные камни ложатся
   * на него одной кнопкой и становятся счётом узоров по каждой руне: большая —
   * пять, малая — одна ([[RuneStoneSize.points]]). Места на алтаре не считают.
-  * Вещи с рунами он не берёт — только камни.
+  *
+  * Вещи с рунами алтарь тоже берёт — «Сдать вещи»: каждая рассыпается узорами
+  * своей руны по редкости ([[Rune.points]]), в тот же счёт, что и камни. Какие
+  * редкости уходят — та же настройка, что у Казимира для «Сдать всё»
+  * (`RuneData.burnRarities`).
   *
   * По руне — две вещи: углубить понимание её узорами, как у Казимира (до
   * потолка по уровню, остаток ждёт на алтаре), и забрать камнями в сумку:
@@ -36,6 +41,10 @@ case class RuneAltarState(
     routes = Map(
       "AltarMenu"   -> Target.Run { (u, ua, r) => menu(u, page(ua, "p"), r) },
       "AltarPutAll" -> Target.Run { (u, _, r) => putAll(u, r) },
+      "AltarGive"       -> Target.Run { (u, _, r) => giveConfirm(u, r) },
+      "AltarGiveYes"    -> Target.Run { (u, _, r) => giveAll(u, r) },
+      "AltarSettings"   -> Target.Run { (u, _, r) => settings(u, r) },
+      "AltarBurnRarity" -> Target.Run { (u, ua, r) => toggleRarity(u, ua, r) },
       "AltarRune"   -> Target.Run { (u, ua, r) => runeScreen(u, ua, r) },
       "AltarDeepen" -> Target.Run { (u, ua, r) => deepen(u, ua, r) },
       "AltarTake"   -> Target.Run { (u, ua, r) => take(u, ua, r) },
@@ -52,7 +61,7 @@ case class RuneAltarState(
     branch.act(user, ua, renderer)
 
   /** Описание алтаря, сколько на нём узоров, руны кнопками по страницам;
-    * «Положить все руны» и «Назад». */
+    * «Положить все руны», «Сдать вещи», «Что сдавать» и «Назад». */
   private def menu(user: User, p: Int, renderer: Renderer): Task[StateType] =
     loadHome(user).flatMap { home =>
       // Без дома и алтаря нет — обратно к Юноне.
@@ -71,6 +80,8 @@ case class RuneAltarState(
         ).flatten
         val tail = List(
           Choice("AltarPutAll", content.text("home.altar.putAll"), color = ChoiceColor.Positive, row = Some(ItemMenu.NavRow + 1)),
+          Choice("AltarGive", content.text("home.altar.give"), color = ChoiceColor.Positive, row = Some(ItemMenu.NavRow + 1)),
+          Choice("AltarSettings", content.text("home.altar.settings"), row = Some(ItemMenu.NavRow + 1)),
           Choice("LeaveAltar", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(ItemMenu.NavRow + 1))
         )
         val text = content.text("home.altar.text") + "\n\n" +
@@ -98,6 +109,74 @@ case class RuneAltarState(
                     s    <- menu(user, 0, renderer)
                   } yield s
                 }
+    } yield res
+
+  // ── Вещи с рунами ───────────────────────────────────────────────────────────
+
+  /** Сколько вещей уйдёт по «Сдать вещи» — и спросить, точно ли: вещи
+    * рассыпаются, обратно их не собрать. */
+  private def giveConfirm(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      hero <- getHero(user)
+      inv  <- inventoryRepo.get(hero.id).mapError(asThrowable)
+      plan  = RuneAltarState.givePlan(hero, inv.items.data)
+      res  <- if (plan.isEmpty) say(user, content.text("home.altar.nothingToGive"), renderer) *> menu(user, 0, renderer)
+              else renderer.show(user, Screen(content.format("home.altar.giveConfirm", "n" -> plan.size.toString), List(
+                Choice("AltarGiveYes", content.text("home.altar.giveYes"), color = ChoiceColor.Positive, row = Some(0)),
+                Choice("AltarMenu", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(0))
+              ))).as(StateType.RuneAltar)
+    } yield res
+
+  /** Вещи с рунами из сумки — узорами на алтарь: каждая по своей редкости. */
+  private def giveAll(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      hero <- getHero(user)
+      inv  <- inventoryRepo.get(hero.id).mapError(asThrowable)
+      plan  = RuneAltarState.givePlan(hero, inv.items.data)
+      res  <- if (plan.isEmpty) say(user, content.text("home.altar.nothingToGive"), renderer) *> menu(user, 0, renderer)
+              else {
+                val added = plan.groupMapReduce(_._2.key)(p => Rune.points(p._1.rarity))(_ + _)
+                for {
+                  home <- loadHome(user)
+                  _    <- inventoryRepo.removeItems(plan.map(_._1.id).toSet, hero.id).mapError(asThrowable)
+                  _    <- saveHome(user, added.foldLeft(home) { case (h, (k, n)) => h.withRune(k, h.runeCount(k) + n) })
+                  lines = added.toList.flatMap { case (k, n) => Rune.byKey(k).map(r => (r.label, n)) }.sortBy(_._1)
+                            .map { case (name, n) => content.format("home.altar.putLine", "name" -> name, "n" -> n.toString) }
+                  _    <- say(user, content.format("home.altar.given", "n" -> plan.size.toString,
+                            "lines" -> lines.mkString("\n")), renderer)
+                  s    <- menu(user, 0, renderer)
+                } yield s
+              }
+    } yield res
+
+  /** Что сдавать: редкости переключателями — та же настройка, что у Казимира. */
+  private def settings(user: User, renderer: Renderer): Task[StateType] =
+    getHero(user).flatMap(hero => renderer.show(user, settingsScreen(hero.runes.burns))).as(StateType.RuneAltar)
+
+  private def settingsScreen(burns: Rarity => Boolean): Screen = {
+    def state(on: Boolean) = content.text(if (on) "merchant.junk.on" else "merchant.junk.off")
+    val groups  = MerchantState.JunkRarityGroups
+    val buttons = groups.zipWithIndex.map { case (g, i) =>
+      val on = g.rarities.forall(burns)
+      Choice("AltarBurnRarity", content.format("merchant.junk.rarity", "emoji" -> g.emoji, "state" -> state(on)),
+        color = if (on) ChoiceColor.Positive else ChoiceColor.Negative, data = Map("g" -> g.id),
+        row = Some(i / MerchantState.JunkRaritiesPerRow))
+    }
+    val rows = (groups.size + MerchantState.JunkRaritiesPerRow - 1) / MerchantState.JunkRaritiesPerRow
+    Screen(content.text("home.altar.settingsText"),
+      buttons :+ Choice("AltarMenu", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(rows)))
+  }
+
+  private def toggleRarity(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
+    for {
+      hero <- getHero(user)
+      res  <- payload(ua, "g").flatMap(id => MerchantState.JunkRarityGroups.find(_.id == id)) match {
+        case None    => settings(user, renderer)
+        case Some(g) =>
+          val updated = hero.runes.toggleBurn(g.rarities)
+          heroDao.updateRunes(user.userId, updated) *>
+            renderer.show(user, settingsScreen(updated.burns)).as(StateType.RuneAltar)
+      }
     } yield res
 
   /** Экран руны: сколько узоров, сколько выйдет камнями, понимание; углубить,
@@ -206,4 +285,14 @@ case class RuneAltarState(
       .orElseFail(new Throwable(s"No hero for user ${user.userId}"))
 
   private def asThrowable(e: Any): Throwable = new Throwable(e.toString)
+}
+
+object RuneAltarState {
+
+  /** Что уйдёт по «Сдать вещи»: вещи с рунами тех редкостей, что отмечены в
+    * настройке (она общая с Казимиром), — каждая вместе со своей руной. Рунные
+    * камни сюда не идут: для них «Положить все руны». */
+  def givePlan(hero: Hero, items: List[Item]): List[(Item, Rune)] =
+    items.filter(i => i.runeStone.isEmpty && !i.isQuestItem && hero.runes.burns(i.rarity))
+      .flatMap(i => Rune.of(i).map(i -> _))
 }

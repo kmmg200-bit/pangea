@@ -276,13 +276,30 @@ object HomeStateSpec extends ZIOSpecDefault {
         _      <- state.action(testUser, tap("HomeAzatUp"), r)
         poor   <- texts(r)
         low    <- homeOf(dao)
-      } yield assertTrue(bought.charges == HomeRates.AltarMaxCharges) &&
+      } yield assertTrue(bought.charges == House.Townhouse.altarCharges && bought.altarMax == 100) &&
               assertTrue(screen.text.contains("растворяются прямо на камне") && screen.text.contains("питает весь дом") &&
                 screen.text.contains("Энергия дома: 70/100")) &&
               assertTrue(screen.choices.map(_.label).headOption.contains("✨ Пополнить +50 — 10 000 🪙")) &&
               assertTrue(topped.charges == 100 && h1.silver == 15000L) &&
               assertTrue(h2.silver == 15000L && said.contains("Алтарь и так полон")) &&
               assertTrue(poor.contains("Не хватает 6 000 🪙") && low.charges == 10)
+    },
+
+    test("алтарь Азата: в доме — 100, на острове — 300; переезд на остров доливает до 300") {
+      for {
+        t <- make(hero(doubloons = 1200L), HomeData(tier = 2, metJunona = true, charges = 40))
+        (state, dao, _, r) = t
+        _      <- state.action(testUser, buy(House.Island, HomeState.PayDoubloons), r)
+        moved  <- homeOf(dao)
+        // на острове потолок — 300: пополнение упирается в него, а не в 100
+        _      <- dao.writeHomeData(userId, moved.copy(charges = 280).asJson)
+        _      <- dao.updateSilver(userId, 10000L)
+        _      <- state.action(testUser, tap("HomeAzatUp"), r)
+        topped <- homeOf(dao)
+        screen <- last(r)
+      } yield assertTrue(House.values.map(_.altarCharges) == List(0, 100, 300)) &&
+              assertTrue(moved.tier == House.Island.tier && moved.charges == 300) &&
+              assertTrue(topped.charges == 300 && screen.text.contains("Энергия дома: 300/300"))
     },
 
     test("сон и «выспался» — по дому: 2 / 1,5 / 1 ч и 4 / 8 / 12 ч") {

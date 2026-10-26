@@ -4,11 +4,12 @@ import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
 import pangea.generator.item.MaterialGenerator
 import pangea.model.artifact.ArtifactKind
+import pangea.model.hero.LoreData
 import pangea.model.home.{HomeData, HomeRates}
 import pangea.model.item.{BrewKind, Item, MaterialKind}
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
-import pangea.service.state.UserAction
+import pangea.service.state.{HerbLore, UserAction}
 import pangea.test.{TestArtifactRepository, TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestRenderer}
 import zio.test._
 import zio.{Task, ZIO}
@@ -31,6 +32,15 @@ object HerbWorkbenchSpec extends ZIOSpecDefault {
 
   private val townhouse = HomeData(tier = 2, metJunona = true, charges = 100)
 
+  /** Что игрок написал у верстака — без кнопки. */
+  private def say(text: String): UserAction = UserAction(text, None)
+
+  /** Отвары, которые герой уже варил. */
+  private def learned(dao: TestHeroDao, kinds: BrewKind*): Task[Unit] =
+    HerbLore.writeLore(dao, userId, LoreData(brewed = kinds.map(_.entryName).toList))
+
+  private def recipe(kind: BrewKind): UserAction = tap("WbRecipe", "k" -> kind.entryName, "p" -> "0")
+
   private def make(home: HomeData, items: List[Item] = Nil, living: List[Item] = Nil) =
     for {
       dao <- TestHeroDao.withHero(userId, TestFixtures.hero(userId, StateType.HerbWorkbench))
@@ -47,6 +57,118 @@ object HerbWorkbenchSpec extends ZIOSpecDefault {
   private def texts(r: TestRenderer) = r.sentScreens.map(_.map(_.text).mkString("\n"))
 
   override def spec = suite("Верстак травника")(
+
+    test("«Изученные»: только то, что уже варили, и только из трав; по алфавиту; пусто — так и говорит") {
+      val notHerbal = BrewKind.values.find(k => !k.recipe.forall(_.isHerb)).get
+      for {
+        t <- make(townhouse)
+        (state, dao, _, _, r) = t
+        _     <- state.action(testUser, tap("WbKnown"), r)
+        empty <- last(r)
+        _     <- learned(dao, BrewKind.BoneSetter, BrewKind.LivingWater, notHerbal)
+        _     <- state.action(testUser, tap("WbMenu"), r)
+        menu  <- last(r)
+        _     <- state.action(testUser, tap("WbKnown"), r)
+        list  <- last(r)
+      } yield assertTrue(empty.text.contains("Изученных отваров пока нет")) &&
+              assertTrue(menu.choices.exists(_.id == "WbKnown")) &&
+              assertTrue(list.choices.filter(_.id == "WbRecipe").map(_.label) ==
+                List(BrewKind.LivingWater.label, BrewKind.BoneSetter.label))
+    },
+
+    test("выбрал отвар — ждёт числа; число — варит с полок: травы и энергия уходят, отвары встают на полку") {
+      val home = townhouse.copy(herbs = boneSet(1L) ++ boneSet(4L) :+ herb(7L, MaterialKind.Sage))
+      for {
+        t <- make(home)
+        (state, dao, _, _, r) = t
+        _     <- learned(dao, BrewKind.BoneSetter)
+        _     <- state.action(testUser, recipe(BrewKind.BoneSetter), r)
+        card  <- last(r)
+        _     <- state.action(testUser, say("3"), r)
+        after <- homeOf(dao)
+        said  <- texts(r)
+        again <- last(r)
+      } yield assertTrue(card.text.contains(BrewKind.BoneSetter.label) &&
+                card.text.contains("Рецепт: Ромашка, Календула, Крапива.") &&
+                card.text.contains("Из одной варки — 2 шт.") && card.text.contains("хватит на 4 шт.") &&
+                card.text.contains("Напишите число")) &&
+              // три отвара — две варки: из одной выходит по два
+              assertTrue(after.brews.flatMap(_.brew) == List.fill(4)(BrewKind.BoneSetter)) &&
+              assertTrue(after.herbs.flatMap(_.material) == List(MaterialKind.Sage) && after.charges == 98) &&
+              assertTrue(said.contains("Готово: «Костоправный отвар» ×4. Варок: 2, энергии ушло: 2.") &&
+                said.contains("поэтому вышло 4, а не 3")) &&
+              // карточка снова ждёт числа — можно сварить ещё
+              assertTrue(again.text.contains("Напишите число"))
+    },
+
+    test("не хватает — говорит, чего и сколько; ничего не трогает") {
+      val home = townhouse.copy(herbs = boneSet(1L), charges = 1)
+      for {
+        t <- make(home)
+        (state, dao, _, _, r) = t
+        _     <- learned(dao, BrewKind.BoneSetter)
+        _     <- state.action(testUser, recipe(BrewKind.BoneSetter), r)
+        _     <- state.action(testUser, say("6"), r)
+        after <- homeOf(dao)
+        said  <- texts(r)
+      } yield assertTrue(after == home) &&
+              assertTrue(said.contains("Для 6 шт. не хватает:\n" +
+                "• Календула — ещё 2 (есть 1 из 3)\n" +
+                "• Крапива — ещё 2 (есть 1 из 3)\n" +
+                "• Ромашка — ещё 2 (есть 1 из 3)\n" +
+                "• Энергия дома — ещё 2 (есть 1 из 3)"))
+    },
+
+    test("не число — просит число; любая другая кнопка снимает ожидание") {
+      val home = townhouse.copy(herbs = boneSet(1L))
+      for {
+        t <- make(home)
+        (state, dao, _, _, r) = t
+        _     <- learned(dao, BrewKind.BoneSetter)
+        _     <- state.action(testUser, recipe(BrewKind.BoneSetter), r)
+        _     <- state.action(testUser, say("много"), r)
+        asked <- texts(r)
+        _     <- state.action(testUser, tap("WbMenu"), r)
+        _     <- state.action(testUser, say("2"), r)
+        after <- homeOf(dao)
+        shown <- last(r)
+      } yield assertTrue(asked.contains("Напишите число — сколько отваров приготовить.")) &&
+              // число после ухода с карточки ничего не варит — это просто верстак
+              assertTrue(after == home && shown.text.contains("Верстак травника"))
+    },
+
+    test("перегонка: основа — с полки отваров, с варки — одна бутылка; основы мало — так и говорит") {
+      val home = townhouse.copy(herbs = List(herb(1L, MaterialKind.Wormwood), herb(2L, MaterialKind.Sage),
+        herb(3L, MaterialKind.Wormwood), herb(4L, MaterialKind.Sage)), brews = List(bottle(10L, BrewKind.Schnapps)))
+      for {
+        t <- make(home)
+        (state, dao, _, _, r) = t
+        _     <- learned(dao, BrewKind.Moonshine)
+        _     <- state.action(testUser, recipe(BrewKind.Moonshine), r)
+        card  <- last(r)
+        _     <- state.action(testUser, say("2"), r)
+        short <- texts(r)
+        _     <- state.action(testUser, say("1"), r)
+        after <- homeOf(dao)
+      } yield assertTrue(card.text.contains("Основа: «Шнапс из красавки» с полки отваров.") &&
+                card.text.contains("Из одной варки — 1 шт.") && card.text.contains("хватит на 1 шт.")) &&
+              assertTrue(short.contains("• «Шнапс из красавки» — ещё 1 (есть 1 из 2)")) &&
+              assertTrue(after.brews.flatMap(_.brew) == List(BrewKind.Moonshine)) &&
+              assertTrue(after.herbs.flatMap(_.material) == List(MaterialKind.Wormwood, MaterialKind.Sage))
+    },
+
+    test("неизученный отвар кнопкой не выбрать — верстак показывает список изученных") {
+      for {
+        t <- make(townhouse)
+        (state, dao, _, _, r) = t
+        _    <- learned(dao, BrewKind.BoneSetter)
+        _    <- state.action(testUser, recipe(BrewKind.LivingWater), r)
+        list <- last(r)
+        _    <- state.action(testUser, say("2"), r)
+        menu <- last(r)
+      } yield assertTrue(list.text.contains("Изученные отвары")) &&
+              assertTrue(menu.text.contains("Верстак травника"))
+    },
 
     test("верстак — со второго дома: в домике его нет, и герой возвращается в дом") {
       for {
