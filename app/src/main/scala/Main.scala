@@ -40,7 +40,7 @@ import pangea.service.schedule.{Scheduler, SchedulerPoller}
 import pangea.service.sender.Api
 import pangea.service.sender.vk.config.VkConfig
 import pangea.service.sender.vk.VkPlayers
-import pangea.service.state.StateHandler
+import pangea.service.state.{PlayerLock, StateHandler}
 import pangea.service.state.states.StatesMap
 import server.Server
 import server.model.ServerConfig
@@ -54,7 +54,7 @@ object Main extends ZIOAppDefault {
   override val bootstrap: ZLayer[ZIOAppArgs, Nothing, Unit] =
     Runtime.removeDefaultLoggers >>> SLF4J.slf4j
 
-  private type Env = Server with SchedulerPoller with Donations with ActivityContest
+  private type Env = Server with SchedulerPoller with Donations with ActivityContest with Transfers
 
   private val env =
     ZLayer.make[Env](
@@ -100,6 +100,7 @@ object Main extends ZIOAppDefault {
       TBankClient.live,
       Donations.live,
       Parcels.live,
+      PlayerLock.live,
       Transfers.live,
       StateHandler.live,
       Scheduler.live,
@@ -132,12 +133,25 @@ object Main extends ZIOAppDefault {
         ZIO.sleep(1.minute)).forever
     }
 
+  /** Почта: срок хранения вышел — всё, что лежит на почте, сгорает, и хозяину
+    * уходит письмо; посылки, что не разложились сразу, раскладываются.
+    * Хода хозяина не ждём; минута — лишь задержка после срока. */
+  private val mailLoop =
+    ZIO.serviceWithZIO[Transfers] { transfers =>
+      (ZIO
+        .clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+        .flatMap(transfers.mailRound)
+        .catchAllCause(cause => ZIO.logErrorCause("Обход почты упал", cause)) *>
+        ZIO.sleep(1.minute)).forever
+    }
+
   private val program =
     for {
       poller <- ZIO.service[SchedulerPoller]
       _      <- poller.start.forkDaemon
       _      <- reconcileLoop.forkDaemon
       _      <- contestLoop.forkDaemon
+      _      <- mailLoop.forkDaemon
       _      <- ZIO.serviceWithZIO[Server](_.run())
     } yield ()
 

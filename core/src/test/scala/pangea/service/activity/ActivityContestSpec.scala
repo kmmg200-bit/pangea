@@ -163,7 +163,7 @@ object ActivityContestSpec extends ZIOSpecDefault {
         payouts   = Payouts(payoutDao, heroDao, content)
         parcels   = Parcels(TestParcelDao.empty, TestBankRepository.empty, content)
         transfers = Transfers(TestInventoryRepository.accepting, userRepo, parcels, players, content,
-                      heroDao, TestBankRepository.empty, payouts)
+                      heroDao, TestBankRepository.empty, payouts, lock)
         handler   = new StateHandler(api, userRepo, new DaoBackedTestHeroRepository(heroDao), heroDao, payouts,
                       parcels, transfers, Map.empty[StateType, State], AdminPanel.disabled, content, lock,
                       Some(c), None)

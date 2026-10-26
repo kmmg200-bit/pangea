@@ -62,7 +62,7 @@ object StateHandlerSpec extends ZIOSpecDefault {
       payouts   = pangea.service.payout.Payouts(pangea.test.TestPayoutDao.empty, heroDao, content)
       parcels   = pangea.service.parcel.Parcels(TestParcelDao.empty, TestBankRepository.empty, content)
       transfers = pangea.service.parcel.Transfers(TestInventoryRepository.accepting, userRepo, parcels,
-                    new pangea.test.TestPlayers, content, heroDao, TestBankRepository.empty, payouts)
+                    new pangea.test.TestPlayers, content, heroDao, TestBankRepository.empty, payouts, lock)
     } yield (new StateHandler(api, userRepo, heroRepo, heroDao, payouts, parcels, transfers, states,
                        admin, content, lock), heroDao, heroRepo, api)
 
@@ -83,13 +83,13 @@ object StateHandlerSpec extends ZIOSpecDefault {
       content   <- ZIO.attempt(SceneContent.load())
       payoutDao  = TestPayoutDao.empty
       payouts    = Payouts(payoutDao, heroDao, content)
+      lock      <- PlayerLock.make
       parcels    = pangea.service.parcel.Parcels(TestParcelDao.empty, TestBankRepository.empty, content)
       transfers  = pangea.service.parcel.Transfers(TestInventoryRepository.accepting, userRepo, parcels,
-                     new pangea.test.TestPlayers, content, heroDao, TestBankRepository.empty, payouts)
+                     new pangea.test.TestPlayers, content, heroDao, TestBankRepository.empty, payouts, lock)
       states     = Map[StateType, State](
         StateType.GlobalMap -> GlobalMapState(heroDao, content),
         StateType.Battle    -> BattleState(heroDao, TestInventoryRepository.accepting, TestItemRepository.make, content))
-      lock      <- PlayerLock.make
     } yield (new StateHandler(api, userRepo, heroRepo, heroDao, payouts, parcels, transfers, states,
                        pangea.service.admin.AdminPanel.disabled, content, lock), heroDao, api, payoutDao)
 
@@ -315,7 +315,7 @@ object StateHandlerSpec extends ZIOSpecDefault {
       payouts   = pangea.service.payout.Payouts(pangea.test.TestPayoutDao.empty, heroDao, content)
       parcels   = pangea.service.parcel.Parcels(TestParcelDao.empty, TestBankRepository.empty, content)
       transfers = pangea.service.parcel.Transfers(TestInventoryRepository.accepting, userRepo, parcels,
-                    new pangea.test.TestPlayers, content, heroDao, TestBankRepository.empty, payouts)
+                    new pangea.test.TestPlayers, content, heroDao, TestBankRepository.empty, payouts, lock)
     } yield (new StateHandler(api, userRepo, heroRepo, heroDao, payouts, parcels, transfers, states,
                        pangea.service.admin.AdminPanel.disabled, content, lock), heroDao, api)
 }

@@ -19,7 +19,7 @@ import pangea.service.state.states.parcel.TransferState
 import pangea.service.sender.Api
 import pangea.service.sender.vk.VkRenderer
 import pangea.service.state.states.StatesMap
-import zio.{Ref, Semaphore, Task, ZIO, ZLayer}
+import zio.{Task, ZIO, ZLayer}
 
 import java.util.concurrent.TimeUnit
 
@@ -106,8 +106,9 @@ class StateHandler(
           }
         }
           // Хвост передачи — то, что делается уже под локом получателя (дублоны
-          // ему в руки). Два лока разом не держим: двое, что одновременно
-          // передают друг другу, ждали бы друг друга вечно.
+          // ему в руки, посылки в ячейку или на почту). Два лока разом не
+          // держим: двое, что одновременно передают друг другу, ждали бы друг
+          // друга вечно.
           .flatMap(ZIO.foreachDiscard(_)(identity))
     }
   }
@@ -192,7 +193,7 @@ class StateHandler(
                           case Some((_, None)) =>
                             api.sendMessage(sender, content.text("transfer.money.howMuch"), List.empty, None).as(None)
                           case None =>
-                            sendItems(sender, hero, target, theirHero, to, query, renderer).as(None)
+                            sendItems(sender, hero, target, theirHero, to, query, renderer)
                         }
             } yield tail
         case (Some(_), _, _) =>
@@ -224,23 +225,24 @@ class StateHandler(
   /** Ответ отправителю на итог передачи. */
   private def reply(sender: User, outcome: Transfers.Outcome): Task[Unit] =
     outcome match {
-      case Transfers.Outcome.Sent(message)      => api.sendMessage(sender, message, List.empty, None).unit
+      case Transfers.Outcome.Sent(message, _)   => api.sendMessage(sender, message, List.empty, None).unit
       case Transfers.Outcome.Forbidden(message) => api.sendMessage(sender, message, List.empty, None).unit
       case Transfers.Outcome.Empty | Transfers.Outcome.NeedPick => ZIO.unit
     }
 
   /** Вещь: понятное название уходит сразу; экран нужен только там, где вещь
-    * можно спутать, — в первую очередь у экипировки. */
+    * можно спутать, — в первую очередь у экипировки. Ушла — хвостом
+    * возвращаем доставку получателю: ей нужен его лок. */
   private def sendItems(sender: User, hero: pangea.model.hero.Hero, target: User, theirHero: pangea.model.hero.Hero,
-                        to: TransferTarget, query: String, renderer: Renderer): Task[Unit] = {
+                        to: TransferTarget, query: String, renderer: Renderer): Task[Option[Task[Unit]]] = {
     val item  = ChatCommand.itemQuery(query)
     val count = ChatCommand.count(query)
     for {
       now     <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
       outcome <- transfers.quickSend(sender, hero, to, item, count, now)
-      _ <- outcome match {
+      tail <- outcome match {
         case Transfers.Outcome.Empty =>
-          api.sendMessage(sender, StateHandler.transferNothing(item), List.empty, None)
+          api.sendMessage(sender, StateHandler.transferNothing(item), List.empty, None).as(None)
         case Transfers.Outcome.NeedPick =>
           val scene = TransferState.TransferScene(
             toHeroId = theirHero.id.value,
@@ -248,13 +250,14 @@ class StateHandler(
             toName   = to.name,
             query    = item,
             count    = count)
-          heroDao.writeSceneData(sender.userId, scene.asJson) *>
+          (heroDao.writeSceneData(sender.userId, scene.asJson) *>
             // Куда вернуть после передачи — туда же, откуда позвали.
             heroDao.writeReturnState(sender.userId, Some(hero.state)) *>
-            enterState(sender, StateType.Transfer, renderer)
-        case sentOrRefused => reply(sender, sentOrRefused)
+            enterState(sender, StateType.Transfer, renderer)).as(None)
+        case sent: Transfers.Outcome.Sent => reply(sender, sent).as(Some(sent.handOver))
+        case refused                      => reply(sender, refused).as(None)
       }
-    } yield ()
+    } yield tail
   }
 
   /** Показать экран состояния и записать его герою (без проверки «уже там»). */
@@ -500,7 +503,7 @@ object StateHandler {
 
   val live: ZLayer[
     Api with StatesMap with HeroRepository with UserRepository with HeroDao with Payouts with Parcels
-      with Transfers with AdminPanel with SceneContent with ActivityContest with Referrals,
+      with Transfers with AdminPanel with SceneContent with ActivityContest with Referrals with PlayerLock,
     Nothing,
     StateHandler
   ] =
@@ -518,7 +521,9 @@ object StateHandler {
         content   <- ZIO.service[SceneContent]
         activity  <- ZIO.service[ActivityContest]
         referrals <- ZIO.service[Referrals]
-        lock <- Ref.make(Map.empty[UserId, Semaphore]).map(new PlayerLock(_))
+        // Тот же лок, что у доставки посылок (см. Transfers): ход игрока и
+        // посылка ему в ячейку не должны идти одновременно.
+        lock      <- ZIO.service[PlayerLock]
       } yield new StateHandler(api, userRepo, heroRepo, heroDao, payouts, parcels, transfers, statesMap.states,
                                admin, content, lock, Some(activity), Some(referrals))
     )

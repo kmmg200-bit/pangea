@@ -46,7 +46,7 @@ object MoneyTransferSpec extends ZIOSpecDefault {
       players   = new TestPlayers
       inv       = TestInventoryRepository.accepting
       parcels   = Parcels(TestParcelDao.empty, bank, content)
-      transfers = Transfers(inv, userRepo, parcels, players, content, heroDao, bank, payouts)
+      transfers = Transfers(inv, userRepo, parcels, players, content, heroDao, bank, payouts, lock)
       handler   = new StateHandler(api, userRepo, new DaoBackedTestHeroRepository(heroDao), heroDao, payouts,
                     parcels, transfers, Map.empty[StateType, State], AdminPanel.disabled, content, lock)
     } yield (handler, heroDao, bank, payoutDao, players, api)

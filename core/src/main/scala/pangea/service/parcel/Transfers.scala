@@ -4,6 +4,7 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.{Players, SceneContent}
 import pangea.model.hero.{Hero, HeroId}
 import pangea.model.item.{Item, ItemStack, ItemType}
+import pangea.model.parcel.Parcel
 import pangea.model.user.{User, UserId}
 import pangea.repository.bank.BankRepository
 import pangea.repository.inventory.InventoryRepository
@@ -12,7 +13,10 @@ import pangea.service.chat.ChatCommand
 import pangea.service.chat.ChatCommand.Money
 import pangea.service.payout.Payouts
 import pangea.service.purse.Purse
+import pangea.service.state.PlayerLock
 import zio.{Task, ZIO, ZLayer}
+
+import java.util.concurrent.TimeUnit
 
 /** Кому и что передают. Имя получателя берём из ВК один раз и носим с собой:
  *  игроку важно видеть, кому он отдаёт. */
@@ -30,7 +34,8 @@ final case class Transfers(
   content:       SceneContent,
   heroDao:       HeroDao,
   bank:          BankRepository,
-  payouts:       Payouts
+  payouts:       Payouts,
+  lock:          PlayerLock
 ) {
 
   private val purse = Purse(heroDao, Some(bank))
@@ -90,31 +95,96 @@ final case class Transfers(
                ZIO.succeed(Transfers.Outcome.Forbidden(content.text("transfer.noTrophies")))
              else if (fit.isEmpty) ZIO.succeed(Transfers.Outcome.Empty)
              else if (!unambiguous(fit)) ZIO.succeed(Transfers.Outcome.NeedPick)
-             else send(sender, hero, target, fit.take(count.max(1)), now).map { sent =>
+             else send(sender, hero, target, fit.take(count.max(1)), now).map { shipment =>
                Transfers.Outcome.Sent(content.format("transfer.sent",
-                 "name"  -> sent.head.displayTitle,
-                 "count" -> sent.size.toString,
-                 "to"    -> target.name))
+                 "name"  -> shipment.items.head.displayTitle,
+                 "count" -> shipment.items.size.toString,
+                 "to"    -> target.name), shipment.handOver)
              }
     } yield res
 
-  /** Отдать вещи: из сумки отправителя — в посылки получателю, плюс письмо
-    * получателю. Возвращает, что ушло. */
+  /** Отдать вещи: из сумки отправителя — в посылки получателю, плюс строка в
+    * общий чат. Возвращает, что ушло, и доставку получателю — её запускают,
+    * отпустив лок отправителя (см. [[handOver]]). */
   def send(
     sender: User,
     hero:   Hero,
     target: TransferTarget,
     items:  List[Item],
     now:    Long
-  ): Task[List[Item]] =
+  ): Task[Transfers.Shipment] =
     for {
       name <- players.getDisplayName(sender).orElse(ZIO.succeed(content.text("transfer.someone")))
-      _    <- ZIO.foreachDiscard(items) { item =>
+      sent <- ZIO.foreach(items) { item =>
                 inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)) *>
                   parcels.send(target.heroId, name, item, now)
               }
-      _    <- ZIO.when(items.nonEmpty)(tell(sender, name, target, items))
-    } yield items
+      _    <- ZIO.when(items.nonEmpty)(announce(sender, name, target, items))
+    } yield Transfers.Shipment(items, handOver(name, target, sent))
+
+  /** Доставка получателю — под ЕГО локом: посылки сразу в ячейку, что не
+    * влезло — на почту, и письмо, где теперь вещи. Лок отправителя к этому
+    * времени отпущен: двое, что одновременно передают друг другу, ждали бы
+    * друг друга вечно. Не вышло — посылки подберёт фон ([[mailRound]]) или
+    * ход получателя ([[Parcels.deliver]]), что раньше. */
+  private def handOver(fromName: String, target: TransferTarget, sent: List[Parcel]): Task[Unit] =
+    ZIO.when(sent.nonEmpty) {
+      lock.withLock(target.userId) {
+        for {
+          now      <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+          landed   <- parcels.arrive(target.heroId, sent.map(_.id), now)
+          receiver <- userRepo.getUserById(target.userId).option.map(_.flatten)
+          _        <- ZIO.foreachDiscard(receiver.zip(letter(fromName, sent, landed))) { case (r, text) =>
+                        players.notify(r, text).ignore
+                      }
+        } yield ()
+      }.catchAllCause(cause => ZIO.logErrorCause(s"Посылки не дошли до игрока ${target.userId.value}", cause))
+    }.unit
+
+  /** Письмо получателю: где теперь переданное, а если почта перед этим
+    * сгорела (срок вышел, а фон ещё не успел), — и об этом. Про срок почты —
+    * только когда он пошёл с этих вещей: пока на почте что-то лежит, срок у
+    * новых тот же, что у остального. */
+  private def letter(fromName: String, sent: List[Parcel], landed: Parcels.Landing): Option[String] = {
+    val vault  = landed.delivered.size
+    val mail   = landed.mailed.size
+    val notice = Option.when(vault + mail > 0) {
+      val where =
+        if (mail == 0) content.text("transfer.noticeVault")
+        else if (vault == 0) content.text("transfer.noticeMail")
+        else content.format("transfer.noticeSplit", "vault" -> vault.toString, "mail" -> mail.toString)
+      val shelf = if (landed.started) content.text("transfer.noticeShelf") else ""
+      content.format("transfer.notice",
+        "from"  -> fromName,
+        "name"  -> sent.head.item.displayTitle,
+        "count" -> (vault + mail).toString) + where + shelf
+    }
+    val lines = Option.when(landed.burned.nonEmpty)(parcels.burnedText(landed.burned)).toList ++ notice
+    Option.when(lines.nonEmpty)(lines.mkString("\n\n"))
+  }
+
+  /** Почта фоном, раз в минуту, — хода хозяев не ждём. Посылки, которые не
+    * разложились сразу (доставка упала или их отправили до того, как они
+    * стали ложиться сразу), — по местам, под локом получателя, и ему письмо.
+    * Срок почты вышел — всё, что на ней лежит, сгорает, и хозяину письмо:
+    * тут лок не нужен — посылку забирают удалением, и одна и та же не
+    * достанется и огню, и хозяину. */
+  def mailRound(now: Long): Task[Unit] =
+    for {
+      stuck  <- parcels.stranded(now - Transfers.StrandedMs)
+      _      <- ZIO.foreachDiscard(stuck) { case (heroId, userId, ids) =>
+                  lock.withLock(userId)(parcels.arrive(heroId, ids, now))
+                    .flatMap(landed => ZIO.foreachDiscard(parcels.report(landed))(write(userId, _)))
+                    .catchAllCause(cause => ZIO.logErrorCause(s"Посылки игрока ${userId.value} не разложились", cause))
+                }
+      burned <- parcels.burnExpired(now)
+      _      <- ZIO.foreachDiscard(burned) { case (userId, lost) => write(userId, parcels.burnedText(lost)) }
+    } yield ()
+
+  /** Письмо игроку по его номеру. */
+  private def write(userId: UserId, text: String): Task[Unit] =
+    userRepo.getUserById(userId).option.map(_.flatten)
+      .flatMap(ZIO.foreachDiscard(_)(players.notify(_, text).ignore))
 
   /** Передать серебро. Отправитель платит сразу — сумму и комиссию сверху
     * (см. [[Transfers.fee]]): сперва с рук, нехватку из ячейки, как любые траты
@@ -220,14 +290,11 @@ final case class Transfers(
                     "money" -> line)).ignore
     } yield ()
 
-  /** Письмо получателю и строка в общий чат: передача — дело публичное. */
-  private def tell(sender: User, fromName: String, target: TransferTarget, items: List[Item]): Task[Unit] =
+  /** Строка в общий чат: передача — дело публичное. Письмо получателю уходит
+    * с доставкой ([[handOver]]) — когда уже ясно, где вещи. */
+  private def announce(sender: User, fromName: String, target: TransferTarget, items: List[Item]): Task[Unit] =
     for {
       receiver <- userRepo.getUserById(target.userId).option.map(_.flatten)
-      _        <- ZIO.foreachDiscard(receiver)(r => players.notify(r, content.format("transfer.notice",
-                    "from"  -> fromName,
-                    "name"  -> items.head.displayTitle,
-                    "count" -> items.size.toString)).ignore)
       _        <- players.announce(content.format("transfer.announce",
                     "from"  -> mention(sender.vkId.value, fromName),
                     "to"    -> receiver.map(r => mention(r.vkId.value, target.name)).getOrElse(target.name),
@@ -244,8 +311,10 @@ object Transfers {
   /** Чем кончилась попытка передать по одной фразе из беседы. */
   sealed trait Outcome
   object Outcome {
-    /** Всё однозначно — вещи уже ушли, отправителю остаётся это сообщение. */
-    final case class Sent(message: String) extends Outcome
+    /** Всё однозначно — вещи уже ушли, отправителю остаётся это сообщение.
+      * `handOver` — доставка получателю: её запускают, отпустив лок
+      * отправителя. У денег её нет — они дошли сразу. */
+    final case class Sent(message: String, handOver: Task[Unit] = ZIO.unit) extends Outcome
     /** В сумке нет ничего похожего. */
     case object Empty extends Outcome
     /** Так не передать: трофеи из рук в руки не ходят, денег не хватает или
@@ -254,6 +323,9 @@ object Transfers {
     /** Надо уточнить кнопками: экипировка или несколько разных вещей. */
     case object NeedPick extends Outcome
   }
+
+  /** Что ушло и доставка получателю (см. [[Transfers.send]]). */
+  final case class Shipment(items: List[Item], handOver: Task[Unit])
 
   /** Куда легли переданные деньги — об этом пишем получателю. */
   sealed trait Landed
@@ -268,6 +340,10 @@ object Transfers {
 
   /** Меньше этого денег не передают — ни серебра, ни дублонов. */
   val MinMoney: Long = 50L
+
+  /** Посылка в пути дольше минуты — значит, сразу разложить её не вышло, и
+    * её подберёт фон ([[Transfers.mailRound]]). */
+  val StrandedMs: Long = 60L * 1000L
 
   /** Комиссия с передачи денег, в процентах. Платит отправитель сверху суммы,
     * и не достаётся она никому: получатель получает ровно названное. */
@@ -284,6 +360,6 @@ object Transfers {
   }
 
   val live: ZLayer[InventoryRepository with UserRepository with Parcels with Players with SceneContent
-                     with HeroDao with BankRepository with Payouts, Nothing, Transfers] =
-    ZLayer.fromFunction(Transfers(_, _, _, _, _, _, _, _))
+                     with HeroDao with BankRepository with Payouts with PlayerLock, Nothing, Transfers] =
+    ZLayer.fromFunction(Transfers(_, _, _, _, _, _, _, _, _))
 }

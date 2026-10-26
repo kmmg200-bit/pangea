@@ -134,10 +134,13 @@ case class TransferState(
         case Some(item) =>
           val target = TransferTarget(HeroId(scene.toHeroId), UserId(scene.toUserId), scene.toName)
           for {
-            sent <- transfers.send(user, hero, target, batch(inv.items.data, item, scene.count), now)
-            _    <- renderer.show(user, Screen(content.format("transfer.sent",
-                      "name" -> item.displayTitle, "count" -> sent.size.toString, "to" -> scene.toName), Nil))
-            next <- leave(user, renderer)
+            shipment <- transfers.send(user, hero, target, batch(inv.items.data, item, scene.count), now)
+            // Доставка ждёт лок получателя, а наш занят этим ходом — пусть
+            // идёт отдельно и начнётся, как только получатель освободится.
+            _        <- shipment.handOver.forkDaemon
+            _        <- renderer.show(user, Screen(content.format("transfer.sent",
+                          "name" -> item.displayTitle, "count" -> shipment.items.size.toString, "to" -> scene.toName), Nil))
+            next     <- leave(user, renderer)
           } yield next
       }
     } yield res

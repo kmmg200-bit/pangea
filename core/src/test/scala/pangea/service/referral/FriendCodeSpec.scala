@@ -173,7 +173,7 @@ object FriendCodeSpec extends ZIOSpecDefault {
         referrals = Referrals(dao, heroDao, userRepo, payouts, players, content)
         parcels   = Parcels(TestParcelDao.empty, TestBankRepository.empty, content)
         transfers = Transfers(TestInventoryRepository.accepting, userRepo, parcels, players, content,
-                      heroDao, TestBankRepository.empty, payouts)
+                      heroDao, TestBankRepository.empty, payouts, lock)
         handler   = new StateHandler(api, userRepo, new DaoBackedTestHeroRepository(heroDao), heroDao, payouts,
                       parcels, transfers, Map.empty[StateType, State], AdminPanel.disabled, content, lock,
                       None, Some(referrals))

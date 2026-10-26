@@ -8,10 +8,10 @@ import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.chat.ChatCommand
 import pangea.service.parcel.{Parcels, TransferTarget, Transfers}
-import pangea.service.state.UserAction
+import pangea.service.state.{PlayerLock, UserAction}
 import pangea.test._
-import zio.ZIO
 import zio.test._
+import zio.{ZIO, durationInt}
 
 /** Передача вещей между игроками: команда из общей беседы, выбор в личке и
   * посылка, которая сама ложится получателю в банковскую ячейку. */
@@ -28,6 +28,12 @@ object TransferSpec extends ZIOSpecDefault {
     UserAction("", Some((("action" -> key) +: data).map { case (k, v) => s""""$k":"$v"""" }.mkString("{", ",", "}")))
 
   private val target = TransferTarget(friend, friendUs, "Пётр")
+
+  /** Из лички доставка идёт отдельным волокном: ждём письмо получателю по
+    * живым часам, а не по тестовым. */
+  private def lettersOf(players: TestPlayers) =
+    Live.live((ZIO.sleep(10.millis) *> ZIO.succeed(players.sentLetters)).repeatUntil(_.nonEmpty)
+      .timeoutFail(new Throwable("письмо получателю не дошло"))(5.seconds))
 
   /** «Надколотый череп» — камень-усилитель первого грейда. */
   private def skull(id: Long): Item =
@@ -58,8 +64,9 @@ object TransferSpec extends ZIOSpecDefault {
       bank      = TestBankRepository.withCells(1)
       parcels   = Parcels(parcelDao, bank, content)
       payouts   = pangea.service.payout.Payouts(TestPayoutDao.empty, heroDao, content)
+      lock     <- PlayerLock.make
       hero     <- heroDao.getHeroByUserId(userId).map(_.get)
-    } yield (Transfers(invRepo, userRepo, parcels, players, content, heroDao, bank, payouts),
+    } yield (Transfers(invRepo, userRepo, parcels, players, content, heroDao, bank, payouts, lock),
              hero, invRepo, parcelDao, players)
 
   private def transfer(items: List[Item], query: String, count: Int = 1) =
@@ -75,8 +82,9 @@ object TransferSpec extends ZIOSpecDefault {
       players   = new TestPlayers
       renderer <- TestRenderer.make
       parcels   = Parcels(parcelDao, bank, content)
+      lock     <- PlayerLock.make
       transfers = Transfers(invRepo, userRepo, parcels, players, content, heroDao, bank,
-                    pangea.service.payout.Payouts(TestPayoutDao.empty, heroDao, content))
+                    pangea.service.payout.Payouts(TestPayoutDao.empty, heroDao, content), lock)
     } yield (TransferState(heroDao, invRepo, transfers, content),
              invRepo, parcelDao, bank, players, renderer)
 
@@ -175,21 +183,21 @@ object TransferSpec extends ZIOSpecDefault {
       } yield assertTrue(ids.contains("Give_1") && !ids.contains("Give_2"))
     },
 
-    test("выбор и подтверждение: вещи уходят посылками, получателю письмо") {
+    test("выбор и подтверждение: вещи сразу у получателя в ячейке, ему письмо") {
       val skulls = (1L to 5L).toList.map(skull)
       for {
         t <- transfer(skulls, query = "череп", count = 2)
-        (state, inv, parcelDao, _, players, renderer) = t
+        (state, inv, parcelDao, bank, players, renderer) = t
         _       <- state.action(testUser, tap("Give_1"), renderer)
         confirm <- renderer.sentScreens.map(_.last)
         next    <- state.action(testUser, tap("TransferYes"), renderer)
+        letters <- lettersOf(players)
       } yield assertTrue(confirm.inline && confirm.text.contains("×2")) &&
-              // ушли ровно две из пяти
+              // ушли ровно две из пяти — и обе легли получателю в ячейку
               assertTrue(inv.snapshot.map(_.id) == List(3L, 4L, 5L)) &&
-              assertTrue(parcelDao.snapshot.map(_.heroId).distinct == List(friend)) &&
-              assertTrue(parcelDao.snapshot.size == 2) &&
-              assertTrue(players.sentLetters.map(_._1) == List(friendUs)) &&
-              assertTrue(players.sentLetters.head._2.contains("Надколотый череп")) &&
+              assertTrue(bank.itemsSnapshot.map(_.id) == List(1L, 2L) && parcelDao.snapshot.isEmpty) &&
+              assertTrue(letters.map(_._1) == List(friendUs)) &&
+              assertTrue(letters.head._2.contains("Надколотый череп ×2. Уже в вашей банковской ячейке.")) &&
               // возвращаемся туда, откуда пришли
               assertTrue(next == StateType.GlobalMap)
     },
@@ -211,7 +219,7 @@ object TransferSpec extends ZIOSpecDefault {
               assertTrue(screens.last.text.contains("банковскую ячейку"))
     },
 
-    test("ячейки нет или она полна — посылка ждёт на почте") {
+    test("ячейки нет или она полна — посылка ждёт на почте, а герою сказано про 7 дней") {
       for {
         heroDao  <- TestHeroDao.withHero(friendUs, TestFixtures.hero(friendUs).copy(id = friend))
         parcelDao = TestParcelDao.empty
@@ -225,8 +233,11 @@ object TransferSpec extends ZIOSpecDefault {
         screens  <- renderer.sentScreens
         waiting  <- parcels.waitingCount(friend)
       } yield assertTrue(waiting == 1L && bank.itemsSnapshot.isEmpty) &&
-              // молча: ничего не выдали — и говорить не о чем
-              assertTrue(screens.isEmpty)
+              // срок пошёл с этой минуты
+              assertTrue(parcelDao.snapshot.map(_.mailedAt) == List(Some(0L))) &&
+              assertTrue(screens.size == 1) &&
+              assertTrue(screens.head.text.contains("На почту Торгового дома пришло: [Ур.3] Меч (Иван)")) &&
+              assertTrue(screens.head.text.contains(s"${Parcels.ShelfDays} дней"))
     },
 
     test("почта: забрать одну и забрать всё, что влезет") {

@@ -12,8 +12,12 @@ import pangea.service.parcel.Parcels
 import pangea.service.state.{CityExit, ItemMenu, State, UserAction}
 import zio.{Task, ZIO}
 
+import java.util.concurrent.TimeUnit
+
 /** Почта Торгового дома: сюда попадает переданное, что не влезло в банковскую
- *  ячейку. Вещи отсюда забирают в сумку — по одной или всё, что поместится. */
+ *  ячейку. Вещи отсюда забирают в сумку — по одной или всё, что поместится.
+ *  Лежат они не вечно: сколько осталось до сгорания, видно в шапке (см.
+ *  [[Parcels]]). */
 case class MailState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
@@ -43,6 +47,7 @@ case class MailState(
       hero  <- getHero(user)
       inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
       items <- parcels.waiting(hero.id)
+      now   <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
       _ <- if (items.isEmpty) renderer.show(user, Screen(content.text("mail.empty"), leaveRow))
            else {
              val page = items.take(ItemMenu.DefaultPageSize)
@@ -51,7 +56,11 @@ case class MailState(
                  "name" -> p.item.displayTitle, "from" -> p.fromName)),
                  data = Map("id" -> p.id.toString), row = Some(i))
              }
-             val text = content.format("mail.header", "free" -> inv.freeSlots.toString) + "\n" +
+             // Срок у почты общий — через сколько сгорит всё, что на ней лежит.
+             val burns = Parcels.burnsAt(items)
+               .map(at => "\n" + content.format("mail.burnsIn", "left" -> Parcels.left(at - now)))
+               .getOrElse("")
+             val text = content.format("mail.header", "free" -> inv.freeSlots.toString) + burns + "\n" +
                page.map(line).mkString("\n")
              renderer.show(user, Screen(text, buttons ++ List(
                Choice("MailAll",   content.text("mail.takeAll"), row = Some(buttons.size)),

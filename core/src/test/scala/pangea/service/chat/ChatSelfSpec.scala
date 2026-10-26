@@ -44,7 +44,7 @@ object ChatSelfSpec extends ZIOSpecDefault {
       payouts    = Payouts(TestPayoutDao.empty, heroDao, content)
       parcels    = Parcels(TestParcelDao.empty, TestBankRepository.empty, content)
       transfers  = Transfers(TestInventoryRepository.accepting, userRepo, parcels, new TestPlayers, content,
-                     heroDao, TestBankRepository.empty, payouts)
+                     heroDao, TestBankRepository.empty, payouts, lock)
     } yield (new StateHandler(api, userRepo, heroRepo, heroDao, payouts, parcels, transfers,
                Map.empty[StateType, State], AdminPanel.disabled, content, lock), api, content)
 
