@@ -37,20 +37,28 @@ final class BankRepositoryLive(dao: BankVaultDao) extends BankRepository {
       _     <- dao.update(vault.withItems(rest)).orElseFail(BankRepoError.CantUpdateVault)
     } yield item
 
+  /** Серебро кладут и чужие — выручка с аукциона, передача из рук в руки, — не
+    * дожидаясь хозяина. Поэтому приращением, а не записью всей ячейки: иначе
+    * зачисление затёрло бы то, что хозяин сделал с ячейкой в ту же секунду, или
+    * наоборот. Ячейку читаем, только чтобы назвать причину отказа; место
+    * проверяет сама запись. */
   def depositSilver(heroId: HeroId, amount: Long): IO[BankRepoError, Unit] =
     for {
       _     <- ZIO.when(amount <= 0)(ZIO.fail(BankRepoError.NonPositiveAmount))
       vault <- get(heroId)
       _     <- ZIO.when(!vault.open)(ZIO.fail(BankRepoError.NoVault))
       _     <- ZIO.when(amount > vault.freeSilverSpace)(ZIO.fail(BankRepoError.SilverOverflow))
-      _     <- dao.update(vault.copy(silver = vault.silver + amount)).orElseFail(BankRepoError.CantUpdateVault)
+      added <- dao.addSilver(heroId, amount, BankVault.SilverPerCell).orElseFail(BankRepoError.CantUpdateVault)
+      _     <- ZIO.when(!added)(ZIO.fail(BankRepoError.SilverOverflow))
     } yield ()
 
+  /** Тоже приращением: пока хозяин снимает, ему могли что-то положить. */
   def withdrawSilver(heroId: HeroId, amount: Long): IO[BankRepoError, Unit] =
     for {
       _     <- ZIO.when(amount <= 0)(ZIO.fail(BankRepoError.NonPositiveAmount))
       vault <- get(heroId)
       _     <- ZIO.when(amount > vault.silver)(ZIO.fail(BankRepoError.NotEnoughSilver))
-      _     <- dao.update(vault.copy(silver = vault.silver - amount)).orElseFail(BankRepoError.CantUpdateVault)
+      taken <- dao.takeSilver(heroId, amount).orElseFail(BankRepoError.CantUpdateVault)
+      _     <- ZIO.when(!taken)(ZIO.fail(BankRepoError.NotEnoughSilver))
     } yield ()
 }

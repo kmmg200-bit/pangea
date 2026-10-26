@@ -20,7 +20,18 @@ class BankVaultDaoLive(xa: Transactor[Task]) extends BankVaultDao {
     } yield v).transact(xa)
 
   override def update(vault: BankVault): Task[Unit] =
-    sql"update bank_vaults set cells = ${vault.cells}, items = ${vault.items.asJson}, silver = ${vault.silver} where id = ${vault.id}".update.run
+    sql"update bank_vaults set cells = ${vault.cells}, items = ${vault.items.asJson} where id = ${vault.id}".update.run
       .transact(xa)
       .unit
+
+  // Место проверяем в том же запросе: между чтением ячейки и этой записью
+  // туда могли положить ещё.
+  override def addSilver(heroId: HeroId, amount: Long, perCell: Long): Task[Boolean] =
+    sql"""update bank_vaults set silver = silver + $amount
+          where hero_id = $heroId and silver + $amount <= cells * $perCell"""
+      .update.run.transact(xa).map(_ == 1)
+
+  override def takeSilver(heroId: HeroId, amount: Long): Task[Boolean] =
+    sql"update bank_vaults set silver = silver - $amount where hero_id = $heroId and silver >= $amount"
+      .update.run.transact(xa).map(_ == 1)
 }
