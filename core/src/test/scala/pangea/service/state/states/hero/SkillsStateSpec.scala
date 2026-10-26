@@ -3,7 +3,7 @@ package pangea.service.state.states.hero
 import pangea.engine.SceneContent
 import pangea.model.hero.Equipment
 import pangea.model.rune.{Rune, RuneData}
-import pangea.model.item.{Item, ItemDetails, ItemType, PassiveKind, Rarity}
+import pangea.model.item.{Item, ItemDetails, ItemSet, ItemType, PassiveKind, Rarity}
 import pangea.model.skill.Skill
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
@@ -104,7 +104,7 @@ object SkillsStateSpec extends ZIOSpecDefault {
         c.id == "PassiveSkill_Jeweler" && c.label == PassiveKind.Jeweler.label))
     },
 
-    test("два предмета с одной пассивкой в разных слотах → одна кнопка (дубли не стакаются)") {
+    test("два предмета с одной пассивкой в разных слотах → одна кнопка «×2», в карточке — что не складываются") {
       val eq = TestFixtures.emptyEquipment.copy(
         boots = passiveItem(ItemType.Boots, PassiveKind.Stash, id = 40L),
         pants = passiveItem(ItemType.Pants, PassiveKind.Stash, id = 41L)
@@ -114,7 +114,55 @@ object SkillsStateSpec extends ZIOSpecDefault {
         (state, _, renderer) = t
         _       <- state.enter(testUser, renderer)
         screens <- renderer.sentScreens
-      } yield assertTrue(screens.last.choices.count(_.id == "PassiveSkill_Stash") == 1)
+        _       <- state.action(testUser, tap("PassiveSkill_Stash"), renderer)
+        card    <- renderer.sentScreens.map(_.last)
+      } yield assertTrue(screens.last.choices.count(_.id == "PassiveSkill_Stash") == 1) &&
+              assertTrue(screens.last.choices.find(_.id == "PassiveSkill_Stash").exists(_.label == s"${PassiveKind.Stash.label} ×2")) &&
+              assertTrue(card.text.contains("Надето вещей с этим умением: 2. Одинаковые умения не складываются — действует одно."))
+    },
+
+    test("одно умение с двух вещей — одна кнопка «×2»; с одной вещи — без числа") {
+      val both = TestFixtures.emptyEquipment.copy(
+        weapon   = weaponWith(Skill.CunningStrike, id = 10L),
+        leftHand = weaponWith(Skill.CunningStrike, id = 11L)
+      )
+      val single = TestFixtures.emptyEquipment.copy(
+        weapon = weaponWith(Skill.CunningStrike, id = 10L),
+        boots  = passiveItem(ItemType.Boots, PassiveKind.Stash, id = 40L)
+      )
+      for {
+        t <- makeState(both)
+        (state, _, renderer) = t
+        _     <- state.enter(testUser, renderer)
+        twice <- renderer.sentScreens.map(_.last.choices.filter(_.id.startsWith("ActiveSkill_")).map(_.label))
+        s <- makeState(single)
+        (one, _, oneRenderer) = s
+        _     <- one.enter(testUser, oneRenderer)
+        once  <- oneRenderer.sentScreens.map(_.last.choices.map(_.label))
+        _     <- one.action(testUser, tap("ActiveSkill_10"), oneRenderer)
+        card  <- oneRenderer.sentScreens.map(_.last)
+      } yield assertTrue(twice == List(s"${Skill.CunningStrike.label} ×2")) &&
+              assertTrue(once.take(2) == List(Skill.CunningStrike.label, PassiveKind.Stash.label)) &&
+              assertTrue(!card.text.contains("Надето вещей"))
+    },
+
+    test("набор — с числом надетых частей: «Дикое пламя 6»") {
+      def piece(itemType: ItemType, id: Long): Item =
+        passiveItem(itemType, PassiveKind.Stash, id).copy(details = ItemDetails.Plain, set = Some(ItemSet.WildFlame))
+      val eq = TestFixtures.emptyEquipment.copy(
+        helmet       = piece(ItemType.Helmet, 1L),
+        shoulderPads = piece(ItemType.ShoulderPads, 2L),
+        bracelets    = piece(ItemType.Bracelets, 3L),
+        gloves       = piece(ItemType.Gloves, 4L),
+        pants        = piece(ItemType.Pants, 5L),
+        boots        = piece(ItemType.Boots, 6L)
+      )
+      for {
+        t <- makeState(eq)
+        (state, _, renderer) = t
+        _    <- state.enter(testUser, renderer)
+        list <- renderer.sentScreens.map(_.last)
+      } yield assertTrue(list.choices.find(_.id == "Set_WildFlame").exists(_.label == "🛡 Дикое пламя 6"))
     },
 
     test("клик по активному умению → показывает полное описание с энергией и перезарядкой") {

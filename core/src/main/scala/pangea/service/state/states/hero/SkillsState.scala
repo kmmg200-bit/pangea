@@ -4,7 +4,7 @@ import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.{Decoder, Encoder, jawn}
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
-import pangea.model.hero.Hero
+import pangea.model.hero.{Equipment, Hero}
 import pangea.model.item.{ItemSet, PassiveKind}
 import pangea.model.rune.Rune
 import pangea.model.skill.Skill
@@ -134,25 +134,26 @@ object SkillsState {
     def describe(hero: Hero): String
   }
   object SkillEntry {
-    final case class Active(itemId: Long, skill: Skill) extends SkillEntry {
+    /** `worn` — сколько надетых вещей несут это умение (см. [[times]]). */
+    final case class Active(itemId: Long, skill: Skill, worn: Int = 1) extends SkillEntry {
       def buttonId: String = s"$ActivePrefix$itemId"
-      def label: String    = if (Rune.isBodySlot(itemId)) s"${skill.label} (на теле)" else skill.label
-      def describe(hero: Hero): String = skill.describe(hero)
+      def label: String    = (if (Rune.isBodySlot(itemId)) s"${skill.label} (на теле)" else skill.label) + times(worn)
+      def describe(hero: Hero): String = skill.describe(hero) + sameSkills(worn)
     }
-    final case class Passive(kind: PassiveKind, onBody: Boolean) extends SkillEntry {
+    final case class Passive(kind: PassiveKind, onBody: Boolean, worn: Int = 1) extends SkillEntry {
       def buttonId: String = s"$PassivePrefix${kind.entryName}"
-      def label: String    = if (onBody) s"${kind.label} (на теле)" else kind.label
+      def label: String    = (if (onBody) s"${kind.label} (на теле)" else kind.label) + times(worn)
       def describe(hero: Hero): String = {
         val n = hero.runes.understandingOf(Rune.Passive(kind))
-        kind.describe + (if (n > 0L) s" Понимание: $n." else "")
+        kind.describe + (if (n > 0L) s" Понимание: $n." else "") + sameSkills(worn)
       }
     }
 
-    /** Набор снаряжения: в списке — сколько предметов надето, в описании —
-     *  только те пороги, до которых игрок добрал. */
-    final case class Set(set: ItemSet) extends SkillEntry {
+    /** Набор снаряжения: в списке — сколько предметов надето («Дикое пламя 6»),
+     *  в описании — только те пороги, до которых игрок добрал. */
+    final case class Set(set: ItemSet, pieces: Int) extends SkillEntry {
       def buttonId: String = s"$SetPrefix${set.entryName}"
-      def label: String    = s"🛡 ${set.label}"
+      def label: String    = s"🛡 ${set.label} $pieces"
       def describe(hero: Hero): String = {
         val sets   = hero.sets
         val worn   = sets.pieces(set)
@@ -173,16 +174,33 @@ object SkillsState {
   private val PassivePrefix = "PassiveSkill_"
   private val SetPrefix     = "Set_"
 
+  /** «Тайник ×2»: умение пришло с нескольких надетых вещей. С одной — без
+   *  числа, иначе «×1» стоял бы почти у всего списка. */
+  private def times(worn: Int): String = if (worn > 1) s" ×$worn" else ""
+
+  /** В карточке — почему ×2 не вдвое сильнее: одинаковые умения не складываются. */
+  private def sameSkills(worn: Int): String =
+    if (worn > 1) s"\n\nНадето вещей с этим умением: $worn. Одинаковые умения не складываются — действует одно."
+    else ""
+
   /** Все умения/пассивки/наборы, реально действующие на герое прямо сейчас —
    *  снятые с надетого снаряжения. Активные (оружие/нагрудник) идут первыми,
    *  затем пассивки по алфавиту метки, затем наборы, набравшие хотя бы один
-   *  порог — стабильный порядок между перерисовками. */
+   *  порог — стабильный порядок между перерисовками. Дубли схлопнуты в одну
+   *  кнопку, а сколько вещей их несут — видно по «×2». */
   def entries(hero: Hero): List[SkillEntry] = {
-    val worn = hero.equipment.passiveKinds
-    hero.activeSkillSlots.map(s => SkillEntry.Active(s.itemId, s.skill)) ++
-      hero.passives.kinds.toList.sortBy(_.label).map(k => SkillEntry.Passive(k, onBody = !worn.contains(k))) ++
-      hero.sets.activeBonuses.map { case (set, _) => SkillEntry.Set(set) }
+    val eq   = hero.equipment
+    val worn = eq.passiveKinds
+    hero.activeSkillSlots.map(s => SkillEntry.Active(s.itemId, s.skill, wornWith(eq, s.skill))) ++
+      hero.passives.kinds.toList.sortBy(_.label).map(k =>
+        SkillEntry.Passive(k, onBody = !worn.contains(k), eq.allItems.count(_.passive.contains(k)))) ++
+      hero.sets.activeBonuses.map { case (set, _) => SkillEntry.Set(set, hero.sets.pieces(set)) }
   }
+
+  /** Сколько надетых вещей несут активное умение — те же, с которых оно и
+   *  берётся: оружие в обеих руках и нагрудник. */
+  private def wornWith(eq: Equipment, skill: Skill): Int =
+    List(eq.weapon, eq.leftHand, eq.chestPlate).count(_.activeSkill.contains(skill))
 
   final case class SkillsScene(page: Option[Int] = None)
   object SkillsScene {
