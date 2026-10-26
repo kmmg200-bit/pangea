@@ -152,9 +152,9 @@ object GirlStateSpec extends ZIOSpecDefault {
               assertTrue(res2 == StateType.GlobalMap && h2.guildReputation == 50L + 30L)
     },
 
-    test("в городе 2%: карта отца — цена уровень×110 ±20%, покупка кладёт карту клада и списывает серебро") {
+    test("в городе 2%: карта отца — цена уровень×750 ±20%, покупка кладёт карту клада и списывает серебро") {
       for {
-        t <- make(hero.copy(silver = 2000L), Some(orcScene(Step.Escort)))
+        t <- make(hero.copy(silver = 10000L), Some(orcScene(Step.Escort)))
         (state, dao, inv, _, _, r) = t
         _      <- TestRandom.feedInts(48) *> TestRandom.feedLongs(100L)
         _      <- state.action(testUser, tap("Escort"), r)
@@ -162,15 +162,15 @@ object GirlStateSpec extends ZIOSpecDefault {
         offer  <- r.sentScreens.map(_.last)
         result <- state.action(testUser, tap("BuyMap"), r)
         h      <- heroOf(dao)
-      } yield assertTrue(offer.text.contains("1100 серебра")) &&
+      } yield assertTrue(offer.text.contains("7500 серебра")) &&
               assertTrue(result == StateType.GlobalMap) &&
-              assertTrue(h.silver == 2000L - 1100L) &&
+              assertTrue(h.silver == 10000L - 7500L) &&
               assertTrue(inv.snapshot.exists(_.itemType == ItemType.TreasureMap))
     },
 
     test("карта отца: без серебра — остаёмся; отказ от покупки — уровень×3; пожелать удачи — уровень×10 ±20%") {
       for {
-        t <- make(hero.copy(silver = 100L), Some(orcScene(Step.MapOffer).copy(price = 1100L)))
+        t <- make(hero.copy(silver = 100L), Some(orcScene(Step.MapOffer).copy(price = 7500L)))
         (state, dao, inv, _, _, r) = t
         stay   <- state.action(testUser, tap("BuyMap"), r)
         all    <- texts(r)

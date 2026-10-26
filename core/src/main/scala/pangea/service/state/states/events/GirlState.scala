@@ -455,8 +455,8 @@ object GirlState {
   val RepPerLevelFarewell: Long = 10L
   /** Уйти из таверны, не поднимаясь в комнату: уровень × 2. */
   val RepPerLevelTavern: Long = 2L
-  /** Цена карты отца: уровень × 110 (±20%). */
-  val MapPricePerLevel: Long  = 110L
+  /** Цена карты отца: уровень × 750 (±20%). */
+  val MapPricePerLevel: Long  = 750L
   val SpreadMin: Long = 80L
   val SpreadMax: Long = 120L
 
