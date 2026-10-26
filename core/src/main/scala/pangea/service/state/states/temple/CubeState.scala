@@ -341,7 +341,7 @@ object CubeState {
     if (azat.cubeHome && home.altarMax > 0) Power.Home(home.charges, home.altarMax) else Power.Own(azat.cubeCharges)
 
   /** Запись в книгу рецептов: названия того, что ушло, и что вышло. */
-  def note(a: CubeCraft.Applied): RecipeNote = RecipeNote(a.consumed.map(_.name), a.result.name, a.count)
+  def note(a: CubeCraft.Applied): RecipeNote = RecipeNote(a.ingredients, a.made, a.count)
 
   case class CubeScene(depositPage: Option[Int] = None, withdrawPage: Option[Int] = None)
   object CubeScene {

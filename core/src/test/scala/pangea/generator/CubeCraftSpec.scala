@@ -305,6 +305,44 @@ object CubeCraftSpec extends ZIOSpecDefault {
       val iron = MaterialGenerator.item(MaterialKind.EverburningIron).copy(id = 2L)
       val result = CubeCraft.craft(List(gem(GemKind.Ruby, 1, id = 3L), head(4L), iron), charges = 50, rng)
       assertTrue(!result.items.exists(_.set.isDefined))
+    },
+
+    test("книга рецептов: экипировка — общим словом, и один рецепт даёт одну запись") {
+      import pangea.model.home.HomeData
+      import pangea.model.rune.Rune
+      import pangea.model.skill.Skill
+      import pangea.service.state.states.temple.CubeState
+      def gear(id: Long, name: String, itemType: ItemType, set: Option[ItemSet] = None,
+               details: ItemDetails = ItemDetails.Plain): Item =
+        Item(id, name, 10L, Rarity.Blue, itemType, attack = 1, accuracy = 0, energy = 0,
+          armor = 0, defence = 0, evasion = 0, details = details, set = set)
+      def lines(items: List[Item]): List[String] =
+        CubeCraft.craft(items, charges = 50, rng).applied.map(CubeState.note).map(_.line)
+      val skin     = MaterialGenerator.item(MaterialKind.GhoulSkin)
+      val salvage  = lines(List(gear(1L, "Шлем Упыря", ItemType.Helmet, Some(ItemSet.Ghoul)),
+                       gear(2L, "Сапоги Упыря", ItemType.Boots, Some(ItemSet.Ghoul)),
+                       gear(3L, "Пояс Упыря", ItemType.Belt, Some(ItemSet.Ghoul))))
+      val infused  = lines(List(gear(4L, "Топор Дворянина", ItemType.Weapon), skin.copy(id = 5L),
+                       gear(6L, "Шлем Странника", ItemType.Helmet), skin.copy(id = 7L)))
+      val reforged = lines(List(legendary(ItemType.Boots, 20L, "Сапоги Зари", 8L), mithril(9L), mithril(10L)))
+      val rerolled = lines(List(legendary(ItemType.Ring, 20L, "Кольцо Зари", 11L), mithril(12L)))
+      val heads    = lines((13L to 21L).toList.map(head))
+      val runes    = lines((22L to 26L).toList.map(i =>
+                       gear(i, s"Меч №$i", ItemType.Weapon, details = ItemDetails.Weapon(Skill.CunningStrike))))
+      val divine   = lines(gear(27L, "Меч Дворянина", ItemType.Weapon) ::
+                       (List.fill(4)(gem(GemKind.Ruby, 1)) ++ List.fill(4)(gem(GemKind.Skull, 1))))
+      val book     = HomeData.empty.noted(CubeCraft.craft(List(gear(4L, "Топор Дворянина", ItemType.Weapon), skin.copy(id = 5L),
+                       gear(6L, "Шлем Странника", ItemType.Helmet), skin.copy(id = 7L)), charges = 50, rng).applied.map(CubeState.note))
+      assertTrue(salvage == List("Вещь из набора «Упырь» ×3 → Кожа упыря")) &&
+        assertTrue(infused == List.fill(2)("Экипировка + Кожа упыря → Экипировка из набора «Упырь»")) &&
+        assertTrue(book.recipes.size == 1) &&
+        assertTrue(reforged == List("Легендарная экипировка + Мифрил ×2 → Та же экипировка на уровень выше")) &&
+        assertTrue(rerolled == List("Легендарная экипировка + Мифрил → Новая легендарная экипировка того же вида")) &&
+        assertTrue(heads == List("Голова существа ×9 → Левитирующая голова монстра")) &&
+        assertTrue(runes == List(s"Вещь с руной «${Rune.Active(Skill.CunningStrike).label}» ×5 → Большая руна Хитрого удара")) &&
+        assertTrue(divine == List("Оружие + Надколотый камень ×8 → Божественное оружие")) &&
+        // травы, камни и прочее — по названию, как было
+        assertTrue(lines(List.fill(3)(gem(GemKind.Ruby, 1))) == List(s"${gem(GemKind.Ruby, 1).name} ×3 → ${gem(GemKind.Ruby, 2).name}"))
     }
 
   )

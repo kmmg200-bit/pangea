@@ -24,8 +24,9 @@ object CubeCraft {
    *  потраченных зарядов (= применённых рецептов) и итоговый Rng. */
   /** Одно сработавшее применение рецепта: что ушло в дело, что вышло и
    *  сколько (у отваров — по числу склянок). По ним верстак ремесленника пишет
-   *  книгу рецептов. */
-  final case class Applied(consumed: List[Item], result: Item, count: Int)
+   *  книгу рецептов: `ingredients` и `made` — то, как это записать (см.
+   *  [[Recipe.describe]]). */
+  final case class Applied(consumed: List[Item], result: Item, count: Int, ingredients: List[String], made: String)
 
   final case class Result(items: List[Item], chargesUsed: Int, rng: Rng, applied: List[Applied] = Nil) {
     def anyApplied: Boolean = chargesUsed > 0
@@ -40,6 +41,25 @@ object CubeCraft {
     /** То же, но с оглядкой на результат: у отваров число склянок своё
       * (из редких трав выходит одна, из простых — две). */
     def portionsFor(@annotation.unused result: Item): Int = portions
+    /** Как применение записывается в книгу рецептов: что ушло и что вышло.
+      * Обычно — названия вещей как есть. Экипировка пишется общим словом: имя у
+      * каждой вещи своё, и иначе один рецепт расползался бы на десятки записей. */
+    def describe(consumed: List[Item], result: Item): (List[String], String) = (consumed.map(_.name), result.name)
+  }
+
+  /** Общие слова книги рецептов — для того, у чего имя у каждой вещи своё. */
+  private object Book {
+    val Gear: String       = "Экипировка"
+    val Legendary: String  = "Легендарная экипировка"
+    val Weapon: String     = "Оружие"
+    val CrackedGem: String = "Надколотый камень"
+    val Divine: String     = "Божественное оружие"
+    val Head: String       = "Голова существа"
+    val LevelUp: String    = "Та же экипировка на уровень выше"
+    val Reroll: String     = "Новая легендарная экипировка того же вида"
+    def ofSet(set: ItemSet): String  = s"Вещь из набора «${set.label}»"
+    def inSet(set: ItemSet): String  = s"Экипировка из набора «${set.label}»"
+    def withRune(rune: Rune): String = s"Вещь с руной «${rune.label}»"
   }
 
   private def isHead(i: Item): Boolean = i.details match {
@@ -101,6 +121,9 @@ object CubeCraft {
       }
     }
 
+    override def describe(consumed: List[Item], result: Item): (List[String], String) =
+      (consumed.map(i => if (i.itemType == ItemType.Weapon) Book.Weapon else Book.CrackedGem), Book.Divine)
+
     /** Вид камня по весу: шанс каждого — его доля среди восьми. Порядок камней
       * в куче не важен, поэтому тянем из отсортированного списка. */
     private def pickKind(kinds: List[GemKind], rng: Rng): (GemKind, Rng) = {
@@ -125,6 +148,9 @@ object CubeCraft {
         .headOption
         .map(rune => (byRune(rune).take(size), RuneStone.item(rune, RuneStoneSize.Big), rng))
     }
+
+    override def describe(consumed: List[Item], result: Item): (List[String], String) =
+      (consumed.map(i => Rune.of(i).fold(i.name)(Book.withRune)), result.name)
   }
 
   // 9 голов существ → «Левитирующая голова монстра».
@@ -135,6 +161,9 @@ object CubeCraft {
       if (heads.size >= 9) Some((heads.take(9), MaterialGenerator.item(MaterialKind.LevitatingMonsterHead), rng))
       else None
     }
+
+    override def describe(consumed: List[Item], result: Item): (List[String], String) =
+      (consumed.map(_ => Book.Head), result.name)
   }
 
   // Легендарный предмет + N мифрила → пересборка того же слота.
@@ -156,6 +185,9 @@ object CubeCraft {
         case _ => None
       }
     }
+
+    override def describe(consumed: List[Item], result: Item): (List[String], String) =
+      (consumed.map(i => if (isMithril(i)) i.name else Book.Legendary), if (keepName) Book.LevelUp else Book.Reroll)
   }
 
   // Любая надеваемая вещь + ингредиент стихии → та же вещь, но из набора этой
@@ -183,6 +215,9 @@ object CubeCraft {
         val (name, r2) = ItemNameGenerator.setName(target.itemType, target.rarity, set, rng, target.grip)
         (List(target, ingredient), target.copy(name = name, set = Some(set)), r2)
       }
+
+    override def describe(consumed: List[Item], result: Item): (List[String], String) =
+      (consumed.map(i => if (setOf(i).isDefined) i.name else Book.Gear), result.set.fold(result.name)(Book.inSet))
   }
 
   // 3 вещи одного набора → ингредиент этого набора. Редкость вещей не важна:
@@ -205,6 +240,9 @@ object CubeCraft {
         .headOption
         .map { case (set, material) => (bySet(set).take(3), MaterialGenerator.item(material), rng) }
     }
+
+    override def describe(consumed: List[Item], result: Item): (List[String], String) =
+      (consumed.map(i => i.set.fold(i.name)(Book.ofSet)), result.name)
   }
 
   // Нераскрытая роза + пыль самоцвета, в котором дремала стихия → раскрывшаяся
@@ -367,7 +405,8 @@ object CubeCraft {
           case Some((consumed, result, r2)) =>
             pool = removeEach(pool, consumed)
             results = results ++ List.fill(recipe.portionsFor(result))(result)
-            applied = applied :+ Applied(consumed, result, recipe.portionsFor(result))
+            val (ingredients, made) = recipe.describe(consumed, result)
+            applied = applied :+ Applied(consumed, result, recipe.portionsFor(result), ingredients, made)
             r = r2
             remaining -= 1
           case None => continue = false
