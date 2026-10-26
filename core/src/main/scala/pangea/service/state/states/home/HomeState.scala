@@ -5,7 +5,7 @@ import io.circe.{Json, jawn}
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.hero.Hero
-import pangea.model.hero.Equipment
+import pangea.model.hero.{AzatState, CubeStatus, Equipment}
 import pangea.model.home.{Furniture, HomeData, HomeRates, House}
 import pangea.model.item.{ItemType, QuestItemKind}
 import pangea.model.schedule.TaskKind
@@ -18,7 +18,7 @@ import pangea.repository.item.ItemRepository
 import pangea.service.purse.Purse
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.{EquipmentState, InventoryState}
-import pangea.service.state.{BeltContents, ItemMenu, SlotChoice, State, UserAction}
+import pangea.service.state.{AzatData, BeltContents, ItemMenu, SlotChoice, State, UserAction}
 import zio.{Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -78,6 +78,10 @@ case class HomeState(
       "HomeRackPick"   -> Target.Run { (u, ua, r) => rackPick(u, ua, r) },
       "HomeRackOff"    -> Target.Run { (u, ua, r) => rackOffList(u, ua, r) },
       "HomeRackDrop"   -> Target.Run { (u, ua, r) => rackDrop(u, ua, r) },
+      "HomeBench"      -> Target.Run { (u, _, r) => bench(u, r) },
+      "HomeCubeInsert" -> Target.Run { (u, _, r) => insertCube(u, r) },
+      "HomeCube"       -> Target.Run { (u, _, r) => openCube(u, r) },
+      "HomeRecipes"    -> Target.Run { (u, ua, r) => recipes(u, ua, r) },
       "HomeClean"      -> Target.Run { (u, _, r) => clean(u, r) },
       CleanStopKey     -> Target.Run { (u, _, r) => stopCleaning(u, r) },
       "HomeBed"     -> Target.Run { (u, _, r) => bed(u, r) },
@@ -248,6 +252,7 @@ case class HomeState(
             Option.when(second)(Choice("HomeHerbs", content.text("home.house.workbench"), row = Some(1))),
             Option.when(second)(Choice("HomeAzat", content.text("home.house.azat"), row = Some(1))),
             Option.when(h == House.Island)(Choice("HomeGems", content.text("home.house.gems"), row = Some(1))),
+            Option.when(home.count(Furniture.ArtisanBench) > 0)(Choice("HomeBench", content.text("home.house.bench"), row = Some(1))),
             Some(Choice("HomeSlots", content.text("home.house.slots"), row = Some(2))),
             Some(Choice("HomeOffice", content.text("home.house.office"), row = Some(2))),
             Some(Choice("LeaveHome", content.text("home.house.leave"), color = ChoiceColor.Negative, row = Some(3)))
@@ -262,7 +267,13 @@ case class HomeState(
     loadHome(user).flatMap { home =>
       home.house.filter(_.tier >= House.Townhouse.tier) match {
         case None    => showHouse(user, renderer)
-        case Some(h) => renderer.show(user, Screen(content.text(s"home.houses.${h.key}.library"), List(backToHouse))).as(StateType.Home)
+        case Some(h) =>
+          val book = Option.when(home.recipes.nonEmpty)(content.format("home.library.bookLine", "n" -> home.recipes.size.toString))
+          renderer.show(user, Screen(content.text(s"home.houses.${h.key}.library") + book.fold("")("\n\n" + _), List(
+            Option.when(home.recipes.nonEmpty)(Choice("HomeRecipes", content.text("home.library.book"), color = ChoiceColor.Positive,
+              data = Map("p" -> "0"), row = Some(0))),
+            Some(backToHouse.copy(row = Some(1)))
+          ).flatten)).as(StateType.Home)
       }
     }
 
@@ -328,7 +339,8 @@ case class HomeState(
         val backRow = 1 + (home.racks.size + 1) / 2
         renderer.show(user, Screen(text, List(
           Option.when(home.hasClutter)(Choice("HomeClean", content.text("home.house.clean"), color = ChoiceColor.Positive, row = Some(0))),
-          Some(Choice("HomeFurnish", content.text("home.slots.furnish"), row = Some(0)))
+          Some(Choice("HomeFurnish", content.text("home.slots.furnish"), row = Some(0))),
+          Option.when(home.count(Furniture.ArtisanBench) > 0)(Choice("HomeBench", content.text("home.house.bench"), row = Some(0)))
         ).flatten ++ rackButtons :+ backToHouse.copy(row = Some(backRow)))).as(StateType.Home)
       }
     }
@@ -519,6 +531,68 @@ case class HomeState(
       }
     } yield res
 
+  // ── Верстак ремесленника ───────────────────────────────────────────────────
+
+  /** Верстак: гнездо под куб Азата. Куба в гнезде нет — «Вставить куб»; есть —
+    * «Открыть куб». */
+  private def bench(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      home <- loadHome(user)
+      azat <- loadAzat(user)
+      res  <- if (home.count(Furniture.ArtisanBench) == 0) slots(user, renderer)
+              else {
+                val action =
+                  if (azat.cubeHome) Choice("HomeCube", content.text("home.bench.open"), color = ChoiceColor.Positive, row = Some(0))
+                  else Choice("HomeCubeInsert", content.text("home.bench.insert"), color = ChoiceColor.Positive, row = Some(0))
+                renderer.show(user, Screen(content.text(if (azat.cubeHome) "home.bench.textCube" else "home.bench.text"), List(
+                  action, Choice("HomeSlots", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(1))
+                ))).as(StateType.Home)
+              }
+    } yield res
+
+  /** Вставить куб: он переезжает из Храма домой — насовсем. Куба нет или он
+    * ещё спит — так и говорим. */
+  private def insertCube(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      home <- loadHome(user)
+      azat <- loadAzat(user)
+      res  <- if (home.count(Furniture.ArtisanBench) == 0) slots(user, renderer)
+              else azat.cube match {
+                case _ if azat.cubeHome => bench(user, renderer)
+                case CubeStatus.Active =>
+                  heroDao.writeAzatData(user.userId, azat.copy(cubeHome = true).asJson) *>
+                    say(user, content.text("home.bench.inserted"), renderer) *> bench(user, renderer)
+                case CubeStatus.FoundInactive => say(user, content.text("home.bench.cubeAsleep"), renderer) *> bench(user, renderer)
+                case CubeStatus.None          => say(user, content.text("home.bench.noCube"), renderer) *> bench(user, renderer)
+              }
+    } yield res
+
+  /** Открыть куб — тот же, что в Храме, только дома. */
+  private def openCube(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      home <- loadHome(user)
+      azat <- loadAzat(user)
+      res  <- if (azat.cubeHome && home.count(Furniture.ArtisanBench) > 0) ZIO.succeed(StateType.Cube)
+              else bench(user, renderer)
+    } yield res
+
+  /** Книга рецептов — в библиотеке: что получалось в кубе на верстаке, по
+    * страницам. Без библиотеки (домик) — обратно в дом: пишется книга и так. */
+  private def recipes(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
+    loadHome(user).flatMap { home =>
+      if (!home.house.exists(_.tier >= House.Townhouse.tier) || home.recipes.isEmpty) library(user, renderer)
+      else {
+        val (lines, total, cur) = ItemMenu.page(home.recipes, payload(ua, "p").flatMap(_.toIntOption).getOrElse(0), RecipesPerPage)
+        val nav = List(
+          Option.when(cur > 0)(Choice("HomeRecipes", content.text("common.prev"), data = Map("p" -> (cur - 1).toString), row = Some(0))),
+          Option.when(cur < total - 1)(Choice("HomeRecipes", content.text("common.next"), data = Map("p" -> (cur + 1).toString), row = Some(0)))
+        ).flatten
+        renderer.show(user, Screen(content.format("home.library.recipes", "page" -> (cur + 1).toString,
+          "total" -> total.toString, "lines" -> lines.map(n => "• " + n.line).mkString("\n")), nav :+
+          Choice("HomeLibrary", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(1)))).as(StateType.Home)
+      }
+    }
+
   /** Номер стойки из кнопки — если такая стойка в доме есть. */
   private def rackNo(ua: UserAction, home: HomeData): Option[Int] =
     payload(ua, "n").flatMap(_.toIntOption).filter(n => n >= 1 && n <= home.racks.size)
@@ -615,6 +689,8 @@ case class HomeState(
       home <- loadHome(user)
       res  <- furnOf(ua, home) match {
         case None => furnish(user, renderer)
+        case Some(Furniture.ArtisanBench) if home.count(Furniture.ArtisanBench) > 0 =>
+          say(user, content.text("home.furnish.benchHave"), renderer) *> furnish(user, renderer)
         case Some(Furniture.Rack) if home.racks.size >= home.racksMax =>
           say(user, content.format("home.furnish.rackMax", "max" -> home.racksMax.toString), renderer) *> furnish(user, renderer)
         case Some(_) if home.slotsFree <= 0 =>
@@ -767,6 +843,9 @@ case class HomeState(
   private def priceText(price: Long, pay: String): String =
     content.format(if (pay == PaySilver) "home.office.silver" else "home.office.doubloons", "price" -> money(price))
 
+  private def loadAzat(user: User): Task[AzatState] =
+    nowMs.flatMap(now => AzatData.load(heroDao, user.userId, now))
+
   private def sleepStartedAt(user: User): Task[Option[Long]] =
     heroDao.readSceneData(user.userId).map(_.flatMap(_.hcursor.get[Long](SleepStartKey).toOption))
 
@@ -826,6 +905,9 @@ object HomeState {
 
   /** Деньги с разрядами: 20 000. */
   def money(n: Long): String = n.toString.reverse.grouped(3).mkString(" ").reverse
+
+  /** Строк книги рецептов на странице. */
+  val RecipesPerPage: Int = 10
 
   /** Что можно надеть на стойку: то же, что на себя, — снаряжение, кроме фляг
     * (их кладут в пояс) и сюжетного. */

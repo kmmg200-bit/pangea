@@ -8,11 +8,14 @@ import pangea.domain.Rng
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.generator.item.CubeCraft
 import pangea.model.hero.{Achievement, AzatState, Hero}
+import pangea.model.home.{HomeData, RecipeNote}
 import pangea.model.item.{BrewKind, Item, ItemStack}
 import pangea.model.state.StateType
 import pangea.model.user.User
+import pangea.repository.bank.BankRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
+import pangea.service.purse.Purse
 import pangea.service.state.ItemMenu
 import pangea.service.state.states.temple.CubeState._
 import pangea.service.state.{AzatData, HerbLore, InventoryFeedback, MarisaQuest, State, UserAction}
@@ -22,13 +25,23 @@ import zio.{Random, Task, ZIO}
 /** Крафт в кубе Азата: по образцу «Неприметной бочки» игрок кладёт в куб до
  *  [[AzatState.CubeCapacity]] предметов и забирает их. Кнопка «Активировать»
  *  просчитывает рецепты ([[CubeCraft]]); успешные применения тратят заряды.
- *  Содержимое куба и заряды живут в `azat_data`; пагинация — в `scene_data`. */
+ *  Содержимое куба и заряды живут в `azat_data`; пагинация — в `scene_data`.
+ *
+ *  Куб может переехать домой — в гнездо верстака ремесленника
+ *  (`AzatState.cubeHome`). Тогда «Назад» ведёт домой, всё, что получилось,
+ *  пишется в книгу рецептов дома, а сила — смотря по дому: со святилищем (алтарь
+ *  Азата) куб берёт энергию дома, без него — свои заряды, и пополнить их можно
+ *  прямо на кубе, по цене жреца. */
 case class CubeState(
   heroDao:        HeroDao,
   inventoryRepo:  InventoryRepository,
   itemRepository: ItemRepository,
-  content:        SceneContent
+  content:        SceneContent,
+  bank:           Option[BankRepository] = None
 ) extends State {
+
+  /** Кошель: своё серебро, а следом — ячейка в Торговом доме. */
+  private val purse = Purse(heroDao, bank)
 
   private val branch = new Branch(
     routes = Map(
@@ -40,12 +53,15 @@ case class CubeState(
       "CubeWithdrawPrev" -> Target.Run { (u, _, r) => navigateWithdraw(u, r, -1).as(StateType.Cube) },
       "CubeWithdrawNext" -> Target.Run { (u, _, r) => navigateWithdraw(u, r, +1).as(StateType.Cube) },
       "CubeActivate"     -> Target.Run { (u, _, r) => activate(u, r).as(StateType.Cube) },
-      "LeaveCube"        -> Target.Goto(StateType.HallAzat)
+      "CubeRefillFull"   -> Target.Run { (u, _, r) => refill(u, r, HallAzatState.RechargeFullSilver, HallAzatState.RechargeFullCharges).as(StateType.Cube) },
+      "CubeRefillHalf"   -> Target.Run { (u, _, r) => refill(u, r, HallAzatState.RechargeHalfSilver, HallAzatState.RechargeHalfCharges).as(StateType.Cube) },
+      // Куб дома — назад домой, в Храме — в зал Азата.
+      "LeaveCube"        -> Target.Run { (u, _, _) => loadAzat(u).map(a => if (a.cubeHome) StateType.Home else StateType.HallAzat) }
     ),
     fallback = Target.Run { (u, ua, r) => handleFallback(u, ua, r) }
   )
 
-  override def targetStates: Set[StateType] = branch.gotoTargets
+  override def targetStates: Set[StateType] = branch.gotoTargets ++ Set(StateType.Home, StateType.HallAzat)
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     resetScene(user) *> showMenu(user, renderer).unit
@@ -58,17 +74,50 @@ case class CubeState(
   private def showMenu(user: User, renderer: Renderer): Task[Unit] =
     for {
       azat <- loadAzat(user)
-      text  = content.format("cube.menu.text",
-                "items"    -> azat.cubeItems.length.toString,
-                "capacity" -> AzatState.CubeCapacity.toString,
-                "charges"  -> azat.cubeCharges.toString)
+      home <- loadHome(user)
+      power = CubeState.power(azat, home)
+      text  = power match {
+                case Power.Home(n, max) => content.format("cube.menu.textHome",
+                  "items" -> azat.cubeItems.length.toString, "capacity" -> AzatState.CubeCapacity.toString,
+                  "charges" -> n.toString, "max" -> max.toString)
+                case Power.Own(n) => content.format("cube.menu.text",
+                  "items" -> azat.cubeItems.length.toString, "capacity" -> AzatState.CubeCapacity.toString,
+                  "charges" -> n.toString)
+              }
+      // Пополнить на самом кубе — когда он дома и живёт на своих зарядах.
+      refills = if (azat.cubeHome && power.isInstanceOf[Power.Own]) List(
+                  Choice("CubeRefillFull", content.format("cube.refill", "charges" -> HallAzatState.RechargeFullCharges.toString,
+                    "price" -> HallAzatState.RechargeFullSilver.toString), row = Some(2)),
+                  Choice("CubeRefillHalf", content.format("cube.refill", "charges" -> HallAzatState.RechargeHalfCharges.toString,
+                    "price" -> HallAzatState.RechargeHalfSilver.toString), row = Some(2)))
+                else Nil
       choices = List(
         Choice("CubeDeposit",  content.text("cube.menu.deposit"),  row = Some(0)),
         Choice("CubeWithdraw", content.text("cube.menu.withdraw"), row = Some(0)),
-        Choice("CubeActivate", content.text("cube.menu.activate"), color = ChoiceColor.Positive, row = Some(1)),
-        Choice("LeaveCube",    content.text("cube.menu.leave"),     color = ChoiceColor.Negative, row = Some(2))
-      )
+        Choice("CubeActivate", content.text("cube.menu.activate"), color = ChoiceColor.Positive, row = Some(1))
+      ) ++ refills :+ Choice("LeaveCube", content.text("cube.menu.leave"), color = ChoiceColor.Negative, row = Some(3))
       _ <- renderer.show(user, Screen(text, choices))
+    } yield ()
+
+  /** Пополнить куб прямо на нём — по цене жреца; только дома и без святилища. */
+  private def refill(user: User, renderer: Renderer, cost: Long, charges: Int): Task[Unit] =
+    for {
+      hero   <- getHero(user)
+      azat   <- loadAzat(user)
+      home   <- loadHome(user)
+      wallet <- purse.wallet(hero)
+      _ <- if (!azat.cubeHome || !CubeState.power(azat, home).isInstanceOf[Power.Own]) ZIO.unit
+           else if (azat.cubeCharges >= AzatState.MaxCharges)
+             renderer.show(user, Screen(content.text("cube.refillFull"), Nil))
+           else if (!wallet.canAfford(cost))
+             renderer.show(user, Screen(content.format("cube.refillLack", "price" -> cost.toString), Nil))
+           else {
+             val next = (azat.cubeCharges + charges).min(AzatState.MaxCharges)
+             purse.charge(user.userId, hero, cost) *>
+               saveAzat(user, azat.copy(cubeCharges = next)) *>
+               renderer.show(user, Screen(content.format("cube.refilled", "charges" -> next.toString), Nil))
+           }
+      _ <- showMenu(user, renderer)
     } yield ()
 
   // --- Списки ---
@@ -199,14 +248,26 @@ case class CubeState(
     for {
       hero <- getHero(user)
       azat <- loadAzat(user)
+      home <- loadHome(user)
+      power = CubeState.power(azat, home)
       seed <- Random.nextLong
-      result = CubeCraft.craft(azat.cubeItems, azat.cubeCharges, Rng(seed))
+      result = CubeCraft.craft(azat.cubeItems, power.charges, Rng(seed))
       // Результаты рецептов (id <= 0) персистим — им нужен id для инвентаря.
       persisted <- ZIO.foreach(result.items) { it =>
         if (it.id > 0L) ZIO.succeed(it)
         else itemRepository.persist(hero.id, it)
       }
-      _ <- saveAzat(user, azat.copy(cubeItems = persisted, cubeCharges = azat.cubeCharges - result.chargesUsed))
+      // Сила уходит оттуда же, откуда взята: энергия дома или заряды куба.
+      _ <- power match {
+             case Power.Home(n, _) =>
+               saveAzat(user, azat.copy(cubeItems = persisted)) *>
+                 saveHome(user, home.copy(charges = n - result.chargesUsed))
+             case Power.Own(n) =>
+               saveAzat(user, azat.copy(cubeItems = persisted, cubeCharges = n - result.chargesUsed))
+           }
+      // Дома всё, что получилось, — в книгу рецептов (пишется и без библиотеки).
+      _ <- ZIO.when(azat.cubeHome && result.applied.nonEmpty)(
+             loadHome(user).flatMap(h => saveHome(user, h.noted(result.applied.map(CubeState.note)))))
       msgKey = if (result.anyApplied) "cube.activated" else "cube.nothing"
       _ <- renderer.show(user, Screen(content.text(msgKey), Nil))
       // Сваренные отвары идут в счёт «Зельевара I»: по одному каждого — достижение.
@@ -238,6 +299,12 @@ case class CubeState(
   private def saveAzat(user: User, azat: AzatState): Task[Unit] =
     heroDao.writeAzatData(user.userId, azat.asJson)
 
+  private def loadHome(user: User): Task[HomeData] =
+    heroDao.readHomeData(user.userId).map(_.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty))
+
+  private def saveHome(user: User, home: HomeData): Task[Unit] =
+    heroDao.writeHomeData(user.userId, home.asJson)
+
   private def readScene(user: User): Task[CubeScene] =
     heroDao.readSceneData(user.userId).map(_.flatMap(_.as[CubeScene].toOption).getOrElse(CubeScene()))
 
@@ -260,6 +327,21 @@ case class CubeState(
 object CubeState {
   val DepositPrefix  = "CubeDeposit_"
   val WithdrawPrefix = "CubeWithdraw_"
+
+  /** Откуда куб берёт силу. */
+  sealed trait Power { def charges: Int }
+  object Power {
+    /** Свои заряды куба — в Храме и в доме без святилища. */
+    final case class Own(charges: Int) extends Power
+    /** Энергия дома — куб дома, и в доме есть алтарь Азата. */
+    final case class Home(charges: Int, max: Int) extends Power
+  }
+
+  def power(azat: AzatState, home: HomeData): Power =
+    if (azat.cubeHome && home.altarMax > 0) Power.Home(home.charges, home.altarMax) else Power.Own(azat.cubeCharges)
+
+  /** Запись в книгу рецептов: названия того, что ушло, и что вышло. */
+  def note(a: CubeCraft.Applied): RecipeNote = RecipeNote(a.consumed.map(_.name), a.result.name, a.count)
 
   case class CubeScene(depositPage: Option[Int] = None, withdrawPage: Option[Int] = None)
   object CubeScene {

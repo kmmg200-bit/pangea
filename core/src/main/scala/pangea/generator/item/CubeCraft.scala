@@ -22,7 +22,12 @@ object CubeCraft {
 
   /** Итог активации: новое содержимое куба (остаток + результаты), число
    *  потраченных зарядов (= применённых рецептов) и итоговый Rng. */
-  final case class Result(items: List[Item], chargesUsed: Int, rng: Rng) {
+  /** Одно сработавшее применение рецепта: что ушло в дело, что вышло и
+   *  сколько (у отваров — по числу склянок). По ним верстак ремесленника пишет
+   *  книгу рецептов. */
+  final case class Applied(consumed: List[Item], result: Item, count: Int)
+
+  final case class Result(items: List[Item], chargesUsed: Int, rng: Rng, applied: List[Applied] = Nil) {
     def anyApplied: Boolean = chargesUsed > 0
   }
 
@@ -353,6 +358,7 @@ object CubeCraft {
     var results   = List.empty[Item]
     var r         = rng
     var remaining = charges
+    var applied   = List.empty[Applied]
 
     recipes.foreach { recipe =>
       var continue = true
@@ -361,13 +367,14 @@ object CubeCraft {
           case Some((consumed, result, r2)) =>
             pool = removeEach(pool, consumed)
             results = results ++ List.fill(recipe.portionsFor(result))(result)
+            applied = applied :+ Applied(consumed, result, recipe.portionsFor(result))
             r = r2
             remaining -= 1
           case None => continue = false
         }
       }
     }
-    Result(pool ++ results, charges - remaining, r)
+    Result(pool ++ results, charges - remaining, r, applied)
   }
 
   // Удаляет каждый элемент `toRemove` из `pool` по первому совпадению.

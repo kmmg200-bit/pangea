@@ -87,6 +87,11 @@ object Furniture {
     * номерной ключ. */
   case object Rack extends Furniture("rack", 100L, 1)
 
+  /** Верстак ремесленника с гнездом под куб Азата: вставил куб — он переехал из
+    * Храма домой; работает так же, а всё, что в нём получится, пишется в книгу
+    * рецептов ([[HomeData.recipes]]). В доме — один: куб-то один. */
+  case object ArtisanBench extends Furniture("artisan", 100L, 1)
+
   /** Сундук аптекаря — у верстака травника: полки шире на
     * [[HomeRates.ApothecaryHerbs]] трав и [[HomeRates.ApothecaryBrews]] отваров. */
   case object ApothecaryChest extends Furniture("apothecary", 100L, 2)
@@ -94,7 +99,7 @@ object Furniture {
   /** Роскошный сундук ювелира — в хранилище камней: шире на [[HomeRates.JewelerGems]]. */
   case object JewelerChest extends Furniture("jeweler", 100L, 3)
 
-  val values: List[Furniture] = List(Rack, ApothecaryChest, JewelerChest)
+  val values: List[Furniture] = List(Rack, ArtisanBench, ApothecaryChest, JewelerChest)
 
   def byKey(key: String): Option[Furniture] = values.find(_.key == key)
 }
@@ -157,7 +162,9 @@ object HomeRates {
   * Обстановка: `furniture` — купленное у Юноны, по месту на вещь (ключи
   * [[Furniture]]); `clutterCleared` — хлам в домике разобран или вывезен;
   * `cleanedMs` — сколько уже наубирано руками (уборку можно прервать);
-  * `racks` — что висит на магических стойках: стойка №N — `racks(N - 1)`. */
+  * `racks` — что висит на магических стойках: стойка №N — `racks(N - 1)`;
+  * `recipes` — книга рецептов: что получилось в кубе на верстаке ремесленника
+  * (видна в библиотеке, когда она есть, а пишется и без неё). */
 final case class HomeData(
   tier:      Int               = 0,
   metJunona: Boolean           = false,
@@ -170,7 +177,8 @@ final case class HomeData(
   furniture: List[String]      = Nil,
   clutterCleared: Boolean      = false,
   cleanedMs: Long              = 0L,
-  racks:     List[Equipment]   = Nil
+  racks:     List[Equipment]   = Nil,
+  recipes:   List[RecipeNote]  = Nil
 ) {
   def house: Option[House] = House.byTier(tier)
 
@@ -188,6 +196,9 @@ final case class HomeData(
 
   /** Сколько стоек можно поставить в этот дом. */
   def racksMax: Int = house.fold(0)(_.racks)
+
+  /** Книга рецептов с новыми записями — без повторов. */
+  def noted(notes: List[RecipeNote]): HomeData = copy(recipes = (recipes ++ notes).distinct)
 
   private def island: Boolean = house.contains(House.Island)
 
@@ -213,6 +224,31 @@ final case class HomeData(
     copy(runes = if (count > 0L) runes.updated(key, count) else runes - key)
 }
 
+/** Запись в книге рецептов: что положили в куб (названия, по вещи) и что
+  * вышло (`count` — сколько штук). */
+final case class RecipeNote(ingredients: List[String], result: String, count: Int) {
+
+  /** «Ромашка + Календула + Крапива → Костоправный отвар ×2»: одинаковое —
+    * числом, в порядке первого появления. */
+  def line: String = {
+    val parts = ingredients.distinct.map { name =>
+      val n = ingredients.count(_ == name)
+      if (n > 1) s"$name ×$n" else name
+    }
+    parts.mkString(" + ") + " → " + result + (if (count > 1) s" ×$count" else "")
+  }
+}
+
+object RecipeNote {
+  implicit val encoder: Encoder[RecipeNote] = deriveEncoder
+  implicit val decoder: Decoder[RecipeNote] = (c: HCursor) =>
+    for {
+      ingredients <- c.getOrElse[List[String]]("ingredients")(Nil)
+      result      <- c.getOrElse[String]("result")("")
+      count       <- c.getOrElse[Int]("count")(1)
+    } yield RecipeNote(ingredients, result, count)
+}
+
 object HomeData {
   val empty: HomeData = HomeData()
 
@@ -231,5 +267,6 @@ object HomeData {
       cleared  <- c.getOrElse[Boolean]("clutterCleared")(false)
       cleaned  <- c.getOrElse[Long]("cleanedMs")(0L)
       racks    <- c.getOrElse[List[Equipment]]("racks")(Nil)
-    } yield HomeData(tier, met, runes, herbs, brews, cauldron, charges, gems, furn, cleared, cleaned, racks)
+      recipes  <- c.getOrElse[List[RecipeNote]]("recipes")(Nil)
+    } yield HomeData(tier, met, runes, herbs, brews, cauldron, charges, gems, furn, cleared, cleaned, racks, recipes)
 }

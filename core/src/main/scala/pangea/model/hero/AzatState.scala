@@ -33,7 +33,10 @@ case class AzatState(
   instantRests:  Int          = 0,
   // Когда благословение в последний раз выдало суточную порцию отдыхов. Ставится
   // при покупке, чтобы за прошедшие до неё сутки ничего не начислилось.
-  restsGrantedAt: Option[Long] = scala.None
+  restsGrantedAt: Option[Long] = scala.None,
+  // Куб переехал из Храма домой, в гнездо верстака ремесленника: в Храме его
+  // больше нет. Обратно не переезжает.
+  cubeHome:       Boolean      = false
 ) {
   def hasCube: Boolean    = cube == CubeStatus.Active
   def cubeFound: Boolean  = cube == CubeStatus.FoundInactive
@@ -129,5 +132,6 @@ object AzatState {
       blessingUntil  <- c.getOrElse[Option[Long]]("blessingUntil")(scala.None)
       instantRests   <- c.getOrElse[Int]("instantRests")(0)
       restsGrantedAt <- c.getOrElse[Option[Long]]("restsGrantedAt")(scala.None)
-    } yield AzatState(cube, cubeCharges, cubeItems, blessingUntil, instantRests, restsGrantedAt)
+      cubeHome       <- c.getOrElse[Boolean]("cubeHome")(false)
+    } yield AzatState(cube, cubeCharges, cubeItems, blessingUntil, instantRests, restsGrantedAt, cubeHome)
 }

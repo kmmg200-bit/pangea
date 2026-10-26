@@ -71,6 +71,9 @@ case class HallAzatState(
           renderer.show(user, Screen(content.format("hall.cube.inactive",
             "doubloons" -> ActivateDoubloons.toString, "silver" -> ActivateSilver.toString),
             List(content.choice("ActivateCube", "hall.cube.activate"), content.choice("BackToHall", "hall.back"))))
+        // Куб переехал домой, на верстак ремесленника, — в Храме его нет.
+        case CubeStatus.Active if azat.cubeHome =>
+          renderer.show(user, Screen(content.text("hall.cube.atHome"), List(content.choice("BackToHall", "hall.back"))))
         case CubeStatus.Active =>
           renderer.show(user, Screen(content.text("hall.cube.active"),
             List(content.choice("OpenCube", "hall.cube.open"), content.choice("BackToHall", "hall.back"))))
@@ -175,6 +178,7 @@ case class HallAzatState(
       azat   <- loadAzat(user)
       wallet <- purse.wallet(hero)
       _ <- if (!azat.hasCube) renderer.show(user, Screen(content.text("hall.recharge.noCube"), Nil))
+           else if (azat.cubeHome) renderer.show(user, Screen(content.text("hall.recharge.atHome"), Nil))
            else if (azat.cubeCharges >= AzatState.MaxCharges)
              renderer.show(user, Screen(content.text("hall.recharge.full_already"), Nil))
            else if (!wallet.canAfford(cost))
