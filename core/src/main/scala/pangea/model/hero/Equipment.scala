@@ -175,6 +175,11 @@ case class Equipment(
 }
 
 object Equipment {
+
+  /** Ни одной вещи: так выглядит, например, новая магическая стойка в доме. */
+  val empty: Equipment = Equipment(Item.NoItem, Item.NoItem, Item.NoItem, Item.NoItem, Item.NoItem, Item.NoItem,
+    Item.NoItem, Item.NoItem, Item.NoItem, Item.NoItem, Item.NoItem, Item.NoItem, Item.NoItem, Item.NoItem)
+
   implicit val encoder: Encoder[Equipment] = deriveEncoder[Equipment]
 
   /** Декодер рукописный: в снаряжении, сохранённом до разделения рук, левой руки

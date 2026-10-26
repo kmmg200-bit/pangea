@@ -55,7 +55,7 @@ object GemVaultSpec extends ZIOSpecDefault {
         sch   <- TestScheduler.make
         c     <- ZIO.attempt(SceneContent.load())
         r2    <- TestRenderer.make
-        _     <- HomeState(dao, sch, c).enter(testUser, r2)
+        _     <- HomeState(dao, sch, c, TestInventoryRepository.accepting, TestItemRepository.make).enter(testUser, r2)
         house <- last(r2)
       } yield assertTrue(out == StateType.Home) && assertTrue(house.choices.exists(_.id == "HomeGems"))
     },

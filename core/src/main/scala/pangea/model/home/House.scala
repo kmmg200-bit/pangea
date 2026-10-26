@@ -2,6 +2,7 @@ package pangea.model.home
 
 import io.circe.generic.semiauto.deriveEncoder
 import io.circe.{Decoder, Encoder, HCursor}
+import pangea.model.hero.Equipment
 import pangea.model.item.Item
 
 /** Дом героя — один из трёх, по ступеням. Продаёт их Юнона Кинтслев,
@@ -27,7 +28,9 @@ sealed abstract class House(
   val altarCharges: Int,
   /** Сколько мест под обстановку (см. [[Furniture]]): встроенное — кровать,
     * алтари, верстак, хранилище — их не занимает. */
-  val slots: Int
+  val slots: Int,
+  /** Сколько магических стоек можно поставить ([[Furniture.Rack]]). */
+  val racks: Int
 )
 
 object House {
@@ -35,16 +38,16 @@ object House {
   /** Домик в две комнаты: всё нужное и ничего сверх. Сон — 2 часа, «выспался» — 4.
     * Два места под обстановку, одно из них поначалу завалено хламом
     * ([[HomeData.hasClutter]]). */
-  case object Cottage extends House(1, "cottage", 100L, 2L * 3600000L, 4L * 3600000L, 0, 2)
+  case object Cottage extends House(1, "cottage", 100L, 2L * 3600000L, 4L * 3600000L, 0, 2, 1)
 
   /** Добротный дом: свой алтарь Азата на 100 энергии, верстак травника,
     * библиотека. Сон — 1,5 часа, «выспался» — 8. */
-  case object Townhouse extends House(2, "townhouse", 800L, 5400000L, 8L * 3600000L, 100, 4)
+  case object Townhouse extends House(2, "townhouse", 800L, 5400000L, 8L * 3600000L, 100, 4, 2)
 
   /** Дом на парящем острове, куда ведёт ключ-портал; алтарь Азата — на 300
     * энергии, полки верстака шире ([[HomeRates.IslandHerbShelves]]), десять мест
     * под обстановку. Сон — 1 час, «выспался» — 12. */
-  case object Island extends House(3, "island", 2000L, 3600000L, 12L * 3600000L, 300, 10)
+  case object Island extends House(3, "island", 2000L, 3600000L, 12L * 3600000L, 300, 10, 4)
 
   val values: List[House] = List(Cottage, Townhouse, Island)
 
@@ -78,6 +81,12 @@ sealed abstract class Furniture(
 
 object Furniture {
 
+  /** Магическая стойка: держит целый комплект снаряжения, и одной кнопкой (или
+    * ключом из сумки — где угодно, кроме боя) надетое меняется местами с тем, что
+    * висит на ней. Стоек в доме — не больше [[House.racks]]; к каждой — свой
+    * номерной ключ. */
+  case object Rack extends Furniture("rack", 100L, 1)
+
   /** Сундук аптекаря — у верстака травника: полки шире на
     * [[HomeRates.ApothecaryHerbs]] трав и [[HomeRates.ApothecaryBrews]] отваров. */
   case object ApothecaryChest extends Furniture("apothecary", 100L, 2)
@@ -85,7 +94,7 @@ object Furniture {
   /** Роскошный сундук ювелира — в хранилище камней: шире на [[HomeRates.JewelerGems]]. */
   case object JewelerChest extends Furniture("jeweler", 100L, 3)
 
-  val values: List[Furniture] = List(ApothecaryChest, JewelerChest)
+  val values: List[Furniture] = List(Rack, ApothecaryChest, JewelerChest)
 
   def byKey(key: String): Option[Furniture] = values.find(_.key == key)
 }
@@ -147,7 +156,8 @@ object HomeRates {
   *
   * Обстановка: `furniture` — купленное у Юноны, по месту на вещь (ключи
   * [[Furniture]]); `clutterCleared` — хлам в домике разобран или вывезен;
-  * `cleanedMs` — сколько уже наубирано руками (уборку можно прервать). */
+  * `cleanedMs` — сколько уже наубирано руками (уборку можно прервать);
+  * `racks` — что висит на магических стойках: стойка №N — `racks(N - 1)`. */
 final case class HomeData(
   tier:      Int               = 0,
   metJunona: Boolean           = false,
@@ -159,7 +169,8 @@ final case class HomeData(
   gems:      List[Item]        = Nil,
   furniture: List[String]      = Nil,
   clutterCleared: Boolean      = false,
-  cleanedMs: Long              = 0L
+  cleanedMs: Long              = 0L,
+  racks:     List[Equipment]   = Nil
 ) {
   def house: Option[House] = House.byTier(tier)
 
@@ -174,6 +185,9 @@ final case class HomeData(
 
   /** Сколько в доме такой обстановки. */
   def count(f: Furniture): Int = furniture.count(_ == f.key)
+
+  /** Сколько стоек можно поставить в этот дом. */
+  def racksMax: Int = house.fold(0)(_.racks)
 
   private def island: Boolean = house.contains(House.Island)
 
@@ -216,5 +230,6 @@ object HomeData {
       furn     <- c.getOrElse[List[String]]("furniture")(Nil)
       cleared  <- c.getOrElse[Boolean]("clutterCleared")(false)
       cleaned  <- c.getOrElse[Long]("cleanedMs")(0L)
-    } yield HomeData(tier, met, runes, herbs, brews, cauldron, charges, gems, furn, cleared, cleaned)
+      racks    <- c.getOrElse[List[Equipment]]("racks")(Nil)
+    } yield HomeData(tier, met, runes, herbs, brews, cauldron, charges, gems, furn, cleared, cleaned, racks)
 }

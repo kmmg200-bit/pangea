@@ -23,6 +23,7 @@ import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.state.states.InventoryState._
+import pangea.service.state.states.home.Racks
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.states.murloc.MurlocVillageState
 import pangea.service.state.{BeltContents, HerbLore, InventoryFeedback, ItemMenu, MarisaQuest, MurlocQuest, NpcQuestLog, QuestSupport, SlotChoice, State, UiScene, UserAction}
@@ -71,6 +72,7 @@ case class InventoryState(
       "DustWeapon"        -> Target.Run { (u, _,  r) => sprinkleDust(u, r) },
       "DrinkBrew"         -> Target.Run { (u, _,  r) => drinkBrew(u, r) },
       "RefillByBrew"      -> Target.Run { (u, _,  r) => refillByBrew(u, r) },
+      "RackKeyUse"        -> Target.Run { (u, _,  r) => useRackKey(u, r) },
       "RefillFlaskPick"   -> Target.Run { (u, ua, r) => refillFlask(u, ua, r) },
       "CoatWeapon"        -> Target.Run { (u, _,  r) => coatWeapon(u, r) },
       "CureTraumaPick"    -> Target.Run { (u, ua, r) => cureTrauma(u, ua, r) },
@@ -452,6 +454,10 @@ case class InventoryState(
           val text = s"${item.displayTitle}\n${content.format("marisa.difficulty", "difficulty" -> Difficulty.render(MurlocQuest.MapDifficulty))}\n\n${QuestItemKind.MurlocVillageMap.description}"
           Screen(text, List(
             content.choice("UseMurlocMap", "murlocVillage.map.useLabel").copy(color = ChoiceColor.Positive, row = Some(0)), exit))
+        // Ключ магической стойки: повернул — надетое и стойка дома меняются местами.
+        case Some(key) if QuestItemKind.rackOf(key).isDefined =>
+          Screen(s"${item.displayTitle}\n\n${key.description}", List(
+            Choice("RackKeyUse", content.text("home.rack.useKey"), color = ChoiceColor.Positive, row = Some(0)), exit))
         case Some(book) if HerbLore.isTreatise(book) =>
           Screen(s"${item.displayTitle}\n\n${book.description}", List(
             content.choice("ReadTreatise", "knowledge.readLabel").copy(color = ChoiceColor.Positive, row = Some(0)), exit))
@@ -459,6 +465,21 @@ case class InventoryState(
       }
       _ <- renderer.show(user, screen)
     } yield StateType.Inventory
+
+  /** Повернуть ключ стойки: магия меняет надетое местами с тем, что висит на
+    * стойке дома, — где угодно, кроме боя (из боя в сумку не попасть). */
+  private def useRackKey(user: User, renderer: Renderer): Task[StateType] =
+    withSelected(user, renderer) { (item, _) =>
+      item.questItem.flatMap(QuestItemKind.rackOf) match {
+        case None => showItem(user, item.id, renderer)
+        case Some(n) =>
+          Racks(heroDao, inventoryRepo, content).swap(user, n, renderer).flatMap {
+            case Left(why) => renderer.show(user, Screen(why, Nil)) *> showItem(user, item.id, renderer)
+            case Right(_)  =>
+              renderer.show(user, Screen(content.format("home.rack.keyTurned", "n" -> n.toString), Nil)) *> showList(user, renderer)
+          }
+      }
+    }
 
   /** Вскрыть письмо: текст Кельвина и карта с обратной стороны. */
   private def openLetter(user: User, renderer: Renderer): Task[StateType] =

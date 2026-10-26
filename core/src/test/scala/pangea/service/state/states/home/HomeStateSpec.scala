@@ -10,7 +10,7 @@ import pangea.model.stats.{FightStats, ParamsBuff, StatBoost, StatBoosts}
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.state.UserAction
 import pangea.service.state.states.GlobalMapState
-import pangea.test.{TestFixtures, TestHeroDao, TestRenderer, TestScheduler}
+import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestRenderer, TestScheduler}
 import zio.test._
 import zio.{Task, ZIO, durationInt}
 
@@ -35,7 +35,7 @@ object HomeStateSpec extends ZIOSpecDefault {
       sch <- TestScheduler.make
       r   <- TestRenderer.make
       c   <- ZIO.attempt(SceneContent.load())
-    } yield (HomeState(dao, sch, c), dao, sch, r)
+    } yield (HomeState(dao, sch, c, TestInventoryRepository.accepting, TestItemRepository.make), dao, sch, r)
 
   private def homeOf(dao: TestHeroDao): Task[HomeData] =
     dao.readHomeData(userId).map(_.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty))
@@ -350,7 +350,7 @@ object HomeStateSpec extends ZIOSpecDefault {
               assertTrue(!done.hasClutter && done.slotsFree == 2 && end.contains("Хлам разобран"))
     },
 
-    test("Юнона: вывезти хлам — за 5 000 серебра; в домике сундуков не продают") {
+    test("Юнона: вывезти хлам — за 5 000 серебра; в домике сундуков не продают, только стойку") {
       for {
         t <- make(hero(silver = 6000L), HomeData(tier = 1, metJunona = true))
         (state, dao, _, r) = t
@@ -360,11 +360,12 @@ object HomeStateSpec extends ZIOSpecDefault {
         home   <- homeOf(dao)
         h      <- heroOf(dao)
         again  <- last(r)
-      } yield assertTrue(page.text.contains("Мест в доме занято: 1 из 2") && page.text.contains("Разве что хлам вывезти")) &&
-              assertTrue(page.choices.map(_.id) == List("HomeClutterPay", "HomeOffice") &&
-                page.choices.head.label == "🧹 Вывезти хлам — 5 000 🪙") &&
+      } yield assertTrue(page.text.contains("Мест в доме занято: 1 из 2")) &&
+              assertTrue(page.choices.map(_.id) == List("HomeClutterPay", "HomeFurnItem", "HomeOffice") &&
+                page.choices.head.label == "🧹 Вывезти хлам — 5 000 🪙" &&
+                page.choices(1).label == "🧥 Магическая стойка — 100 🟡") &&
               assertTrue(!home.hasClutter && h.silver == 1000L) &&
-              assertTrue(again.choices.map(_.id) == List("HomeOffice"))
+              assertTrue(again.choices.map(_.id) == List("HomeFurnItem", "HomeOffice"))
     },
 
     test("сундук аптекаря — со второго дома, за 100 дублонов, по месту на сундук; мест нет — не продаёт") {
@@ -387,8 +388,8 @@ object HomeStateSpec extends ZIOSpecDefault {
         // сундук ювелира — только на острове
         _      <- state.action(testUser, tap("HomeFurnBuy", "f" -> "jeweler"), r)
         h3     <- heroOf(dao)
-      } yield assertTrue(page.choices.map(_.id) == List("HomeFurnItem", "HomeOffice") &&
-                page.choices.head.label == "📦 Сундук аптекаря — 100 🟡") &&
+      } yield assertTrue(page.choices.map(_.id) == List("HomeFurnItem", "HomeFurnItem", "HomeOffice") &&
+                page.choices(1).label == "📦 Сундук аптекаря — 100 🟡") &&
               assertTrue(card.text.contains("на 100 больше, отваров — на 50") && card.text.contains("Свободных мест в доме: 4.")) &&
               assertTrue(home.furniture == List("apothecary") && h.doubloons == 200L) &&
               assertTrue(home.herbShelves == 150 && home.brewShelves == 75) &&
