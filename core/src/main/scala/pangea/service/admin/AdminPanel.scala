@@ -8,7 +8,7 @@ import pangea.generator.item.ItemGenerator
 import pangea.model.hero.Hero
 import pangea.model.item.{Item, ItemType, Rarity}
 import pangea.model.state.StateType
-import pangea.model.user.{User, UserId}
+import pangea.model.user.{User, UserId, VkId}
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.state.states.StatesMap
@@ -80,6 +80,9 @@ trait AdminPanel {
   /** Взять ввод себе, если это «/admin» или игрок уже в панели. `false` —
     * сообщение обычное, пусть его разбирает игровой автомат. */
   def intercept(user: User, hero: Hero, action: UserAction, renderer: Renderer): Task[Boolean]
+
+  /** Кому пересылать /home игрока `except`: всем «Админ 1», кроме него самого. */
+  def homeWatchers(except: UserId): Task[List[VkId]]
 }
 
 class AdminPanelLive(
@@ -104,11 +107,29 @@ class AdminPanelLive(
       case None                       => ZIO.succeed(false)
     }
 
+  override def homeWatchers(except: UserId): Task[List[VkId]] =
+    adminDao.withLevel(Level1).map(_.collect { case (id, vk) if id != except => vk })
+
   // ── Вход ──────────────────────────────────────────────────────────────────
 
+  /** «Админ 1» входит сразу, остальных панель спрашивает о пароле. Выключенная
+    * панель (пароль не задан) не пускает и «Админ 1»: выключена — значит никого. */
   private def open(user: User, renderer: Renderer): Task[Unit] =
-    sessions.update(_.updated(user.userId, AdminScreen.Password)) *>
-      renderer.show(user, Screen(PasswordAsk, List(cancelButton)))
+    adminDao.level(user.userId).flatMap { level =>
+      if (level >= Level1 && config.password.isDefined) goTo(user, AdminScreen.Main, renderer)
+      else
+        sessions.update(_.updated(user.userId, AdminScreen.Password)) *>
+          renderer.show(user, Screen(PasswordAsk, List(cancelButton)))
+    }
+
+  /** «Админ 1»: нажал — получил права, нажал ещё раз — снял. */
+  private def toggleLevel1(user: User, renderer: Renderer): Task[Unit] =
+    adminDao.level(user.userId).flatMap { level =>
+      val granting = level < Level1
+      adminDao.setLevel(user.userId, if (granting) Level1 else 0) *>
+        renderer.show(user, Screen(if (granting) Level1Granted else Level1Revoked, Nil)) *>
+        show(user, AdminScreen.Main, renderer)
+    }
 
   private def checkPassword(user: User, action: UserAction, renderer: Renderer): Task[Unit] =
     if (parse(action).contains(CancelId)) leave(user, renderer)
@@ -136,6 +157,7 @@ class AdminPanelLive(
       case Some("AdminStats")                   => goTo(user, AdminScreen.Stats, renderer)
       case Some("AdminMoney")                   => goTo(user, AdminScreen.Money, renderer)
       case Some("AdminEquip")                   => goTo(user, AdminScreen.EquipType, renderer)
+      case Some(Level1Id)                       => toggleLevel1(user, renderer)
       case Some(a) if a.startsWith(SectionPrefix) =>
         goTo(user, AdminScreen.Listing(a.drop(SectionPrefix.length), 0), renderer)
       case Some(a) if a.startsWith(GivePrefix)  => give(user, hero, a.drop(GivePrefix.length), screen, renderer)
@@ -188,11 +210,15 @@ class AdminPanelLive(
     case AdminScreen.Password => renderer.show(user, Screen(PasswordAsk, List(cancelButton)))
 
     case AdminScreen.Main =>
-      renderer.show(user, Screen(MainText, List(
-        Choice("AdminItems", "🎁 Вещи", color = ChoiceColor.Positive, row = Some(0)),
-        Choice("AdminMoney", "💰 Деньги", color = ChoiceColor.Positive, row = Some(0)),
-        Choice("AdminStats", "📊 Статистика", row = Some(1)),
-        cancelButton.copy(row = Some(2)))))
+      adminDao.level(user.userId).flatMap { level =>
+        renderer.show(user, Screen(MainText, List(
+          Choice("AdminItems", "🎁 Вещи", color = ChoiceColor.Positive, row = Some(0)),
+          Choice("AdminMoney", "💰 Деньги", color = ChoiceColor.Positive, row = Some(0)),
+          Choice("AdminStats", "📊 Статистика", row = Some(1)),
+          if (level >= Level1) Choice(Level1Id, "✅ Админ 1", color = ChoiceColor.Positive, row = Some(1))
+          else Choice(Level1Id, "Админ 1", row = Some(1)),
+          cancelButton.copy(row = Some(2)))))
+      }
 
     case AdminScreen.Items =>
       renderer.show(user, Screen(ItemsText, List(
@@ -358,6 +384,10 @@ object AdminPanel {
   val RarityPrefix: String   = "AdminRarity_"
   val SilverPrefix: String   = "AdminSilver_"
   val DoubloonPrefix: String = "AdminDoubloon_"
+  val Level1Id: String       = "AdminLevel1"
+
+  /** Уровень «Админ 1»: вход без пароля и пересылка /home в личку. */
+  val Level1: Int = 1
 
   /** Раскладка кнопок: панель служебная, но в клавиатуру ВК влезать обязана. */
   val PerRow: Int      = 2
@@ -387,6 +417,10 @@ object AdminPanel {
   val Given: String         = "✅ Выдано:"
   val BagFull: String       = "❌ Сумка полна — вещь не влезла."
   val BadLevel: String      = s"Нужно число от 1 до $MaxLevel."
+  val Level1Granted: String =
+    "✅ Вы — Админ 1. Панель теперь открывается без пароля, а сообщения игроков с /home будут приходить сюда. Нажмите кнопку ещё раз, чтобы снять права."
+  val Level1Revoked: String =
+    "Права «Админ 1» сняты: для входа снова нужен пароль, а /home игроков больше не придут."
 
   def nothingFound(query: String): String = s"По «$query» ничего не нашлось."
 
@@ -449,6 +483,7 @@ object AdminPanel {
   val disabled: AdminPanel = new AdminPanel {
     def intercept(user: User, hero: Hero, action: UserAction, renderer: Renderer): Task[Boolean] =
       ZIO.succeed(false)
+    def homeWatchers(except: UserId): Task[List[VkId]] = ZIO.succeed(Nil)
   }
 
   private[admin] def noSessions: UIO[Ref[Map[UserId, AdminScreen]]] = Ref.make(Map.empty[UserId, AdminScreen])

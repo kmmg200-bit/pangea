@@ -7,7 +7,7 @@ import org.http4s.client.Client
 import org.http4s.implicits.http4sLiteralsSyntax
 import org.http4s.{Method, Request, Status, UrlForm}
 import pangea.dao.sendfailure.SendFailureDao
-import pangea.model.user.User
+import pangea.model.user.{User, VkId}
 import pangea.model.vk.Attachment
 import pangea.model.vk.keyboard.Keyboard
 import pangea.model.vk.model.UserResponse
@@ -101,6 +101,34 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
           .tapError(err => ZIO.logError(s"vk chat announce failed: ${err.getMessage}"))
           .orElse(ZIO.unit)
     }
+
+  // Пересылка /home админам. Пересылку ВК может и не принять — тогда шлём хотя
+  // бы подпись: в ней ссылка на игрока, и админ всё равно узнает, кто застрял.
+  override def forwardToUser(to: VkId, message: String, forwarded: Option[Long]): Task[Unit] = {
+    val letter = Map("message" -> List(message), "user_id" -> List(to.value))
+    forwarded.filter(_ > 0L) match {
+      case Some(id) =>
+        post(letter + ("forward_messages" -> List(id.toString)))
+          .tapError(err => ZIO.logWarning(s"vk forward failed, sending caption only: ${err.getMessage}"))
+          .orElse(post(letter))
+      case None => post(letter)
+    }
+  }
+
+  /** messages.send с этими полями — с токеном, версией, своим random_id (один
+    * на все повторы, чтобы повтор не задвоил письмо) и теми же повторами. */
+  private def post(fields: Map[String, List[String]]): Task[Unit] = {
+    val formParams = fields ++ baseQueryParams + ("random_id" -> List(randomId.toString))
+    val request = Request[Task](
+      method = Method.POST,
+      uri = uri / "messages.send"
+    ).withEntity(UrlForm(formParams.map { case (k, vs) => k -> Chain.fromSeq(vs) }))
+
+    client
+      .run(request)
+      .use(res => res.bodyText.compile.toList.map(_.mkString("")).flatMap(VkApi.failOnBadResponse(res.status, _)))
+      .retry(sendRetry)
+  }
 
   private def recordFailure(
     user:         User,

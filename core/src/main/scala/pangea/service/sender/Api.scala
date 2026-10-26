@@ -1,6 +1,6 @@
 package pangea.service.sender
 
-import pangea.model.user.User
+import pangea.model.user.{User, VkId}
 import pangea.model.vk.Attachment
 import pangea.model.vk.keyboard.Keyboard
 import pangea.model.vk.model.UserResponse
@@ -22,6 +22,11 @@ trait Api {
   /** Написать в общую беседу Пангеи (объявления аукциона). Беседа не настроена —
     * тихо ничего не делаем: это объявление, а не часть хода игрока. */
   def sendToChat(message: String): Task[Unit]
+
+  /** Написать `to` от сообщества и приложить пересланным сообщение `forwarded` —
+    * номер сообщения в диалоге сообщества, — если оно есть. Так «Админ 1»
+    * получает /home игроков (см. [[pangea.service.admin.HomeAlert]]). */
+  def forwardToUser(to: VkId, message: String, forwarded: Option[Long]): Task[Unit]
 }
 
 object Api {

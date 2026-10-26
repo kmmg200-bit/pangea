@@ -28,8 +28,14 @@ object AdminPanelSpec extends ZIOSpecDefault {
     sets = List(AdminStats.SetRow(ItemSet.Hunter, 6, 54L), AdminStats.SetRow(ItemSet.Ghoul, 8, 32L)),
     levels = AdminStats.levelRows(List(3L, 17L, 40L, 99L, 150L), AdminDao.LevelStep, AdminDao.MaxLevel))
 
-  private val stubDao: AdminDao = new AdminDao {
+  /** Сводка — готовая, уровни прав — в памяти; адрес в ВК у каждого `vk<id>`. */
+  private final class StubAdminDao(levels: Ref[Map[UserId, Int]]) extends AdminDao {
     def stats: Task[AdminStats] = ZIO.succeed(stubStats)
+    def level(userId: UserId): Task[Int] = levels.get.map(_.getOrElse(userId, 0))
+    def setLevel(userId: UserId, level: Int): Task[Unit] =
+      levels.update(m => if (level <= 0) m - userId else m.updated(userId, level))
+    def withLevel(min: Int): Task[List[(UserId, VkId)]] =
+      levels.get.map(_.toList.collect { case (id, l) if l >= min => (id, VkId(s"vk${id.value}")) }.sortBy(_._1.value))
   }
 
   private def panel(hero: Hero = TestFixtures.hero(userId), password: Option[String] = Some(Password)) =
@@ -37,9 +43,20 @@ object AdminPanelSpec extends ZIOSpecDefault {
       dao      <- TestHeroDao.withHero(userId, hero)
       inv       = TestInventoryRepository.accepting
       sessions <- Ref.make(Map.empty[UserId, AdminScreen])
+      levels   <- Ref.make(Map.empty[UserId, Int])
       r        <- TestRenderer.make
-    } yield (new AdminPanelLive(dao, inv, TestItemRepository.make, stubDao, Map.empty, AdminConfig(password), sessions),
-             dao, inv, r)
+    } yield (new AdminPanelLive(dao, inv, TestItemRepository.make, new StubAdminDao(levels), Map.empty,
+               AdminConfig(password), sessions), dao, inv, r)
+
+  /** Панель с заданными уровнями прав: их видно и после нажатий. */
+  private def leveled(start: Map[UserId, Int], password: Option[String] = Some(Password)) =
+    for {
+      dao      <- TestHeroDao.withHero(userId, TestFixtures.hero(userId))
+      sessions <- Ref.make(Map.empty[UserId, AdminScreen])
+      levels   <- Ref.make(start)
+      r        <- TestRenderer.make
+    } yield (new AdminPanelLive(dao, TestInventoryRepository.accepting, TestItemRepository.make, new StubAdminDao(levels),
+               Map.empty, AdminConfig(password), sessions), levels, r)
 
   private def said(r: TestRenderer): Task[String] = r.sentScreens.map(_.map(_.text).mkString("\n"))
 
@@ -67,8 +84,61 @@ object AdminPanelSpec extends ZIOSpecDefault {
         wrong  <- said(r2)
       } yield assertTrue(opened && ok) &&
               assertTrue(ask.text.contains("Пришлите пароль")) &&
-              assertTrue(main.choices.map(_.id) == List("AdminItems", "AdminMoney", "AdminStats", AdminPanel.CancelId)) &&
+              assertTrue(main.choices.map(_.id) ==
+                List("AdminItems", "AdminMoney", "AdminStats", AdminPanel.Level1Id, AdminPanel.CancelId)) &&
               assertTrue(wrong.contains("Неверно") && !after)
+    },
+
+    test("«Админ 1»: нажал — права и вход без пароля; нажал ещё раз — права сняты, пароль снова нужен") {
+      val hero = TestFixtures.hero(userId)
+      for {
+        t <- leveled(Map.empty)
+        (p, levels, r) = t
+        _       <- enter(p, r)
+        before  <- r.sentScreens.map(_.last)
+        _       <- p.intercept(testUser, hero, tap(AdminPanel.Level1Id), r)
+        granted <- said(r)
+        marked  <- r.sentScreens.map(_.last)
+        lvl1    <- levels.get
+        // вышел и зашёл снова — пароля уже не спрашивают
+        _       <- p.intercept(testUser, hero, tap(AdminPanel.CancelId), r)
+        _       <- p.intercept(testUser, hero, text("/admin"), r)
+        again   <- r.sentScreens.map(_.last)
+        // нажал ещё раз — права сняты
+        _       <- p.intercept(testUser, hero, tap(AdminPanel.Level1Id), r)
+        revoked <- r.sentScreens.map(_.map(_.text))
+        lvl0    <- levels.get
+        _       <- p.intercept(testUser, hero, tap(AdminPanel.CancelId), r)
+        _       <- p.intercept(testUser, hero, text("/admin"), r)
+        ask     <- r.sentScreens.map(_.last)
+      } yield assertTrue(before.choices.find(_.id == AdminPanel.Level1Id).exists(_.label == "Админ 1")) &&
+              assertTrue(granted.contains(AdminPanel.Level1Granted) && lvl1 == Map(userId -> AdminPanel.Level1)) &&
+              assertTrue(marked.choices.find(_.id == AdminPanel.Level1Id).exists(_.label == "✅ Админ 1")) &&
+              assertTrue(again.text == AdminPanel.MainText) &&
+              assertTrue(revoked.contains(AdminPanel.Level1Revoked) && lvl0.isEmpty) &&
+              assertTrue(ask.text.contains("Пришлите пароль"))
+    },
+
+    test("выключенная панель (пароль не задан) не пускает и «Админ 1»") {
+      for {
+        t <- leveled(Map(userId -> AdminPanel.Level1), password = None)
+        (p, _, r) = t
+        _    <- p.intercept(testUser, TestFixtures.hero(userId), text("/admin"), r)
+        ask  <- r.sentScreens.map(_.last)
+        _    <- p.intercept(testUser, TestFixtures.hero(userId), text("что угодно"), r)
+        says <- said(r)
+      } yield assertTrue(ask.text.contains("Пришлите пароль") && says.contains(AdminConfig.EnvName))
+    },
+
+    test("кому пересылать /home: всем «Админ 1», кроме самого игрока") {
+      val other = UserId(2L)
+      for {
+        t <- leveled(Map(userId -> AdminPanel.Level1, other -> AdminPanel.Level1, UserId(3L) -> 0))
+        (p, _, _) = t
+        fromPlayer <- p.homeWatchers(UserId(9L))
+        fromAdmin  <- p.homeWatchers(userId)
+      } yield assertTrue(fromPlayer == List(VkId("vk1"), VkId("vk2"))) &&
+              assertTrue(fromAdmin == List(VkId("vk2")))
     },
 
     test("без ADMIN_PASSWORD панель не пускает никого") {

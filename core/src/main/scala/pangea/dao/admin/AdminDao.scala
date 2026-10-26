@@ -4,6 +4,7 @@ import doobie.implicits._
 import doobie.util.transactor
 import pangea.model.hero.Equipment
 import pangea.model.item.ItemSet
+import pangea.model.user.{UserId, VkId}
 import zio.interop.catz._
 import zio.{Task, ZLayer}
 
@@ -64,6 +65,15 @@ object AdminStats {
 
 trait AdminDao {
   def stats: Task[AdminStats]
+
+  /** Уровень прав в панели: 0 — обычный игрок, 1 — «Админ 1». */
+  def level(userId: UserId): Task[Int]
+
+  /** Выдать уровень; 0 и ниже — снять права совсем. */
+  def setLevel(userId: UserId, level: Int): Task[Unit]
+
+  /** Все, у кого уровень не ниже `min`, — с адресом в ВК: им пересылается /home. */
+  def withLevel(min: Int): Task[List[(UserId, VkId)]]
 }
 
 /** Запросы админ-панели. Героев на сервере немного, а панель открывают руками
@@ -101,6 +111,23 @@ class AdminDaoLive(xa: transactor.Transactor[Task]) extends AdminDao {
   private def activeSince(interval: String): Task[Long] =
     doobie.Fragment.const(s"select count(*) from users where last_seen_at > now() - interval '$interval'")
       .query[Long].unique.transact(xa)
+
+  override def level(userId: UserId): Task[Int] =
+    sql"select level from admins where user_id = ${userId.value}"
+      .query[Int].option.transact(xa).map(_.getOrElse(0))
+
+  override def setLevel(userId: UserId, level: Int): Task[Unit] =
+    (if (level <= 0) sql"delete from admins where user_id = ${userId.value}"
+     else sql"""insert into admins (user_id, level) values (${userId.value}, $level)
+                on conflict (user_id) do update set level = excluded.level, granted_at = now()""")
+      .update.run.transact(xa).unit
+
+  override def withLevel(min: Int): Task[List[(UserId, VkId)]] =
+    sql"""select u.id, u.vk_id from admins a
+          join users u on u.id = a.user_id
+          where a.level >= $min"""
+      .query[(Long, String)].to[List].transact(xa)
+      .map(_.map { case (id, vk) => (UserId(id), VkId(vk)) })
 
 }
 

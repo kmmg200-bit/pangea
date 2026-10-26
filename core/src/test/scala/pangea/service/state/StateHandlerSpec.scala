@@ -10,11 +10,13 @@ import pangea.model.monster.{Race, Rarity}
 import pangea.model.state.StateType
 import pangea.model.stats.FightStats
 import pangea.model.user.{TelegramId, User, UserId, VkId}
+import pangea.engine.Renderer
+import pangea.service.admin.{AdminPanel, HomeAlert}
 import pangea.service.state.states.GlobalMapState
 import pangea.service.state.states.battle.BattleState
 import pangea.service.payout.Payouts
 import pangea.test.{TestApi, TestBankRepository, TestFixtures, TestHeroDao, TestHeroRepository, TestInventoryRepository, TestItemRepository, TestParcelDao, TestPayoutDao, TestUserRepository}
-import zio.ZIO
+import zio.{Task, ZIO}
 import zio.test._
 
 /** `/home` — глобальная аварийная команда (см. ARCHITECTURE.md §10): должна
@@ -41,7 +43,8 @@ object StateHandlerSpec extends ZIOSpecDefault {
     monsterCurrentArmor = 0L
   )
 
-  private def makeHandler(startState: StateType, customize: Hero => Hero = identity) =
+  private def makeHandler(startState: StateType, customize: Hero => Hero = identity,
+                          admin: AdminPanel = AdminPanel.disabled) =
     for {
       baseHero <- ZIO.succeed(customize(hero.copy(state = startState)))
       heroDao  <- TestHeroDao.withHero(userId, baseHero)
@@ -61,7 +64,13 @@ object StateHandlerSpec extends ZIOSpecDefault {
       transfers = pangea.service.parcel.Transfers(TestInventoryRepository.accepting, userRepo, parcels,
                     new pangea.test.TestPlayers, content, heroDao, TestBankRepository.empty, payouts)
     } yield (new StateHandler(api, userRepo, heroRepo, heroDao, payouts, parcels, transfers, states,
-                       pangea.service.admin.AdminPanel.disabled, content, lock), heroDao, heroRepo, api)
+                       admin, content, lock), heroDao, heroRepo, api)
+
+  /** Панель-заглушка для пересылки /home: «Админ 1» — те, кого вернёт `watchers`. */
+  private def watchedBy(watchers: UserId => Task[List[VkId]]): AdminPanel = new AdminPanel {
+    def intercept(user: User, hero: Hero, action: UserAction, renderer: Renderer): Task[Boolean] = ZIO.succeed(false)
+    def homeWatchers(except: UserId): Task[List[VkId]] = watchers(except)
+  }
 
   /** Обвязка для отложенной выручки: герой, диспетчер и склад невыданных денег. */
   private def makePayoutHandler(startState: StateType) =
@@ -130,6 +139,53 @@ object StateHandlerSpec extends ZIOSpecDefault {
         _       <- handler.makeActionVK(vkId, eventId = 1L, UserAction("  /HOME  ", None))
         updated <- heroRepo.getHero(userId).map(_.get)
       } yield assertTrue(updated.state == StateType.GlobalMap)
+    },
+
+    test("/home уходит «Админ 1»: само сообщение игрока и подпись, из какой сцены он выбирался") {
+      val admin1 = VkId("777")
+      val admin2 = VkId("888")
+      for {
+        t <- makeHandler(StateType.Battle, admin = watchedBy(_ => ZIO.succeed(List(admin1, admin2))))
+        (handler, _, heroRepo, api) = t
+        _       <- handler.makeActionVK(vkId, eventId = 42L, UserAction("/home", None))
+        updated <- heroRepo.getHero(userId).map(_.get)
+        sent    <- api.forwards
+      } yield assertTrue(updated.state == StateType.GlobalMap) &&
+              assertTrue(sent.map(_._1) == List(admin1, admin2)) &&
+              // пересылается ровно это сообщение — по его номеру в диалоге сообщества
+              assertTrue(sent.forall(_._3.contains(42L))) &&
+              assertTrue(sent.forall(_._2 == HomeAlert.caption(vkId, StateType.Battle))) &&
+              assertTrue(HomeAlert.caption(vkId, StateType.Battle) == "🆘 /home от vk.com/idvk_test\nСцена: бой")
+    },
+
+    test("свой /home админу не пересылается, а без «Админ 1» не пересылается никому") {
+      for {
+        // панель исключает самого игрока — и других «Админ 1» нет
+        t <- makeHandler(StateType.Battle, admin = watchedBy(except => ZIO.succeed(List(VkId("777")).filter(_ => except != userId))))
+        (self, _, _, selfApi) = t
+        _      <- self.makeActionVK(vkId, eventId = 1L, UserAction("/home", None))
+        toSelf <- selfApi.forwards
+        d <- makeHandler(StateType.Battle)
+        (nobody, _, _, nobodyApi) = d
+        _      <- nobody.makeActionVK(vkId, eventId = 1L, UserAction("/home", None))
+        toNone <- nobodyApi.forwards
+      } yield assertTrue(toSelf.isEmpty && toNone.isEmpty)
+    },
+
+    test("сбой пересылки не мешает самому /home: игрок всё равно в городе") {
+      for {
+        t <- makeHandler(StateType.Battle, admin = watchedBy(_ => ZIO.fail(new Throwable("база недоступна"))))
+        (handler, _, heroRepo, _) = t
+        _       <- handler.makeActionVK(vkId, eventId = 1L, UserAction("/home", None))
+        updated <- heroRepo.getHero(userId).map(_.get)
+      } yield assertTrue(updated.state == StateType.GlobalMap)
+    },
+
+    test("у сцены, ещё не названной по-русски, в подписи её имя из кода") {
+      assertTrue(StateType.values.forall(s => HomeAlert.sceneName(s).nonEmpty)) &&
+      assertTrue(HomeAlert.sceneName(StateType.TreasureHunt) == "поход за сокровищем") &&
+      // сейчас по-русски названы все сцены
+      assertTrue(StateType.values.forall(s => HomeAlert.sceneName(s) != s.entryName))
     },
 
     test("кнопка с payload не считается командой /home, даже если текст совпадает") {

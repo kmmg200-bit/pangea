@@ -25,6 +25,7 @@ object VkRendererSpec extends ZIOSpecDefault {
     def sendMessage(user: User, message: String, attachments: List[Attachment],
                     keyboard: Option[Keyboard]): Task[Unit] = sent.set(keyboard)
     def sendToChat(message: String): Task[Unit] = ZIO.unit
+    def forwardToUser(to: VkId, message: String, forwarded: Option[Long]): Task[Unit] = ZIO.unit
   }
 
   /** Апи-заглушка: запоминает вложения, с которыми ушло сообщение. */
@@ -33,6 +34,7 @@ object VkRendererSpec extends ZIOSpecDefault {
     def sendMessage(user: User, message: String, attachments: List[Attachment],
                     keyboard: Option[Keyboard]): Task[Unit] = sent.set(attachments)
     def sendToChat(message: String): Task[Unit] = ZIO.unit
+    def forwardToUser(to: VkId, message: String, forwarded: Option[Long]): Task[Unit] = ZIO.unit
   }
 
   override def spec = suite("VkRenderer")(

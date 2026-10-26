@@ -9,7 +9,7 @@ import pangea.repository.hero.HeroRepository
 import pangea.repository.user.UserRepository
 import io.circe.syntax.EncoderOps
 import pangea.service.activity.{ActivityContest, GroupEvent}
-import pangea.service.admin.AdminPanel
+import pangea.service.admin.{AdminPanel, HomeAlert}
 import pangea.engine.SceneContent
 import pangea.service.referral.Referrals
 import pangea.service.chat.{ChatCommand, ChatProfile, Links}
@@ -63,7 +63,7 @@ class StateHandler(
       _ <- lock.withLock(user.userId) {
         for {
           isNew <- userRepo.checkAndRecordEvent(user.userId, eventId)
-          _     <- ZIO.when(isNew)(makeActionSafe(user, action, renderer))
+          _     <- ZIO.when(isNew)(makeActionSafe(user, action, renderer, Some(eventId)))
         } yield ()
       }
     } yield ()
@@ -292,12 +292,15 @@ class StateHandler(
     }
   }
 
+  /** `messageId` — номер сообщения игрока в диалоге сообщества: его /home
+    * пересылается «Админ 1». */
   private def makeActionSafe(
       user: User,
       action: UserAction,
-      renderer: Renderer
+      renderer: Renderer,
+      messageId: Option[Long] = None
   ): Task[Unit] =
-    makeAction(user, action, renderer)
+    makeAction(user, action, renderer, messageId)
       .catchAll(err =>
         ZIO.logError(
           s"Error occurred while making action: ${err.getMessage}"
@@ -313,7 +316,8 @@ class StateHandler(
   private def makeAction(
       user: User,
       action: UserAction,
-      renderer: Renderer
+      renderer: Renderer,
+      messageId: Option[Long] = None
   ): Task[Unit] =
     for {
       heroOp <- heroRepo.getHero(user.userId)
@@ -338,7 +342,7 @@ class StateHandler(
       _ <-
         if (inPanel) ZIO.unit
         else if (StateHandler.isHomeCommand(action))
-          goHome(user, renderer)
+          goHome(user, renderer) *> homeToAdmins(user, hero.state, messageId)
         else if (StateHandler.isRestartCommand(action))
           offerRestart(user, renderer)
         else if (StateHandler.isRestartConfirm(action))
@@ -395,6 +399,17 @@ class StateHandler(
       _ <- target.enter(user, renderer)
       _ <- heroRepo.updateState(user.userId, StateType.GlobalMap)
     } yield ()
+
+  /** /home уходит всем «Админ 1», кроме самого игрока: группа пересылает его
+    * сообщение с подписью, из какой сцены он выбирался. Игрок к этому моменту
+    * уже в городе, и сбой пересылки его не касается. */
+  private def homeToAdmins(user: User, from: StateType, messageId: Option[Long]): Task[Unit] =
+    admin.homeWatchers(user.userId)
+      .flatMap(ZIO.foreachDiscard(_)(to =>
+        // Один недоступный админ не должен оставить без письма остальных.
+        api.forwardToUser(to, HomeAlert.caption(user.vkId, from), messageId)
+          .catchAll(err => ZIO.logWarning(s"/home не переслан админу ${to.value}: ${err.getMessage}"))))
+      .catchAll(err => ZIO.logWarning(s"/home не переслан админам: ${err.getMessage}"))
 
   /** Performs a state transition (enter + persist) and follows any
     * `autoAdvance` chain so effect nodes route onward without a player action.
