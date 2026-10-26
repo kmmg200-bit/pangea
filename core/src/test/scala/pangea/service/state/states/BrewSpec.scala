@@ -24,6 +24,8 @@ object BrewSpec extends ZIOSpecDefault {
   private def tap(key: String): UserAction = UserAction("", Some(s"""{"action":"$key"}"""))
   private def selectItem(id: Long): UserAction =
     UserAction("", Some(s"""{"action":"${InventoryState.ItemActionPrefix}$id"}"""))
+  private def pickFlask(slot: Int): UserAction =
+    UserAction("", Some(s"""{"action":"RefillFlaskPick","slot":"$slot"}"""))
   private def pickTrauma(name: String): UserAction =
     UserAction("", Some(s"""{"action":"CureTraumaPick","trauma":"$name"}"""))
   private def pickRace(race: pangea.model.monster.Race): UserAction =
@@ -338,6 +340,8 @@ object BrewSpec extends ZIOSpecDefault {
         (state, dao, inv, r) = t
         _   <- state.action(testUser, selectItem(11L), r)
         _   <- state.action(testUser, tap("RefillByBrew"), r)
+        ask <- r.sentScreens.map(_.last)
+        _   <- state.action(testUser, pickFlask(0), r)
         h1  <- dao.getHeroByUserId(userId).map(_.get)
         after <- r.sentScreens.map(_.last)
         _   <- state.action(testUser, tap("RefillByBrew"), r)   // фляга уже полна
@@ -347,7 +351,11 @@ object BrewSpec extends ZIOSpecDefault {
         _   <- state2.action(testUser, selectItem(10L), r2)
         _   <- state2.action(testUser, tap("RefillByBrew"), r2)
         log2 <- texts(r2)
-      } yield assertTrue(beltSlots(h1) == List(BeltSlot.Flask(FlaskKind.Healer, Rarity.Blue, 6))) &&
+      } yield // спрашивает, какую флягу, даже когда она одна: ячейка, название, заряды
+              assertTrue(ask.text.contains("Какую флягу заправить") &&
+                         ask.choices.map(_.id) == List("RefillFlaskPick", "ItemCard") &&
+                         ask.choices.head.label == s"1. ${FlaskKind.Healer.label} — 1/6") &&
+              assertTrue(beltSlots(h1) == List(BeltSlot.Flask(FlaskKind.Healer, Rarity.Blue, 6))) &&
               assertTrue(inv.snapshot.size == 1 && after.choices.exists(_.id == "RefillByBrew")) && // остались на карточке стопки
               assertTrue(log.contains("полна до краёв") && log.contains("и так полна") && inv.snapshot.size == 1) &&
               assertTrue(log2.contains("Фляги нет") && inv2.snapshot.size == 1)
@@ -364,6 +372,7 @@ object BrewSpec extends ZIOSpecDefault {
         _     <- state.action(testUser, selectItem(10L), r)
         water <- r.sentScreens.map(_.last)
         _     <- state.action(testUser, tap("RefillByBrew"), r)
+        _     <- state.action(testUser, pickFlask(0), r)
         h     <- dao.getHeroByUserId(userId).map(_.get)
         t2 <- inventory(withFlask(FlaskKind.Smoke), List(brew(BrewKind.LivingWater, 10L), brew(BrewKind.SleepingDope, 11L)))
         (state2, dao2, inv2, r2) = t2
@@ -373,6 +382,7 @@ object BrewSpec extends ZIOSpecDefault {
         _     <- state2.action(testUser, selectItem(11L), r2)
         dope2 <- r2.sentScreens.map(_.last)
         _     <- state2.action(testUser, tap("RefillByBrew"), r2)
+        _     <- state2.action(testUser, pickFlask(0), r2)
         h2    <- dao2.getHeroByUserId(userId).map(_.get)
         log2  <- texts(r2)
       } yield assertTrue(!dope.choices.exists(_.id == "RefillByBrew") && water.choices.exists(_.id == "RefillByBrew")) &&
@@ -395,14 +405,42 @@ object BrewSpec extends ZIOSpecDefault {
         _    <- state.action(testUser, selectItem(10L), r)
         card <- r.sentScreens.map(_.last)
         _    <- state.action(testUser, tap("RefillByBrew"), r)
+        ask  <- r.sentScreens.map(_.last)
+        _    <- state.action(testUser, pickFlask(1), r)
         h    <- dao.getHeroByUserId(userId).map(_.get)
         log  <- texts(r)
       } yield assertTrue(card.choices.exists(_.id == "RefillByBrew")) &&
+              // дымную не предлагают — только флягу целителя из второй ячейки
+              assertTrue(ask.choices.filter(_.id == "RefillFlaskPick").map(_.data.get("slot")) == List(Some("1"))) &&
               // дымную живая вода не берёт — заправлена фляга целителя во второй ячейке
               assertTrue(h.equipment.belt.details == ItemDetails.Belt(List(
                 BeltSlot.Flask(FlaskKind.Smoke, Rarity.Gray, 0),
                 BeltSlot.Flask(FlaskKind.Healer, Rarity.Gray, FlaskKind.chargesFor(Rarity.Gray))))) &&
               assertTrue(log.contains("полна до краёв") && inv.snapshot.isEmpty)
+    },
+
+    test("две подходящие фляги — живая вода спрашивает, какую заправить, и заправляет выбранную; устаревшая кнопка отвар не тратит") {
+      val twoFlasks = baseHero.copy(equipment = TestFixtures.emptyEquipment.copy(
+        belt = beltOf(BeltSlot.Flask(FlaskKind.Healer, Rarity.Blue, 1), BeltSlot.Flask(FlaskKind.Smith, Rarity.Blue, 0))))
+      for {
+        t <- inventory(twoFlasks, List(brew(BrewKind.LivingWater, 10L), brew(BrewKind.LivingWater, 11L)))
+        (state, dao, inv, r) = t
+        _     <- state.action(testUser, selectItem(10L), r)
+        _     <- state.action(testUser, tap("RefillByBrew"), r)
+        ask   <- r.sentScreens.map(_.last)
+        _     <- state.action(testUser, pickFlask(1), r)
+        h1    <- dao.getHeroByUserId(userId).map(_.get)
+        left1  = inv.snapshot.size
+        // кнопка из старого вопроса: кузнец уже полон — отвар не тратим, спрашиваем заново
+        _     <- state.action(testUser, pickFlask(1), r)
+        again <- r.sentScreens.map(_.last)
+        left2  = inv.snapshot.size
+      } yield assertTrue(ask.choices.map(_.label) == List(
+                s"1. ${FlaskKind.Healer.label} — 1/6", s"2. ${FlaskKind.Smith.label} — 0/6", "↩ Выйти")) &&
+              assertTrue(beltSlots(h1) == List(BeltSlot.Flask(FlaskKind.Healer, Rarity.Blue, 1),
+                                               BeltSlot.Flask(FlaskKind.Smith, Rarity.Blue, 6))) &&
+              assertTrue(left1 == 1 && left2 == 1) &&
+              assertTrue(again.choices.map(_.label).take(1) == List(s"1. ${FlaskKind.Healer.label} — 1/6"))
     },
 
     test("ядовитая и кровавая смазки: мажут оружие на ближайший бой и заправляют флягу своего толка") {
@@ -417,6 +455,7 @@ object BrewSpec extends ZIOSpecDefault {
         _     <- state.action(testUser, tap("CoatWeapon"), r)
         h1    <- dao.getHeroByUserId(userId).map(_.get)
         _     <- state.action(testUser, tap("RefillByBrew"), r)      // остались на карточке стопки — вторая мазь идёт во флягу
+        _     <- state.action(testUser, pickFlask(0), r)
         h2    <- dao.getHeroByUserId(userId).map(_.get)
         left   = inv.snapshot.map(_.id)
         _     <- state.action(testUser, selectItem(12L), r)

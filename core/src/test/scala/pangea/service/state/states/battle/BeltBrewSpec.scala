@@ -203,18 +203,65 @@ object BeltBrewSpec extends ZIOSpecDefault {
               assertTrue(after.effects.monsterPoison.isDefined)
     },
 
-    test("живая вода заправляет флягу, что лежит в соседней ячейке") {
+    test("живая вода спрашивает, какую флягу заправить, и заправляет выбранную, а не первую") {
+      val full = FlaskKind.chargesFor(ItemRarity.Gray)
       val h = hero(BeltSlot.Brew(BrewKind.LivingWater),
-                   BeltSlot.Flask(FlaskKind.Healer, ItemRarity.Gray, 1))
+                   BeltSlot.Flask(FlaskKind.Healer, ItemRarity.Gray, 1),
+                   BeltSlot.Flask(FlaskKind.Smith, ItemRarity.Gray, 0))
       for {
         t <- makeState(h, battle(h, 1000L))
         (state, dao, r) = t
         _     <- state.action(testUser, useSlot(0), r)
+        ask   <- r.sentScreens.map(_.last)
+        asked <- dao.getHeroByUserId(userId).map(_.get)
+        mid   <- battleOf(dao)
+        _     <- state.action(testUser, pick(0, "2"), r)
         after <- dao.getHeroByUserId(userId).map(_.get)
-        full   = FlaskKind.chargesFor(ItemRarity.Gray)
-      } yield assertTrue(slots(after) == List(
+        fight <- battleOf(dao)
+      } yield // вопрос — отдельным сообщением; фляги с номером ячейки и зарядами
+              assertTrue(ask.inline && ask.text.contains("Какую флягу заправить")) &&
+              assertTrue(ask.choices.map(_.label) == List(
+                s"2. ${FlaskKind.Healer.label} — 1/$full", s"3. ${FlaskKind.Smith.label} — 0/$full")) &&
+              // на вопрос ни склянка, ни бонусное действие не ушли
+              assertTrue(slots(asked) == slots(h) && !mid.consumableUsedThisRound) &&
+              // заправлена фляга кузнеца из третьей ячейки, целителя — как была
+              assertTrue(slots(after) == List(
                 BeltSlot.Brew(BrewKind.LivingWater, spent = true),
-                BeltSlot.Flask(FlaskKind.Healer, ItemRarity.Gray, full)))
+                BeltSlot.Flask(FlaskKind.Healer, ItemRarity.Gray, 1),
+                BeltSlot.Flask(FlaskKind.Smith, ItemRarity.Gray, full))) &&
+              // заправка — бонусное действие раунда, как и всё с пояса
+              assertTrue(fight.consumableUsedThisRound)
+    },
+
+    test("живая вода: заправлять некуда (полная фляга, фляга не того толка) — склянка цела, и раунд тоже") {
+      val full = FlaskKind.chargesFor(ItemRarity.Gray)
+      val h = hero(BeltSlot.Brew(BrewKind.LivingWater),
+                   BeltSlot.Flask(FlaskKind.Poison, ItemRarity.Gray, 0),
+                   BeltSlot.Flask(FlaskKind.Healer, ItemRarity.Gray, full))
+      for {
+        t <- makeState(h, battle(h, 1000L))
+        (state, dao, r) = t
+        _       <- state.action(testUser, useSlot(0), r)
+        after   <- dao.getHeroByUserId(userId).map(_.get)
+        fight   <- battleOf(dao)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(slots(after) == slots(h) && !fight.consumableUsedThisRound) &&
+              assertTrue(screens.contains("Заправлять некуда"))
+    },
+
+    test("живая вода: кнопка устарела (фляга уже полна) — склянку не тратит, спросит снова") {
+      val full = FlaskKind.chargesFor(ItemRarity.Gray)
+      val h = hero(BeltSlot.Brew(BrewKind.LivingWater),
+                   BeltSlot.Flask(FlaskKind.Healer, ItemRarity.Gray, full))
+      for {
+        t <- makeState(h, battle(h, 1000L))
+        (state, dao, r) = t
+        _       <- state.action(testUser, pick(0, "1"), r)
+        after   <- dao.getHeroByUserId(userId).map(_.get)
+        fight   <- battleOf(dao)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(slots(after) == slots(h) && !fight.consumableUsedThisRound) &&
+              assertTrue(screens.contains("откройте пояс заново"))
     },
 
     test("пустая ячейка номеров не сдвигает: кнопка фляги знает своё место") {

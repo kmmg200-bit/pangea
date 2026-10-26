@@ -71,6 +71,7 @@ case class InventoryState(
       "DustWeapon"        -> Target.Run { (u, _,  r) => sprinkleDust(u, r) },
       "DrinkBrew"         -> Target.Run { (u, _,  r) => drinkBrew(u, r) },
       "RefillByBrew"      -> Target.Run { (u, _,  r) => refillByBrew(u, r) },
+      "RefillFlaskPick"   -> Target.Run { (u, ua, r) => refillFlask(u, ua, r) },
       "CoatWeapon"        -> Target.Run { (u, _,  r) => coatWeapon(u, r) },
       "CureTraumaPick"    -> Target.Run { (u, ua, r) => cureTrauma(u, ua, r) },
       "SentencePick"      -> Target.Run { (u, ua, r) => sentenceRace(u, ua, r) },
@@ -234,22 +235,47 @@ case class InventoryState(
       renderer.show(user, Screen(text, choices)).as(StateType.Inventory)
     }
 
-  /** Заправить флягу отваром: только флягу своего толка и только неполную —
-    * первую такую среди фляг героя (см. [[InventoryState.brewFlasks]]). */
+  /** Заправить флягу отваром: только флягу своего толка и только неполную.
+    * Какую — выбирает игрок: таких на поясе может быть несколько (живая вода
+    * берёт и флягу целителя, и кузнеца, и стихийные), а угадать, какая ему
+    * нужнее, нельзя. Спрашиваем и тогда, когда фляга одна, — как и травму у
+    * костоправного отвара. */
   private def refillByBrew(user: User, renderer: Renderer): Task[StateType] =
     withSelected(user, renderer) { (item, hero) =>
       val flasks  = InventoryState.brewFlasks(hero)
       val fitting = item.brew.toList.flatMap(kind => flasks.filter(f => kind.refills.contains(f.source)))
-      fitting.find(f => f.charges < f.maxCharges) match {
-        case Some(f) =>
-          heroDao.updateEquipment(user.userId, f.refilled) *>
-            consume(user, item, hero, content.format("brew.refilled", "flask" -> f.name), renderer)
-        case None =>
+      fitting.filter(f => f.charges < f.maxCharges) match {
+        case Nil =>
           val why =
             if (fitting.nonEmpty) "brew.flaskFull"
             else if (flasks.nonEmpty && item.brew.isDefined) "brew.wrongFlask"
             else "brew.noFlask"
           renderer.show(user, Screen(content.text(why), Nil)) *> showItem(user, item.id, renderer)
+        case open =>
+          val choices = open.zipWithIndex.map { case (f, i) =>
+            Choice("RefillFlaskPick", Choice.fit(content.format("brew.flaskPick",
+              "n" -> (f.slot + 1).toString, "name" -> f.name,
+              "charges" -> f.charges.toString, "max" -> f.maxCharges.toString)),
+              data = Map("slot" -> f.slot.toString), color = ChoiceColor.Positive, row = Some(i))
+          } :+ content.choice("ItemCard", "inventory.exit").copy(row = Some(open.size), color = ChoiceColor.Negative)
+          renderer.show(user, Screen(content.text("brew.whichFlask"), choices)).as(StateType.Inventory)
+      }
+    }
+
+  /** Фляга выбрана: заправляем её, если она всё ещё своего толка и неполная.
+    * Кнопка из старого сообщения (флягу уже долили или сняли) — спрашиваем
+    * заново, отвар не тратим. */
+  private def refillFlask(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
+    withSelected(user, renderer) { (item, hero) =>
+      val slot   = payloadField(ua, "slot").flatMap(_.toIntOption)
+      val chosen = item.brew.toList.flatMap(kind => InventoryState.brewFlasks(hero)
+                     .filter(f => kind.refills.contains(f.source) && f.charges < f.maxCharges))
+                     .find(f => slot.contains(f.slot))
+      chosen match {
+        case Some(f) =>
+          heroDao.updateEquipment(user.userId, f.refilled) *>
+            consume(user, item, hero, content.format("brew.refilled", "flask" -> f.name), renderer)
+        case None => refillByBrew(user, renderer)
       }
     }
 
@@ -1083,9 +1109,9 @@ object InventoryState {
   /** Сколько родов помещается в ряд на экране приговора. */
   val RacesPerRow: Int = 3
 
-  /** Фляга, которую можно заправить отваром: её толк, заряды и снаряжение, в
-    * котором она уже полна. */
-  final case class BrewFlask(name: String, source: RefillSource, charges: Int, maxCharges: Int,
+  /** Фляга, которую можно заправить отваром: её ячейка на поясе (с нуля), толк,
+    * заряды и снаряжение, в котором она уже полна. */
+  final case class BrewFlask(slot: Int, name: String, source: RefillSource, charges: Int, maxCharges: Int,
                              refilled: Equipment)
 
   /** Фляги героя на поясе — по ячейкам. */
@@ -1094,7 +1120,7 @@ object InventoryState {
     equip.belt.details match {
       case b: ItemDetails.Belt =>
         b.slots.zipWithIndex.collect { case (f: BeltSlot.Flask, i) =>
-          BrewFlask(f.name, f.kind.effect.refillSource, f.charges, f.maxCharges,
+          BrewFlask(i, f.name, f.kind.effect.refillSource, f.charges, f.maxCharges,
             equip.copy(belt = equip.belt.copy(details = b.updated(i, f.refilled))))
         }
       case _ => Nil

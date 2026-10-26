@@ -3709,8 +3709,8 @@ case class BattleState(
     * оружие, отвар уходит внутрь, роза раскрывается; ход при этом не кончается
     * — как и раньше у расходников.
     *
-    * Отвару, которому нужно знать, на что его тратят (какую травму снять, кого
-    * приговорить), сперва задаём вопрос — ход на вопрос не уходит. */
+    * Отвару, которому нужно знать, на что его тратят (какую травму снять, какую
+    * флягу заправить), сперва задаём вопрос — ход на вопрос не уходит. */
   private def beltUse(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     BattleState.parseSlot(ua) match {
       case None      => showBelt(user, renderer)
@@ -3737,21 +3737,31 @@ case class BattleState(
       case _ => showBelt(user, renderer)
     }
 
-  /** Вопрос к отвару: пока такой один — костоправный спрашивает, какую травму
-    * снять. Кнопки живут внутри отдельного сообщения, как и сам пояс, — боевая
-    * сцена не меняется. */
+  /** Вопрос к отвару: костоправный спрашивает, какую травму снять, заправка
+    * (живая вода) — какую флягу заправить. Кнопки живут внутри отдельного
+    * сообщения, как и сам пояс, — боевая сцена не меняется. */
   private def offerBeltPick(user: User, hero: Hero, idx: Int, kind: BrewKind, nowMs: Long,
                             renderer: Renderer): Task[StateType] = {
-    val (head, options) = kind.effect match {
+    val (head, options, perRow) = kind.effect match {
       case BrewEffect.CureTrauma =>
         (content.text("battle.belt.whichTrauma"),
-          hero.activeTraumas(nowMs).filter(_.severity != Trauma.Heavy).distinct.map(t => (t.name, t.name)))
-      case _ => (content.text("battle.belt.gone"), Nil)
+          hero.activeTraumas(nowMs).filter(_.severity != Trauma.Heavy).distinct.map(t => (t.name, t.name)),
+          BattleState.PicksPerRow)
+      // Фляга — по номеру ячейки: две одинаковые фляги различаются только им.
+      // Подпись длинная, поэтому по одной в ряд.
+      case BrewEffect.RefillFlask(sources) =>
+        (content.text("battle.belt.whichFlask"),
+          refillableFlasks(hero, sources).map { case (i, f) =>
+            (content.format("battle.belt.flaskPick", "n" -> (i + 1).toString, "name" -> f.name,
+              "charges" -> f.charges.toString, "max" -> f.maxCharges.toString), i.toString)
+          },
+          1)
+      case _ => (content.text("battle.belt.gone"), Nil, 1)
     }
     val buttons = options.zipWithIndex.map { case ((label, pick), i) =>
       pangea.engine.Choice("BeltPick", pangea.engine.Choice.fit(label),
         data = Map("slot" -> idx.toString, "pick" -> pick),
-        row = Some(i / BattleState.PicksPerRow))
+        row = Some(i / perRow))
     }
     renderer.show(user, Screen(head, buttons, inline = true)).as(StateType.Battle)
   }
@@ -3844,13 +3854,16 @@ case class BattleState(
       case _ => cont(hero, battle, content.text("battle.belt.none"))
     }
 
-  /** Годится ли ответ на вопрос отвара: травма ещё на герое и не тяжёлая.
-    * Отвару, который ничего не спрашивает, годится любой. */
+  /** Годится ли ответ на вопрос отвара: травма ещё на герое и не тяжёлая;
+    * фляга в названной ячейке всё ещё своего толка и неполная. Отвару, который
+    * ничего не спрашивает, годится любой. */
   private def pickValid(hero: Hero, kind: BrewKind, pick: Option[String], nowMs: Long): Boolean =
     kind.effect match {
       case BrewEffect.CureTrauma =>
         pick.flatMap(Trauma.byName)
           .exists(t => t.severity != Trauma.Heavy && hero.activeTraumas(nowMs).contains(t))
+      case BrewEffect.RefillFlask(sources) =>
+        pick.flatMap(_.toIntOption).exists(i => refillableFlasks(hero, sources).exists(_._1 == i))
       case _ => true
     }
 
@@ -3866,20 +3879,21 @@ case class BattleState(
         else None
       case BrewEffect.Coat(_, _) if hero.equipment.unarmed =>
         Some(content.text("battle.belt.noWeapon"))
-      case BrewEffect.RefillFlask(sources) if refillableFlask(hero, sources).isEmpty =>
+      case BrewEffect.RefillFlask(sources) if refillableFlasks(hero, sources).isEmpty =>
         Some(content.text("battle.belt.noFlask"))
       case _ => None
     }
 
-  /** Какую флягу на поясе заправит отвар: своего толка и не полную. */
-  private def refillableFlask(hero: Hero, sources: Set[RefillSource]): Option[(Int, BeltSlot.Flask)] =
+  /** Какие фляги на поясе может заправить отвар: своего толка и не полные — с
+    * номерами ячеек. */
+  private def refillableFlasks(hero: Hero, sources: Set[RefillSource]): List[(Int, BeltSlot.Flask)] =
     hero.equipment.belt.details match {
       case b: ItemDetails.Belt =>
-        b.slots.zipWithIndex.collectFirst {
+        b.slots.zipWithIndex.collect {
           case (f: BeltSlot.Flask, i)
             if sources.contains(f.kind.effect.refillSource) && f.charges < f.maxCharges => (i, f)
         }
-      case _ => None
+      case _ => Nil
     }
 
   /** Отвар из ячейки пояса. Герой приходит уже с пустой ячейкой, а бой — с
@@ -3936,9 +3950,12 @@ case class BattleState(
               Vector(content.format("battle.belt.cured", "trauma" -> t.name)))
         }
 
-      // Заправка: отвар уходит во флягу своего толка, что лежит рядом в ячейке.
+      // Заправка: отвар уходит в ту флягу своего толка, которую назвал игрок
+      // (см. offerBeltPick); не назвал — в первую такую.
       case BrewEffect.RefillFlask(sources) =>
-        (refillableFlask(hero, sources), hero.equipment.belt.details) match {
+        val chosen = pick.flatMap(_.toIntOption)
+        (refillableFlasks(hero, sources).find { case (i, _) => chosen.forall(_ == i) },
+         hero.equipment.belt.details) match {
           case (Some((i, f)), b: ItemDetails.Belt) =>
             done(withBelt(hero, b.updated(i, f.refilled)), battle,
               Vector(content.format("battle.belt.flaskRefilled", "flask" -> f.name)))
@@ -5893,10 +5910,11 @@ object BattleState {
   }
 
   /** Спрашивает ли отвар, на что его тратят: костоправный — какую травму
-    * снять. Приговор спрашивал бы род, но в ячейку он не ложится. */
+    * снять, заправка (живая вода) — какую флягу заправить. Приговор спрашивал
+    * бы род, но в ячейку он не ложится. */
   def needsPick(kind: BrewKind): Boolean = kind.effect match {
-    case BrewEffect.CureTrauma => true
-    case _                     => false
+    case BrewEffect.CureTrauma | BrewEffect.RefillFlask(_) => true
+    case _                                                 => false
   }
 
   /** Ячейка, которой после боя найдётся замена в сумке. */
@@ -5945,7 +5963,7 @@ object BattleState {
     ua.payload.flatMap(p =>
       io.circe.jawn.decode[Map[String, String]](p).toOption.flatMap(_.get("slot")).flatMap(_.toIntOption))
 
-  /** Что игрок выбрал на вопрос отвара: имя травмы или род. */
+  /** Что игрок выбрал на вопрос отвара: имя травмы или номер ячейки фляги. */
   def parsePick(ua: pangea.service.state.UserAction): Option[String] =
     ua.payload.flatMap(p =>
       io.circe.jawn.decode[Map[String, String]](p).toOption.flatMap(_.get("pick"))).filter(_.nonEmpty)
