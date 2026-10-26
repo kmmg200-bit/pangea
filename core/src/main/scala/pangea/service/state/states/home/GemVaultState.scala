@@ -8,7 +8,7 @@ import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Scree
 import pangea.generator.item.CubeCraft
 import pangea.model.artifact.ArtifactKind
 import pangea.model.hero.Hero
-import pangea.model.home.{HomeData, HomeRates, House}
+import pangea.model.home.{HomeData, House}
 import pangea.model.item.{Gem, GemKind, Item}
 import pangea.model.state.StateType
 import pangea.model.user.User
@@ -18,7 +18,8 @@ import pangea.repository.item.ItemRepository
 import pangea.service.state.{ItemMenu, State, UserAction}
 import zio.{Random, Task, ZIO}
 
-/** Хранилище камней — на острове, на [[HomeRates.GemVault]] камней. Камни
+/** Хранилище камней — на острове, на [[HomeData.gemShelves]] камней (с
+  * роскошными сундуками ювелира — больше). Камни
   * ложатся одной кнопкой — из сумки и из Ларца Азата, пока есть место. На
   * экране — виды камней; нажал на вид — его качества, нажал на качество — один
   * такой камень уходит в сумку.
@@ -71,7 +72,7 @@ case class GemVaultState(
         Choice("GvUpgrade", content.text("home.gems.upgrade"), row = Some(ItemMenu.NavRow + 1)),
         Choice("LeaveGv", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(ItemMenu.NavRow + 1))
       )
-      val text = content.format("home.gems.text", "n" -> home.gems.size.toString, "max" -> HomeRates.GemVault.toString,
+      val text = content.format("home.gems.text", "n" -> home.gems.size.toString, "max" -> home.gemShelves.toString,
         "charges" -> home.charges.toString, "chargesMax" -> home.altarMax.toString)
       renderer.show(user, Screen(text, buttons ++ nav ++ tail)).as(StateType.GemVault)
     }
@@ -130,7 +131,7 @@ case class GemVaultState(
                        a.get(hero.id).fold(_ => Nil, _.of(ArtifactKind.Casket).items.data))
         fromCasket = casket.filter(_.gem.isDefined)
         all        = fromBag ++ fromCasket
-        taken      = all.take((HomeRates.GemVault - home.gems.size).max(0))
+        taken      = all.take((home.gemShelves - home.gems.size).max(0))
         ids        = taken.map(_.id).toSet
         res       <- if (all.isEmpty) say(user, content.text("home.gems.nothingToPut"), renderer) *> menu(user, 0, renderer)
                      else for {

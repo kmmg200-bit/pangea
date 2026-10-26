@@ -35,6 +35,8 @@ object TaskKind extends Enum[TaskKind] with DoobieEnum[TaskKind] {
   case object TavernHeal extends TaskKind
   // Пробуждение на своей кровати дома (2 / 1,5 / 1 ч — по дому).
   case object HomeSleep extends TaskKind
+  // Уборка хлама в домике своими руками (4 часа с перерывами) — место свободно.
+  case object HomeClean extends TaskKind
   // Завершение добычи на Серебряной жиле спустя 15 минут — выдача серебра.
   case object Harvest extends TaskKind
   // Завершение работы на стройке (1/4/8 часов) — выдача серебра.

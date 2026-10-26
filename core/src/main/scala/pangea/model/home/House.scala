@@ -24,21 +24,27 @@ sealed abstract class House(
   /** Сколько после сна держится «выспался» — прибавка к опыту (см. [[HomeRates.RestedExpPct]]). */
   val restedMs: Long,
   /** Потолок энергии личного алтаря Азата; 0 — алтаря в доме нет. */
-  val altarCharges: Int
+  val altarCharges: Int,
+  /** Сколько мест под обстановку (см. [[Furniture]]): встроенное — кровать,
+    * алтари, верстак, хранилище — их не занимает. */
+  val slots: Int
 )
 
 object House {
 
-  /** Домик в две комнаты: всё нужное и ничего сверх. Сон — 2 часа, «выспался» — 4. */
-  case object Cottage extends House(1, "cottage", 100L, 2L * 3600000L, 4L * 3600000L, 0)
+  /** Домик в две комнаты: всё нужное и ничего сверх. Сон — 2 часа, «выспался» — 4.
+    * Два места под обстановку, одно из них поначалу завалено хламом
+    * ([[HomeData.hasClutter]]). */
+  case object Cottage extends House(1, "cottage", 100L, 2L * 3600000L, 4L * 3600000L, 0, 2)
 
   /** Добротный дом: свой алтарь Азата на 100 энергии, верстак травника,
     * библиотека. Сон — 1,5 часа, «выспался» — 8. */
-  case object Townhouse extends House(2, "townhouse", 800L, 5400000L, 8L * 3600000L, 100)
+  case object Townhouse extends House(2, "townhouse", 800L, 5400000L, 8L * 3600000L, 100, 4)
 
   /** Дом на парящем острове, куда ведёт ключ-портал; алтарь Азата — на 300
-    * энергии. Сон — 1 час, «выспался» — 12. */
-  case object Island extends House(3, "island", 2000L, 3600000L, 12L * 3600000L, 300)
+    * энергии, полки верстака шире ([[HomeRates.IslandHerbShelves]]), десять мест
+    * под обстановку. Сон — 1 час, «выспался» — 12. */
+  case object Island extends House(3, "island", 2000L, 3600000L, 12L * 3600000L, 300, 10)
 
   val values: List[House] = List(Cottage, Townhouse, Island)
 
@@ -56,6 +62,32 @@ object House {
   /** За серебро продаётся только домик — и только тому, у кого дома ещё нет. */
   def silverPrice(target: House, current: Option[House]): Option[Long] =
     Option.when(target == Cottage && current.isEmpty)(HomeRates.CottageSilver)
+}
+
+/** Обстановка дома: покупается у Юноны в «Обустройстве» за дублоны и
+  * занимает в доме одно место ([[House.slots]]). При переезде едет вместе с
+  * героем. `minTier` — с какого дома её продают.
+  *
+  * Числа — прямо в вариантах (см. заметку у [[House]]). */
+sealed abstract class Furniture(
+  /** Ключ: в `HomeData.furniture` и в `scenes.yaml` (`home.furniture.<key>.*`). */
+  val key: String,
+  val doubloons: Long,
+  val minTier: Int
+)
+
+object Furniture {
+
+  /** Сундук аптекаря — у верстака травника: полки шире на
+    * [[HomeRates.ApothecaryHerbs]] трав и [[HomeRates.ApothecaryBrews]] отваров. */
+  case object ApothecaryChest extends Furniture("apothecary", 100L, 2)
+
+  /** Роскошный сундук ювелира — в хранилище камней: шире на [[HomeRates.JewelerGems]]. */
+  case object JewelerChest extends Furniture("jeweler", 100L, 3)
+
+  val values: List[Furniture] = List(ApothecaryChest, JewelerChest)
+
+  def byKey(key: String): Option[Furniture] = values.find(_.key == key)
 }
 
 /** Числа дома, которые не держит сам [[House]]. */
@@ -82,6 +114,22 @@ object HomeRates {
   /** Хранилище камней на острове. */
   val GemVault: Int = 50
 
+  /** На острове полки верстака шире по умолчанию: трав и отваров сверху. */
+  val IslandHerbShelves: Int = 100
+  val IslandBrewShelves: Int = 50
+
+  /** Сундук аптекаря: трав и отваров сверху — за каждый. */
+  val ApothecaryHerbs: Int = 100
+  val ApothecaryBrews: Int = 50
+
+  /** Роскошный сундук ювелира: камней сверху — за каждый. */
+  val JewelerGems: Int = 100
+
+  /** Хлам прежнего хозяина домика: разобрать самому — 4 часа (с перерывами,
+    * наубиранное не пропадает), вывезти через Юнону — за серебро. */
+  val ClutterCleanMs: Long = 4L * 3600000L
+  val ClutterSilver: Long  = 5000L
+
   /** Пополнение алтаря: столько энергии за столько серебра — как в храме. */
   val AltarRefillCharges: Int = 50
   val AltarRefillSilver: Long = 10000L
@@ -95,7 +143,11 @@ object HomeRates {
   * Со второго дома: `herbs` — травы на полках верстака, `brews` — полка готовых
   * отваров, `cauldron` — что лежит в котелке, `charges` — энергия дома от
   * личного алтаря Азата (её тратят котелок и хранилище камней). На острове —
-  * `gems`: хранилище камней. */
+  * `gems`: хранилище камней.
+  *
+  * Обстановка: `furniture` — купленное у Юноны, по месту на вещь (ключи
+  * [[Furniture]]); `clutterCleared` — хлам в домике разобран или вывезен;
+  * `cleanedMs` — сколько уже наубирано руками (уборку можно прервать). */
 final case class HomeData(
   tier:      Int               = 0,
   metJunona: Boolean           = false,
@@ -104,9 +156,35 @@ final case class HomeData(
   brews:     List[Item]        = Nil,
   cauldron:  List[Item]        = Nil,
   charges:   Int               = 0,
-  gems:      List[Item]        = Nil
+  gems:      List[Item]        = Nil,
+  furniture: List[String]      = Nil,
+  clutterCleared: Boolean      = false,
+  cleanedMs: Long              = 0L
 ) {
   def house: Option[House] = House.byTier(tier)
+
+  /** Хлам прежнего хозяина: есть только в домике, пока его не разобрали. При
+    * переезде остаётся в домике — новый дом чистый. */
+  def hasClutter: Boolean = house.contains(House.Cottage) && !clutterCleared
+
+  /** Мест под обстановку всего, занято (хлам тоже занимает) и свободно. */
+  def slotsMax: Int  = house.fold(0)(_.slots)
+  def slotsUsed: Int = furniture.size + (if (hasClutter) 1 else 0)
+  def slotsFree: Int = (slotsMax - slotsUsed).max(0)
+
+  /** Сколько в доме такой обстановки. */
+  def count(f: Furniture): Int = furniture.count(_ == f.key)
+
+  private def island: Boolean = house.contains(House.Island)
+
+  /** Полки верстака: трав и отваров — с прибавкой острова и сундуков аптекаря. */
+  def herbShelves: Int = HomeRates.HerbShelves + (if (island) HomeRates.IslandHerbShelves else 0) +
+    count(Furniture.ApothecaryChest) * HomeRates.ApothecaryHerbs
+  def brewShelves: Int = HomeRates.BrewShelves + (if (island) HomeRates.IslandBrewShelves else 0) +
+    count(Furniture.ApothecaryChest) * HomeRates.ApothecaryBrews
+
+  /** Хранилище камней — с роскошными сундуками ювелира. */
+  def gemShelves: Int = HomeRates.GemVault + count(Furniture.JewelerChest) * HomeRates.JewelerGems
 
   /** Потолок энергии дома — алтарь Азата этого дома (см. [[House.altarCharges]]). */
   def altarMax: Int = house.fold(0)(_.altarCharges)
@@ -135,5 +213,8 @@ object HomeData {
       cauldron <- c.getOrElse[List[Item]]("cauldron")(Nil)
       charges  <- c.getOrElse[Int]("charges")(0)
       gems     <- c.getOrElse[List[Item]]("gems")(Nil)
-    } yield HomeData(tier, met, runes, herbs, brews, cauldron, charges, gems)
+      furn     <- c.getOrElse[List[String]]("furniture")(Nil)
+      cleared  <- c.getOrElse[Boolean]("clutterCleared")(false)
+      cleaned  <- c.getOrElse[Long]("cleanedMs")(0L)
+    } yield HomeData(tier, met, runes, herbs, brews, cauldron, charges, gems, furn, cleared, cleaned)
 }

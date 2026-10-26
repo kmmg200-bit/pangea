@@ -20,8 +20,9 @@ import pangea.service.state.{HerbLore, ItemMenu, MarisaQuest, State, UiScene, Us
 import zio.{Random, Task, ZIO}
 
 /** Верстак травника — со второго дома. Полки под травы (всего
-  * [[HomeRates.HerbShelves]], не по видам), котелок на [[HomeRates.CauldronSlots]]
-  * мест и полка готовых отваров на [[HomeRates.BrewShelves]].
+  * [[HomeData.herbShelves]], не по видам), котелок на [[HomeRates.CauldronSlots]]
+  * мест и полка готовых отваров на [[HomeData.brewShelves]]: на острове и с
+  * сундуками аптекаря полки шире.
   *
   * Травы ложатся на полки одной кнопкой — из сумки и из Живой сумки, пока есть
   * место. Траву с полки можно бросить в котелок или забрать в сумку. Котелок
@@ -86,9 +87,9 @@ case class HerbWorkbenchState(
   private def menu(user: User, p: Int, renderer: Renderer): Task[StateType] =
     withWorkbench(user) { home =>
       val text = content.format("home.workbench.text",
-        "herbs" -> home.herbs.size.toString, "herbsMax" -> HomeRates.HerbShelves.toString,
+        "herbs" -> home.herbs.size.toString, "herbsMax" -> home.herbShelves.toString,
         "pot" -> home.cauldron.size.toString, "potMax" -> HomeRates.CauldronSlots.toString,
-        "brewsMax" -> HomeRates.BrewShelves.toString,
+        "brewsMax" -> home.brewShelves.toString,
         "charges" -> home.charges.toString, "chargesMax" -> home.altarMax.toString)
       val tail = List(
         Choice("WbPutHerbs", content.text("home.workbench.putHerbs"), color = ChoiceColor.Positive, row = Some(ItemMenu.NavRow + 1)),
@@ -145,7 +146,7 @@ case class HerbWorkbenchState(
   /** Все травы — из сумки и из Живой сумки — на полки, пока есть место. */
   private def putHerbs(user: User, renderer: Renderer): Task[StateType] =
     withWorkbench(user) { home =>
-      gather(user, isHerb, HomeRates.HerbShelves - home.herbs.size).flatMap {
+      gather(user, isHerb, home.herbShelves - home.herbs.size).flatMap {
         case (Nil, 0) => say(user, content.text("home.workbench.noHerbs"), renderer) *> menu(user, 0, renderer)
         case (taken, left) =>
           saveHome(user, home.copy(herbs = home.herbs ++ taken)) *>
@@ -186,7 +187,7 @@ case class HerbWorkbenchState(
                     val (fresh, kept) = result.items.partition(_.id <= 0L)
                     for {
                       made  <- ZIO.foreach(fresh)(itemRepo.persist(hero.id, _))
-                      room   = (HomeRates.BrewShelves - home.brews.size).max(0)
+                      room   = (home.brewShelves - home.brews.size).max(0)
                       (shelf, queued) = made.splitAt(room)
                       _     <- saveHome(user, home.copy(brews = home.brews ++ shelf, cauldron = kept ++ queued,
                                  charges = home.charges - result.chargesUsed))
@@ -210,8 +211,8 @@ case class HerbWorkbenchState(
         hero <- getHero(user)
         inv  <- inventoryRepo.get(hero.id).mapError(asThrowable)
         (hShelf, bShelf, bag, stay) = {
-          val hRoom = HomeRates.HerbShelves - home.herbs.size
-          val bRoom = HomeRates.BrewShelves - home.brews.size
+          val hRoom = home.herbShelves - home.herbs.size
+          val bRoom = home.brewShelves - home.brews.size
           val (hs, rest1) = home.cauldron.partition(isHerb)
           val (bs, other) = rest1.partition(_.brew.isDefined)
           val (hIn, hOver) = hs.splitAt(hRoom.max(0))
@@ -234,7 +235,7 @@ case class HerbWorkbenchState(
     withWorkbench(user) { home =>
       val text =
         if (home.brews.isEmpty) content.text("home.workbench.brewsEmpty")
-        else content.format("home.workbench.brewsText", "n" -> home.brews.size.toString, "max" -> HomeRates.BrewShelves.toString)
+        else content.format("home.workbench.brewsText", "n" -> home.brews.size.toString, "max" -> home.brewShelves.toString)
       val tail = List(
         Choice("WbPutBrews", content.text("home.workbench.putBrews"), color = ChoiceColor.Positive, row = Some(ItemMenu.NavRow + 1)),
         Choice("WbMenu", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(ItemMenu.NavRow + 1))
@@ -288,7 +289,7 @@ case class HerbWorkbenchState(
   /** Все отвары — из сумки и из Живой сумки — на полку, пока есть место. */
   private def putBrews(user: User, renderer: Renderer): Task[StateType] =
     withWorkbench(user) { home =>
-      gather(user, _.brew.isDefined, HomeRates.BrewShelves - home.brews.size).flatMap {
+      gather(user, _.brew.isDefined, home.brewShelves - home.brews.size).flatMap {
         case (Nil, 0) => say(user, content.text("home.workbench.noBrews"), renderer) *> brews(user, 0, renderer)
         case (taken, left) =>
           saveHome(user, home.copy(brews = home.brews ++ taken)) *>
@@ -373,7 +374,7 @@ case class HerbWorkbenchState(
           for {
             hero <- getHero(user)
             made <- ZIO.foreach(List.fill(total)(BrewKind.item(kind)))(itemRepo.persist(hero.id, _))
-            room  = (HomeRates.BrewShelves - brewsLeft.size).max(0)
+            room  = (home.brewShelves - brewsLeft.size).max(0)
             (shelf, queued) = made.splitAt(room)
             _    <- saveHome(user, home.copy(herbs = herbsLeft, brews = brewsLeft ++ shelf,
                       cauldron = home.cauldron ++ queued, charges = home.charges - batches))

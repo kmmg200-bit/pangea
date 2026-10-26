@@ -5,7 +5,7 @@ import io.circe.{Json, jawn}
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.hero.Hero
-import pangea.model.home.{HomeData, HomeRates, House}
+import pangea.model.home.{Furniture, HomeData, HomeRates, House}
 import pangea.model.schedule.TaskKind
 import pangea.model.state.StateType
 import pangea.model.stats.{ParamsBuff, StatBoost}
@@ -26,7 +26,13 @@ import java.util.concurrent.TimeUnit
   * Покупка — в два шага: в канцелярии дома кнопками без цен, нажал на дом —
   * рассказ Юноны и цены кнопками «Подписать за …»; нажал цену — подписал. Дом
   * выше покупается с зачётом того, что есть (см. [[House.doubloonPrice]]); за
-  * серебро — только домик, и только без дома. «Обустройство» — пока заглушка.
+  * серебро — только домик, и только без дома.
+  *
+  * «Обустройство» у Юноны — обстановка дома за дублоны ([[Furniture]]): по
+  * месту на вещь ([[House.slots]]). В домике одно место завалено хламом:
+  * «Прибраться» самому — 4 часа, как сон (прервался — наубиранное не
+  * пропадает, доделывает таймер [[TaskKind.HomeClean]]), или вывезти через
+  * Юнону за серебро.
   *
   * Кровать — как комната в таверне, только своя и бесплатно: сон по таймеру
   * (2 / 1,5 / 1 ч), травмы проходят, HP, броня, энергия и отряд — как новые; встал
@@ -51,6 +57,12 @@ case class HomeState(
       "HomeOffer"   -> Target.Run { (u, ua, r) => offer(u, ua, r) },
       "HomeBuy"     -> Target.Run { (u, ua, r) => buy(u, ua, r) },
       "HomeFurnish" -> Target.Run { (u, _, r) => furnish(u, r) },
+      "HomeFurnItem"   -> Target.Run { (u, ua, r) => furnItem(u, ua, r) },
+      "HomeFurnBuy"    -> Target.Run { (u, ua, r) => furnBuy(u, ua, r) },
+      "HomeClutterPay" -> Target.Run { (u, _, r) => clutterPay(u, r) },
+      "HomeSlots"      -> Target.Run { (u, _, r) => slots(u, r) },
+      "HomeClean"      -> Target.Run { (u, _, r) => clean(u, r) },
+      CleanStopKey     -> Target.Run { (u, _, r) => stopCleaning(u, r) },
       "HomeBed"     -> Target.Run { (u, _, r) => bed(u, r) },
       "HomeSleep"   -> Target.Run { (u, _, r) => sleep(u, r) },
       WakeKey       -> Target.Run { (u, _, r) => wake(u, r) },
@@ -69,19 +81,23 @@ case class HomeState(
 
   override def targetStates: Set[StateType] = branch.gotoTargets
 
-  /** Спит — экран сна; дом есть — дом; нет — канцелярия Юноны. */
+  /** Спит — экран сна; убирается — экран уборки; дом есть — дом; нет —
+    * канцелярия Юноны. */
   override def enter(user: User, renderer: Renderer): Task[Unit] =
-    sleepStartedAt(user).flatMap {
-      case Some(_) => showSleeping(user, renderer).unit
-      case None    => loadHome(user).flatMap(home => (if (home.owns) showHouse(user, renderer) else office(user, renderer)).unit)
+    busy(user).flatMap {
+      case (Some(_), _) => showSleeping(user, renderer).unit
+      case (_, Some(_)) => showCleaning(user, renderer).unit
+      case _            => loadHome(user).flatMap(home => (if (home.owns) showHouse(user, renderer) else office(user, renderer)).unit)
     }
 
-  /** Пока герой спит, работают только кнопки пробуждения: старая кнопка из
-    * прежнего экрана не уведёт его из постели. */
+  /** Пока герой спит, работают только кнопки пробуждения, пока убирается —
+    * только «Прерваться»: старая кнопка из прежнего экрана не уведёт его ни из
+    * постели, ни от хлама. */
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
-    sleepStartedAt(user).flatMap {
-      case Some(_) if !actionOf(ua).exists(WakeActions.contains) => showSleeping(user, renderer)
-      case _                                                     => branch.act(user, ua, renderer)
+    busy(user).flatMap {
+      case (Some(_), _) if !actionOf(ua).exists(WakeActions.contains) => showSleeping(user, renderer)
+      case (_, Some(_)) if !actionOf(ua).contains(CleanStopKey)        => showCleaning(user, renderer)
+      case _                                                           => branch.act(user, ua, renderer)
     }
 
   // ── Канцелярия совета ───────────────────────────────────────────────────────
@@ -138,8 +154,8 @@ case class HomeState(
       }
     }
 
-  /** «Обустройство» — пока заглушка: реплика Юноны и «Назад» в канцелярию. */
-  private def furnish(user: User, renderer: Renderer): Task[StateType] =
+  /** «Обустройство» без дома: обустраивать нечего — реплика Юноны и «Назад» в канцелярию. */
+  private def furnishStub(user: User, renderer: Renderer): Task[StateType] =
     renderer.show(user, Screen(content.text("home.office.furnishText"), List(
       Choice("HomeOffice", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(0))
     ))).as(StateType.Home)
@@ -204,15 +220,18 @@ case class HomeState(
       home.house match {
         case None => office(user, renderer)
         case Some(h) =>
-          // Ряд 0 — отдых и чтение, ряд 1 — хозяйство дома, дальше — Юнона и дверь.
+          // Ряд 0 — отдых, чтение и уборка, ряд 1 — хозяйство дома, дальше —
+          // обстановка, Юнона и дверь.
           val second = h.tier >= House.Townhouse.tier
           val buttons = List(
             Some(Choice("HomeBed", content.text("home.house.bed"), color = ChoiceColor.Positive, row = Some(0))),
             Option.when(second)(Choice("HomeLibrary", content.text("home.house.library"), row = Some(0))),
+            Option.when(home.hasClutter)(Choice("HomeClean", content.text("home.house.clean"), row = Some(0))),
             Some(Choice("HomeAltar", content.text("home.house.altar"), row = Some(1))),
             Option.when(second)(Choice("HomeHerbs", content.text("home.house.workbench"), row = Some(1))),
             Option.when(second)(Choice("HomeAzat", content.text("home.house.azat"), row = Some(1))),
             Option.when(h == House.Island)(Choice("HomeGems", content.text("home.house.gems"), row = Some(1))),
+            Some(Choice("HomeSlots", content.text("home.house.slots"), row = Some(2))),
             Some(Choice("HomeOffice", content.text("home.house.office"), row = Some(2))),
             Some(Choice("LeaveHome", content.text("home.house.leave"), color = ChoiceColor.Negative, row = Some(3)))
           ).flatten
@@ -266,6 +285,163 @@ case class HomeState(
                     azat(user, renderer)
               }
     } yield res
+
+  // ── Обстановка ──────────────────────────────────────────────────────────────
+
+  /** Места под обстановку: что где стоит и сколько свободно. Хлам в домике
+    * тоже занимает место — «Прибраться» самому или вывезти через Юнону. */
+  private def slots(user: User, renderer: Renderer): Task[StateType] =
+    loadHome(user).flatMap { home =>
+      if (!home.owns) office(user, renderer)
+      else {
+        val clutter = Option.when(home.hasClutter)(content.format("home.slots.clutter",
+          "left" -> duration(HomeRates.ClutterCleanMs - home.cleanedMs), "price" -> money(HomeRates.ClutterSilver)))
+        val placed  = home.furniture.flatMap(Furniture.byKey).map(furnName)
+        val free    = List.fill(home.slotsFree)(content.text("home.slots.free"))
+        val lines   = (clutter.toList ++ placed ++ free).zipWithIndex.map { case (l, i) =>
+          content.format("home.slots.line", "n" -> (i + 1).toString, "what" -> l)
+        }
+        val text = content.format("home.slots.text", "used" -> home.slotsUsed.toString,
+          "max" -> home.slotsMax.toString, "lines" -> lines.mkString("\n"))
+        renderer.show(user, Screen(text, List(
+          Option.when(home.hasClutter)(Choice("HomeClean", content.text("home.house.clean"), color = ChoiceColor.Positive, row = Some(0))),
+          Some(Choice("HomeFurnish", content.text("home.slots.furnish"), row = Some(0))),
+          Some(backToHouse.copy(row = Some(1)))
+        ).flatten)).as(StateType.Home)
+      }
+    }
+
+  /** «Прибраться»: взяться за хлам самому. Как сон — пока убирается, дом его
+    * не отпускает; прервался — наубиранное не пропадает. Доделывает таймер. */
+  private def clean(user: User, renderer: Renderer): Task[StateType] =
+    loadHome(user).flatMap { home =>
+      if (!home.hasClutter) showHouse(user, renderer)
+      else for {
+        now <- nowMs
+        _   <- heroDao.writeSceneData(user.userId, Json.obj(CleanStartKey -> now.asJson))
+        _   <- scheduler.schedule(user.userId, now + (HomeRates.ClutterCleanMs - home.cleanedMs).max(0L),
+                 TaskKind.HomeClean, StateType.Home, CleanStopAction)
+        s   <- showCleaning(user, renderer)
+      } yield s
+    }
+
+  private def showCleaning(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      now     <- nowMs
+      started <- cleanStartedAt(user)
+      home    <- loadHome(user)
+      left     = (HomeRates.ClutterCleanMs - home.cleanedMs - started.fold(0L)(now - _)).max(0L)
+      _       <- renderer.show(user, Screen(content.format("home.clean.working", "remaining" -> remaining(left)),
+                   List(Choice(CleanStopKey, content.text("home.clean.stop"), color = ChoiceColor.Negative))))
+    } yield StateType.Home
+
+  /** «Прерваться» — и таймер приходит сюда же. Наубиранное копится; хватило
+    * — хлам разобран, место свободно. */
+  private def stopCleaning(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      now     <- nowMs
+      started <- cleanStartedAt(user)
+      home    <- loadHome(user)
+      _       <- clearCleaning(user)
+      done     = home.cleanedMs + started.fold(0L)(now - _)
+      res     <- if (started.isEmpty || !home.hasClutter) showHouse(user, renderer)
+                 else if (done >= HomeRates.ClutterCleanMs)
+                   saveHome(user, home.copy(clutterCleared = true, cleanedMs = HomeRates.ClutterCleanMs)) *>
+                     say(user, content.text("home.clean.done"), renderer) *> showHouse(user, renderer)
+                 else
+                   saveHome(user, home.copy(cleanedMs = done)) *>
+                     say(user, content.format("home.clean.paused", "left" -> duration(HomeRates.ClutterCleanMs - done)), renderer) *>
+                     showHouse(user, renderer)
+    } yield res
+
+  private def clearCleaning(user: User): Task[Unit] =
+    heroDao.writeSceneData(user.userId, Json.Null) *> scheduler.cancel(user.userId, TaskKind.HomeClean)
+
+  // ── «Обустройство» у Юноны ──────────────────────────────────────────────────
+
+  /** Папка «Обустройство»: что совет поставит в дом — по дому и местам; хлам из
+    * домика — вывезти за серебро. Без дома обустраивать нечего. */
+  private def furnish(user: User, renderer: Renderer): Task[StateType] =
+    loadHome(user).flatMap { home =>
+      home.house match {
+        case None => furnishStub(user, renderer)
+        case Some(h) =>
+          val clutter = Option.when(home.hasClutter)(Choice("HomeClutterPay",
+            content.format("home.furnish.clutter", "price" -> money(HomeRates.ClutterSilver)),
+            color = ChoiceColor.Positive, row = Some(0)))
+          val items = Furniture.values.filter(_.minTier <= h.tier).zipWithIndex.map { case (f, i) =>
+            Choice("HomeFurnItem", content.format("home.furnish.item", "name" -> furnName(f), "price" -> money(f.doubloons)),
+              data = Map("f" -> f.key), row = Some(1 + i))
+          }
+          val text = content.format("home.furnish.text", "used" -> home.slotsUsed.toString, "max" -> home.slotsMax.toString) +
+            (if (items.isEmpty) "\n\n" + content.text("home.furnish.nothingYet") else "")
+          renderer.show(user, Screen(text, clutter.toList ++ items :+
+            Choice("HomeOffice", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(1 + items.size))))
+            .as(StateType.Home)
+      }
+    }
+
+  /** Вещь из папки: что даёт, сколько мест свободно, и «Купить за …». */
+  private def furnItem(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
+    loadHome(user).flatMap { home =>
+      furnOf(ua, home) match {
+        case None => furnish(user, renderer)
+        case Some(f) =>
+          val text = furnText(f, "desc") + "\n\n" + content.format("home.furnish.free", "n" -> home.slotsFree.toString)
+          renderer.show(user, Screen(text, List(
+            Choice("HomeFurnBuy", content.format("home.furnish.buy", "price" -> money(f.doubloons)),
+              color = ChoiceColor.Positive, data = Map("f" -> f.key), row = Some(0)),
+            Choice("HomeFurnish", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(0))
+          ))).as(StateType.Home)
+      }
+    }
+
+  /** Купить: нужно свободное место и дублоны; вещь встаёт в дом сразу. */
+  private def furnBuy(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
+    for {
+      hero <- getHero(user)
+      home <- loadHome(user)
+      res  <- furnOf(ua, home) match {
+        case None => furnish(user, renderer)
+        case Some(_) if home.slotsFree <= 0 =>
+          say(user, content.text("home.furnish.noSlot"), renderer) *> furnish(user, renderer)
+        case Some(f) =>
+          charge(hero, PayDoubloons, f.doubloons).flatMap {
+            case Left(lack) =>
+              say(user, content.format("home.office.lack", "lack" -> priceText(lack, PayDoubloons)), renderer) *> furnish(user, renderer)
+            case Right(_) =>
+              saveHome(user, home.copy(furniture = home.furniture :+ f.key)) *>
+                say(user, furnText(f, "bought"), renderer) *> furnish(user, renderer)
+          }
+      }
+    } yield res
+
+  /** Вывезти хлам через Юнону — за серебро (с ячейкой), без уборки руками. */
+  private def clutterPay(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      hero <- getHero(user)
+      home <- loadHome(user)
+      res  <- if (!home.hasClutter) furnish(user, renderer)
+              else charge(hero, PaySilver, HomeRates.ClutterSilver).flatMap {
+                case Left(lack) =>
+                  say(user, content.format("home.office.lack", "lack" -> priceText(lack, PaySilver)), renderer) *> furnish(user, renderer)
+                case Right(_) =>
+                  saveHome(user, home.copy(clutterCleared = true)) *>
+                    say(user, content.text("home.furnish.clutterDone"), renderer) *> furnish(user, renderer)
+              }
+    } yield res
+
+  /** Вещь из кнопки — если её продают для этого дома. */
+  private def furnOf(ua: UserAction, home: HomeData): Option[Furniture] =
+    payload(ua, "f").flatMap(Furniture.byKey).filter(f => home.house.exists(_.tier >= f.minTier))
+
+  private def furnName(f: Furniture): String = content.text(s"home.furniture.${f.key}.name")
+
+  /** Текст о вещи (`desc` — в папке, `bought` — после покупки) — с её числами. */
+  private def furnText(f: Furniture, part: String): String =
+    content.format(s"home.furniture.${f.key}.$part",
+      "herbs" -> HomeRates.ApothecaryHerbs.toString, "brews" -> HomeRates.ApothecaryBrews.toString,
+      "gems" -> HomeRates.JewelerGems.toString)
 
   // ── Кровать ─────────────────────────────────────────────────────────────────
 
@@ -369,6 +545,18 @@ case class HomeState(
   private def sleepStartedAt(user: User): Task[Option[Long]] =
     heroDao.readSceneData(user.userId).map(_.flatMap(_.hcursor.get[Long](SleepStartKey).toOption))
 
+  private def cleanStartedAt(user: User): Task[Option[Long]] =
+    heroDao.readSceneData(user.userId).map(_.flatMap(_.hcursor.get[Long](CleanStartKey).toOption))
+
+  /** Чем герой занят дома: когда лёг спать и когда взялся за уборку. */
+  private def busy(user: User): Task[(Option[Long], Option[Long])] =
+    heroDao.readSceneData(user.userId).map { scene =>
+      (scene.flatMap(_.hcursor.get[Long](SleepStartKey).toOption), scene.flatMap(_.hcursor.get[Long](CleanStartKey).toOption))
+    }
+
+  private def say(user: User, text: String, renderer: Renderer): Task[Unit] =
+    renderer.show(user, Screen(text, Nil))
+
   private def loadHome(user: User): Task[HomeData] =
     heroDao.readHomeData(user.userId).map(_.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty))
 
@@ -403,6 +591,13 @@ object HomeState {
 
   /** Что можно нажать, пока герой спит. */
   val WakeActions: Set[String] = Set(WakeKey, "HomeWakeYes", "HomeWakeNo")
+
+  /** Когда герой взялся за хлам (`scene_data`). */
+  val CleanStartKey: String = "homeCleanStartedAt"
+
+  /** «Прерваться» — его же шлёт таймер, когда хлам разобран. */
+  val CleanStopKey: String    = "HomeCleanStop"
+  val CleanStopAction: String = s"""{"action":"$CleanStopKey"}"""
 
   /** Деньги с разрядами: 20 000. */
   def money(n: Long): String = n.toString.reverse.grouped(3).mkString(" ").reverse

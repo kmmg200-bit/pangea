@@ -79,7 +79,7 @@ object HomeStateSpec extends ZIOSpecDefault {
                 "🏠 Домик в две комнаты", "🏠 Добротный дом", "🏠 Ключ от острова", "🛠 Обустройство", "Уйти"))
     },
 
-    test("«Обустройство» — пока пустое: реплика Юноны и «Назад» в канцелярию") {
+    test("«Обустройство» без дома: реплика Юноны и «Назад» в канцелярию") {
       for {
         t <- make(hero(), HomeData(metJunona = true))
         (state, _, _, r) = t
@@ -87,7 +87,7 @@ object HomeStateSpec extends ZIOSpecDefault {
         page   <- last(r)
         _      <- state.action(testUser, tap("HomeOffice"), r)
         office <- last(r)
-      } yield assertTrue(page.text.contains("«Обустройство». Папка пуста.")) &&
+      } yield assertTrue(page.text.contains("Сперва дом, искатель, потом обстановка.")) &&
               assertTrue(page.choices.map(c => c.id -> c.label) == List("HomeOffice" -> "↩ Назад")) &&
               assertTrue(office.choices.exists(_.id == "HomeFurnish"))
     },
@@ -129,7 +129,7 @@ object HomeStateSpec extends ZIOSpecDefault {
               assertTrue(h2.silver == 1000L && home.house.contains(House.Cottage)) &&
               assertTrue(FirstSteps.progress(h2, NpcQuests.empty, home).house) &&
               // сразу — в дом: кровать, «К Юноне», «Уйти»; библиотеки в домике нет
-              assertTrue(inside.text.contains("Ваш домик") && inside.choices.map(_.id) == List("HomeBed", "HomeAltar", "HomeOffice", "LeaveHome"))
+              assertTrue(inside.text.contains("Ваш домик") && inside.choices.map(_.id) == List("HomeBed", "HomeClean", "HomeAltar", "HomeSlots", "HomeOffice", "LeaveHome"))
     },
 
     test("второй дом с домиком — особая реплика о зачёте и 700 дублонов; старый уходит, библиотека появляется") {
@@ -154,7 +154,7 @@ object HomeStateSpec extends ZIOSpecDefault {
                 pitch.text.contains("всё личное тоже") && pitch.text.contains("место, чтобы расшириться")) &&
               assertTrue(pitch.text.contains("Твой «Домик в две комнаты» уходит в управление совета.")) &&
               assertTrue(h.doubloons == 50L && home.house.contains(House.Townhouse)) &&
-              assertTrue(inside.choices.map(_.id) == List("HomeBed", "HomeLibrary", "HomeAltar", "HomeHerbs", "HomeAzat", "HomeOffice", "LeaveHome")) &&
+              assertTrue(inside.choices.map(_.id) == List("HomeBed", "HomeLibrary", "HomeAltar", "HomeHerbs", "HomeAzat", "HomeSlots", "HomeOffice", "LeaveHome")) &&
               assertTrue(same.house.contains(House.Townhouse))
     },
 
@@ -300,6 +300,113 @@ object HomeStateSpec extends ZIOSpecDefault {
       } yield assertTrue(House.values.map(_.altarCharges) == List(0, 100, 300)) &&
               assertTrue(moved.tier == House.Island.tier && moved.charges == 300) &&
               assertTrue(topped.charges == 300 && screen.text.contains("Энергия дома: 300/300"))
+    },
+
+    test("места под обстановку: 2 / 4 / 10; в домике одно завалено хламом, в домах выше хлама нет") {
+      val cottage = HomeData(tier = 1, metJunona = true)
+      for {
+        t <- make(hero(), cottage)
+        (state, _, _, r) = t
+        _     <- state.action(testUser, tap("HomeSlots"), r)
+        slots <- last(r)
+      } yield assertTrue(House.values.map(_.slots) == List(2, 4, 10)) &&
+              assertTrue(cottage.hasClutter && cottage.slotsUsed == 1 && cottage.slotsFree == 1) &&
+              assertTrue(cottage.copy(clutterCleared = true).slotsFree == 2) &&
+              // переехал — хлам остался в домике
+              assertTrue(!cottage.copy(tier = 2).hasClutter && cottage.copy(tier = 2).slotsFree == 4) &&
+              assertTrue(slots.text.contains("занято мест: 1 из 2") && slots.text.contains("1. 🗑 Захламление") &&
+                slots.text.contains("2. Свободно")) &&
+              assertTrue(slots.choices.map(_.id) == List("HomeClean", "HomeFurnish", "HomeMain"))
+    },
+
+    test("«Прибраться» — как сон: дом не отпускает; прервался — наубиранное копится; доделал — место свободно") {
+      for {
+        t <- make(hero(), HomeData(tier = 1, metJunona = true))
+        (state, dao, sch, r) = t
+        _       <- state.action(testUser, tap("HomeClean"), r)
+        working <- last(r)
+        timer   <- sch.scheduled.map(_.last)
+        // пока убирается — другие кнопки не уводят
+        _       <- state.action(testUser, tap("HomeBed"), r)
+        locked  <- last(r)
+        _       <- TestClock.adjust(1.hour)
+        _       <- state.action(testUser, tap(HomeState.CleanStopKey), r)
+        paused  <- homeOf(dao)
+        said    <- texts(r)
+        // взялся снова — таймер на оставшиеся три часа; он и доделывает
+        _       <- state.action(testUser, tap("HomeClean"), r)
+        timer2  <- sch.scheduled.map(_.last)
+        _       <- TestClock.adjust(3.hours)
+        _       <- state.action(testUser, UserAction("", Some(HomeState.CleanStopAction)), r)
+        done    <- homeOf(dao)
+        end     <- texts(r)
+      } yield assertTrue(working.text.contains("Вы разбираете хлам") && working.text.contains("4 ч 0 мин") &&
+                working.choices.map(_.id) == List(HomeState.CleanStopKey)) &&
+              assertTrue(timer.kind == TaskKind.HomeClean && timer.fireAt == 4L * 3600000L &&
+                timer.action == HomeState.CleanStopAction) &&
+              assertTrue(locked.text.contains("Вы разбираете хлам")) &&
+              assertTrue(paused.cleanedMs == 3600000L && paused.hasClutter && said.contains("Осталось разобрать: 3 ч")) &&
+              assertTrue(timer2.fireAt == 3600000L + 3L * 3600000L) &&
+              assertTrue(!done.hasClutter && done.slotsFree == 2 && end.contains("Хлам разобран"))
+    },
+
+    test("Юнона: вывезти хлам — за 5 000 серебра; в домике сундуков не продают") {
+      for {
+        t <- make(hero(silver = 6000L), HomeData(tier = 1, metJunona = true))
+        (state, dao, _, r) = t
+        _      <- state.action(testUser, tap("HomeFurnish"), r)
+        page   <- last(r)
+        _      <- state.action(testUser, tap("HomeClutterPay"), r)
+        home   <- homeOf(dao)
+        h      <- heroOf(dao)
+        again  <- last(r)
+      } yield assertTrue(page.text.contains("Мест в доме занято: 1 из 2") && page.text.contains("Разве что хлам вывезти")) &&
+              assertTrue(page.choices.map(_.id) == List("HomeClutterPay", "HomeOffice") &&
+                page.choices.head.label == "🧹 Вывезти хлам — 5 000 🪙") &&
+              assertTrue(!home.hasClutter && h.silver == 1000L) &&
+              assertTrue(again.choices.map(_.id) == List("HomeOffice"))
+    },
+
+    test("сундук аптекаря — со второго дома, за 100 дублонов, по месту на сундук; мест нет — не продаёт") {
+      for {
+        t <- make(hero(doubloons = 300L), HomeData(tier = 2, metJunona = true))
+        (state, dao, _, r) = t
+        _      <- state.action(testUser, tap("HomeFurnish"), r)
+        page   <- last(r)
+        _      <- state.action(testUser, tap("HomeFurnItem", "f" -> "apothecary"), r)
+        card   <- last(r)
+        _      <- state.action(testUser, tap("HomeFurnBuy", "f" -> "apothecary"), r)
+        home   <- homeOf(dao)
+        h      <- heroOf(dao)
+        // все четыре места заняты — пятый не встанет
+        _      <- dao.writeHomeData(userId, home.copy(furniture = List.fill(4)("apothecary")).asJson)
+        _      <- state.action(testUser, tap("HomeFurnBuy", "f" -> "apothecary"), r)
+        full   <- homeOf(dao)
+        h2     <- heroOf(dao)
+        said   <- texts(r)
+        // сундук ювелира — только на острове
+        _      <- state.action(testUser, tap("HomeFurnBuy", "f" -> "jeweler"), r)
+        h3     <- heroOf(dao)
+      } yield assertTrue(page.choices.map(_.id) == List("HomeFurnItem", "HomeOffice") &&
+                page.choices.head.label == "📦 Сундук аптекаря — 100 🟡") &&
+              assertTrue(card.text.contains("на 100 больше, отваров — на 50") && card.text.contains("Свободных мест в доме: 4.")) &&
+              assertTrue(home.furniture == List("apothecary") && h.doubloons == 200L) &&
+              assertTrue(home.herbShelves == 150 && home.brewShelves == 75) &&
+              assertTrue(full.furniture.size == 4 && h2.doubloons == 200L && said.contains("Ставить некуда")) &&
+              assertTrue(h3.doubloons == 200L)
+    },
+
+    test("остров: полки верстака 150 / 75 по умолчанию; роскошный сундук ювелира — +100 камней за каждый") {
+      val island = HomeData(tier = 3, metJunona = true)
+      for {
+        t <- make(hero(doubloons = 100L), island)
+        (state, dao, _, r) = t
+        _    <- state.action(testUser, tap("HomeFurnBuy", "f" -> "jeweler"), r)
+        home <- homeOf(dao)
+      } yield assertTrue(island.herbShelves == 150 && island.brewShelves == 75 && island.gemShelves == 50) &&
+              assertTrue(island.copy(furniture = List("apothecary", "jeweler", "jeweler")).herbShelves == 250 &&
+                island.copy(furniture = List("jeweler", "jeweler")).gemShelves == 250) &&
+              assertTrue(home.furniture == List("jeweler") && home.gemShelves == 150 && home.slotsFree == 9)
     },
 
     test("сон и «выспался» — по дому: 2 / 1,5 / 1 ч и 4 / 8 / 12 ч") {
