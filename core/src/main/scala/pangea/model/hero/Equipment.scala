@@ -162,6 +162,7 @@ case class Equipment(
     case ItemType.Shield           => List(weapon, leftHand)
     case ItemType.AdditionalWeapon => List(additionalWeapon)
     case ItemType.Trophy           => Nil
+    case ItemType.NamedTrophy      => Nil
     case ItemType.TreasureMap      => Nil
     case ItemType.TreasureMapHalf  => Nil
     case ItemType.Gem              => Nil

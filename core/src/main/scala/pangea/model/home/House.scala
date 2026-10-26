@@ -4,6 +4,7 @@ import io.circe.generic.semiauto.deriveEncoder
 import io.circe.{Decoder, Encoder, HCursor}
 import pangea.model.hero.Equipment
 import pangea.model.item.Item
+import pangea.model.monster.NamedTrophy
 
 /** Дом героя — один из трёх, по ступеням. Продаёт их Юнона Кинтслев,
   * представитель городского совета. Дом выше покупается с зачётом того, что
@@ -164,7 +165,10 @@ object HomeRates {
   * `cleanedMs` — сколько уже наубирано руками (уборку можно прервать);
   * `racks` — что висит на магических стойках: стойка №N — `racks(N - 1)`;
   * `recipes` — книга рецептов: что получилось в кубе на верстаке ремесленника
-  * (видна в библиотеке, когда она есть, а пишется и без неё). */
+  * (видна в библиотеке, когда она есть, а пишется и без неё).
+  *
+  * На острове — `wall`: Стена трофеев, чьи уникальные трофеи на ней висят
+  * (имена именных мобов, без повторов; см. [[NamedTrophy]]). */
 final case class HomeData(
   tier:      Int               = 0,
   metJunona: Boolean           = false,
@@ -178,7 +182,8 @@ final case class HomeData(
   clutterCleared: Boolean      = false,
   cleanedMs: Long              = 0L,
   racks:     List[Equipment]   = Nil,
-  recipes:   List[RecipeNote]  = Nil
+  recipes:   List[RecipeNote]  = Nil,
+  wall:      List[String]      = Nil
 ) {
   def house: Option[House] = House.byTier(tier)
 
@@ -207,6 +212,13 @@ final case class HomeData(
     count(Furniture.ApothecaryChest) * HomeRates.ApothecaryHerbs
   def brewShelves: Int = HomeRates.BrewShelves + (if (island) HomeRates.IslandBrewShelves else 0) +
     count(Furniture.ApothecaryChest) * HomeRates.ApothecaryBrews
+
+  /** Стена трофеев — встроенная, в доме на острове. */
+  def hasWall: Boolean = island
+
+  /** Прибавка Стены трофеев к урону по расам: entryName расы → проценты. Без
+    * стены — ничего, что бы на ней ни числилось. */
+  def wallPct: Map[String, Int] = if (hasWall) NamedTrophy.pctByRace(wall) else Map.empty
 
   /** Хранилище камней — с роскошными сундуками ювелира. */
   def gemShelves: Int = HomeRates.GemVault + count(Furniture.JewelerChest) * HomeRates.JewelerGems
@@ -268,5 +280,6 @@ object HomeData {
       cleaned  <- c.getOrElse[Long]("cleanedMs")(0L)
       racks    <- c.getOrElse[List[Equipment]]("racks")(Nil)
       recipes  <- c.getOrElse[List[RecipeNote]]("recipes")(Nil)
-    } yield HomeData(tier, met, runes, herbs, brews, cauldron, charges, gems, furn, cleared, cleaned, racks, recipes)
+      wall     <- c.getOrElse[List[String]]("wall")(Nil)
+    } yield HomeData(tier, met, runes, herbs, brews, cauldron, charges, gems, furn, cleared, cleaned, racks, recipes, wall)
 }

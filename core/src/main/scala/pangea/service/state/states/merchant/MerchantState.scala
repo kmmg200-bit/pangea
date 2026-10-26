@@ -613,11 +613,12 @@ case class MerchantState(
     item.material.map(_.doubloonPrice).getOrElse(0L)
 
   /** Вещи на продажу: сюжетные предметы и травы Ришелье не берёт — травы несут
-    * Густаво, — а крысиное добро из канализации не берёт никто. */
+    * Густаво, — а крысиное добро из канализации не берёт никто. Уникальный
+    * трофей не продаётся: его место — на Стене трофеев. */
   private def inventoryItems(hero: Hero): Task[List[Item]] =
     inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       .map(_.items.data.filterNot(i =>
-        i.isQuestItem || i.material.exists(m => m.isHerb || m.worthless) || i.itemType == ItemType.Brew))
+        i.isQuestItem || i.isNamedTrophy || i.material.exists(m => m.isHerb || m.worthless) || i.itemType == ItemType.Brew))
 
   private def currentSellPage(user: User): Task[Int] = currentSellScene(user).map(_.page)
 
@@ -706,7 +707,7 @@ object MerchantState {
     * них ничего осмысленного не значил бы. Способности у трофеев не бывают,
     * поэтому их защита трофеев тоже не касается. */
   def isJunk(item: Item, s: JunkSaleSettings): Boolean =
-    if (item.isQuestItem) false
+    if (item.isQuestItem || item.isNamedTrophy) false
     else if (item.itemType == ItemType.Trophy) s.trophies
     // Руны уходят только по своему переключателю: редкости у камня нет.
     else if (item.itemType == ItemType.RuneStone) s.runes

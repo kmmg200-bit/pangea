@@ -59,8 +59,8 @@ case class TransferState(
       items  = transfers.matching(inv.items.data, scene.query)
       _ <- if (items.isEmpty)
              renderer.show(user, Screen(
-               if (transfers.onlyTrophies(inv.items.data, scene.query)) content.text("transfer.noTrophies")
-               else content.format("transfer.nothing", "query" -> scene.query), leaveRow))
+               transfers.trophyRefusal(inv.items.data, scene.query).fold(
+                 content.format("transfer.nothing", "query" -> scene.query))(content.text), leaveRow))
            else {
              val (pageItems, pages, p) = ItemMenu.page(ItemStack.grouped(items), scene.page)
              val header = content.format("transfer.pick",

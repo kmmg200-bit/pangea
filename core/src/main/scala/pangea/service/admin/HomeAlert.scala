@@ -58,6 +58,7 @@ object HomeAlert {
       RuneAltar        -> "рунический алтарь",
       HerbWorkbench    -> "верстак травника",
       GemVault         -> "хранилище камней",
+      TrophyWall       -> "стена трофеев",
       Thieves          -> "разбойники в городе",
       ThievesSpoils    -> "кошельки разбойников",
       MarisaSearch     -> "поиски Марисы",

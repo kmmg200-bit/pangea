@@ -253,6 +253,7 @@ case class LootState(
   private def itemLine(item: Item): String =
     if (item.itemType == ItemType.Trophy)
       s"🎁 ${item.displayTitle} (трофей)" // у трофеев нет редкости — кружка в заголовке не будет
+    else if (item.isNamedTrophy) s"🎁 ${item.displayTitle} (уникальный трофей)"
     else if (item.itemType == ItemType.Gem || item.itemType == ItemType.Material || item.itemType == ItemType.RuneStone)
       s"🎁 ${item.displayTitle}" // описания камня, ингредиента, пыли и рунной плиты при выпадении не показываем — только в инвентаре
     else {
@@ -266,7 +267,7 @@ case class LootState(
    *  ([[Item.ComparisonSeparator]]). Трофеи не сравниваются. */
   private def itemLineWithEquipped(item: Item, hero: Hero): String = {
     val base = itemLine(item)
-    if (item.itemType == ItemType.Trophy) base
+    if (item.itemType == ItemType.Trophy || item.isNamedTrophy) base
     else {
       val equipped = hero.equipment.equippedFor(item.itemType)
                        .filter(_.itemType != ItemType.NoItem)

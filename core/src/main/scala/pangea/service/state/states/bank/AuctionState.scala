@@ -309,7 +309,7 @@ case class AuctionState(
     * друг другу, — ровно по той же причине, по которой их не передают из рук
     * в руки (см. [[pangea.service.parcel.Transfers.sendable]]). */
   private def sellable(item: Item): Boolean =
-    !item.isQuestItem && !item.weightless && item.itemType != ItemType.Trophy
+    !item.isQuestItem && !item.weightless && item.itemType != ItemType.Trophy && !item.isNamedTrophy
 
   private def turnSellPage(user: User, renderer: Renderer, delta: Int): Task[Unit] =
     for {

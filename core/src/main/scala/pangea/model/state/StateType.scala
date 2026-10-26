@@ -69,6 +69,7 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   case object RuneAltar        extends StateType // рунический алтарь в доме: узоры рунных камней счётом
   case object HerbWorkbench    extends StateType // верстак травника в доме: полки трав, котелок, полка отваров
   case object GemVault         extends StateType // хранилище камней на острове: по видам и качествам, улучшение 3 к 1
+  case object TrophyWall       extends StateType // стена трофеев на острове: уникальные трофеи именных, прибавка к урону по расам
   case object TempleAzat       extends StateType // Храм Азата (Жрец / Зал / Уйти)
   case object Arena            extends StateType // арена: запись на бой с другим игроком
   case object HallAzat         extends StateType // Зал Азата (кубы, заряды)
@@ -167,5 +168,5 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
     Arena, Outskirts,
     Merchant, Gustavo, GustavoHeal, GustavoBoost, GustavoSupplies, GustavoBelt, GustavoHerbs,
     Tavern, Mercenaries, QuestBoard, Innkeeper, CardSeller, Construction, Guild, TrophyExchange, TrainingHall,
-    MasterHorn, MentorKazimir, Home, RuneAltar, HerbWorkbench, GemVault)
+    MasterHorn, MentorKazimir, Home, RuneAltar, HerbWorkbench, GemVault, TrophyWall)
 }

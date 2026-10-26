@@ -7,7 +7,7 @@ import pangea.domain.Rng
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.generator.loot.LootGenerator
 import pangea.generator.monster.MonsterGenerator
-import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Element, Formation, GroupState, HealedWounds, MonsterSlot, Nature, Poison, RaceTactics, Regen, SoloPveBattle, SkillSlotState, TimedDefenceDebuff}
+import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Element, Formation, GroupState, HealedWounds, MonsterSlot, Nature, Poison, RaceTactics, Regen, SlainMonster, SoloPveBattle, SkillSlotState, TimedDefenceDebuff}
 import pangea.model.cave.CaveGenerator
 import pangea.model.item.ItemSet
 import pangea.model.squad.AllySkill
@@ -15,7 +15,8 @@ import pangea.model.hero.{Achievement, AzatState, CubeStatus, Hero, WeaponCoat, 
 import pangea.model.item.QuestItemKind
 import pangea.model.quest.{BoardKind, NpcQuest}
 import pangea.model.item.{BeltSlot, BrewEffect, BrewKind, BrewRates, FlaskEffect, FlaskRates, GripRates, Item, ItemDetails, ItemType, PassiveKind, PotionKind, RefillSource, DivineKind, DivineRates}
-import pangea.model.monster.{MiniBoss, Race, Rarity}
+import pangea.model.home.HomeData
+import pangea.model.monster.{MiniBoss, NamedTrophy, Race, Rarity}
 import pangea.model.stats.FightStats
 import pangea.model.stats.{ParamsBuff, StatBoost}
 import pangea.model.trauma.{Trauma, TraumaRoll}
@@ -26,6 +27,7 @@ import pangea.model.user.{User, UserId}
 import pangea.service.state.states.LootState
 import pangea.service.state.MurlocQuest
 import pangea.service.state.states.gustavo.GustavoState
+import pangea.repository.bank.BankRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.dao.arena.ArenaDao
@@ -54,7 +56,10 @@ case class BattleState(
   scheduler:     Scheduler = Scheduler.none,
   // Арена: строка боя двух игроков. Без неё бой на арену не попадает — в
   // лабиринте она не нужна.
-  arenaDao:      Option[ArenaDao] = None
+  arenaDao:      Option[ArenaDao] = None,
+  // Хранилище в Торговом доме: уникальный трофей не падает второй раз, даже
+  // если первый лежит там.
+  bank:          Option[BankRepository] = None
 ) extends State {
 
   import BattleState.{AllyBlow, MobStrike, Outcome, TurnResult, VictoryOutcome}
@@ -171,10 +176,13 @@ case class BattleState(
   private def resolveLoaded(user: User, renderer: Renderer, hero: Hero, battle: SoloPveBattle, now: Long,
                             note: String)(turn: Turn): Task[StateType] =
     for {
+      // Стена трофеев — какая она сейчас дома: прибавка к урону по расам.
+      wall   <- trophyWall(user, battle)
+      walled  = battle.copy(trophyWall = wall)
       // Щит, поднятый в прошлом раунде, своё отстоял, и кинжал наизготовку тоже:
       // их снимает первое действие нового раунда. Посреди раунда — после пояса,
       // Блока или Контрудара — они ещё держатся (см. Skill.Block, Counterstrike).
-      struck <- turn(hero, if (battle.midRound) battle else battle.copy(heroBlockPct = 0L, heroCounterReady = false), now)
+      struck <- turn(hero, if (walled.midRound) walled else walled.copy(heroBlockPct = 0L, heroCounterReady = false), now)
       // «Упырь» (порог 12): пир — только за тех, кого уложил САМ герой, и тут
       // же, в бою. Считаем до хода союзников: их добычу упырь не ест.
       feasted = ghoulFeast(battle, struck, now)
@@ -1118,10 +1126,11 @@ case class BattleState(
             // Пыль, севшая неудачно (всполох магии или четвёртая горсть), режет
             // весь урон героя на четверть — ровно этот бой (см. WeaponDust).
             // «Мерзавец» бьёт на 5% сильнее — и получает на 5% больше (см. mobStrike).
+            // Стена трофеев прибавляет по проценту за каждого именного той же расы.
             damage =
               (((hero.effectiveBaseStats(nowMs).str * 3L + buffedEff.atk) * spread / 100L) *
                 weaponMod * closeMod * hero.passives.finalDamageMult * hero.weaponDust.damageMult *
-                Achievement.damagePct(hero) / 100.0).toLong
+                Achievement.damagePct(hero) / 100.0 * battle.trophyMult).toLong
                 .max(1L)
             // Стихии оружия модифицируют раздельно урон по броне и по HP
             // (см. splitElementalDamage). Без стихий поведение прежнее.
@@ -3447,8 +3456,11 @@ case class BattleState(
       splash: (SoloPveBattle, Long) => (SoloPveBattle, Vector[String]),
       crit: Boolean
   ): Task[TurnResult] = {
+    // Стена трофеев: прибавка к урону умения по расе цели. Здесь, а не в числе
+    // умения, — то же число лечит и чинит броню, а их стена не трогает.
+    val walled = (value.max(1L) * battle.trophyMult).toLong.max(1L)
     // На арене соперник мог поднять щит — умение по нему режется так же, как удар.
-    val raw = BattleState.shieldCut(battle.foeBlockPct, if (crit) value.max(1L) * 2L else value.max(1L))
+    val raw = BattleState.shieldCut(battle.foeBlockPct, if (crit) walled * 2L else walled)
     // Урон навыка тоже несёт стихию оружия — раздельный урон по броне/HP с тем же
     // усилением. Проки стихий роллятся отдельным броском (как и на обычной атаке).
     val resisted          = (raw * bossResistance(hero, battle)).toLong.max(1L)
@@ -5155,10 +5167,14 @@ case class BattleState(
       (blessingGear, _) =
         if (blessed) LootGenerator.rollBlessingExtraGear(BattleState.BlessingExtraDropPct, battle.rarity, killLevel, rngAfter2)
         else (Option.empty[pangea.model.item.Item], rngAfter2)
-      lootByMonster = withExtras.map { case (name, drops) =>
+      // Именной оставляет свой уникальный трофей — если у героя такого ещё
+      // нет. Сюжетный бой — нет: там добычу кладёт сюжет.
+      owned <- if (storyFight) ZIO.succeed(Set.empty[String]) else ownedNamedTrophies(user, hero, fallen)
+      named  = if (storyFight) Nil else BattleState.namedTrophies(fallen, killLevel, owned)
+      lootByMonster = withExtras.zipWithIndex.map { case ((name, drops), i) =>
         LootState.MonsterLoot(
           monsterName = name,
-          items       = drops.flatMap(_.itemOpt),
+          items       = drops.flatMap(_.itemOpt) ++ named.lift(i).flatten,
           silvers     = drops.collect { case LootGenerator.LootDrop.Silver(a, _) => a * silverScalePct(blessed) / 100L },
           doubloons   = drops.collect { case LootGenerator.LootDrop.Doubloons(a) => a }.sum
         )
@@ -5676,6 +5692,22 @@ case class BattleState(
       .map(_.items.data.count((i: Item) => i.brew.contains(BrewKind.MushroomMix)))
       .orElseSucceed(0)
 
+  /** Чьи уникальные трофеи у героя уже есть: в сумке, в хранилище, на Стене
+    * трофеев. Читаем всё это, только если среди павших есть именной. */
+  private def ownedNamedTrophies(user: User, hero: Hero, fallen: List[SlainMonster]): Task[Set[String]] =
+    if (!fallen.exists(m => NamedTrophy.raceOf(m.name).isDefined)) ZIO.succeed(Set.empty)
+    else for {
+      bag   <- inventoryRepo.get(hero.id).fold(_ => List.empty[Item], _.items.data)
+      vault <- bank.fold(ZIO.succeed(List.empty[Item]))(_.get(hero.id).fold(_ => List.empty[Item], _.items.data))
+      home  <- heroDao.readHomeData(user.userId).map(_.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty))
+    } yield (bag ++ vault).flatMap(_.namedTrophy).map(_.monster).toSet ++ home.wall
+
+  /** Стена трофеев дома: прибавка к урону героя по расам. На арене её нет —
+    * напротив там герой, а не моб. */
+  private def trophyWall(user: User, battle: SoloPveBattle): Task[Map[String, Int]] =
+    if (battle.arena.isDefined) ZIO.succeed(Map.empty)
+    else heroDao.readHomeData(user.userId).map(_.flatMap(_.as[HomeData].toOption).fold(Map.empty[String, Int])(_.wallPct))
+
   private def getHero(user: User): Task[Hero] =
     heroDao
       .getHeroByUserId(user.userId)
@@ -5746,6 +5778,15 @@ object BattleState {
   /** Сколько союзников помещается в ряд клавиатуры: их бывает до десяти, а
     * рядов у ВК всего десять. */
   val AlliesPerRow: Int = 2
+
+  /** Уникальные трофеи павших — по порядку гибели. У именного — его трофей,
+    * если у героя такого нет (`owned` — чьи трофеи у него уже есть) и в этом
+    * бою он ещё не выпал; поднятый некромантом второй раз его не роняет. */
+  def namedTrophies(fallen: List[SlainMonster], killLevel: Long, owned: Set[String]): List[Option[Item]] =
+    fallen.foldLeft((List.empty[Option[Item]], owned)) { case ((acc, seen), m) =>
+      val drop = if (m.undead || seen.contains(m.name)) None else NamedTrophy.item(m.name, m.race, killLevel)
+      (acc :+ drop, seen ++ drop.map(_ => m.name))
+    }._1
 
   /** Кем встанет павший, если «Некромант» (порог 12) его поднимет. None — в нём
     * нечего поднимать: элементаль, сооружение, уже нежить или Крысиный король

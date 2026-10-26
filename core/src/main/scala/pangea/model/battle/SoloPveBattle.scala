@@ -115,8 +115,14 @@ case class SoloPveBattle(
   midRound: Boolean = false,
   // Умения, взятые в этом раунде бонусным действием (Блок, Контрудар): в конце
   // раунда их перезарядка не тикает — как у умения, которым раунд кончился.
-  bonusSlots: List[Long] = Nil
+  bonusSlots: List[Long] = Nil,
+  // Стена трофеев дома героя: прибавка к его урону по расам (entryName → %).
+  // Перечитывается из дома каждый ход (см. BattleState.resolveLoaded).
+  trophyWall: Map[String, Int] = Map.empty
 ) {
+
+  /** Множитель Стены трофеев к урону героя по тому, кто сейчас в полях. */
+  def trophyMult: Double = 1.0 + trophyWall.getOrElse(monsterRace, 0) / 100.0
 
   // ── Группа ────────────────────────────────────────────────────────────────
 
@@ -887,13 +893,14 @@ object SoloPveBattle {
       monsterArenaUnit    <- c.getOrElse[Option[Int]]("monsterArenaUnit")(None)
       midRound            <- c.getOrElse[Boolean]("midRound")(false)
       bonusSlots          <- c.getOrElse[List[Long]]("bonusSlots")(Nil)
+      trophyWall          <- c.getOrElse[Map[String, Int]]("trophyWall")(Map.empty)
     } yield SoloPveBattle(monsterLvl, monsterRace, monsterRarity, monsterStats,
                          monsterCurrentHp, monsterCurrentArmor, heroBattleState, consumableUsed, monsterMarked,
                          monsterUndead,
                          skillSlots, effects, toughnessUsed, bossKind, bossTurn, charges, revives, firstSkill, monsterEnergy, group,
                          story, customName, divineUsed, escapesAfter, noKin, arena, minionLvl, bossTaken,
                          noFlee, lootLevel, holyWater, heroBlockPct, monsterBlockPct,
-                         heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots)
+                         heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall)
 
   /** Номер самого соперника среди «мобов» зеркала арены; его союзники — от
     * единицы (см. `ArenaSide.allies`). */

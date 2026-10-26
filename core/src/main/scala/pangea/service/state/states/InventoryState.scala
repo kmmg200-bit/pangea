@@ -1293,6 +1293,7 @@ object InventoryState {
       if (cur.itemType == ItemType.NoItem) s"$prefix: свободна" else cur.equippedComparison(prefix)
     val slotInfo = item.itemType match {
       case ItemType.Trophy => "\nТрофей"
+      case ItemType.NamedTrophy => "\nУникальный трофей. В Гильдию не сдаётся — его вешают на Стену трофеев."
       case ItemType.Ring   => s"\n$sep\n${equipped("Слот 1", eq.firstRing)}\n${equipped("Слот 2", eq.secondRing)}"
       case ItemType.Weapon | ItemType.Shield =>
         val left =
@@ -1337,6 +1338,7 @@ object InventoryState {
     case ItemType.Shield           => eq.weapon // руки — см. wield
     case ItemType.AdditionalWeapon => eq.additionalWeapon
     case ItemType.Trophy           => Item.NoItem // трофей не экипируется
+    case ItemType.NamedTrophy      => Item.NoItem
     case ItemType.TreasureMap      => Item.NoItem // карта не экипируется
     case ItemType.TreasureMapHalf  => Item.NoItem // половинка карты не экипируется
     case ItemType.Gem              => Item.NoItem // камень не экипируется
@@ -1368,6 +1370,7 @@ object InventoryState {
     case ItemType.Shield           => eq.copy(weapon = item) // руки — см. wield
     case ItemType.AdditionalWeapon => eq.copy(additionalWeapon = item)
     case ItemType.Trophy           => eq // трофей не экипируется
+    case ItemType.NamedTrophy      => eq
     case ItemType.TreasureMap      => eq // карта не экипируется
     case ItemType.TreasureMapHalf  => eq // половинка карты не экипируется
     case ItemType.Gem              => eq // камень не экипируется

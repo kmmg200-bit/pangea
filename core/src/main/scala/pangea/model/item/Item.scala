@@ -91,6 +91,14 @@ case class Item(
 
   def isQuestItem: Boolean = itemType == ItemType.QuestItem
 
+  /** Уникальный трофей именного моба: чей он, если это он. */
+  def namedTrophy: Option[ItemDetails.NamedTrophy] = details match {
+    case n: ItemDetails.NamedTrophy => Some(n)
+    case _                          => None
+  }
+
+  def isNamedTrophy: Boolean = itemType == ItemType.NamedTrophy
+
   /** Горсть пыли: места в сумке и в бочке не занимает (в кубе Азата — как все, слот). */
   def isDust: Boolean = material.exists(_.gem.isDefined)
 
@@ -169,6 +177,7 @@ case class Item(
    *  У карт клада, камней-усилителей и материалов уровня нет — только имя. */
   def displayTitle: String =
     if (isQuestItem) s"${Item.QuestMark} $name" // сюжетный предмет: звёздочка вместо редкости и уровня
+    else if (isNamedTrophy) s"${Item.NamedTrophyMark} $name" // уникальный трофей: кубок вместо уровня
     else if (isTreasureMap || itemType == ItemType.Gem || itemType == ItemType.Material ||
         itemType == ItemType.Flask || itemType == ItemType.Brew || itemType == ItemType.RuneStone ||
         rose.isDefined) name
@@ -283,6 +292,9 @@ object Item {
 
   /** Значок сюжетного предмета перед именем — в списке сумки и на карточке. */
   val QuestMark: String = "★"
+
+  /** Значок уникального трофея именного моба. */
+  val NamedTrophyMark: String = "🏆"
 
   def NoItem: Item =
     Item(0, "Пусто", 0, Rarity.Gray, ItemType.NoItem, 0, 0, 0, 0, 0, 0, 0, ItemDetails.Plain)

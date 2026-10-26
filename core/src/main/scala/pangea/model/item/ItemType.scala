@@ -33,7 +33,7 @@ object ItemType extends Enum[ItemType] {
   // Типы, которые не надеваются: трофеи, карты клада и камни-усилители. Пусто
   // (NoItem) сюда тоже относится, но оно и так исключено из itemTypes.
   private val nonEquippable: Set[ItemType] =
-    Set(Trophy, TreasureMap, TreasureMapHalf, Gem, Material, QuestItem, Brew, RuneStone, Rose)
+    Set(Trophy, NamedTrophy, TreasureMap, TreasureMapHalf, Gem, Material, QuestItem, Brew, RuneStone, Rose)
 
   /** Надеваемые типы — всё, кроме трофеев, карт клада и NoItem. Экраны, где
    *  предмет предлагается к надеванию, опираются на этот список. */
@@ -59,6 +59,11 @@ object ItemType extends Enum[ItemType] {
   // Трофей с убитого моба: лежит в инвентаре как обычный предмет (раса + уровень),
   // но не экипируется — не входит в attackItems/defenceItems.
   case object Trophy extends ItemType
+
+  // Уникальный трофей именного моба: у каждого свой, с его именем (см.
+  // pangea.model.monster.NamedTrophy). Гильдия, Трактирщик и Ришелье его не
+  // берут, из рук в руки он не ходит — его вешают на Стену трофеев.
+  case object NamedTrophy extends ItemType
 
   // Карта клада и её половинка: лежат в инвентаре, занимают слот, не надеваются.
   case object TreasureMap     extends ItemType

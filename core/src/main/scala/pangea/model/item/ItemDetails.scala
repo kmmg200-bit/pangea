@@ -91,6 +91,10 @@ object ItemDetails {
     def coefValue: Double = coef.getOrElse(kind.coef)
   }
 
+  /** Уникальный трофей именного моба: чей он (имя из
+    * [[pangea.model.monster.Monster.legendaryNames]]) и раса хозяина (entryName). */
+  case class NamedTrophy(monster: String, race: String) extends ItemDetails
+
   /** Карта клада или её половинка (целость кодирует `Item.itemType`). */
   case class TreasureMap(zone: MapZone) extends ItemDetails
 
@@ -149,6 +153,8 @@ object ItemDetails {
       kind <- c.get[TrophyKind]("kind")
       coef <- c.getOrElse[Option[Double]]("coef")(None)
     } yield Trophy(race, kind, coef)
+  private val namedEnc:  Encoder[NamedTrophy]      = deriveEncoder
+  private val namedDec:  Decoder[NamedTrophy]      = deriveDecoder
   private val mapEnc:    Encoder[TreasureMap]      = deriveEncoder
   private val mapDec:    Decoder[TreasureMap]      = deriveDecoder
   private val gemEnc:    Encoder[Gem]              = deriveEncoder
@@ -178,6 +184,7 @@ object ItemDetails {
     case b: Belt        => tagged("Belt", beltEnc(b))
     case p: Passive     => tagged("Passive", passiveEnc(p))
     case t: Trophy      => tagged("Trophy", trophyEnc(t))
+    case n: NamedTrophy => tagged("NamedTrophy", namedEnc(n))
     case m: TreasureMap => tagged("TreasureMap", mapEnc(m))
     case g: Gem         => tagged("Gem", gemEnc(g))
     case m: Material    => tagged("Material", matEnc(m))
@@ -198,6 +205,7 @@ object ItemDetails {
       case "Belt"        => beltDec(c)
       case "Passive"     => passiveDec(c)
       case "Trophy"      => trophyDec(c)
+      case "NamedTrophy" => namedDec(c)
       case "TreasureMap" => mapDec(c)
       case "Gem"         => gemDec(c)
       case "Material"    => matDec(c)

@@ -41,15 +41,21 @@ final case class Transfers(
   private val purse = Purse(heroDao, Some(bank))
 
   /** Что вообще можно передать: вещь занимает место, не сюжетная и не трофей.
-    * Трофеи — личная добыча: их сдают в Гильдии, а не передают друг другу. */
+    * Трофеи — личная добыча: обычные сдают в Гильдии, уникальные вешают на
+    * Стену трофеев, а не передают друг другу. */
   def sendable(item: Item): Boolean =
-    !item.isQuestItem && !item.weightless && item.itemType != ItemType.Trophy
+    !item.isQuestItem && !item.weightless && item.itemType != ItemType.Trophy && !item.isNamedTrophy
 
   /** Под запрос подошли только трофеи — о них стоит сказать отдельно, иначе
-    * «ничего не нашлось» сбивает с толку. */
-  def onlyTrophies(items: List[Item], query: String): Boolean =
-    items.exists(i => i.itemType == ItemType.Trophy && ChatCommand.matches(query, i.name)) &&
-      matching(items, query).isEmpty
+    * «ничего не нашлось» сбивает с толку. Ключ текста отказа: про обычные
+    * трофеи и про уникальные — разный. */
+  def trophyRefusal(items: List[Item], query: String): Option[String] = {
+    def found(p: Item => Boolean): Boolean = items.exists(i => p(i) && ChatCommand.matches(query, i.name))
+    if (matching(items, query).nonEmpty) None
+    else if (found(_.itemType == ItemType.Trophy)) Some("transfer.noTrophies")
+    else if (found(_.isNamedTrophy)) Some("transfer.noNamedTrophies")
+    else None
+  }
 
   /** Подходящее под запрос. Точное совпадение по названию бьёт частичное:
     * «надколотый череп» отдаст именно череп, а не всё, где встретилось слово.
@@ -91,15 +97,17 @@ final case class Transfers(
     for {
       inv <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       fit  = matching(inv.items.data, query)
-      res <- if (onlyTrophies(inv.items.data, query))
-               ZIO.succeed(Transfers.Outcome.Forbidden(content.text("transfer.noTrophies")))
-             else if (fit.isEmpty) ZIO.succeed(Transfers.Outcome.Empty)
-             else if (!unambiguous(fit)) ZIO.succeed(Transfers.Outcome.NeedPick)
-             else send(sender, hero, target, fit.take(count.max(1)), now).map { shipment =>
-               Transfers.Outcome.Sent(content.format("transfer.sent",
-                 "name"  -> shipment.items.head.displayTitle,
-                 "count" -> shipment.items.size.toString,
-                 "to"    -> target.name), shipment.handOver)
+      res <- trophyRefusal(inv.items.data, query) match {
+               case Some(key)                 => ZIO.succeed(Transfers.Outcome.Forbidden(content.text(key)))
+               case None if fit.isEmpty       => ZIO.succeed(Transfers.Outcome.Empty)
+               case None if !unambiguous(fit) => ZIO.succeed(Transfers.Outcome.NeedPick)
+               case None =>
+                 send(sender, hero, target, fit.take(count.max(1)), now).map { shipment =>
+                   Transfers.Outcome.Sent(content.format("transfer.sent",
+                     "name"  -> shipment.items.head.displayTitle,
+                     "count" -> shipment.items.size.toString,
+                     "to"    -> target.name), shipment.handOver)
+                 }
              }
     } yield res
 

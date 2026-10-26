@@ -21,6 +21,7 @@ import pangea.model.state.StateType.{
   RuneAltar,
   HerbWorkbench,
   GemVault,
+  TrophyWall,
   SilverVein,
   Guild,
   Gustavo,
@@ -138,7 +139,7 @@ import pangea.service.state.states.gustavo.{
   GustavoSuppliesState
 }
 import pangea.service.state.states.registration.RegistrationState
-import pangea.service.state.states.home.{GemVaultState, HerbWorkbenchState, HomeState, RuneAltarState}
+import pangea.service.state.states.home.{GemVaultState, HerbWorkbenchState, HomeState, RuneAltarState, TrophyWallState}
 import pangea.service.state.states.hero.{FriendCodeState, HeroStatsState, KnowledgeState, SkillsState, SquadState}
 import pangea.service.referral.Referrals
 import pangea.service.state.states.tavern.{
@@ -229,7 +230,7 @@ object StatesMap {
             content,
             artifacts
           ),
-          Battle -> BattleState(heroDao, inventoryRepo, itemRepo, content, scheduler, Some(arenaDao)),
+          Battle -> BattleState(heroDao, inventoryRepo, itemRepo, content, scheduler, Some(arenaDao), bank),
           Death  -> DeathState(heroDao, inventoryRepo, content, artifacts),
           Rest   -> RestState(heroDao, scheduler, content),
           Inventory -> InventoryState(
@@ -274,6 +275,7 @@ object StatesMap {
           RuneAltar       -> RuneAltarState(heroDao, inventoryRepo, itemRepo, content),
           HerbWorkbench   -> HerbWorkbenchState(heroDao, inventoryRepo, itemRepo, content, artifacts),
           GemVault        -> GemVaultState(heroDao, inventoryRepo, itemRepo, content, artifacts),
+          TrophyWall      -> TrophyWallState(heroDao, inventoryRepo, content),
           CardSeller -> CardSellerState(
             heroDao,
             inventoryRepo,

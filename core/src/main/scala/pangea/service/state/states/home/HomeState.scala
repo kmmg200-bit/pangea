@@ -93,6 +93,7 @@ case class HomeState(
       "HomeAltar"   -> Target.Goto(StateType.RuneAltar),
       "HomeHerbs"   -> Target.Goto(StateType.HerbWorkbench),
       "HomeGems"    -> Target.Goto(StateType.GemVault),
+      "HomeWall"    -> Target.Goto(StateType.TrophyWall),
       "HomeAzat"    -> Target.Run { (u, _, r) => azat(u, r) },
       "HomeAzatUp"  -> Target.Run { (u, _, r) => azatRefill(u, r) },
       "LeaveHome"   -> Target.Goto(StateType.GlobalMap)
@@ -248,6 +249,7 @@ case class HomeState(
             Some(Choice("HomeBed", content.text("home.house.bed"), color = ChoiceColor.Positive, row = Some(0))),
             Option.when(second)(Choice("HomeLibrary", content.text("home.house.library"), row = Some(0))),
             Option.when(home.hasClutter)(Choice("HomeClean", content.text("home.house.clean"), row = Some(0))),
+            Option.when(home.hasWall)(Choice("HomeWall", content.text("home.house.wall"), row = Some(0))),
             Some(Choice("HomeAltar", content.text("home.house.altar"), row = Some(1))),
             Option.when(second)(Choice("HomeHerbs", content.text("home.house.workbench"), row = Some(1))),
             Option.when(second)(Choice("HomeAzat", content.text("home.house.azat"), row = Some(1))),
