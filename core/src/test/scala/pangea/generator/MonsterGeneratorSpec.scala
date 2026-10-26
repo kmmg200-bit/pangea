@@ -61,9 +61,9 @@ object MonsterGeneratorSpec extends ZIOSpecDefault {
       val human   = statsOf(Race.Human)
       val gnome   = statsOf(Race.Gnome)
       val khajiit = statsOf(Race.Khajiit)
-      // ряд защиты: гоблин 3 — самый защищённый, каджит 0.5 — самый уязвимый
+      // ряд защиты: гоблин и эльф по 2 — самые защищённые, каджит 0.5 — самый уязвимый
       assertTrue(Race.mortals.forall(statsOf(_).defence > 0L)) &&
-      assertTrue(goblin.defence > elf.defence) &&
+      assertTrue(goblin.defence == elf.defence) &&
       assertTrue(elf.defence > human.defence) &&
       assertTrue(human.defence > gnome.defence) &&
       assertTrue(gnome.defence > khajiit.defence) &&

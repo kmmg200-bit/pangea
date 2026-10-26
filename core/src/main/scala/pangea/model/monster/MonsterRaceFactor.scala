@@ -54,7 +54,7 @@ object MonsterRaceFactor {
     Race.Goblin -> MonsterRaceFactor(
       hpFactor = 0.6,
       armorFactor = 0.5,
-      defenceFactor = 3.0,
+      defenceFactor = 2.0,
       attackFactor = 1.0,
       accuracyFactor = 1.3,
       evasionFactor = 2.0

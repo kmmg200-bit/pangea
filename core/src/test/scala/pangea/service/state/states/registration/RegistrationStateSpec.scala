@@ -56,7 +56,10 @@ object RegistrationStateSpec extends ZIOSpecDefault {
         screens                     <- renderer.sentScreens
       } yield assertTrue(result == StateType.Registration) &&
               assertTrue(screens.nonEmpty) &&
-              assertTrue(screens.head.text.startsWith("Добро пожаловать на Пангею!"))
+              assertTrue(screens.head.text.startsWith("Добро пожаловать на Пангею!")) &&
+              // приписка в конце: пролог можно прощёлкать до выбора расы
+              assertTrue(screens.head.text.trim.endsWith(
+                "Если хотите пропустить пролог и приступить к игровой части, то можете проскипать до выбора расы."))
     },
 
     test("Race → показывает выбор расы, остаётся в Registration") {
