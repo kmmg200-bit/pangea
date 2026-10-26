@@ -1,9 +1,10 @@
 package pangea.service.state.states.guild
 
 import pangea.engine.SceneContent
+import pangea.model.quest.{DailyKind, DailyNpc, DailyQuests, DailyRates, DailyTask}
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
-import pangea.service.state.UserAction
+import pangea.service.state.{DailyQuestLog, UserAction}
 import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestRenderer}
 import zio.ZIO
 import zio.test._
@@ -67,6 +68,23 @@ object MasterHornStateSpec extends ZIOSpecDefault {
               assertTrue(hero.silver == 4L) &&
               assertTrue(hero.masterHornBoosts.armor == 0L) &&
               assertTrue(screens.exists(_.text.contains("Недостаточно серебра")))
+    },
+
+    test("прокачка у Горна не съедает его наказ «набрать репутации»: мерка опускается на потраченное") {
+      // Часы тестов стоят в нуле — это и есть «сегодня» для поручения.
+      val task = DailyTask(DailyKind.HornReputation, DailyRates.dayOf(0L), from = 100L, goal = 60L, taken = true)
+      for {
+        t <- makeState(reputation = 100L, silver = 100L)
+        (state, heroDao, renderer) = t
+        _     <- DailyQuestLog.save(heroDao, userId, DailyQuests.empty.updated(DailyNpc.Horn, task))
+        _     <- state.action(testUser, tap("ImproveArmor"), renderer)
+        _     <- state.action(testUser, tap("ConfirmImprove"), renderer)
+        hero  <- heroDao.getHeroByUserId(userId).map(_.get)
+        saved <- DailyQuestLog.load(heroDao, userId).map(_.of(DailyNpc.Horn).get)
+      } yield assertTrue(hero.guildReputation == 95L) &&
+              assertTrue(saved.taken && saved.kind == DailyKind.HornReputation && saved.from == 95L) &&
+              // наберёт теперь 60 — наказ готов: потраченное отрабатывать не нужно
+              assertTrue(saved.withCounter(hero.guildReputation + 60L).ready)
     },
 
     test("LeaveMasterHorn → переход в TrainingHall") {

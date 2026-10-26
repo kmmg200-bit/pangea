@@ -249,8 +249,9 @@ final case class DailyTask(
   def plus(n: Long): DailyTask = if (done) this else copy(count = count + n)
 
   /** Счётчиковое задание: прогресс — разница с тем, что было при взятии, но
-    * счёт только растёт. Репутацию тратят там же, в гильдии, и без этого
-    * прокачка у Горна съедала бы его же наказ. */
+    * счёт только растёт. Репутацию тратят там же, в гильдии: потраченное
+    * опускает мерку ([[pangea.service.state.DailyQuestLog.reputationSpent]]),
+    * так что прокачка у Горна не съедает его же наказ. */
   def withCounter(now: Long): DailyTask =
     if (!kind.snap || done) this else copy(count = count.max((now - from).max(0L)))
 

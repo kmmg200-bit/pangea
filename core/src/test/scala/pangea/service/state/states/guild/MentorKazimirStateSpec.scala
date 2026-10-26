@@ -3,11 +3,12 @@ package pangea.service.state.states.guild
 import pangea.engine.{ChoiceColor, SceneContent}
 import pangea.model.hero.Hero
 import pangea.model.item.{Item, ItemDetails, ItemType, PassiveKind, Rarity}
+import pangea.model.quest.{DailyKind, DailyNpc, DailyQuests, DailyRates, DailyTask}
 import pangea.model.rune.{Rune, RuneData, RuneStone, RuneStoneSize}
 import pangea.model.skill.Skill
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
-import pangea.service.state.UserAction
+import pangea.service.state.{DailyQuestLog, UserAction}
 import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestRenderer}
 import zio.test._
 import zio.{Task, ZIO}
@@ -119,6 +120,19 @@ object MentorKazimirStateSpec extends ZIOSpecDefault {
               assertTrue(after.runes.isBranded(cunning) && after.runes.nextCost == 1000L) &&
               assertTrue(after.activeSkillSlots.map(_.skill) == List(Skill.CunningStrike) && after.activeSkillSlots.forall(s => Rune.isBodySlot(s.itemId))) &&
               assertTrue(again.text.contains("уже на тебе") && inv.snapshot.map(_.id) == List(2L))
+    },
+
+    test("клеймо не съедает наказ Горна «набрать репутации»: мерка опускается на цену клейма") {
+      val task = DailyTask(DailyKind.HornReputation, DailyRates.dayOf(0L), from = 600L, goal = 60L, taken = true)
+      for {
+        t <- make(hero(rep = 600L), List(weapon(1L, Skill.CunningStrike)))
+        (state, dao, _, r) = t
+        _     <- DailyQuestLog.save(dao, userId, DailyQuests.empty.updated(DailyNpc.Horn, task))
+        _     <- state.action(testUser, tap("BrandItem", "k" -> cunning.key, "id" -> "1"), r)
+        after <- heroOf(dao)
+        saved <- DailyQuestLog.load(dao, userId).map(_.of(DailyNpc.Horn).get)
+      } yield assertTrue(after.guildReputation == 100L) &&
+              assertTrue(saved.taken && saved.from == 100L)
     },
 
     test("проверки: мало репутации — отказ; нет места под третью боевую — отказ; вещь без руны — «уже нет»") {

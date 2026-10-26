@@ -75,6 +75,23 @@ object DailyQuestLog {
         }
       }
 
+  /** Репутацию потратили — у Горна или у Казимира. Наказ Горна «набрать
+    * репутации» мерит разницу с тем, что было при взятии, и без этого трата
+    * съедала бы набранное: всё потраченное пришлось бы набивать заново и только
+    * потом сам наказ. Мерка опускается ровно на потраченное — в счёт идёт всё,
+    * что заработано после взятия, а траты его не трогают. Новое место, где
+    * тратят репутацию, зовёт и это. */
+  def reputationSpent(heroDao: HeroDao, userId: UserId, n: Long): Task[Unit] =
+    if (n <= 0L) ZIO.unit
+    else
+      load(heroDao, userId).flatMap { all =>
+        all.of(DailyNpc.Horn) match {
+          case Some(task) if task.taken && !task.done && task.kind == DailyKind.HornReputation =>
+            save(heroDao, userId, all.updated(DailyNpc.Horn, task.copy(from = task.from - n)))
+          case _ => ZIO.unit
+        }
+      }
+
   /** Сдать: отмечаем выполненным. Награду выдаёт сама сцена — у каждого
     * горожанина она своя. */
   def complete(heroDao: HeroDao, userId: UserId, npc: DailyNpc, task: DailyTask): Task[Unit] =

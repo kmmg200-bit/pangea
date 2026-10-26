@@ -242,6 +242,7 @@ case class MasterHornState(
   private def writeBoost(user: User, hero: Hero, stat: Stat, price: Long): Task[Unit] =
     for {
       _ <- heroDao.updateGuildReputation(user.userId, hero.guildReputation - price)
+      _ <- DailyQuestLog.reputationSpent(heroDao, user.userId, price)
       _ <- purse.charge(user.userId, hero, price)
       _ <- ZIO.when(stat == Stat.Inventory)(inventoryRepo.increaseCapacity(hero.id, stat.step).orElse(ZIO.unit))
       _ <- heroDao.updateMasterHornBoosts(user.userId, bumped(hero.masterHornBoosts, stat))

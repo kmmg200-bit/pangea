@@ -427,6 +427,49 @@ object DailyQuestSpec extends ZIOSpecDefault {
               assertTrue(saved.count == need)
     },
 
+    test("потратил репутацию раньше, чем набрал, — в счёт всё равно идёт всё заработанное после взятия") {
+      val lvl   = 10L
+      val need  = DailyKind.HornReputation.goalFor(lvl)
+      val start = hero(rep = 500L)
+      for {
+        d      <- TestHeroDao.withHero(userId, start)
+        _      <- seed(d, DailyNpc.Horn,
+                    DailyTask(DailyKind.HornReputation, DailyRates.dayOf(noon), goal = need))
+        taken  <- DailyQuestLog.take(d, start, DailyNpc.Horn, noon)
+        // взял наказ и сразу спустил 400 на прокачку — заработанного пока нет
+        spent   = start.copy(guildReputation = 100L)
+        _      <- d.insertHero(spent)
+        _      <- DailyQuestLog.reputationSpent(d, userId, 400L)
+        empty  <- DailyQuestLog.todays(d, spent, DailyNpc.Horn, noon)
+        // потом набрал ровно наказ — потраченное отрабатывать не нужно
+        earned  = spent.copy(guildReputation = 100L + need)
+        _      <- d.insertHero(earned)
+        full   <- DailyQuestLog.todays(d, earned, DailyNpc.Horn, noon)
+      } yield assertTrue(taken.from == 500L) &&
+              assertTrue(empty.from == 100L && empty.count == 0L && !empty.ready) &&
+              assertTrue(full.count == need && full.ready)
+    },
+
+    test("трата репутации двигает мерку только у взятого и не сданного наказа «набрать репутации»") {
+      val day = DailyRates.dayOf(noon)
+      def after(task: DailyTask) =
+        for {
+          d <- dao(hero(rep = 500L))
+          _ <- seed(d, DailyNpc.Horn, task)
+          _ <- DailyQuestLog.reputationSpent(d, userId, 400L)
+          t <- DailyQuestLog.load(d, userId).map(_.of(DailyNpc.Horn).get)
+        } yield t
+      val rep = DailyTask(DailyKind.HornReputation, day, from = 500L, goal = 100L)
+      for {
+        free  <- after(rep)
+        done  <- after(rep.copy(taken = true, done = true))
+        kills <- after(DailyTask(DailyKind.HornKills, day, from = 7L, taken = true))
+        taken <- after(rep.copy(taken = true))
+      } yield // не взят, уже сдан, наказ на убийства — мерка на месте
+              assertTrue(free.from == 500L && done.from == 500L && kills.from == 7L) &&
+              assertTrue(taken.from == 100L)
+    },
+
     test("наказ Горна мерен мешками, и цель не плывёт за уровнем") {
       import pangea.service.state.states.guild.TrophyExchangeState
       val lvl  = 10L

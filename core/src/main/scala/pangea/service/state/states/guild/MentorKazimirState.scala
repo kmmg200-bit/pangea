@@ -11,7 +11,7 @@ import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
 import pangea.service.state.states.InventoryState
 import pangea.service.state.states.merchant.MerchantState
-import pangea.service.state.{CityExit, ItemMenu, NpcQuestDialog, State, UserAction}
+import pangea.service.state.{CityExit, DailyQuestLog, ItemMenu, NpcQuestDialog, State, UserAction}
 import zio.{Task, ZIO}
 
 /** Наставник Казимир — руны на теле. Снимает узор руны с вещи из сумки и
@@ -169,6 +169,7 @@ case class MentorKazimirState(heroDao: HeroDao, inventoryRepo: InventoryReposito
           else for {
             _ <- inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString))
             _ <- heroDao.updateGuildReputation(user.userId, hero.guildReputation - cost)
+            _ <- DailyQuestLog.reputationSpent(heroDao, user.userId, cost)
             _ <- heroDao.updateRunes(user.userId, r.brand(rune))
             // Тайник на теле держит слоты сумки, как надетый Тайник (см. InventoryState.equipmentStashDelta).
             _ <- ZIO.when(rune == Rune.Passive(pangea.model.item.PassiveKind.Stash) && !hero.passives.kinds.contains(pangea.model.item.PassiveKind.Stash))(
