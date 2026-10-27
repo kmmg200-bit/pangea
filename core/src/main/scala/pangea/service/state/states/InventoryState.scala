@@ -26,6 +26,7 @@ import pangea.service.state.states.InventoryState._
 import pangea.service.state.states.home.Racks
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.states.murloc.MurlocVillageState
+import pangea.service.state.states.race.RaceQuestState
 import pangea.service.state.{BeltContents, HerbLore, InventoryFeedback, ItemMenu, MarisaQuest, MurlocQuest, NpcQuestLog, QuestSupport, SlotChoice, State, UiScene, UserAction}
 import zio.{Random, Task, ZIO}
 
@@ -87,14 +88,16 @@ case class InventoryState(
       "UseMurlocMap"      -> Target.Run { (u, _,  r) => useMurlocMap(u, r) },
       // Трактаты Густаво: читать, пока не осилишь.
       "ReadTreatise"      -> Target.Run { (u, _,  r) => readTreatise(u, r) },
-      "IdentifyFlower"    -> Target.Run { (u, _,  r) => identifyFlower(u, r) }
+      "IdentifyFlower"    -> Target.Run { (u, _,  r) => identifyFlower(u, r) },
+      // Купон на смену расы: квест начинается сразу — только из города.
+      "RaceChange"        -> Target.Run { (u, _,  r) => startRaceChange(u, r) }
     ),
     fallback = Target.Run { (u, ua, r) => handleFallback(u, ua, r) }
   )
 
   override def targetStates: Set[StateType] =
     Set(StateType.HeroStats, StateType.Backpack, StateType.Inventory, StateType.Socketing,
-        StateType.MarisaHunt, StateType.MurlocVillage) ++ BackpackOrigins
+        StateType.MarisaHunt, StateType.MurlocVillage, StateType.RaceQuest) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.
@@ -463,6 +466,10 @@ case class InventoryState(
           val text = s"${item.displayTitle}\n${content.format("marisa.difficulty", "difficulty" -> Difficulty.render(MurlocQuest.MapDifficulty))}\n\n${QuestItemKind.MurlocVillageMap.description}"
           Screen(text, List(
             content.choice("UseMurlocMap", "murlocVillage.map.useLabel").copy(color = ChoiceColor.Positive, row = Some(0)), exit))
+        // Купон на смену расы: описание и «Сменить расу» — квест начнётся сразу.
+        case Some(QuestItemKind.RaceCoupon) =>
+          Screen(s"${item.displayTitle}\n\n${QuestItemKind.RaceCoupon.description}", List(
+            content.choice("RaceChange", "raceQuest.useLabel").copy(row = Some(0)), exit))
         // Ключ магической стойки: повернул — надетое и стойка дома меняются местами.
         case Some(key) if QuestItemKind.rackOf(key).isDefined =>
           Screen(s"${item.displayTitle}\n\n${key.description}", List(
@@ -552,6 +559,17 @@ case class InventoryState(
              else if (quests.onStep(NpcQuest.Marisa, 3))
                renderer.show(user, content.screen("marisa.mapTakeMarisa")).as(StateType.Inventory)
              else startHunt(user, renderer, withMarisa = false)
+    } yield res
+
+  /** Купон на смену расы: из города — к выбору расы, дальше квест ведёт
+    * RaceQuestState; не из города — отказ, как у сюжетных карт. */
+  private def startRaceChange(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      from <- heroDao.readReturnState(user.userId)
+      res  <- if (!from.exists(StateType.cityStates.contains))
+                renderer.show(user, Screen(content.text("raceQuest.onlyInCity"), Nil)) *> showList(user, renderer)
+              else
+                heroDao.writeSceneData(user.userId, RaceQuestState.Progress.start.asJson).as(StateType.RaceQuest)
     } yield res
 
   /** Карта деревни мурлоков: только из города; дальше развилку показывает сама деревня. */

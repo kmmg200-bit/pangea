@@ -70,6 +70,7 @@ import pangea.model.state.StateType.{
   MurlocElder,
   MurlocVillage,
   SquadMine,
+  RaceQuest,
   TreasureHunt,
   TreasureMobs,
   TreasureMobsFight,
@@ -131,6 +132,7 @@ import pangea.service.state.states.road.QuestRoadState
 import pangea.service.state.states.events.thieves.{ThievesSpoilsState, ThievesState}
 import pangea.service.state.states.murloc.{MurlocElderState, MurlocVillageState}
 import pangea.service.state.states.lostsquad.SquadMineState
+import pangea.service.state.states.race.RaceQuestState
 import pangea.service.state.states.merchant.MerchantState
 import pangea.service.state.states.gustavo.{
   GustavoBoostState,
@@ -256,7 +258,7 @@ object StatesMap {
           Mail       -> MailState(heroDao, inventoryRepo, parcels, content),
           BankVault  -> BankVaultState(heroDao, inventoryRepo, bankRepo, content, artifacts),
           Auction    -> AuctionState(heroDao, inventoryRepo, itemRepo, auctionRepo, userRepo, bankRepo, payouts, players, content),
-          FetShop    -> FetShopState(heroDao, artifactRepo, inventoryRepo, content),
+          FetShop    -> FetShopState(heroDao, artifactRepo, inventoryRepo, content, Some(itemRepo)),
           Backpack   -> BackpackState(heroDao, inventoryRepo, artifactRepo, content),
           Casket     -> ArtifactState(ArtifactKind.Casket, heroDao, inventoryRepo, itemRepo, artifactRepo, content),
           LivingBag  -> ArtifactState(ArtifactKind.LivingBag, heroDao, inventoryRepo, itemRepo, artifactRepo, content),
@@ -305,6 +307,7 @@ object StatesMap {
           MurlocElder       -> MurlocElderState(heroDao, inventoryRepo, itemRepo, content),
           MurlocVillage     -> MurlocVillageState(heroDao, inventoryRepo, itemRepo, content),
           SquadMine         -> SquadMineState(heroDao, inventoryRepo, itemRepo, content),
+          RaceQuest         -> RaceQuestState(heroDao, inventoryRepo, content),
           Outskirts -> OutskirtsState(
             heroDao,
             inventoryRepo,

@@ -103,7 +103,8 @@ object HomeAlert {
       QuestRoad        -> "дорога по заданию",
       MurlocElder      -> "старейшина мурлоков",
       MurlocVillage    -> "деревня мурлоков",
-      SquadMine        -> "штольня под Серебряной жилой"
+      SquadMine        -> "штольня под Серебряной жилой",
+      RaceQuest        -> "квест смены расы"
     )
   }
 }

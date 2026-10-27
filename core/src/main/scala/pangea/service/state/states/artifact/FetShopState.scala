@@ -5,12 +5,13 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.artifact.{Artifact, ArtifactKind, HeroArtifacts}
 import pangea.model.hero.{FetPotion, Hero}
-import pangea.model.item.{Item, MaterialKind}
+import pangea.model.item.{Item, MaterialKind, QuestItemKind}
 import pangea.model.quest.NpcQuest
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.InventoryRepository
+import pangea.repository.item.ItemRepository
 import pangea.service.state.{CityExit, NpcQuestDialog, State, UserAction}
 import zio.{Task, ZIO}
 
@@ -18,12 +19,15 @@ import zio.{Task, ZIO}
  *  [[HeroArtifacts.StepPriceDoubloons]] дублонов, и за ту же цену Фет трижды
  *  его улучшит — каждая ступень добавляет мест внутри. С краю прилавка — три
  *  зелья ([[FetPotion]]) по [[FetShopState.PotionPriceDoubloons]] дублонов: их
- *  выпивают сразу, при покупке. */
+ *  выпивают сразу, при покупке. И купон на смену расы за
+ *  [[FetShopState.CouponPriceDoubloons]] — он ложится в сумку (см. RaceQuestState). */
 case class FetShopState(
   heroDao:       HeroDao,
   artifacts:     ArtifactRepository,
   inventoryRepo: InventoryRepository,
-  content:       SceneContent
+  content:       SceneContent,
+  // Купон на смену расы — новый предмет в сумке: без хранилища вещей его не продать.
+  itemRepo:      Option[ItemRepository] = None
 ) extends State {
 
   /** «Живая кожа»: кусок с Гнилого Джо — из такого Фет доращивает сумку. */
@@ -41,6 +45,9 @@ case class FetShopState(
       "FetPotion"     -> Target.Run { (u, ua, r) => withPotion(ua)(showPotion(u, _, r)).as(StateType.FetShop) },
       "FetPotionBuy"  -> Target.Run { (u, ua, r) => withPotion(ua)(confirmPotion(u, _, r)).as(StateType.FetShop) },
       "FetPotionYes"  -> Target.Run { (u, ua, r) => withPotion(ua)(drinkPotion(u, _, r)).as(StateType.FetShop) },
+      "FetCoupon"     -> Target.Run { (u, _, r)  => showCoupon(u, r).as(StateType.FetShop) },
+      "FetCouponBuy"  -> Target.Run { (u, _, r)  => confirmCoupon(u, r).as(StateType.FetShop) },
+      "FetCouponYes"  -> Target.Run { (u, _, r)  => buyCoupon(u, r).as(StateType.FetShop) },
       "LeaveFetShop" -> Target.Goto(StateType.TradeHouse),
       CityExit.route
     ),
@@ -64,10 +71,13 @@ case class FetShopState(
         Choice("FetPotion", content.text(s"fet.potions.${p.key}.title"), data = Map("potion" -> p.entryName),
           row = Some(ArtifactKind.values.size + i))
       }
-      val questRow = ArtifactKind.values.size + FetPotion.values.size
+      val couponRow = ArtifactKind.values.size + FetPotion.values.size
+      val coupon    = Option.when(itemRepo.isDefined)(
+                        Choice("FetCoupon", content.text("fet.coupon.title"), row = Some(couponRow)))
+      val questRow = couponRow + coupon.size
       val leaveRow = questRow + quest.button(quests).size
       renderer.show(user, Screen(content.text("fet.counter"),
-        goods ++ potions ++ quest.button(quests).map(_.copy(row = Some(questRow))).toList ++ List(
+        goods ++ potions ++ coupon.toList ++ quest.button(quests).map(_.copy(row = Some(questRow))).toList ++ List(
           Choice("LeaveFetShop", content.text("fet.leave"),
             color = ChoiceColor.Negative, row = Some(leaveRow)),
           CityExit.button(content, Some(leaveRow)))))
@@ -241,6 +251,47 @@ case class FetShopState(
         case None         => ZIO.unit
       }
 
+  // ── Купон на смену расы ───────────────────────────────────────────────────
+
+  private def showCoupon(user: User, renderer: Renderer): Task[Unit] =
+    if (itemRepo.isEmpty) showShop(user, renderer)
+    else renderer.show(user, Screen(content.text("fet.coupon.pitch"), List(
+      Choice("FetCouponBuy", Choice.fit(content.format("fet.buyLabel", "price" -> FetShopState.CouponPriceDoubloons.toString)),
+        color = ChoiceColor.Positive, row = Some(0)),
+      Choice("FetShop", content.text("fet.back"), color = ChoiceColor.Negative, row = Some(1)))))
+
+  private def confirmCoupon(user: User, renderer: Renderer): Task[Unit] =
+    getHero(user).flatMap { hero =>
+      val price = FetShopState.CouponPriceDoubloons
+      if (itemRepo.isEmpty) showShop(user, renderer)
+      else if (hero.doubloons < price)
+        renderer.show(user, Screen(content.format("fet.notEnough", "price" -> price.toString), backRow))
+      else
+        renderer.show(user, Screen(content.format("fet.coupon.confirm", "price" -> price.toString), List(
+          Choice("FetCouponYes", content.text("fet.confirmYes"), color = ChoiceColor.Positive, row = Some(0)),
+          Choice("FetShop", content.text("fet.confirmNo"), color = ChoiceColor.Negative, row = Some(0))
+        ), inline = true))
+    }
+
+  /** Купить купон: дублоны — Фету, купон — в сумку. Места он не занимает, так
+    * что влезает всегда. Дублонов не хватает (старая кнопка) — ничего не тратим. */
+  private def buyCoupon(user: User, renderer: Renderer): Task[Unit] =
+    itemRepo match {
+      case None => showShop(user, renderer)
+      case Some(items) =>
+        getHero(user).flatMap { hero =>
+          val price = FetShopState.CouponPriceDoubloons
+          if (hero.doubloons < price)
+            renderer.show(user, Screen(content.format("fet.notEnough", "price" -> price.toString), backRow))
+          else
+            heroDao.updateDoubloons(user.userId, hero.doubloons - price) *>
+              items.persist(hero.id, QuestItemKind.item(QuestItemKind.RaceCoupon))
+                .flatMap(inventoryRepo.addItem(hero.id, _).mapError(asThrowable)) *>
+              renderer.show(user, Screen(content.text("fet.coupon.done"), Nil)) *>
+              showShop(user, renderer)
+        }
+    }
+
   // ── Вспомогательное ────────────────────────────────────────────────────────
 
   private def backRow: List[Choice] =
@@ -272,6 +323,9 @@ object FetShopState {
 
   /** Почём у Фета каждое зелье. */
   val PotionPriceDoubloons: Long = 100L
+
+  /** Почём купон на смену расы. */
+  val CouponPriceDoubloons: Long = 100L
 
   /** Кожа упыря — остаётся только от Гнилого Джо. */
   def ghoulSkin(item: Item): Boolean = item.material.contains(MaterialKind.GhoulSkin)
