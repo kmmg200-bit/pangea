@@ -251,6 +251,27 @@ final case class Squad(
     if (pos < 1 || pos > AllyRates.Positions || pos == heroPos) this
     else copy(heroPos = pos, allies = allies.map(x => if (x.position == pos) x.copy(position = heroPos) else x))
 
+  /** Двое на одном месте — герой и союзник или два союзника — так быть не
+    * должно: такой строй оставлял сюжетный бой без отряда. Лишний встаёт на
+    * первое свободное место, остальные стоят где стояли. */
+  def repaired: Squad =
+    if (allyAt(heroPos).isEmpty && allies.map(_.position).distinct.size == allies.size) this
+    else {
+      val (placed, _) = allies.foldLeft((Vector.empty[Ally], Set(heroPos))) { case ((acc, taken), a) =>
+        if (!taken.contains(a.position)) (acc :+ a, taken + a.position)
+        else {
+          // Свободное — не занятое ни героем, ни уже вставшими, ни теми, кто
+          // ещё встанет на своё.
+          val busy = taken ++ allies.map(_.position)
+          (1 to AllyRates.Positions).find(p => !busy.contains(p)) match {
+            case Some(p) => (acc :+ a.copy(position = p), taken + p)
+            case None    => (acc :+ a, taken)
+          }
+        }
+      }
+      copy(allies = placed.toList)
+    }
+
   def update(kind: AllyKind)(f: Ally => Ally): Squad =
     copy(allies = allies.map(a => if (a.kind == kind) f(a) else a))
 
@@ -272,7 +293,7 @@ object Squad {
       away    <- c.getOrElse[Map[String, Long]]("away")(Map.empty)
       offDuty <- c.getOrElse[Map[String, Long]]("offDuty")(Map.empty)
       pending <- c.getOrElse[Option[UndeadForm]]("pendingRisen")(None)
-    } yield Squad(heroPos, allies, away, offDuty, pending)
+    } yield Squad(heroPos, allies, away, offDuty, pending).repaired
 
   implicit val meta: Meta[Squad] = new Meta(pgDecoderGet, pgEncoderPut)
 }

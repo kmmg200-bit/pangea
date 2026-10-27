@@ -167,6 +167,19 @@ object SquadSpec extends ZIOSpecDefault {
       assertTrue(Squad(heroPos = 3, allies = List(Ally(AllyKind.Human, 1, 1L, 1L, 1L, 9L))).frontShift == 0)
     },
 
+    test("двое на одном месте при чтении расходятся: лишний — на первое свободное, остальные где стояли") {
+      // герой и Медоус оба на 1 — так оставлял сюжетный бой без отряда
+      val merged = Squad(heroPos = 1, allies = List(Ally(AllyKind.Human, 1, 1L, 1L, 1L, 9L), Ally(AllyKind.Gnome, 3, 1L, 1L, 1L, 9L)))
+      val healed = merged.asJson.as[Squad].toOption
+      // два союзника на одном месте
+      val twins  = Squad(heroPos = 4, allies = List(Ally(AllyKind.Human, 2, 1L, 1L, 1L, 9L), Ally(AllyKind.Gnome, 2, 1L, 1L, 1L, 9L)))
+      val fine   = Squad(heroPos = 2, allies = List(Ally(AllyKind.Human, 1, 1L, 1L, 1L, 9L)))
+      assertTrue(healed.exists(s => s.heroPos == 1 && s.allyAt(2).exists(_.kind == AllyKind.Human) &&
+                                    s.allyAt(3).exists(_.kind == AllyKind.Gnome))) &&
+      assertTrue(twins.repaired.allyAt(2).exists(_.kind == AllyKind.Human) && twins.repaired.allyAt(1).exists(_.kind == AllyKind.Gnome)) &&
+      assertTrue(fine.repaired == fine)
+    },
+
     test("отряд переживает сериализацию, а пустая запись читается как пустой отряд") {
       val s    = Squad(heroPos = 2, allies = List(Ally(AllyKind.Gnome, 1, 10L, 20L, 30L)), away = Map("Human" -> 5L))
       val back = s.asJson.as[Squad].toOption

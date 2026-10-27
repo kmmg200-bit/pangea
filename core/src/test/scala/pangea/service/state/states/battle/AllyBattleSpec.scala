@@ -688,6 +688,19 @@ object AllyBattleSpec extends ZIOSpecDefault {
               assertTrue(updated.squad.allies.size == 1)
     },
 
+    test("бой без отряда (девушка, Мариса) строй не трогает: герой за союзником так и стоит на 2-м, союзник на 1-м") {
+      val h = hero(atk = 100000L, heroPos = 2, allies = List(ally(pos = 1)))
+      for {
+        t <- makeState(h, SoloPveBattle.from(monster(10L), h, squad = false))
+        (state, dao, r) = t
+        _       <- TestRandom.feedInts(60, 99) *> TestRandom.feedLongs(100L)
+        out     <- state.action(testUser, tap("Attack"), r)
+        updated <- dao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(out != StateType.Battle) &&
+              assertTrue(updated.squad.heroPos == 2 && updated.squad.allyAt(1).exists(_.kind == AllyKind.Human)) &&
+              assertTrue(updated.squad.allyAt(2).isEmpty)
+    },
+
     test("раненому доступны фляга и починка: второй вариант — фляга на 30% HP") {
       val h = hero(allies = List(ally(energy = 1000L, hp = Some(500L), armor = Some(500L))))
       for {

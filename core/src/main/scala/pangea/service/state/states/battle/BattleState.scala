@@ -4612,14 +4612,20 @@ case class BattleState(
     val battleEnd = (battle.group.heroPos :: fromSquad.map(_.toAlly.position)).max
     val back      = hero.squad.frontShift.min(pangea.model.squad.AllyRates.Positions - battleEnd).max(0)
     val byHome    = fromSquad.map(a => a.home -> a).toMap
-    val synced0 = left.copy(
-      heroPos = battle.group.heroPos + back,
-      allies  = left.allies.map { old =>
-        byHome.get(old.position).fold(old) { a =>
-          val after = a.toAlly
-          after.copy(position = after.position + back, hiredUntil = old.hiredUntil)
-        }
-      })
+    // Отряда в бою не было — сюжетный бой один на один (девушка, охота Марисы):
+    // герой там всегда на месте 1, и о строе это ничего не говорит. Строй не
+    // трогаем — иначе герой вставал на 1, где уже стоит союзник.
+    val fought  = fromSquad.nonEmpty || battle.group.alliesGone.nonEmpty
+    val synced0 =
+      if (!fought) left
+      else left.copy(
+        heroPos = battle.group.heroPos + back,
+        allies  = left.allies.map { old =>
+          byHome.get(old.position).fold(old) { a =>
+            val after = a.toAlly
+            after.copy(position = after.position + back, hiredUntil = old.hiredUntil)
+          }
+        })
     // Выжившие, пришедшие не из отряда, — в отряд: крыса на сутки, восставший
     // на двое. Крысе мест не нашлось — разбежится, восставший будет ждать
     // ответа, кем за него пожертвовать (см. Squad.admitRisen).
