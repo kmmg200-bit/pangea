@@ -51,34 +51,41 @@ final class ServerLive(
         // второе чтение большого события (длинный текст, пересланные сообщения,
         // посты для конкурса) падало — «Body Has Been Consumed Completely
         // Already». Событие ВК разбираем из того же JSON.
-        json  <- req.as[Json]
-        event  = json.as[VkEvent].toOption
-        _ <- (event match {
-          case Some(value) =>
-            val msg = value.`object`.message
-            // Пароль админ-панели приходит обычным сообщением, а лог отдаётся
-            // наружу — в логе от него остаётся только метка.
-            val logged = AdminPanel.maskSecrets(msg.text, adminConfig.password)
-            ZIO.logInfo(s"peer=${msg.peerId} from=${msg.fromId.getOrElse(0L)} id=${msg.id} cmid=${msg.conversationMessageId.getOrElse(0L)} text=$logged payload=${msg.payload.getOrElse("")}") *>
-              // Беседа — не игрок: её peer_id за героя принимать нельзя, оттуда
-              // мы слушаем только команды вроде «Передать».
-              (if (msg.fromChat) handleChat(msg)
-               else
-                 stateHandler
-                   .makeActionVK(
-                     VkId(msg.peerId.toString),
-                     msg.id,
-                     UserAction(msg.text, msg.payload)
-                   ))
-                // Любая поломка — и ошибка, и падение кода (defect) — в лог
-                // целиком, со стеком и с тем, чьё это сообщение; ВК всё равно
-                // отвечаем «ok», иначе он будет слать то же событие снова.
-                .catchAllCause(ErrorLog.logged(s"VK: сообщение не обработано: peer=${msg.peerId} id=${msg.id}"))
-          case None => groupEvent(json).catchAllCause(ErrorLog.logged("VK: событие группы не обработано"))
-        })
+        json <- req.as[Json]
+        // «ok» — сразу, событие — в фоне. ВК ждёт ответа: не дождавшись, он
+        // повторяет событие, а после череды таймаутов притормаживает отправку
+        // всем игрокам разом. Порядок ходов одного игрока держит его лок,
+        // повтор ВК отсекает номер события. Именно forkDaemon: обычный fork
+        // прервался бы вместе с запросом, как только мы ответим.
+        _    <- handle(json).forkDaemon
         resp <- Ok("ok")
       } yield resp
   }
+
+  /** Событие ВК целиком: сообщение игрока или из беседы — либо событие группы.
+    * Любая поломка — и ошибка, и падение кода (defect) — в лог со всей причиной
+    * и с тем, чьё это сообщение. */
+  private def handle(json: Json): Task[Unit] =
+    json.as[VkEvent].toOption match {
+      case Some(value) =>
+        val msg = value.`object`.message
+        // Пароль админ-панели приходит обычным сообщением, а лог отдаётся
+        // наружу — в логе от него остаётся только метка.
+        val logged = AdminPanel.maskSecrets(msg.text, adminConfig.password)
+        ZIO.logInfo(s"peer=${msg.peerId} from=${msg.fromId.getOrElse(0L)} id=${msg.id} cmid=${msg.conversationMessageId.getOrElse(0L)} text=$logged payload=${msg.payload.getOrElse("")}") *>
+          // Беседа — не игрок: её peer_id за героя принимать нельзя, оттуда
+          // мы слушаем только команды вроде «Передать».
+          (if (msg.fromChat) handleChat(msg)
+           else
+             stateHandler
+               .makeActionVK(
+                 VkId(msg.peerId.toString),
+                 msg.id,
+                 UserAction(msg.text, msg.payload)
+               ))
+            .catchAllCause(ErrorLog.logged(s"VK: сообщение не обработано: peer=${msg.peerId} id=${msg.id}"))
+      case None => groupEvent(json).catchAllCause(ErrorLog.logged("VK: событие группы не обработано"))
+    }
 
   /** Что умеет общая беседа: «Передать» в ответ (или пересылкой) на
     * сообщение того, кому передают, команды о себе — «Мой профиль» и «Моё
