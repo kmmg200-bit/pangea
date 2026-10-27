@@ -133,7 +133,7 @@ object FlowerMeadowSpec extends ZIOSpecDefault {
               assertTrue(all.contains("обобрана"))
     },
 
-    test("редкая трава (2%) без знаний 2 ранга — тоже странная, а с ними — по имени") {
+    test("редкая трава (2%) без знаний 2 ранга — «Необычный цветок», а с ними — по имени") {
       for {
         t <- meadow(hero(), LoreData.empty.learn(Knowledge.FlowersRank1, alone = false))
         (state, dao, inv, _, r) = t
@@ -145,10 +145,10 @@ object FlowerMeadowSpec extends ZIOSpecDefault {
         _   <- TestRandom.feedInts(50, 2, 0) *> TestRandom.feedLongs(120000L)
         _   <- state.action(testUser, tap("FlowerFind"), r)
         names = inv.snapshot.map(_.name)
-      } yield assertTrue(names == List("Странный цветок", MaterialKind.herbsOfRank(2)(0).displayName))
+      } yield assertTrue(names == List("Необычный цветок", MaterialKind.herbsOfRank(2)(0).displayName))
     },
 
-    test("догадка о редких травах — вдвое реже: интеллект ÷ 8, и только когда простые уже знакомы") {
+    test("догадка о редких травах — по необычному цветку и вдвое реже: интеллект ÷ 8") {
       val rank1 = LoreData.empty.learn(Knowledge.FlowersRank1, alone = false)
       for {
         t <- meadow(hero(int = 40L), rank1)
@@ -168,10 +168,10 @@ object FlowerMeadowSpec extends ZIOSpecDefault {
               assertTrue(!miss.knows(Knowledge.FlowersRank2)) &&
               assertTrue(hit.knows(Knowledge.FlowersRank2) && hit.learnedAlone(Knowledge.FlowersRank2)) &&
               assertTrue(all.contains("узнаю и редкие цветы")) &&
-              // не зная простых, по редкому цветку догадываются сперва о простых
-              assertTrue(HerbLore.insightTarget(LoreData.empty).contains(Knowledge.FlowersRank1)) &&
-              assertTrue(HerbLore.insightTarget(rank1).contains(Knowledge.FlowersRank2)) &&
-              assertTrue(HerbLore.insightTarget(rank1.learn(Knowledge.FlowersRank2, alone = false)).isEmpty)
+              // по странному — о простых, по необычному — о редких; что знаешь, о том не догадываются
+              assertTrue(HerbLore.insightTarget(LoreData.empty, MaterialKind.StrangeFlower).contains(Knowledge.FlowersRank1)) &&
+              assertTrue(HerbLore.insightTarget(rank1, MaterialKind.UnusualFlower).contains(Knowledge.FlowersRank2)) &&
+              assertTrue(HerbLore.insightTarget(rank1.learn(Knowledge.FlowersRank2, alone = false), MaterialKind.UnusualFlower).isEmpty)
     },
 
     test("Нераскрытая роза — обычная трава второго ранга: седьмая в общем списке редких") {

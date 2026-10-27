@@ -85,7 +85,8 @@ case class InventoryState(
       // «Деревня Мурлоков»: по карте старейшины — к развилке (налёт или помощь).
       "UseMurlocMap"      -> Target.Run { (u, _,  r) => useMurlocMap(u, r) },
       // Трактаты Густаво: читать, пока не осилишь.
-      "ReadTreatise"      -> Target.Run { (u, _,  r) => readTreatise(u, r) }
+      "ReadTreatise"      -> Target.Run { (u, _,  r) => readTreatise(u, r) },
+      "IdentifyFlower"    -> Target.Run { (u, _,  r) => identifyFlower(u, r) }
     ),
     fallback = Target.Run { (u, ua, r) => handleFallback(u, ua, r) }
   )
@@ -192,6 +193,9 @@ case class InventoryState(
             Option.when(isPurse)(content.choice("PurseOpen", "purse.open").copy(row = Some(0))),
             Option.when(canBreak)(content.choice("BreakGem", "inventory.breakGem").copy(color = ChoiceColor.Negative, row = Some(0))),
             Option.when(canSocket)(content.choice("CrushGem", "inventory.crushGem").copy(color = ChoiceColor.Negative, row = Some(0))),
+            // Неопознанный цветок — приглядеться к нему ещё раз (см. HerbLore.identify).
+            Option.when(item.material.exists(MaterialKind.isUnknownFlower))(
+              content.choice("IdentifyFlower", "knowledge.identifyLabel").copy(color = ChoiceColor.Positive, row = Some(0))),
             // Пыль сыплется на оружие: разовое покрытие на один бой.
             Option.when(item.material.exists(_.gem.isDefined))(
               content.choice("DustWeapon", "inventory.dustWeapon").copy(color = ChoiceColor.Positive, row = Some(0))),
@@ -917,6 +921,25 @@ case class InventoryState(
         case Some(item) => f(stackOf(inv.items.data, item).lastOption.getOrElse(item), hero)
       }
     } yield res
+
+  // ── Опознать цветок ────────────────────────────────────────────────────────
+
+  /** Странный или необычный цветок: знаешь ранг — он становится травой и
+    * показывается её карточка; не знаешь — рассыпается, а бросок на догадку идёт
+    * тот же, что при сборе. */
+  private def identifyFlower(user: User, renderer: Renderer): Task[StateType] =
+    withSelected(user, renderer) { (item, hero) =>
+      item.material.filter(MaterialKind.isUnknownFlower) match {
+        case None => showItem(user, item.id, renderer)
+        case Some(kind) =>
+          for {
+            now <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
+            res <- HerbLore.identify(heroDao, inventoryRepo, content, user, hero, item, kind, now)
+            _   <- renderer.show(user, Screen(res.lines.mkString("\n"), Nil))
+            s   <- res.herb.fold(showList(user, renderer))(h => showItem(user, h.id, renderer))
+          } yield s
+      }
+    }
 
   // ── Пыль на оружие ─────────────────────────────────────────────────────────
 

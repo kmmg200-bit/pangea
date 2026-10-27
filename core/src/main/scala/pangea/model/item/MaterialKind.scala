@@ -19,15 +19,15 @@ sealed abstract class MaterialKind(val displayName: String) extends EnumEntry {
     * покрывает оружие. У прочих материалов — None. */
   val gem: Option[GemKind] = None
 
-  /** Ранг травы (1 — простая, 2 — редкая); 0 — не трава. «Странный цветок» —
-    * трава без ранга: герой не понял, что сорвал. */
+  /** Ранг травы (1 — простая, 2 — редкая); 0 — не трава. «Странный» и
+    * «Необычный» цветки — травы без ранга: герой не понял, что сорвал. */
   val herbRank: Int = 0
 
   /** Множитель цены травы у Густаво. */
   val herbModifier: Int = 0
 
   /** Трава: собирается на поляне, сдаётся Густаво, Ришелье её не берёт. */
-  def isHerb: Boolean = this == MaterialKind.StrangeFlower || herbRank > 0
+  def isHerb: Boolean = this == MaterialKind.StrangeFlower || this == MaterialKind.UnusualFlower || herbRank > 0
 
   /** Добыча, за которую не платят: Ришелье такое не берёт, и серебра за него
    *  не выручить. Место в сумке оно занимает как всё прочее — носят его ради
@@ -125,9 +125,14 @@ object MaterialKind extends Enum[MaterialKind] {
 
   // ── Травы с поляны цветов ────────────────────────────────────────────────
 
-  /** Сорвано без понимания — таким трава становится, пока герой её не знает. */
+  /** Сорвано без понимания — такой становится простая трава, пока герой её не знает. */
   case object StrangeFlower extends MaterialKind("Странный цветок") {
     override val description: String = "Этот цветок отличался от других, что там росли… но я правда не знаю, ценный ли он…"
+  }
+
+  /** Сорвано без понимания — такой становится редкая трава, пока герой её не знает. */
+  case object UnusualFlower extends MaterialKind("Необычный цветок") {
+    override val description: String = "Таких цветов мне ещё не попадалось: лепестки будто светятся изнутри, а стебель холодный, как металл… Что это и чего стоит — без знаний не понять."
   }
 
   sealed abstract class Herb(name: String, rank: Int, modifier: Int, text: String) extends MaterialKind(name) {
@@ -243,6 +248,19 @@ object MaterialKind extends Enum[MaterialKind] {
 
   /** Травы данного ранга — из них выбирается находка на поляне. */
   def herbsOfRank(rank: Int): IndexedSeq[MaterialKind] = values.filter(_.herbRank == rank)
+
+  /** Ранг травы, которой на деле был неопознанный цветок: странный — простая,
+    * необычный — редкая. У прочего — None. */
+  def unknownFlowerRank(kind: MaterialKind): Option[Int] = kind match {
+    case StrangeFlower => Some(1)
+    case UnusualFlower => Some(2)
+    case _             => None
+  }
+
+  def isUnknownFlower(kind: MaterialKind): Boolean = unknownFlowerRank(kind).isDefined
+
+  /** Каким цветком видит траву этого ранга тот, кто её не знает. */
+  def unknownFlower(rank: Int): MaterialKind = if (rank >= 2) UnusualFlower else StrangeFlower
 
   /** Пыль, которая остаётся от камня этого вида. */
   def dustOf(kind: GemKind): MaterialKind =
