@@ -30,9 +30,11 @@ trait Api {
 }
 
 object Api {
-  val vk: ZLayer[VkConfig with SendFailureDao, Throwable, VkApi] = ZLayer.fromZIO(for {
+  // Клиент живёт, пока жив слой: пул соединений с ВК не закрывается сразу
+  // после создания (см. Client.scoped).
+  val vk: ZLayer[VkConfig with SendFailureDao, Throwable, VkApi] = ZLayer.scoped(for {
     config   <- ZIO.service[VkConfig]
     failures <- ZIO.service[SendFailureDao]
-    client   <- pangea.client.Client.make
+    client   <- pangea.client.Client.scoped
   } yield new VkApi(client, config, failures))
 }
