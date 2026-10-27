@@ -178,12 +178,38 @@ object LootStateSpec extends ZIOSpecDefault {
       } yield assertTrue(result == StateType.Dungeon)
     },
 
-    test("неизвестный ввод → уходит в Dungeon") {
+    test("посторонний ввод не пропускает добычу: тот же экран ещё раз, вещи ждут, серебро не задваивается") {
       for {
-        t <- makeState(LootData(Nil, Nil))
-        (state, renderer, _, _) = t
+        t <- makeState(LootData(items = List(gear("Шлем"), trophy), silvers = List(30L)))
+        (state, renderer, heroDao, invRepo) = t
+        _      <- state.enter(testUser, renderer)
+        typed  <- state.action(testUser, UserAction("что угодно", None), renderer)
+        again  <- renderer.sentScreens.map(_.last)
+        stale  <- state.action(testUser, tap("Attack"), renderer)
+        again2 <- renderer.sentScreens.map(_.last)
+        loot   <- heroDao.readSceneData(userId).map(_.flatMap(_.as[LootData].toOption))
+        hero   <- heroDao.getHeroByUserId(userId)
+        took   <- state.action(testUser, tap("Take"), renderer)
+      } yield assertTrue(typed == StateType.Loot && stale == StateType.Loot) &&
+              assertTrue(again.text.contains("Осматривая добычу") && again.choices.map(_.id).toSet == Set("Take", "Leave")) &&
+              assertTrue(again2.choices.map(_.id).toSet == Set("Take", "Leave")) &&
+              assertTrue(loot.exists(_.items.size == 2) && hero.exists(_.silver == 100L + 30L)) &&
+              // нужная кнопка, как и прежде, разбирает добычу
+              assertTrue(took == StateType.Dungeon && invRepo.snapshot.size == 2)
+    },
+
+    test("добыча без вещей тоже ждёт «Продолжить»: посторонний ввод повторяет экран") {
+      for {
+        t <- makeState(LootData(Nil, List(15L)))
+        (state, renderer, heroDao, _) = t
+        _      <- state.enter(testUser, renderer)
         result <- state.action(testUser, UserAction("что угодно", None), renderer)
-      } yield assertTrue(result == StateType.Dungeon)
+        again  <- renderer.sentScreens.map(_.last)
+        hero   <- heroDao.getHeroByUserId(userId)
+        next   <- state.action(testUser, tap("Continue"), renderer)
+      } yield assertTrue(result == StateType.Loot && again.choices.map(_.id) == List("Continue")) &&
+              assertTrue(again.text.contains("15") && hero.exists(_.silver == 115L)) &&
+              assertTrue(next == StateType.Dungeon)
     },
 
     test("группа: над добычей имя павшего, «Забрать» ведёт к следующему; павший без вещей проскакивает сам; последний — наружу") {

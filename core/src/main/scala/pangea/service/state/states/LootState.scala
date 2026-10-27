@@ -51,7 +51,9 @@ case class LootState(
       "Leave"    -> Target.Run { (user, _, renderer) => leaveLoot(user, renderer) },
       "Continue" -> Target.Run { (user, _, renderer) => readLoot(user).flatMap(finish(user, _, renderer)) }
     ),
-    fallback = Target.Run { (user, _, renderer) => readLoot(user).flatMap(finish(user, _, renderer)) }
+    // Написал текст или нажал старую кнопку — добычу не пропускаем: тот же
+    // экран ещё раз, пока не нажата одна из его кнопок (см. repeat).
+    fallback = Target.Run { (user, _, renderer) => repeat(user, renderer) }
   )
 
   // Добыча этого павшего разобрана. Если в очереди есть следующий — его экран
@@ -87,14 +89,9 @@ case class LootState(
       _        <- ZIO.when(loot.doubloons > 0L)(heroDao.updateDoubloons(user.userId, hero.doubloons + loot.doubloons))
       currency  = currencyLines(hero, loot)
 
-      empty = loot.monsterName match {
-        case Some(name) => content.format("loot.groupEmpty", "monster" -> name)
-        case None       => content.text("loot.empty")
-      }
       _ <- if (loot.items.isEmpty) {
              // выбирать нечего — только серебро/дублоны (или совсем пусто)
-             val text = if (currency.isEmpty) empty
-                        else header(loot) + "\n\n" + currency.mkString("\n")
+             val text = noItemsText(loot, currency)
              journal.append(GameEvent(user.userId, "loot_claimed",
                Json.obj("silver" -> silverTotal.asJson, "items" -> loot.items.map(_.name).asJson))) *>
                // В группе, пока павшие ещё есть, решать нечего — сообщение и сразу следующий.
@@ -104,6 +101,25 @@ case class LootState(
              // серебро/дублоны уже в кошельке; по предметам спрашиваем
              renderer.show(user, previewScreen(hero, loot))
     } yield ()
+
+  /** Экран добычи без вещей: только серебро и дублоны — или совсем пусто. */
+  private def noItemsText(loot: LootData, currency: List[String]): String =
+    if (currency.nonEmpty) header(loot) + "\n\n" + currency.mkString("\n")
+    else loot.monsterName match {
+      case Some(name) => content.format("loot.groupEmpty", "monster" -> name)
+      case None       => content.text("loot.empty")
+    }
+
+  /** Тот же экран добычи ещё раз — на посторонний ввод: текст, чужая или старая
+    * кнопка. Вещи ждут решения, пока игрок не нажмёт «Забрать», «Оставить» или
+    * «Продолжить»; серебро второй раз не начисляется. */
+  private def repeat(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      hero <- getHero(user)
+      loot <- readLoot(user)
+      _    <- if (loot.items.nonEmpty) renderer.show(user, previewScreen(hero, loot))
+              else renderer.show(user, Screen(noItemsText(loot, currencyLines(hero, loot)), content.screen("loot.enter").choices))
+    } yield StateType.Loot
 
   /** Серебро с добычи: «Спаситель Марисы» получает на десятую больше. */
   private def silvers(hero: Hero, loot: LootData): List[Long] =
