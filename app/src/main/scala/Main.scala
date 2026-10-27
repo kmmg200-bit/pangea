@@ -51,8 +51,11 @@ import java.util.concurrent.TimeUnit
 
 object Main extends ZIOAppDefault {
 
+  // Необработанная ошибка любого fiber'а (фоновые задачи, forkDaemon) — в лог
+  // уровнем ERROR со всей причиной: по умолчанию ZIO пишет её в DEBUG, а его в
+  // логе не видно.
   override val bootstrap: ZLayer[ZIOAppArgs, Nothing, Unit] =
-    Runtime.removeDefaultLoggers >>> SLF4J.slf4j
+    (Runtime.removeDefaultLoggers >>> SLF4J.slf4j) ++ Runtime.setUnhandledErrorLogLevel(LogLevel.Error)
 
   private type Env = Server with SchedulerPoller with Donations with ActivityContest with Transfers
 
@@ -155,6 +158,8 @@ object Main extends ZIOAppDefault {
       _      <- ZIO.serviceWithZIO[Server](_.run())
     } yield ()
 
+  // Сервер упал целиком (не поднялся слой, не открылся порт) — причина в лог,
+  // а не только в консоль.
   override def run: ZIO[ZIOAppArgs with Scope, Any, Any] =
-    program.provideLayer(env)
+    program.provideLayer(env).tapErrorCause(cause => ZIO.logErrorCause("Сервер остановился с ошибкой", cause))
 }

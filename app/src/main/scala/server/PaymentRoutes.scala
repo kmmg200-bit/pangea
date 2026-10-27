@@ -4,6 +4,7 @@ import io.circe.Json
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 import org.http4s.dsl.Http4sDsl
+import pangea.service.ErrorLog
 import pangea.service.donation.Donations
 import zio.interop.catz._
 import zio.{Task, ZIO}
@@ -38,17 +39,19 @@ final class PaymentRoutes(donations: Donations) {
           case Donations.Notified.Granted(payment) =>
             // Письмо игроку не должно задерживать ответ банку: он ждёт его 10
             // секунд, а дублоны к этому моменту уже начислены.
-            donations.announce(payment).forkDaemon *> accepted
+            donations.announce(payment)
+              .catchAllCause(ErrorLog.logged(s"donation: письмо о зачислении не ушло: ${payment.orderId.value}"))
+              .forkDaemon *> accepted
 
           // Заказ не найден, сумма не та, тело не объект — повтор это не
           // вылечит, а слать его банк будет месяц. Отвечаем `OK` и шумим в лог.
           case Donations.Notified.Ignored(_) => accepted
           case Donations.Notified.Accepted   => accepted
         }
-      } yield resp).catchAll { err =>
+      } yield resp).catchAllCause { cause =>
         // Своя поломка (упала база, например) — единственный случай, когда
         // повтор нотификации действительно нужен.
-        ZIO.logError(s"donation: нотификация не обработана: ${err.getMessage}") *>
+        ErrorLog.logged("donation: нотификация не обработана")(cause) *>
           InternalServerError("retry later")
       }
   }

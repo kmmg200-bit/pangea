@@ -20,15 +20,19 @@ class SchedulerPollerLive(dao: ScheduledTaskDao, handler: StateHandler) extends 
   override def start: Task[Unit] =
     (poll.catchAllCause(c => ZIO.logErrorCause("Scheduler poll failed", c)) *> ZIO.sleep(PollInterval)).forever
 
-  /** Исполнить одну задачу и проставить итоговый статус. */
+  /** Исполнить одну задачу и проставить итоговый статус. Поломка — и ошибка,
+    * и падение кода (defect) — это попытка: причина целиком в лог, после
+    * [[MaxAttempts]] задача мертва. Раньше падение кода проходило мимо: задача
+    * оставалась в очереди навсегда, а те, что за ней в партии, не исполнялись. */
   private def process(task: ScheduledTask): Task[Unit] = {
     val ua = UserAction(text = "", payload = Some(task.action))
     handler
       .runScheduled(task.userId, task.expectedState, ua)
-      .foldZIO(
-        err =>
-          dao.bumpAttempts(task.id).flatMap { attempts =>
-            ZIO.logError(s"Scheduled task ${task.id} (${task.kind}) failed, attempt $attempts: ${err.getMessage}") *>
+      .foldCauseZIO(
+        cause =>
+          if (cause.isInterruptedOnly) ZIO.refailCause(cause)
+          else dao.bumpAttempts(task.id).flatMap { attempts =>
+            ZIO.logErrorCause(s"Scheduled task ${task.id} (${task.kind}) failed, attempt $attempts", cause) *>
               ZIO.when(attempts >= MaxAttempts)(dao.markDead(task.id)).unit
           },
         _ => dao.markDone(task.id)

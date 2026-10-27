@@ -12,6 +12,7 @@ import pangea.service.activity.{ActivityContest, GroupEvent}
 import pangea.service.admin.{AdminPanel, HomeAlert}
 import pangea.engine.SceneContent
 import pangea.service.referral.Referrals
+import pangea.service.ErrorLog
 import pangea.service.chat.{ChatCommand, ChatProfile, Links}
 import pangea.service.parcel.{Parcels, TransferTarget, Transfers}
 import pangea.service.payout.Payouts
@@ -211,9 +212,9 @@ class StateHandler(
       case Some(refusal) => api.sendMessage(sender, refusal, List.empty, None).as(None)
       case None =>
         ZIO.some(
-          lock.withLock(to.userId)(transfers.giveDoubloons(to, amount)).foldZIO(
-            err =>
-              ZIO.logError(s"Дублоны не дошли до ${to.userId.value}: ${err.getMessage}") *>
+          lock.withLock(to.userId)(transfers.giveDoubloons(to, amount)).foldCauseZIO(
+            cause =>
+              ErrorLog.logged(s"Дублоны не дошли до ${to.userId.value}")(cause) *>
                 lock.withLock(sender.userId)(transfers.returnDoubloons(sender, amount)) *>
                 api.sendMessage(sender, content.text("transfer.money.failed"), List.empty, None).unit,
             _ =>
@@ -304,10 +305,10 @@ class StateHandler(
       messageId: Option[Long] = None
   ): Task[Unit] =
     makeAction(user, action, renderer, messageId)
-      .catchAll(err =>
-        ZIO.logError(
-          s"Error occurred while making action: ${err.getMessage}"
-        ) *>
+      // Любая поломка хода — и ошибка, и падение кода (defect): причина целиком
+      // в лог, игроку — что делать дальше.
+      .catchAllCause(cause =>
+        ErrorLog.logged(s"Ход игрока ${user.userId.value} не обработан")(cause) *>
           api.sendMessage(
             user,
             "Произошла ошибка, пропишите /home или обратитесь в техподдержку",

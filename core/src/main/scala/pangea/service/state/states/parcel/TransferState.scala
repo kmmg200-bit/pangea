@@ -11,6 +11,7 @@ import pangea.model.state.StateType
 import pangea.model.user.{User, UserId}
 import pangea.repository.inventory.InventoryRepository
 import pangea.service.parcel.{TransferTarget, Transfers}
+import pangea.service.ErrorLog
 import pangea.service.state.states.parcel.TransferState._
 import pangea.service.state.{ItemMenu, State, UserAction}
 import zio.{Task, ZIO}
@@ -137,7 +138,9 @@ case class TransferState(
             shipment <- transfers.send(user, hero, target, batch(inv.items.data, item, scene.count), now)
             // Доставка ждёт лок получателя, а наш занят этим ходом — пусть
             // идёт отдельно и начнётся, как только получатель освободится.
-            _        <- shipment.handOver.forkDaemon
+            _        <- shipment.handOver
+                          .catchAllCause(ErrorLog.logged(s"Передача ${user.userId.value} → ${scene.toUserId}: доставка не прошла"))
+                          .forkDaemon
             _        <- renderer.show(user, Screen(content.format("transfer.sent",
                           "name" -> item.displayTitle, "count" -> shipment.items.size.toString, "to" -> scene.toName), Nil))
             next     <- leave(user, renderer)

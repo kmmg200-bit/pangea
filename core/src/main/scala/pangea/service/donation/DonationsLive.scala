@@ -8,8 +8,9 @@ import pangea.model.GameEvent
 import pangea.model.payment.{DonationSku, OrderId, Payment, PaymentStatus}
 import pangea.model.user.{User, UserId}
 import pangea.repository.user.UserRepository
+import pangea.service.ErrorLog
 import pangea.service.sender.Api
-import zio.{Random, Task, ZIO}
+import zio.{Cause, Random, Task, ZIO}
 
 final case class DonationsLive(
   config:   TBankConfig,
@@ -114,7 +115,7 @@ final case class DonationsLive(
 
         case (None, Left(error)) =>
           payments.setStatus(orderId, PaymentStatus.Rejected, "INIT_ERROR", now) *>
-            ZIO.logError(s"donation: Init упал по заказу ${orderId.value}: ${error.getMessage}") *>
+            ZIO.logErrorCause(s"donation: Init упал по заказу ${orderId.value}", Cause.fail(error)) *>
             ZIO.succeed(Donations.Start.Unavailable)
       }
     } yield start
@@ -234,7 +235,7 @@ final case class DonationsLive(
         step.flatMap {
           case Donations.Settle.Granted(_) => announce(payment)
           case _                           => ZIO.unit
-        }.catchAll(err => ZIO.logError(s"donation: сверка ${payment.orderId.value} упала: ${err.getMessage}"))
+        }.catchAllCause(ErrorLog.logged(s"donation: сверка ${payment.orderId.value} упала"))
       }
     }
 }

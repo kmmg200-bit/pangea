@@ -9,6 +9,7 @@ import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.implicits._
 import org.http4s.{HttpApp, HttpRoutes}
 import pangea.model.user.VkId
+import pangea.service.ErrorLog
 import pangea.service.admin.{AdminConfig, AdminPanel}
 import pangea.service.donation.Donations
 import pangea.service.state.{StateHandler, UserAction}
@@ -65,11 +66,12 @@ final class ServerLive(
                      msg.id,
                      UserAction(msg.text, msg.payload)
                    ))
-                .catchAll(err => ZIO.logError(err.getMessage))
-          case None => groupEvent(json)
-        }).catchAll { err =>
-          ZIO.logError(s"error occurred: $err")
-        }
+                // Любая поломка — и ошибка, и падение кода (defect) — в лог
+                // целиком, со стеком и с тем, чьё это сообщение; ВК всё равно
+                // отвечаем «ok», иначе он будет слать то же событие снова.
+                .catchAllCause(ErrorLog.logged(s"VK: сообщение не обработано: peer=${msg.peerId} id=${msg.id}"))
+          case None => groupEvent(json).catchAllCause(ErrorLog.logged("VK: событие группы не обработано"))
+        })
         resp <- Ok("ok")
       } yield resp
   }
@@ -109,7 +111,17 @@ final class ServerLive(
       case _ => ZIO.attempt(println(json.noSpaces))
     }
 
-  private val httpApp: HttpApp[Task] = (routes <+> payments.routes <+> logs.routes).orNotFound
+  // Последний рубеж: что бы ни уронило любой роут — ВК, кассу, логи, — причина
+  // целиком уходит в лог, клиенту — 500. В лог — только путь: в запросе к логам
+  // в параметрах лежит пароль.
+  private val httpApp: HttpApp[Task] = {
+    val app = (routes <+> payments.routes <+> logs.routes).orNotFound
+    HttpApp[Task] { req =>
+      app.run(req).catchAllCause { cause =>
+        ErrorLog.logged(s"HTTP ${req.method} ${req.uri.path}: запрос не обработан")(cause) *> InternalServerError()
+      }
+    }
+  }
 
   override def run(): UIO[Unit] = {
     // Явный Network[Task] вместо устаревшего неявного implicitForAsync (http4s 3.7.0).

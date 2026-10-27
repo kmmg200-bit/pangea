@@ -11,6 +11,7 @@ import pangea.model.user.{User, VkId}
 import pangea.model.vk.Attachment
 import pangea.model.vk.keyboard.Keyboard
 import pangea.model.vk.model.UserResponse
+import pangea.service.ErrorLog
 import pangea.service.sender.Api
 import pangea.service.sender.vk.config.VkConfig
 import zio.interop.catz._
@@ -98,7 +99,7 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
           .run(request)
           .use(res => res.bodyText.compile.toList.map(_.mkString("")).flatMap(VkApi.failOnBadResponse(res.status, _)))
           .retry(sendRetry)
-          .tapError(err => ZIO.logError(s"vk chat announce failed: ${err.getMessage}"))
+          .tapErrorCause(ErrorLog.logged("vk chat announce failed"))
           .orElse(ZIO.unit)
     }
 

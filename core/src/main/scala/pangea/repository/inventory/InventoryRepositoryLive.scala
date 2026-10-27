@@ -1,5 +1,6 @@
 package pangea.repository.inventory
 
+import pangea.service.ErrorLog
 import pangea.dao.inventory.InventoryDao
 import pangea.model.hero.HeroId
 import pangea.model.inventory.Inventory
@@ -17,7 +18,7 @@ final class InventoryRepositoryLive(inventoryDao: InventoryDao)
     (for {
       inventory <- inventoryDao
         .get(heroId)
-        .tapError(err => ZIO.logError(s"Error occurred: ${err.getMessage}"))
+        .tapErrorCause(ErrorLog.logged(s"Сумка героя ${heroId.value} не прочиталась"))
         .orElseFail(InventoryRepoError.CantFindInventory)
       updatedInventory <-
         // Сюжетный предмет места не занимает и кладётся всегда; пыль и малые
