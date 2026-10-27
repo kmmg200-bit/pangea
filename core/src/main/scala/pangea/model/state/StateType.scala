@@ -45,6 +45,8 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
    *  мере спуска. Чего здесь нет, то встречается с первого уровня. У закрытого
    *  события в пуле нет ни одного билета, поэтому доли остальных выше. */
   val EventMinLevel: Map[StateType, Int] = Map(
+    SilverVein    -> 2,  // первый уровень — только бои и находки
+    TreasureDig   -> 2,  // в схроне может ждать Гнилой Джо
     Girl          -> 5,  // групповые бои
     TreasureMobs  -> 5,
     ElementalLair -> 7,  // минибосс

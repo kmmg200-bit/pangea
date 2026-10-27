@@ -155,15 +155,17 @@ object DungeonStateSpec extends ZIOSpecDefault {
       assertTrue(StateType.events.size == 100 && StateType.events.distinct.size == 11)
     },
 
-    test("события открываются по мере спуска: девушка и мобы с сокровищем с 5-го, элементаль с 7-го, пещера и караван с 10-го") {
+    test("события открываются по мере спуска: жила и схрон со 2-го, девушка и мобы с сокровищем с 5-го, элементаль с 7-го, пещера и караван с 10-го") {
       def at(lvl: Int): Set[StateType] = StateType.eventsAt(lvl, 1.0).toSet
       val first = at(1)
+      val second = Set[StateType](StateType.SilverVein, StateType.TreasureDig)
       val group = Set[StateType](StateType.Girl, StateType.TreasureMobs)
       val deep  = Set[StateType](StateType.MonsterCave, StateType.Caravan)
       val (l4, l5, l6, l7, l9, l10) = (at(4), at(5), at(6), at(7), at(9), at(10))
-      // наверху — только то, что было с самого начала
+      // на первом уровне — бои, находки, луг и ручей; жила и схрон — со второго
       assertTrue(first == Set[StateType](StateType.Battle, StateType.FlowerMeadow, StateType.FoundItem,
-        StateType.Spring, StateType.SilverVein, StateType.TreasureDig)) &&
+        StateType.Spring)) &&
+      assertTrue(second.subsetOf(at(2)) && at(2) == first ++ second) &&
       assertTrue(l4.intersect(group).isEmpty && group.subsetOf(l5)) &&
       assertTrue(!l6.contains(StateType.ElementalLair) && l7.contains(StateType.ElementalLair)) &&
       assertTrue(l9.intersect(deep).isEmpty && deep.subsetOf(l10)) &&
