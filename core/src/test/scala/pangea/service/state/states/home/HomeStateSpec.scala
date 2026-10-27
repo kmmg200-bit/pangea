@@ -9,8 +9,9 @@ import pangea.model.state.StateType
 import pangea.model.stats.{FightStats, ParamsBuff, StatBoost, StatBoosts}
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.state.UserAction
-import pangea.service.state.states.GlobalMapState
-import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestRenderer, TestScheduler}
+import pangea.model.item.{ItemType, Rarity}
+import pangea.service.state.states.{GlobalMapState, LootState}
+import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestJournal, TestRenderer, TestScheduler}
 import zio.test._
 import zio.{Task, ZIO, durationInt}
 
@@ -42,6 +43,8 @@ object HomeStateSpec extends ZIOSpecDefault {
   private def heroOf(dao: TestHeroDao) = dao.getHeroByUserId(userId).map(_.get)
   private def last(r: TestRenderer)    = r.sentScreens.map(_.last)
   private def texts(r: TestRenderer)   = r.sentScreens.map(_.map(_.text).mkString("\n"))
+  private def lootOf(dao: TestHeroDao): Task[Option[LootState.LootData]] =
+    dao.readSceneData(userId).map(_.flatMap(_.as[LootState.LootData].toOption))
 
   override def spec = suite("Дом")(
 
@@ -333,13 +336,15 @@ object HomeStateSpec extends ZIOSpecDefault {
         _       <- state.action(testUser, tap(HomeState.CleanStopKey), r)
         paused  <- homeOf(dao)
         said    <- texts(r)
+        noFind  <- lootOf(dao)
         // взялся снова — таймер на оставшиеся три часа; он и доделывает
         _       <- state.action(testUser, tap("HomeClean"), r)
         timer2  <- sch.scheduled.map(_.last)
         _       <- TestClock.adjust(3.hours)
-        _       <- state.action(testUser, UserAction("", Some(HomeState.CleanStopAction)), r)
+        out     <- state.action(testUser, UserAction("", Some(HomeState.CleanStopAction)), r)
         done    <- homeOf(dao)
         end     <- texts(r)
+        find    <- lootOf(dao)
       } yield assertTrue(working.text.contains("Вы разбираете хлам") && working.text.contains("4 ч 0 мин") &&
                 working.choices.map(_.id) == List(HomeState.CleanStopKey)) &&
               assertTrue(timer.kind == TaskKind.HomeClean && timer.fireAt == 4L * 3600000L &&
@@ -347,7 +352,27 @@ object HomeStateSpec extends ZIOSpecDefault {
               assertTrue(locked.text.contains("Вы разбираете хлам")) &&
               assertTrue(paused.cleanedMs == 3600000L && paused.hasClutter && said.contains("Осталось разобрать: 3 ч")) &&
               assertTrue(timer2.fireAt == 3600000L + 3L * 3600000L) &&
-              assertTrue(!done.hasClutter && done.slotsFree == 2 && end.contains("Хлам разобран"))
+              assertTrue(!done.hasClutter && done.slotsFree == 2 && end.contains("Хлам разобран")) &&
+              // разобрал сам — находка: пурпурная вещь 4-го уровня на экране добычи, потом домой
+              assertTrue(noFind.isEmpty && out == StateType.Loot) &&
+              assertTrue(find.exists(l => l.items.size == 1 && l.items.forall(i => i.lvl == 4L &&
+                i.rarity == Rarity.Violet && ItemType.equippable.contains(i.itemType)) &&
+                l.returnState.contains(StateType.Home) && l.header.exists(_.contains("Прежний хозяин припрятал"))))
+    },
+
+    test("находка из хлама — на экране добычи со своим текстом") {
+      for {
+        t <- make(hero(), HomeData(tier = 1, metJunona = true, cleanedMs = HomeRates.ClutterCleanMs - 1000L))
+        (state, dao, _, r) = t
+        _       <- state.action(testUser, tap("HomeClean"), r)
+        _       <- TestClock.adjust(1.second)
+        _       <- state.action(testUser, UserAction("", Some(HomeState.CleanStopAction)), r)
+        journal <- TestJournal.make
+        c       <- ZIO.attempt(SceneContent.load())
+        _       <- LootState(dao, TestInventoryRepository.accepting, TestItemRepository.make, journal, c).enter(testUser, r)
+        screen  <- last(r)
+      } yield assertTrue(screen.text.startsWith("На самом дне, под истлевшими мешками") && screen.text.contains("[Ур.4]")) &&
+              assertTrue(screen.choices.exists(_.id == "Take") && screen.choices.exists(_.id == "Leave"))
     },
 
     test("Юнона: вывезти хлам — за 5 000 серебра; в домике сундуков не продают, только стойку и верстак") {
@@ -360,12 +385,15 @@ object HomeStateSpec extends ZIOSpecDefault {
         home   <- homeOf(dao)
         h      <- heroOf(dao)
         again  <- last(r)
+        find   <- lootOf(dao)
       } yield assertTrue(page.text.contains("Мест в доме занято: 1 из 2")) &&
               assertTrue(page.choices.map(_.id) == List("HomeClutterPay", "HomeFurnItem", "HomeFurnItem", "HomeOffice") &&
                 page.choices.head.label == "🧹 Вывезти хлам — 5 000 🪙" &&
                 page.choices(1).label == "🧥 Магическая стойка — 100 🟡" &&
                 page.choices(2).label == "🛠 Верстак ремесленника — 100 🟡") &&
               assertTrue(!home.hasClutter && h.silver == 1000L) &&
+              // вывез за серебро — находки нет
+              assertTrue(find.isEmpty) &&
               assertTrue(again.choices.map(_.id) == List("HomeFurnItem", "HomeFurnItem", "HomeOffice"))
     },
 

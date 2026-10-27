@@ -74,7 +74,7 @@ case class LootState(
   override def targetStates: Set[StateType] =
     Set(StateType.Dungeon, StateType.GlobalMap, StateType.TreasureMobsFight, StateType.TreasureSchron, StateType.Loot, StateType.Girl,
         StateType.MarisaHunt, StateType.FlowerMeadow, StateType.MonsterCave, StateType.Caravan,
-        StateType.MurlocElder, StateType.MurlocVillage)
+        StateType.MurlocElder, StateType.MurlocVillage, StateType.Home)
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     for {
@@ -114,10 +114,10 @@ case class LootState(
       (if (loot.doubloons > 0L) List(content.format("loot.doubloons", "amount" -> loot.doubloons.toString)) else Nil)
 
   // В группе над добычей стоит имя павшего — чтобы было видно, чья она.
-  private def header(loot: LootData): String = loot.monsterName match {
+  private def header(loot: LootData): String = loot.header.getOrElse(loot.monsterName match {
     case Some(name) => content.format("loot.groupHeader", "monster" -> name)
     case None       => content.text("loot.header")
-  }
+  })
 
   /** Превью добычи: валюта, вещи с надетым для сравнения и кнопки. Валюта уже в
     * кошельке, строки о ней — только для глаз, поэтому превью можно показать ещё
@@ -301,7 +301,9 @@ object LootState {
     eventData:   Option[Json]      = None,
     monsterName: Option[String]    = None,
     queue:       List[MonsterLoot] = Nil,
-    won:         Boolean           = false
+    won:         Boolean           = false,
+    // Свой заголовок экрана — у находки не с тела (хлам в домике).
+    header:      Option[String]    = None
   )
   object LootData {
     implicit val encoder: Encoder[LootData] = deriveEncoder[LootData]
@@ -317,7 +319,8 @@ object LootState {
         monsterName <- c.getOrElse[Option[String]]("monsterName")(None)
         queue       <- c.getOrElse[List[MonsterLoot]]("queue")(Nil)
         won         <- c.getOrElse[Boolean]("won")(false)
-      } yield LootData(items, silvers, doubloons, returnState, eventData, monsterName, queue, won)
+        header      <- c.getOrElse[Option[String]]("header")(None)
+      } yield LootData(items, silvers, doubloons, returnState, eventData, monsterName, queue, won, header)
   }
 
   /** Добыча с одного павшего в группе: ждёт своей очереди на экран. */

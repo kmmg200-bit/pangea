@@ -3,7 +3,9 @@ package pangea.service.state.states.home
 import io.circe.syntax.EncoderOps
 import io.circe.{Json, jawn}
 import pangea.dao.hero.HeroDao
+import pangea.domain.Rng
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
+import pangea.generator.item.ItemGenerator
 import pangea.model.hero.Hero
 import pangea.model.hero.{AzatState, CubeStatus, Equipment}
 import pangea.model.home.{Furniture, HomeData, HomeRates, House}
@@ -17,9 +19,9 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.purse.Purse
 import pangea.service.schedule.Scheduler
-import pangea.service.state.states.{EquipmentState, InventoryState}
+import pangea.service.state.states.{EquipmentState, InventoryState, LootState}
 import pangea.service.state.{AzatData, BeltContents, ItemMenu, SlotChoice, State, UserAction}
-import zio.{Task, ZIO}
+import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
 
@@ -635,12 +637,22 @@ case class HomeState(
       res     <- if (started.isEmpty || !home.hasClutter) showHouse(user, renderer)
                  else if (done >= HomeRates.ClutterCleanMs)
                    saveHome(user, home.copy(clutterCleared = true, cleanedMs = HomeRates.ClutterCleanMs)) *>
-                     say(user, content.text("home.clean.done"), renderer) *> showHouse(user, renderer)
+                     say(user, content.text("home.clean.done"), renderer) *> clutterFind(user)
                  else
                    saveHome(user, home.copy(cleanedMs = done)) *>
                      say(user, content.format("home.clean.paused", "left" -> duration(HomeRates.ClutterCleanMs - done)), renderer) *>
                      showHouse(user, renderer)
     } yield res
+
+  /** Хлам разобран руками — на дне находка: случайная пурпурная вещь 4-го
+    * уровня. Её экран — как у добычи: забрать, надеть или оставить; потом домой. */
+  private def clutterFind(user: User): Task[StateType] =
+    for {
+      seed     <- Random.nextLong
+      (item, _) = ItemGenerator.createItemAtLevel(HomeRates.ClutterFindLvl, HomeRates.ClutterFindRarity, Rng(seed))
+      _        <- heroDao.writeSceneData(user.userId, LootState.LootData(items = List(item), silvers = Nil,
+                    returnState = Some(StateType.Home), header = Some(content.text("home.clean.find"))).asJson)
+    } yield StateType.Loot
 
   private def clearCleaning(user: User): Task[Unit] =
     heroDao.writeSceneData(user.userId, Json.Null) *> scheduler.cancel(user.userId, TaskKind.HomeClean)

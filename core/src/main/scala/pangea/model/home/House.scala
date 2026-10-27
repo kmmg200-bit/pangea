@@ -3,7 +3,7 @@ package pangea.model.home
 import io.circe.generic.semiauto.deriveEncoder
 import io.circe.{Decoder, Encoder, HCursor}
 import pangea.model.hero.Equipment
-import pangea.model.item.Item
+import pangea.model.item.{Item, Rarity}
 import pangea.model.monster.NamedTrophy
 
 /** Дом героя — один из трёх, по ступеням. Продаёт их Юнона Кинтслев,
@@ -144,6 +144,11 @@ object HomeRates {
     * наубиранное не пропадает), вывезти через Юнону — за серебро. */
   val ClutterCleanMs: Long = 4L * 3600000L
   val ClutterSilver: Long  = 5000L
+
+  /** Разобрал хлам сам — в нём находка: случайная вещь этого уровня и
+    * редкости (пурпурной). Вывез через Юнону — находки нет. */
+  val ClutterFindLvl: Long         = 4L
+  val ClutterFindRarity: Rarity    = Rarity.Violet
 
   /** Пополнение алтаря: столько энергии за столько серебра — как в храме. */
   val AltarRefillCharges: Int = 50
