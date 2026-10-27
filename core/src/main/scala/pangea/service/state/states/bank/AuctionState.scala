@@ -6,7 +6,6 @@ import io.circe.syntax.EncoderOps
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Players, Renderer, SceneContent, Screen, Target}
 import pangea.model.auction.{AuctionCurrency, AuctionLot}
-import pangea.model.bank.BankVault
 import pangea.model.hero.Hero
 import pangea.model.item.{Item, ItemType}
 import pangea.model.state.StateType
@@ -30,6 +29,10 @@ import java.util.concurrent.TimeUnit
  *  Рахадиму десятину от запрошенной цены. Лот живёт неделю, потом уходит в
  *  «непроданные» и ждёт хозяина. О каждом новом лоте бот пишет в общий чат
  *  Пангеи — там же виден его номер, который можно просто написать в ответ.
+ *
+ *  Торговать можно и без ячейки в Торговом доме: купленное и снятое с торгов
+ *  идёт в сумку, а выручка — в ячейку продавца; нет её, полна или монета не та —
+ *  деньги ждут его в городе.
  *
  *  Гонку двух покупателей ловит сам аукцион: лот закрывается одним UPDATE, и
  *  тому, кто опоздал на пару секунд, приходит «лот уже ушёл» — до списания
@@ -74,29 +77,10 @@ case class AuctionState(
   override def targetStates: Set[StateType] = branch.gotoTargets
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
-    resetScene(user) *> withVault(user, renderer)(showMenu(user, renderer))
+    resetScene(user) *> showMenu(user, renderer)
 
-  // Уйти из аукциона можно всегда — и в Торговый дом, и сразу в город, — а
-  // остальное только с выкупленной ячейкой: деньги и вещи здесь ходят через
-  // неё. Уход нельзя пускать через `withVault`: она держит героя в аукционе, и
-  // «В город» молча оставлял его на месте.
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
-    parseAction(ua.payload) match {
-      case Some("LeaveAuction") | Some(CityExit.Action) => branch.act(user, ua, renderer)
-      case _ => withVault(user, renderer)(branch.act(user, ua, renderer).unit).as(StateType.Auction)
-    }
-
-  /** В аукционе участвуют только с ячейкой в Торговом доме. */
-  private def withVault(user: User, renderer: Renderer)(action: => Task[Unit]): Task[Unit] =
-    vaultOf(user).flatMap { vault =>
-      if (vault.open) action
-      else renderer.show(user, Screen(content.text("bank.auction.needVault"),
-        List(Choice("LeaveAuction", content.text("bank.auction.leave"), color = ChoiceColor.Negative, row = Some(0)),
-             CityExit.button(content, Some(0)))))
-    }
-
-  private def vaultOf(user: User): Task[BankVault] =
-    getHero(user).flatMap(h => bankRepo.get(h.id).mapError(asThrowable))
+    branch.act(user, ua, renderer)
 
   // ── Меню ───────────────────────────────────────────────────────────────────
 

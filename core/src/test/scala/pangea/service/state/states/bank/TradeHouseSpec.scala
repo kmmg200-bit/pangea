@@ -79,7 +79,7 @@ object TradeHouseSpec extends ZIOSpecDefault {
 
     suite("Рахадим")(
 
-      test("без ячеек: приветствие, кнопка покупки за 10 000, ни хранилища, ни аукциона") {
+      test("без ячеек: приветствие, кнопка покупки за 10 000; хранилища нет, а аукцион есть") {
         for {
           t <- house(heroSilver = 0L)
           (state, _, _, renderer, _) = t
@@ -88,7 +88,7 @@ object TradeHouseSpec extends ZIOSpecDefault {
           menu     = screens.last
         } yield assertTrue(screens.head.text.contains("Рахадим")) &&
                 assertTrue(menu.choices.map(_.id) ==
-                  List("BuyCell", "BuyDoubloons", "DepositInterest", "FetShop", "RakhadimDaily",
+                  List("BuyCell", "BuyDoubloons", "DepositInterest", "FetShop", "Auction", "RakhadimDaily",
                        "RakhQuest", "LeaveTradeHouse", "GoToCity")) &&
                 assertTrue(menu.choices.head.label.contains(BankVault.FirstCellPrice.toString)) &&
                 assertTrue(menu.choices.forall(_.label.length <= pangea.engine.Choice.MaxLabelLength))

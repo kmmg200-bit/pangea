@@ -12,8 +12,9 @@ import pangea.test._
 import zio.ZIO
 import zio.test._
 
-/** Аукцион Торгового дома: торгуют только с ячейкой, лотов на руках не больше
-  * десяти, выручка ложится в ячейку, а что в неё не влезло — ждёт в городе. */
+/** Аукцион Торгового дома: торгуют и без ячейки, лотов на руках не больше
+  * десяти, выручка ложится в ячейку, а без неё или что в неё не влезло — ждёт
+  * в городе. */
 object AuctionSpec extends ZIOSpecDefault {
 
   private val userId     = UserId(1L)
@@ -75,17 +76,21 @@ object AuctionSpec extends ZIOSpecDefault {
 
   override def spec = suite("Аукцион")(
 
-    test("без ячейки в банке на торги не пускают, но уйти можно") {
+    test("без ячейки торгуют: меню, выставить, купить — в сумку; выручка без ячейки ждёт в городе") {
       for {
-        f       <- auction(cells = 0)
+        f       <- auction(cells = 0, inventory = List(gear(42L)), lots = List(lotOf(1L, price = 300L)), silver = 1000L)
         _       <- f.state.enter(testUser, f.renderer)
-        screens <- f.renderer.sentScreens
-        _       <- f.state.action(testUser, tap("AuctionBrowse"), f.renderer)
-        browse  <- f.renderer.sentScreens
+        menu    <- f.renderer.sentScreens.map(_.last)
+        _       <- f.state.action(testUser, tap("AuctionSell"), f.renderer)
+        sell    <- f.renderer.sentScreens.map(_.last)
+        _       <- f.state.action(testUser, tap("BuyLotYes", "id" -> "1"), f.renderer)
+        buyer   <- f.heroDao.getHeroByUserId(userId)
         back    <- f.state.action(testUser, tap("LeaveAuction"), f.renderer)
-      } yield assertTrue(screens.last.text.contains("ячейка в Торговом доме")) &&
-              assertTrue(screens.last.choices.map(_.id) == List("LeaveAuction", "GoToCity")) &&
-              assertTrue(browse.last.choices.map(_.id) == List("LeaveAuction", "GoToCity")) &&
+      } yield assertTrue(menu.choices.map(_.id) == List("AuctionBrowse", "AuctionSell", "MyLots", "LeaveAuction", "GoToCity")) &&
+              assertTrue(sell.choices.map(_.id) == List("AucSell_42", "Auction")) &&
+              assertTrue(f.inv.snapshot.map(_.name).contains("Топор 1") && buyer.exists(_.silver == 700L)) &&
+              assertTrue(f.payouts.snapshot.get(seller).contains((300L, 0L))) &&
+              assertTrue(f.players.sentLetters.head._2.contains("Деньги у Рахадима")) &&
               assertTrue(back == StateType.TradeHouse)
     },
 
