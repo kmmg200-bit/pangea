@@ -162,7 +162,7 @@ object LostSquadSpec extends ZIOSpecDefault {
               assertTrue(loot.exists(_.returnState.contains(StateType.SquadMine)))
     },
 
-    test("дружина выведена: шлем старшины (пурпурный, уровня героя, с точностью) и семь кусков; задание закрыто, +1 к телосложению") {
+    test("дружина выведена: шлем старшины (пурпурный, уровня героя, с точностью) и четыре куска; задание закрыто, +1 к телосложению") {
       val h0 = hero().copy(lvl = 12L)
       for {
         d   <- dao(h0, Some(quest(2)))
@@ -179,7 +179,7 @@ object LostSquadSpec extends ZIOSpecDefault {
         h    <- heroOf(d)
       } yield assertTrue(thanks.text.contains("Двенадцатый фонарь") && thanks.choices.map(_.id) == List("MineGifts")) &&
               assertTrue(out == StateType.Loot && q.isDone(NpcQuest.LostSquad)) &&
-              assertTrue(loot.exists(l => l.items.size == 8 && l.returnState.contains(StateType.Dungeon))) &&
+              assertTrue(loot.exists(l => l.items.size == 1 + LostSquadQuest.GiftCount && l.returnState.contains(StateType.Dungeon))) &&
               assertTrue(loot.exists(_.items.headOption.exists(i => i.itemType == ItemType.Helmet && i.rarity == ItemRarity.Violet &&
                 i.lvl == 12L && i.accuracy > 0L && i.name.contains("Двенадцать фонарей")))) &&
               assertTrue(loot.exists(_.items.tail.forall(i => i.material.exists(LostSquadQuest.GiftKinds.contains)))) &&
@@ -206,7 +206,11 @@ object LostSquadSpec extends ZIOSpecDefault {
               // битва не повторяется: не «последний гоблин падает», а дружина у выхода
               assertTrue(wait.text.contains("ждут вас у выхода из штольни") && !wait.text.contains("Последний гоблин")) &&
               assertTrue(wait.choices.map(_.id) == List("MineGifts")) &&
-              assertTrue(took == StateType.Loot && loot.exists(_.items.size == 8) && q.isDone(NpcQuest.LostSquad))
+              assertTrue(took == StateType.Loot && loot.exists(_.items.size == 1 + LostSquadQuest.GiftCount) && q.isDone(NpcQuest.LostSquad))
+    },
+
+    test("дружина дарит четыре куска, а не по куску на каждого из семерых") {
+      assertTrue(LostSquadQuest.GiftCount == 4 && LostSquadQuest.gifts(Rng(7L))._1.size == 4)
     },
 
     test("шлем — всегда с точностью, дары — только железо и магический камень, обоих примерно поровну") {
@@ -215,7 +219,7 @@ object LostSquadSpec extends ZIOSpecDefault {
       val gifts   = (1L to 60L).toList.flatMap(s => LostSquadQuest.gifts(Rng(s))._1)
       val iron    = gifts.count(_.material.contains(MaterialKind.EverburningIron))
       assertTrue(helmets.forall(i => i.accuracy > 0L && i.rarity == ItemRarity.Violet && i.lvl == 30L)) &&
-        assertTrue(gifts.size == 60 * LostSquadQuest.Survivors && iron > gifts.size / 3 && iron < gifts.size * 2 / 3)
+        assertTrue(gifts.size == 60 * LostSquadQuest.GiftCount && iron > gifts.size / 3 && iron < gifts.size * 2 / 3)
     },
 
     test("забрать ящик: Брамбл уходит по свитку и больше не нанимается; Гуннар даёт 10 000 серебра и кусок железа") {

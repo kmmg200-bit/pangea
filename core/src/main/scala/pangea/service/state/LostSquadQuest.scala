@@ -32,10 +32,11 @@ object LostSquadQuest {
     * павшего по уровню героя. */
   val EscortStory: String = "squadEscort"
 
-  /** Сколько гномов ждёт за завалом. */
-  val Survivors: Int = 7
+  /** Сколько кусков дарит дружина: из всего, что семеро несли из глубины,
+    * уцелело четыре. */
+  val GiftCount: Int = 4
 
-  /** Чем гномы благодарят: каждый — куском одного из двух, поровну. */
+  /** Чем дружина благодарит: каждый кусок — одно из двух, поровну. */
   val GiftKinds: List[MaterialKind] = List(MaterialKind.EverburningIron, MaterialKind.MagicStone)
 
   /** Шлем старшины с фонарём: пурпурный, ровно уровня героя, всегда с точностью. */
@@ -171,10 +172,10 @@ object LostSquadQuest {
     raw.copy(accuracy = accuracy).withName(s"${HelmetRarity.emoji} $HelmetName")
   }
 
-  /** По куску на каждого выведенного: вечно огненное железо или магический
+  /** Четыре куска от дружины: каждый — вечно огненное железо или магический
     * камень, поровну. */
   def gifts(rng: Rng): (List[Item], Rng) =
-    (1 to Survivors).foldLeft((List.empty[Item], rng)) { case ((acc, r), _) =>
+    (1 to GiftCount).foldLeft((List.empty[Item], rng)) { case ((acc, r), _) =>
       val (kind, next) = r.pick(GiftKinds)
       (acc :+ MaterialGenerator.item(kind), next)
     }

@@ -31,7 +31,7 @@ import java.util.concurrent.TimeUnit
   * героя, последним — их вожак Хруст Собиратель; трое дружинников бьются на
   * стороне героя (см. LostSquadQuest.withEscort). Победа возвращает сюда
   * (`Progress(AfterEscort)` через добычу): дружина наверху, дары — шлем
-  * старшины и по куску на каждого гнома, «Друг подгорного народа».
+  * старшины и четыре куска от дружины, «Друг подгорного народа».
   *
   * «Забрать ящик» — груз в сумку, дружина остаётся у фонаря. Брамбл в отряде
   * уходит по свитку, а за стол возвращается с двойной ценой; ящик ждёт
@@ -143,7 +143,7 @@ case class SquadMineState(
   private def giftsWaitingScreen: Screen =
     Screen(content.text("lostSquad.mine.giftsWaiting"), List(content.choice("MineGifts", "lostSquad.mine.giftsLabel")))
 
-  /** Принять дары: шлем и по куску на гнома — экраном добычи, задание
+  /** Принять дары: шлем и четыре куска — экраном добычи, задание
     * закрыто, «Друг подгорного народа». */
   private def gifts(user: User, renderer: Renderer): Task[StateType] =
     for {
