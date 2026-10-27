@@ -657,6 +657,15 @@ object InventoryStateSpec extends ZIOSpecDefault {
       } yield assertTrue(toLoot == StateType.Loot && keptToLoot == StateType.Loot)
     },
 
+    test("BackFromInventory, когда в сумку зашли с находки, → обратно к находке") {
+      for {
+        quad                   <- makeState(baseHero, List(sword), Some(TestArtifactRepository.empty))
+        (state, heroDao, _, r)  = quad
+        _                      <- heroDao.writeReturnState(userId, Some(StateType.FoundItem))
+        result                 <- state.action(testUser, tap("BackFromInventory"), r)
+      } yield assertTrue(result == StateType.FoundItem)
+    },
+
     test("Equip выбранного оружия в пустой слот → надет, удалён из инвентаря") {
       for {
         quad                             <- makeState(baseHero, List(sword))

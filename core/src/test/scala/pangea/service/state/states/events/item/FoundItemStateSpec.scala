@@ -67,8 +67,8 @@ object FoundItemStateSpec extends ZIOSpecDefault {
         (hs, hr, _, _) = high
         _       <- hs.action(testUser, UserAction("что угодно", None), hr)
         highIds <- hr.sentScreens.map(_.last.choices.map(_.id))
-      } yield assertTrue(fitIds == List("TakeItem", "TakeWearItem", "DontTakeItem")) &&
-              assertTrue(highIds == List("TakeItem", "DontTakeItem"))
+      } yield assertTrue(fitIds == List("TakeItem", "TakeWearItem", "FoundBackpack", "DontTakeItem")) &&
+              assertTrue(highIds == List("TakeItem", "FoundBackpack", "DontTakeItem"))
     },
 
     test("«Забрать и надеть» → находка на герое, сумка пуста, «сразу надели», уход в Dungeon") {
@@ -103,7 +103,7 @@ object FoundItemStateSpec extends ZIOSpecDefault {
         result <- state.action(testUser, tap("TakeWearItem"), renderer)
         hero   <- heroDao.getHeroByUserId(userId)
         text   <- renderer.sentScreens.map(_.map(_.text).mkString(" | "))
-      } yield assertTrue(ids == List("TakeItem", "TakeWearItem", "DontTakeItem")) &&
+      } yield assertTrue(ids == List("TakeItem", "TakeWearItem", "FoundBackpack", "DontTakeItem")) &&
               assertTrue(result == StateType.Dungeon) &&
               assertTrue(hero.exists(_.equipment.helmet.id == 77L)) &&
               assertTrue(invRepo.snapshot.map(_.id) == List(5L)) &&
@@ -142,6 +142,43 @@ object FoundItemStateSpec extends ZIOSpecDefault {
               assertTrue(result == StateType.Dungeon) &&
               assertTrue(hero.exists(h => h.equipment.firstRing.id == 77L && h.equipment.secondRing.id == 7L)) &&
               assertTrue(invRepo.snapshot.map(_.id) == List(6L))
+    },
+
+    test("«🎒 Рюкзак» — над «Оставить»: в сумку и обратно к той же находке, новая не катится") {
+      for {
+        t <- withFound(helmet())
+        (state, renderer, heroDao, _) = t
+        _       <- state.action(testUser, UserAction("что угодно", None), renderer)
+        first   <- renderer.sentScreens.map(_.last)
+        to      <- state.action(testUser, tap("FoundBackpack"), renderer)
+        back    <- heroDao.readReturnState(userId)
+        waiting <- heroDao.readSceneData(userId).map(_.flatMap(_.as[FoundItemData].toOption))
+        // вернулся из сумки — диспетчер снова зовёт enter
+        _       <- state.enter(testUser, renderer)
+        again   <- renderer.sentScreens.map(_.last)
+        after   <- heroDao.readSceneData(userId).map(_.flatMap(_.as[FoundItemData].toOption))
+      } yield assertTrue(first.choices.find(_.id == "FoundBackpack").exists(_.label == "🎒 Рюкзак")) &&
+              assertTrue(to == StateType.Inventory && back.contains(StateType.FoundItem)) &&
+              assertTrue(waiting.exists(f => f.item.id == 77L && f.waiting)) &&
+              assertTrue(again.text == first.text && again.choices == first.choices) &&
+              assertTrue(after.exists(f => f.item.id == 77L && !f.waiting))
+    },
+
+    test("после возврата пометка снята: следующая находка — уже новая вещь, а не та же второй раз") {
+      for {
+        t <- withFound(helmet())
+        (state, renderer, heroDao, _) = t
+        _    <- state.action(testUser, tap("FoundBackpack"), renderer)
+        _    <- state.enter(testUser, renderer) // вернулся из сумки
+        _    <- state.action(testUser, tap("DontTakeItem"), renderer)
+        _    <- state.enter(testUser, renderer) // следующая находка на этаже
+        next <- heroDao.readSceneData(userId).map(_.flatMap(_.as[FoundItemData].toOption))
+      } yield assertTrue(next.exists(f => f.item.id != 77L && !f.waiting))
+    },
+
+    test("находка, записанная до пометки «ждёт», читается как раньше") {
+      val old = FoundItemData(helmet()).asJson.mapObject(_.remove("waiting"))
+      assertTrue(old.as[FoundItemData].toOption.exists(f => f.item.id == 77L && !f.waiting))
     },
 
     test("enter → сохраняет предмет в scene_data, показывает экран находки") {

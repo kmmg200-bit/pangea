@@ -13,14 +13,18 @@ import pangea.repository.inventory.{InventoryRepoError, InventoryRepository}
 import pangea.service.admin.AdminPanel
 import pangea.service.sender.vk.VkRenderer
 import pangea.service.state.states.LootState.{LootData, MonsterLoot}
+import pangea.service.state.states.dungeon.DungeonState
+import pangea.service.state.states.events.item.FoundItemState
+import pangea.service.state.states.events.item.FoundItemState.FoundItemData
 import pangea.service.state.states.{GlobalMapState, InventoryState, LootState}
 import pangea.test._
 import zio.test._
 import zio.{IO, Task, ZIO}
 
-/** «🎒 Рюкзак» на экране добычи — через настоящий диспетчер состояний: из
-  * добычи в сумку и обратно, на тот же экран, с той же добычей и той же
-  * очередью павших; деньги второй раз не начисляются. */
+/** «🎒 Рюкзак» на экранах добычи и находки — через настоящий диспетчер
+  * состояний: в сумку и обратно, на тот же экран, с той же добычей и той же
+  * очередью павших (деньги второй раз не начисляются) или с той же находкой
+  * (новая вещь не катится). */
 object LootBackpackSpec extends ZIOSpecDefault {
 
   private val userId   = UserId(1L)
@@ -35,7 +39,8 @@ object LootBackpackSpec extends ZIOSpecDefault {
 
   private def junk(id: Long): Item = gear(s"Хлам $id", ItemType.Boots).copy(id = id)
 
-  private val onLoot = TestFixtures.hero(userId, state = StateType.Loot).copy(silver = 100L)
+  private val onLoot  = TestFixtures.hero(userId, state = StateType.Loot).copy(silver = 100L)
+  private val onFound = TestFixtures.hero(userId, state = StateType.FoundItem)
 
   /** Сумка на `cap` вещей: в полную, как и в проде, ничего не ложится. */
   private final class TightBag(cap: Long, start: List[Item]) extends TestInventoryRepository(canAdd = true, start) {
@@ -58,17 +63,44 @@ object LootBackpackSpec extends ZIOSpecDefault {
       heroRepo <- TestHeroRepository.withHero(userId, onLoot)
       _        <- heroDao.writeSceneData(userId, loot.asJson)
       _        <- heroDao.writeReturnState(userId, menuFrom)
-      userRepo <- TestUserRepository.withUser(testUser)
       api      <- TestApi.make
       journal  <- TestJournal.make
       content  <- ZIO.attempt(SceneContent.load())
       itemRepo  = TestItemRepository.make
       owned     = Some(artifacts)
       lootState = LootState(heroDao, inv, itemRepo, journal, content, owned)
-      states    = Map[StateType, State](
+      press    <- dispatcher(heroDao, heroRepo, api, content, Map[StateType, State](
                     StateType.Loot      -> lootState,
                     StateType.Inventory -> InventoryState(heroDao, inv, itemRepo, content, owned),
-                    StateType.GlobalMap -> GlobalMapState(heroDao, content))
+                    StateType.GlobalMap -> GlobalMapState(heroDao, content)))
+      // Экран добычи, как его показывает победа: бой отдал Loot, диспетчер позвал enter.
+      _        <- lootState.enter(testUser, VkRenderer(api))
+    } yield (press, heroDao, heroRepo, api)
+
+  /** Диспетчер с находкой, сумкой и лабиринтом — куда уходит находка. */
+  private def makeFound(inv: InventoryRepository) =
+    for {
+      heroDao  <- TestHeroDao.withHero(userId, onFound)
+      heroRepo <- TestHeroRepository.withHero(userId, onFound)
+      api      <- TestApi.make
+      journal  <- TestJournal.make
+      content  <- ZIO.attempt(SceneContent.load())
+      sch      <- TestScheduler.make
+      itemRepo  = TestItemRepository.make
+      found     = FoundItemState(heroDao, inv, itemRepo, journal, content)
+      press    <- dispatcher(heroDao, heroRepo, api, content, Map[StateType, State](
+                    StateType.FoundItem -> found,
+                    StateType.Inventory -> InventoryState(heroDao, inv, itemRepo, content),
+                    StateType.Dungeon   -> DungeonState(heroDao, inv, sch, content)))
+      // Находка, как её показывает исследование этажа: диспетчер позвал enter.
+      _        <- found.enter(testUser, VkRenderer(api))
+    } yield (press, heroDao, heroRepo, api)
+
+  /** Настоящий диспетчер над этими состояниями; нажатие — как сообщение игрока. */
+  private def dispatcher(heroDao: TestHeroDao, heroRepo: TestHeroRepository, api: TestApi, content: SceneContent,
+                         states: Map[StateType, State]) =
+    for {
+      userRepo <- TestUserRepository.withUser(testUser)
       lock     <- PlayerLock.make
       payouts   = pangea.service.payout.Payouts(TestPayoutDao.empty, heroDao, content)
       parcels   = pangea.service.parcel.Parcels(TestParcelDao.empty, TestBankRepository.empty, content)
@@ -76,22 +108,21 @@ object LootBackpackSpec extends ZIOSpecDefault {
                     new TestPlayers, content, heroDao, TestBankRepository.empty, payouts, lock)
       handler   = new StateHandler(api, userRepo, heroRepo, heroDao, payouts, parcels,
                     transfers, states, AdminPanel.disabled, content, lock)
-      // Экран добычи, как его показывает победа: бой отдал Loot, диспетчер позвал enter.
-      _        <- lootState.enter(testUser, VkRenderer(api))
       events   <- zio.Ref.make(0L)
-      press     = (ua: UserAction) => events.updateAndGet(_ + 1L).flatMap(handler.makeActionVK(vkId, _, ua))
-    } yield (press, heroDao, heroRepo, api)
+    } yield (ua: UserAction) => events.updateAndGet(_ + 1L).flatMap(handler.makeActionVK(vkId, _, ua))
 
   private def stateOf(heroRepo: TestHeroRepository): Task[Option[StateType]] = heroRepo.getHero(userId).map(_.map(_.state))
   private def lootOf(heroDao: TestHeroDao): Task[Option[LootData]] =
     heroDao.readSceneData(userId).map(_.flatMap(_.as[LootData].toOption))
+  private def foundOf(heroDao: TestHeroDao): Task[Option[Item]] =
+    heroDao.readSceneData(userId).map(_.flatMap(_.as[FoundItemData].toOption).map(_.item))
   private def money(heroDao: TestHeroDao): Task[Option[(Long, Long)]] =
     heroDao.getHeroByUserId(userId).map(_.map(h => h.silver -> h.doubloons))
   private def lastText(api: TestApi): Task[String] = api.sentMessages.map(_.lastOption.fold("")(_._1))
   private def lastLabels(api: TestApi): Task[List[String]] =
     api.sentMessages.map(_.lastOption.flatMap(_._2).toList.flatMap(_.buttons.flatten.map(_.action.label)))
 
-  override def spec = suite("Добыча: «🎒 Рюкзак»")(
+  override def spec = suite("«🎒 Рюкзак» с добычи и с находки")(
 
     test("группа: дважды в сумку и обратно — тот же павший, вещи и очередь целы, серебро и дублоны по разу, дальше по маршруту") {
       val loot = LootData(
@@ -175,6 +206,32 @@ object LootBackpackSpec extends ZIOSpecDefault {
               assertTrue(refused.contains("только из города") && stayed.contains(StateType.Inventory)) &&
               assertTrue(waiting.exists(_.items.map(_.name) == List("Шлем"))) &&
               assertTrue(onLoot.contains(StateType.Loot) && again == first && silver.contains(130L -> 0L))
+    },
+
+    test("находка, сумка полна: рюкзак → выбросить хлам → назад к той же вещи (новая не катится) → забрать — она в сумке") {
+      val bag = new TightBag(3L, List(junk(101L), junk(102L), junk(103L)))
+      for {
+        t <- makeFound(bag)
+        (press, heroDao, heroRepo, api) = t
+        first   <- lastText(api)
+        labels  <- lastLabels(api)
+        item    <- foundOf(heroDao)
+        _       <- press(tap("FoundBackpack"))
+        inBag   <- stateOf(heroRepo)
+        back    <- heroDao.readReturnState(userId)
+        _       <- press(select(101L)) *> press(tap("Drop"))
+        _       <- press(tap("BackFromInventory"))
+        onFound <- stateOf(heroRepo)
+        again   <- lastText(api)
+        same    <- foundOf(heroDao)
+        _       <- press(tap("TakeItem"))
+        after   <- stateOf(heroRepo)
+      } yield assertTrue(labels.takeRight(2) == List("🎒 Рюкзак", "Оставить")) &&
+              assertTrue(inBag.contains(StateType.Inventory) && back.contains(StateType.FoundItem)) &&
+              assertTrue(onFound.contains(StateType.FoundItem) && again == first) &&
+              assertTrue(item.isDefined && same.map(_.id) == item.map(_.id)) &&
+              assertTrue(item.exists(i => bag.snapshot.map(_.id) == List(102L, 103L, i.id))) &&
+              assertTrue(after.contains(StateType.Dungeon))
     }
   )
 }

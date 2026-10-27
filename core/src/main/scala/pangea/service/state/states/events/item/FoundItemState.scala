@@ -1,8 +1,8 @@
 package pangea.service.state.states.events.item
 
-import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
+import io.circe.generic.semiauto.deriveEncoder
 import io.circe.syntax.EncoderOps
-import io.circe.{Decoder, Encoder, Json}
+import io.circe.{Decoder, Encoder, HCursor, Json}
 import pangea.dao.hero.HeroDao
 import pangea.domain.Rng
 import pangea.engine.{Branch, Journal, Renderer, SceneContent, Screen, Target}
@@ -21,6 +21,10 @@ import pangea.service.state.states.events.item.FoundItemState.FoundItemData
 import pangea.service.state.{InventoryFeedback, QuestSupport, SlotChoice, State, TakeAndEquip, UserAction}
 import zio.{Random, Task, ZIO}
 
+/** Одинокая находка при исследовании этажа: вещь катится на входе и ждёт в
+  * scene_data, пока игрок не решит — забрать, забрать и надеть, оставить. Над
+  * «Оставить» — «🎒 Рюкзак»: заглянуть в сумку, освободить место и вернуться к
+  * той же находке (см. [[openBackpack]]). */
 case class FoundItemState(
   heroDao:             HeroDao,
   inventoryRepository: InventoryRepository,
@@ -36,12 +40,25 @@ case class FoundItemState(
       "TakeWearItem" -> Target.Run { (user, ua, renderer) => takeItem(user, ua, renderer, wear = true) },
       // «Назад» с выбора кольца или руки — снова находка
       "FoundBack"    -> Target.Run { (user, _, renderer) => showFoundScreen(user, renderer).as(StateType.FoundItem) },
+      "FoundBackpack" -> Target.Run { (user, _, renderer) => openBackpack(user, renderer) },
       "DontTakeItem" -> Target.Run { (user, _, renderer) => dontTakeItem(user, renderer) }
     ),
     fallback = Target.Run { (user, _, renderer) => showFoundScreen(user, renderer).as(StateType.FoundItem) }
   )
 
+  override def targetStates: Set[StateType] = Set(StateType.Dungeon, StateType.FoundItem, StateType.Inventory)
+
   override def enter(user: User, renderer: Renderer): Task[Unit] =
+    readFound(user).flatMap {
+      // Вернулся из сумки — та же находка: новую не катаем, иначе «🎒 Рюкзак»
+      // стал бы бесплатным перебросом.
+      case Some(found) if found.waiting =>
+        heroDao.writeSceneData(user.userId, found.copy(waiting = false).asJson) *> showFoundScreen(user, renderer)
+      case _ => findNew(user, renderer)
+    }
+
+  /** Новая находка: вещь катится, ложится в scene_data и показывается. */
+  private def findNew(user: User, renderer: Renderer): Task[Unit] =
     for {
       hero <- heroDao
         .getHeroByUserId(user.userId)
@@ -63,23 +80,40 @@ case class FoundItemState(
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     branch.act(user, ua, renderer)
 
+  private def readFound(user: User): Task[Option[FoundItemData]] =
+    heroDao.readSceneData(user.userId).map(_.flatMap(_.as[FoundItemData].toOption))
+
   private def showFoundScreen(user: User, renderer: Renderer): Task[Unit] =
     for {
       hero <- heroDao
         .getHeroByUserId(user.userId)
         .flatMap(ZIO.fromOption(_))
         .orElseFail(new Throwable(s"No hero found for user ${user.userId}"))
-      raw  <- heroDao.readSceneData(user.userId)
-      item  = raw.flatMap(_.as[FoundItemData].toOption).map(_.item)
+      item <- readFound(user).map(_.map(_.item))
       text  = item.fold(content.text("foundItem.header")) { i =>
         content.text("foundItem.header") + "\n\n" + InventoryState.itemText(i, hero.equipment, Some(hero))
       }
       // Надеть можно — в пустой слот или вместо надетого — «Забрать и надеть»
       // второй кнопкой, под «Забрать».
       wearBtn = item.filter(TakeAndEquip.canWear(hero, _)).map(_ => content.choice("TakeWearItem", "foundItem.takeWearLabel"))
+      // Над «Оставить» — «🎒 Рюкзак»: освободить место и вернуться к находке.
+      packBtn = item.map(_ => content.choice("FoundBackpack", "foundItem.backpackLabel"))
       (take, rest) = content.screen("foundItem.enter").choices.partition(_.id == "TakeItem")
-      _    <- renderer.show(user, Screen(text, take ++ wearBtn.toList ++ rest))
+      _    <- renderer.show(user, Screen(text, take ++ wearBtn.toList ++ packBtn.toList ++ rest))
     } yield ()
+
+  /** «🎒 Рюкзак»: заглянуть в сумку, не бросая находку, — сразу в инвентарь.
+    * Находка ждёт в scene_data с пометкой `waiting`: по ней `enter` при
+    * возврате покажет её же, а не выкатит новую. return_state — FoundItem: по
+    * нему выход из сумки ведёт обратно сюда, а карты из сумки не уводят в путь
+    * (они только из города). */
+  private def openBackpack(user: User, renderer: Renderer): Task[StateType] =
+    readFound(user).flatMap {
+      case None => showFoundScreen(user, renderer).as(StateType.FoundItem)
+      case Some(found) =>
+        heroDao.writeSceneData(user.userId, found.copy(waiting = true).asJson) *>
+          heroDao.writeReturnState(user.userId, Some(StateType.FoundItem)).as(StateType.Inventory)
+    }
 
   private def takeItem(user: User, ua: UserAction, renderer: Renderer, wear: Boolean): Task[StateType] =
     for {
@@ -158,9 +192,18 @@ case class FoundItemState(
 }
 
 object FoundItemState {
-  case class FoundItemData(item: Item)
+
+  /** Находка на экране. `waiting` — игрок ушёл в сумку («🎒 Рюкзак») и вернётся
+    * к ней же: `enter` покажет её, а не выкатит новую. */
+  case class FoundItemData(item: Item, waiting: Boolean = false)
   object FoundItemData {
     implicit val encoder: Encoder[FoundItemData] = deriveEncoder[FoundItemData]
-    implicit val decoder: Decoder[FoundItemData] = deriveDecoder[FoundItemData]
+    // Рукописный декодер: находка лежит в scene_data, и новое поле не должно
+    // ронять разбор уже лежащей (см. память о производных декодерах).
+    implicit val decoder: Decoder[FoundItemData] = (c: HCursor) =>
+      for {
+        item    <- c.get[Item]("item")
+        waiting <- c.getOrElse[Boolean]("waiting")(false)
+      } yield FoundItemData(item, waiting)
   }
 }
