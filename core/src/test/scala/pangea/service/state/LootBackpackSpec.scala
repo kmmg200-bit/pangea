@@ -13,7 +13,6 @@ import pangea.repository.inventory.{InventoryRepoError, InventoryRepository}
 import pangea.service.admin.AdminPanel
 import pangea.service.sender.vk.VkRenderer
 import pangea.service.state.states.LootState.{LootData, MonsterLoot}
-import pangea.service.state.states.artifact.BackpackState
 import pangea.service.state.states.{GlobalMapState, InventoryState, LootState}
 import pangea.test._
 import zio.test._
@@ -48,7 +47,7 @@ object LootBackpackSpec extends ZIOSpecDefault {
       else super.addItem(heroId, item)
   }
 
-  /** Диспетчер с добычей, сумкой, рюкзаком и городом — куда уходит добыча.
+  /** Диспетчер с добычей, сумкой и городом — куда уходит добыча.
     * `menuFrom` — откуда герой в последний раз открывал «Персонаж» (return_state
     * до добычи). */
   private def make(loot: LootData, inv: InventoryRepository, artifacts: TestArtifactRepository,
@@ -69,7 +68,6 @@ object LootBackpackSpec extends ZIOSpecDefault {
       states    = Map[StateType, State](
                     StateType.Loot      -> lootState,
                     StateType.Inventory -> InventoryState(heroDao, inv, itemRepo, content, owned),
-                    StateType.Backpack  -> BackpackState(heroDao, inv, artifacts, content),
                     StateType.GlobalMap -> GlobalMapState(heroDao, content))
       lock     <- PlayerLock.make
       payouts   = pangea.service.payout.Payouts(TestPayoutDao.empty, heroDao, content)
@@ -154,7 +152,7 @@ object LootBackpackSpec extends ZIOSpecDefault {
               assertTrue(after.contains(StateType.GlobalMap) && scene.contains(Json.obj("chain" -> 2.asJson)))
     },
 
-    test("с ларцом — через рюкзак: сумка → рюкзак → добыча; карта Кельвина из такой сумки в путь не уводит") {
+    test("с ларцом — тоже сразу в сумку и из неё обратно к добыче; карта Кельвина из такой сумки в путь не уводит") {
       val map    = QuestItemKind.item(QuestItemKind.KelvinMap).copy(id = 12L)
       val casket = TestArtifactRepository.of(casket = TestArtifactRepository.artifact(ArtifactKind.Casket, tier = 1))
       val loot   = LootData(items = List(gear("Шлем")), silvers = List(30L), returnState = Some(StateType.GlobalMap))
@@ -164,22 +162,18 @@ object LootBackpackSpec extends ZIOSpecDefault {
         (press, heroDao, heroRepo, api) = t
         first     <- lastText(api)
         _         <- press(tap("Backpack"))
-        inPack    <- stateOf(heroRepo)
-        _         <- press(tap("OpenBag"))
+        inBag     <- stateOf(heroRepo)
         _         <- press(select(12L)) *> press(tap("UseKelvinMap"))
         refused   <- api.sentMessages.map(_.map(_._1).mkString(" | "))
         stayed    <- stateOf(heroRepo)
         waiting   <- lootOf(heroDao)
         _         <- press(tap("BackFromInventory"))
-        packAgain <- stateOf(heroRepo)
-        _         <- press(tap("BackFromBackpack"))
         onLoot    <- stateOf(heroRepo)
         again     <- lastText(api)
         silver    <- money(heroDao)
-      } yield assertTrue(inPack.contains(StateType.Backpack)) &&
+      } yield assertTrue(inBag.contains(StateType.Inventory)) &&
               assertTrue(refused.contains("только из города") && stayed.contains(StateType.Inventory)) &&
               assertTrue(waiting.exists(_.items.map(_.name) == List("Шлем"))) &&
-              assertTrue(packAgain.contains(StateType.Backpack)) &&
               assertTrue(onLoot.contains(StateType.Loot) && again == first && silver.contains(130L -> 0L))
     }
   )

@@ -41,7 +41,7 @@ case class InventoryState(
     routes = Map(
       // Есть хранилища — назад в рюкзак, откуда сюда и зашли; нет — сразу в
       // «Персонаж»: рюкзак такому герою не показывают. Зашли с экрана добычи —
-      // обратно к ней.
+      // обратно к ней, есть хранилища или нет.
       "BackFromInventory" -> Target.Run { (u, _, _) => backTarget(u) },
       // Возврат из карточки к списку: страницу держим ту же, с которой ушли, —
       // иначе после каждого взгляда на вещь приходится листать заново. Сбрасываем
@@ -103,8 +103,8 @@ case class InventoryState(
       keeps <- artifacts.fold(ZIO.succeed(false): Task[Boolean])(
                  _.get(hero.id).map(_.anyOwned).orElseSucceed(false))
       from  <- heroDao.readReturnState(user.userId)
-    } yield if (keeps) StateType.Backpack
-            else if (from.contains(StateType.Loot)) StateType.Loot
+    } yield if (from.contains(StateType.Loot)) StateType.Loot
+            else if (keeps) StateType.Backpack
             else StateType.HeroStats
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =

@@ -81,7 +81,7 @@ case class LootState(
     Set(StateType.Dungeon, StateType.GlobalMap, StateType.TreasureMobsFight, StateType.TreasureSchron, StateType.Loot, StateType.Girl,
         StateType.MarisaHunt, StateType.FlowerMeadow, StateType.MonsterCave, StateType.Caravan,
         StateType.MurlocElder, StateType.MurlocVillage, StateType.Home, StateType.SquadMine, StateType.Construction,
-        StateType.Backpack, StateType.Inventory)
+        StateType.Inventory)
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     for {
@@ -171,19 +171,14 @@ case class LootState(
               else renderer.show(user, previewScreen(hero, loot)).as(StateType.Loot)
     } yield next
 
-  /** «🎒 Рюкзак»: заглянуть в сумку, не бросая добычу. Она ждёт в scene_data —
-    * рюкзак, сумка и хранилища держат там только свои ключи. return_state — Loot:
-    * по нему выход из сумки и рюкзака ведёт обратно сюда, а карты из сумки не
-    * уводят в путь (они только из города). Вернувшись, игрок видит ту же добычу:
-    * `enter` покажет её снова, а деньги второй раз не начислит (`credited`).
-    * Хранилища есть — в рюкзак, нет — прямо в сумку, как из «Персонажа». */
+  /** «🎒 Рюкзак»: заглянуть в сумку, не бросая добычу, — сразу в инвентарь, и у
+    * владельца хранилищ тоже. Добыча ждёт в scene_data — сумка держит там только
+    * свои ключи. return_state — Loot: по нему выход из сумки ведёт обратно сюда,
+    * а карты из сумки не уводят в путь (они только из города). Вернувшись, игрок
+    * видит ту же добычу: `enter` покажет её снова, а деньги второй раз не
+    * начислит (`credited`). */
   private def openBackpack(user: User): Task[StateType] =
-    for {
-      hero  <- getHero(user)
-      keeps <- artifacts.fold(ZIO.succeed(false): Task[Boolean])(
-                 _.get(hero.id).map(_.anyOwned).orElseSucceed(false))
-      _     <- heroDao.writeReturnState(user.userId, Some(StateType.Loot))
-    } yield if (keeps) StateType.Backpack else StateType.Inventory
+    heroDao.writeReturnState(user.userId, Some(StateType.Loot)).as(StateType.Inventory)
 
   /** Данные кнопки «Надеть: …»: номер вещи и её имя — старая кнопка не наденет
     * чужую вещь, если добыча на экране уже другая. */

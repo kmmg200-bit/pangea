@@ -424,14 +424,14 @@ object LootStateSpec extends ZIOSpecDefault {
               assertTrue(hero.exists(h => h.silver == 130L && h.doubloons == 2L))
     },
 
-    test("«🎒 Рюкзак» у героя с хранилищем ведёт в рюкзак, как из «Персонажа»") {
+    test("«🎒 Рюкзак» у героя с хранилищем — тоже сразу в инвентарь, не в рюкзак") {
       val casket = TestArtifactRepository.of(casket = TestArtifactRepository.artifact(ArtifactKind.Casket, tier = 1))
       for {
         t <- makeState(LootData(items = List(gear("Шлем")), silvers = Nil))
         (state, renderer, heroDao, _) = t
         result <- state.copy(artifacts = Some(casket)).action(testUser, tap("Backpack"), renderer)
         back   <- heroDao.readReturnState(userId)
-      } yield assertTrue(result == StateType.Backpack && back.contains(StateType.Loot))
+      } yield assertTrue(result == StateType.Inventory && back.contains(StateType.Loot))
     },
 
     test("старая запись добычи без полей группы читается как одиночная") {
