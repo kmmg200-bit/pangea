@@ -242,13 +242,17 @@ object GroupStateSpec extends ZIOSpecDefault {
       assertTrue(b3.group.attackTargets.isEmpty)                                   // с места 3 до места 1 не достать
     },
 
-    test("в начале боя пустоты в отряде схлопываются: герой один — на месте 1, в паре с мобом") {
+    test("в начале боя строй съезжает к месту 1, промежутки остаются: герой один — на 1, в паре с мобом") {
       val stale = hero.copy(squad = Squad(heroPos = 2))
       val b     = SoloPveBattle.from(trio.head, stale)
       val gap   = hero.copy(squad = Squad(heroPos = 3, allies = List(Ally(AllyKind.Human, 1, 10L, 10L, 0L))))
       val g     = SoloPveBattle.from(trio.head, gap)
+      // наёмник на 6-м, герой на 10-м — в бою на 1-м и 5-м, между ними три пустых
+      val far   = hero.copy(squad = Squad(heroPos = 10, allies = List(Ally(AllyKind.Human, 6, 10L, 10L, 0L))))
+      val f     = SoloPveBattle.fromGroup(trio, far, Nil)
       assertTrue(b.group.heroPos == 1 && b.group.paired) &&
-      assertTrue(g.group.heroPos == 2 && g.group.allyAt(1).isDefined && g.group.rows == 2)
+      assertTrue(g.group.heroPos == 3 && g.group.allyAt(1).isDefined && g.group.allyAt(2).isEmpty) &&
+      assertTrue(f.group.heroPos == 5 && f.group.allyAt(1).exists(_.home == 6) && (2 to 4).forall(f.group.allyAt(_).isEmpty))
     },
 
     test("группа: мобы по местам 1, 2, 3; в паре — тот, что на месте героя") {

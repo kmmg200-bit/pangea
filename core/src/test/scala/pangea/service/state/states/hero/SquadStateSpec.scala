@@ -104,7 +104,7 @@ object SquadStateSpec extends ZIOSpecDefault {
       } yield assertTrue(withT && !without)
     },
 
-    test("enter → строй по позициям: герой, союзники, пустое место; кнопки — союзники и «Назад»") {
+    test("enter → строй по позициям: герой, союзники, пустое место; кнопки — герой и союзники по порядку и «Назад»") {
       for {
         t <- makeState(baseHero)
         (state, _, renderer) = t
@@ -114,7 +114,7 @@ object SquadStateSpec extends ZIOSpecDefault {
               assertTrue(scr.text.contains("2. Йорген Кремень — ❤ 625/625  🧥 750/750")) &&
               assertTrue(scr.text.contains("3. Брамбл Медноус — ❤ 560/560  🧥 1225/1225")) &&
               assertTrue(scr.text.contains("4. — пусто —")) &&
-              assertTrue(scr.choices.map(_.label) == List("Йорген Кремень", "Брамбл Медноус", "↩ Назад")) &&
+              assertTrue(scr.choices.map(_.label) == List("👤 Вы", "Йорген Кремень", "Брамбл Медноус", "↩ Назад")) &&
               assertTrue(scr.choices.forall(_.label.length <= pangea.engine.Choice.MaxLabelLength))
     },
 
@@ -148,6 +148,34 @@ object SquadStateSpec extends ZIOSpecDefault {
               assertTrue(h1.squad.heroPos == 2 && h1.squad.allyAt(1).exists(_.kind == AllyKind.Human)) &&
               assertTrue(h2.squad.allyAt(1).exists(_.kind == AllyKind.Gnome) && h2.squad.allyAt(3).exists(_.kind == AllyKind.Human)) &&
               assertTrue(scr.contains("Йорген Кремень теперь на позиции 1."))
+    },
+
+    test("герой выбирает место сам: карточка с кнопкой на каждое; на пустое — встаёт, на союзника — меняются") {
+      for {
+        t <- makeState(baseHero)
+        (state, dao, renderer) = t
+        _    <- state.action(testUser, tap("SquadHero"), renderer)
+        card <- renderer.sentScreens.map(_.last)
+        moves = card.choices.filter(_.id == "SquadHeroMove").map(c => c.label -> c.data("to"))
+        _    <- state.action(testUser, UserAction("", Some("""{"action":"SquadHeroMove","to":"10"}""")), renderer)
+        h1   <- dao.getHeroByUserId(userId).map(_.get)
+        _    <- state.action(testUser, UserAction("", Some("""{"action":"SquadHeroMove","to":"3"}""")), renderer)
+        h2   <- dao.getHeroByUserId(userId).map(_.get)
+        said <- renderer.sentScreens.map(_.map(_.text).mkString("\n"))
+        _    <- state.enter(testUser, renderer)
+        list <- renderer.sentScreens.map(_.last)
+      } yield assertTrue(card.text.startsWith("Вы — позиция 1.")) &&
+              assertTrue(moves.take(3) == List("На 2 (Йорген Кремень)" -> "2", "На 3 (Брамбл Медноус)" -> "3", "На 4 (пусто)" -> "4")) &&
+              assertTrue(moves.size == AllyRates.Positions - 1 && card.choices.exists(_.id == "SquadList")) &&
+              assertTrue(card.choices.forall(_.label.length <= pangea.engine.Choice.MaxLabelLength)) &&
+              // на пустое 10-е: союзники стоят где стояли
+              assertTrue(h1.squad.heroPos == 10 && h1.squad.allyAt(2).exists(_.kind == AllyKind.Human) &&
+                         h1.squad.allyAt(3).exists(_.kind == AllyKind.Gnome)) &&
+              // на место Брамбла: он встаёт на прежнее место героя
+              assertTrue(h2.squad.heroPos == 3 && h2.squad.allyAt(10).exists(_.kind == AllyKind.Gnome)) &&
+              assertTrue(said.contains("Вы теперь на позиции 10.") && said.contains("Вы теперь на позиции 3.")) &&
+              // в строю кнопки по порядку мест: Йорген на 2, герой на 3, Брамбл на 10
+              assertTrue(list.choices.map(_.label) == List("Йорген Кремень", "👤 Вы", "Брамбл Медноус", "↩ Назад"))
     },
 
     test("увольнение — с подтверждением; «Нет» оставляет, «Да» убирает и сохраняет") {

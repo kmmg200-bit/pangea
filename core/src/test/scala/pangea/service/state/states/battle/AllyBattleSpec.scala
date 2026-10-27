@@ -497,8 +497,8 @@ object AllyBattleSpec extends ZIOSpecDefault {
       // раунды шли без героя, а сроки эффектов тикали только в его ход.
       val h      = hero(hp = 0L, allies = List(ally(pos = 3)))
       val b0     = group(h, 1000L)
-      // В бой отряд встаёт без пустот (Squad.compact) — здесь союзник через
-      // место от героя, как в отряде.
+      // Союзник через место от героя — как в отряде: промежутки между бойцами
+      // в бою остаются (Squad.frontShift).
       val pinned = b0.copy(noKin = true, effects = b0.effects.copy(monsterRootedTurns = 2),
                      group = b0.group.copy(heroDown = true,
                        allies = b0.group.allies.map(_.copy(position = 3, home = 3))))
@@ -668,6 +668,24 @@ object AllyBattleSpec extends ZIOSpecDefault {
         updated <- dao.getHeroByUserId(userId).map(_.get)
       } yield assertTrue(fled == StateType.Dungeon) &&
               assertTrue(updated.squad.heroPos == 2 && updated.squad.allyAt(1).exists(a => a.kind == AllyKind.Human && a.hiredUntil == until))
+    },
+
+    test("наёмник на 6, герой на 10: в бою на 1 и 5, а после боя оба снова на своих местах в отряде") {
+      val until = 777_777L
+      val h     = hero(heroPos = 10, allies = List(ally(pos = 6).copy(hiredUntil = until)))
+      val b     = group(h, 1000L, 1000L)
+      for {
+        t <- makeState(h, b)
+        (state, dao, r) = t
+        // бежим сразу: окружать некому
+        _       <- TestRandom.feedInts(99, 99, 99) *> TestRandom.feedLongs(100L, 100L)
+        fled    <- state.action(testUser, tap("ConfirmFlee"), r)
+        updated <- dao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(b.group.heroPos == 5 && b.group.allyAt(1).exists(a => a.kind == AllyKind.Human && a.home == 6)) &&
+              assertTrue(fled == StateType.Dungeon) &&
+              assertTrue(updated.squad.heroPos == 10) &&
+              assertTrue(updated.squad.allyAt(6).exists(a => a.kind == AllyKind.Human && a.hiredUntil == until)) &&
+              assertTrue(updated.squad.allies.size == 1)
     },
 
     test("раненому доступны фляга и починка: второй вариант — фляга на 30% HP") {

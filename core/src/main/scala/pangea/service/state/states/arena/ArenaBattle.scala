@@ -102,19 +102,21 @@ object ArenaBattle {
   }
 
   /** Групповой бой: сторона выходит на песок со своим отрядом — герой и
-    * союзники встают так же, как в лабиринте (по местам «Отряда», без пустот).
-    * На песке — копии: что бы с ними ни случилось, отряд в «Отряде» прежний. */
+    * союзники встают так же, как в лабиринте (строй съезжает к месту 1,
+    * промежутки остаются, см. Squad.frontShift). На песке — копии: что бы с
+    * ними ни случилось, отряд в «Отряде» прежний. */
   def withSquad(side: ArenaSide, hero: Hero): ArenaSide = {
-    val formation = hero.squad.compact
-    val allies = formation.inOrder.zipWithIndex.map { case (a, i) =>
+    val shift  = hero.squad.frontShift
+    val allies = hero.squad.inOrder.zipWithIndex.map { case (a, i) =>
       val id = side.nextAlly + i
-      ArenaAlly(id, BattleAlly.of(a, hero.lvl, hero.sets.undeadAllyBoostPct, hero.sets.undeadEntersFresh).copy(home = id))
+      ArenaAlly(id, BattleAlly.of(a, hero.lvl, hero.sets.undeadAllyBoostPct, hero.sets.undeadEntersFresh)
+        .copy(position = a.position - shift, home = id))
     }
-    side.copy(pos = formation.heroPos, allies = side.allies ++ allies, nextAlly = side.nextAlly + allies.size)
+    side.copy(pos = hero.squad.heroPos - shift, allies = side.allies ++ allies, nextAlly = side.nextAlly + allies.size)
   }
 
   /** Сколько бойцов выйдет с героем в групповом бою — для списка ждущих. */
-  def squadSize(hero: Hero): Int = hero.squad.compact.allies.size
+  def squadSize(hero: Hero): Int = hero.squad.allies.size
 
   /** Крыса на старте (набор «Крыса», порог 12): выходит на песок вместе с
     * героем — на ближайшее к нему свободное место. Одна такая уже есть — вторая

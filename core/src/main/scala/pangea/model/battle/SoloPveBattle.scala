@@ -804,14 +804,16 @@ object SoloPveBattle {
     // Зеркальный настой выпит до боя — копии входят в бой вместе с героем.
     effects             = BattleEffects(heroMirrors = hero.weaponDust.mirrors),
     monsterCurrentEnergy = monster.fightStats.energy,
-    // Отряд встаёт по своим позициям без пустот (герой один — на месте 1); моб
-    // обычной встречи всегда появляется на месте 1, где бы ни стоял герой.
+    // Отряд съезжает к месту 1, промежутки между бойцами остаются (герой один —
+    // на месте 1, см. Squad.frontShift); в отряде каждый записан под своим
+    // местом (`home`) — по нему его там и найдут после боя. Моб обычной встречи
+    // всегда появляется на месте 1, где бы ни стоял герой.
     group =
       if (squad) {
-        val formation = hero.squad.compact
-        GroupState(heroPos = formation.heroPos, activePos = 1,
-          allies = formation.inOrder.map(BattleAlly.of(_, hero.lvl,
-            hero.sets.undeadAllyBoostPct, hero.sets.undeadEntersFresh)))
+        val shift = hero.squad.frontShift
+        GroupState(heroPos = hero.squad.heroPos - shift, activePos = 1,
+          allies = hero.squad.inOrder.map(a => BattleAlly.of(a, hero.lvl,
+            hero.sets.undeadAllyBoostPct, hero.sets.undeadEntersFresh).copy(position = a.position - shift)))
       }
       else GroupState()
   )

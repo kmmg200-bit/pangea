@@ -146,19 +146,25 @@ object SquadSpec extends ZIOSpecDefault {
       assertTrue(AllyRates.HireMs == 12L * 60L * 60L * 1000L && AllyRates.OffDutyMs == AllyRates.HireMs)
     },
 
-    test("пустые позиции схлопываются: ушли двое — герой один встаёт на 1; порядок оставшихся сохраняется") {
+    test("ушёл союзник — его место просто пустеет: остальные и герой стоят где стояли") {
       val three = Squad(heroPos = 2, allies = List(Ally(AllyKind.Human, 1, 1L, 1L, 1L, 9L), Ally(AllyKind.Gnome, 4, 1L, 1L, 1L, 9L)))
       val alone = three.dismiss(AllyKind.Human).dismiss(AllyKind.Gnome)
       val one   = three.dismiss(AllyKind.Human)
       val (expired, gone) = three.copy(allies = three.allies.map(_.copy(hiredUntil = 0L))).expire(1L)
       val away  = three.sentAway(AllyKind.Human, 0L)
-      assertTrue(alone.heroPos == 1 && alone.isEmpty) &&
-      assertTrue(one.heroPos == 1 && one.allyAt(2).exists(_.kind == AllyKind.Gnome)) &&
-      assertTrue(gone.size == 2 && expired.heroPos == 1) &&
-      assertTrue(away.heroPos == 1 && away.allyAt(2).exists(_.kind == AllyKind.Gnome)) &&
-      assertTrue(three.compact.heroPos == 2 && three.compact.allyAt(1).exists(_.kind == AllyKind.Human) &&
-                 three.compact.allyAt(3).exists(_.kind == AllyKind.Gnome)) &&
-      assertTrue(Squad(heroPos = 4).compact == Squad(heroPos = 1))
+      val byPos = three.dismissAll(Set(1))
+      assertTrue(alone.heroPos == 2 && alone.isEmpty) &&
+      assertTrue(one.heroPos == 2 && one.allyAt(1).isEmpty && one.allyAt(4).exists(_.kind == AllyKind.Gnome)) &&
+      assertTrue(gone.size == 2 && expired.heroPos == 2 && expired.isEmpty) &&
+      assertTrue(away.heroPos == 2 && away.allyAt(4).exists(_.kind == AllyKind.Gnome)) &&
+      assertTrue(byPos.heroPos == 2 && byPos.allyAt(4).exists(_.kind == AllyKind.Gnome))
+    },
+
+    test("в бою строй съезжает к первому месту, промежутки остаются: наёмник на 6, герой на 10 — сдвиг на 5") {
+      val gap = Squad(heroPos = 10, allies = List(Ally(AllyKind.Human, 6, 1L, 1L, 1L, 9L)))
+      assertTrue(gap.frontShift == 5) &&
+      assertTrue(Squad(heroPos = 4).frontShift == 3) &&
+      assertTrue(Squad(heroPos = 3, allies = List(Ally(AllyKind.Human, 1, 1L, 1L, 1L, 9L))).frontShift == 0)
     },
 
     test("отряд переживает сериализацию, а пустая запись читается как пустой отряд") {

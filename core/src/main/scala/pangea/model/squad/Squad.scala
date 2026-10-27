@@ -90,9 +90,10 @@ object Ally {
 }
 
 /** Отряд героя: места в строю (см. [[AllyRates.Positions]]) делят герой
- *  (`heroPos`) и союзники — до десяти. В бою позиция
- *  — это место в строю напротив врагов: союзник на позиции N стоит против
- *  врага на месте N и достаёт соседние места. `away` — кто ушёл по свитку и
+ *  (`heroPos`) и союзники — до десяти; расставляет их игрок, и встать можно на
+ *  любое место. В бой строй выходит, съехав к первому месту (см. [[frontShift]]):
+ *  союзник на месте N стоит против врага на месте N и достаёт соседние места.
+ *  Ушёл союзник — его место просто пустеет. `away` — кто ушёл по свитку и
  *  когда вернётся в таверну (ключ — вид); `offDuty` — кто отработал свой найм и
  *  когда снова сядет за стол. Хранится в `heroes.squad_data`. */
 final case class Squad(
@@ -143,7 +144,7 @@ final case class Squad(
     else {
       val hired = gone.filter(_.undead.isEmpty).map(_.kind)
       (copy(allies = allies.filterNot(_.leaving(nowMs)),
-            offDuty = offDuty ++ hired.map(k => k.entryName -> (nowMs + AllyRates.OffDutyMs))).compact, gone)
+            offDuty = offDuty ++ hired.map(k => k.entryName -> (nowMs + AllyRates.OffDutyMs))), gone)
     }
   }
 
@@ -155,17 +156,17 @@ final case class Squad(
       if (a.undead.isDefined && a.hiredUntil <= 0L) a.copy(hiredUntil = nowMs + AllyRates.UndeadMs) else a
     })
 
-  def dismiss(kind: AllyKind): Squad = copy(allies = allies.filterNot(_.kind == kind)).compact
+  def dismiss(kind: AllyKind): Squad = copy(allies = allies.filterNot(_.kind == kind))
 
   /** Убрать союзника с этой позиции. Позиция — единственный надёжный ключ:
     * поднятых с алтаря в отряде может быть несколько, и вид их не различает. */
   def dismissAt(pos: Int): Squad = dismissAll(Set(pos))
 
-  /** Убрать сразу всех с этих позиций: по одному нельзя — [[compact]] сдвигает
-    * оставшихся, и вторая позиция указала бы уже не на того. */
+  /** Убрать сразу всех с этих позиций: их места пустеют, остальные стоят где
+    * стояли. */
   def dismissAll(positions: Set[Int]): Squad =
     if (positions.isEmpty) this
-    else copy(allies = allies.filterNot(a => positions.contains(a.position))).compact
+    else copy(allies = allies.filterNot(a => positions.contains(a.position)))
 
   def updateAt(pos: Int)(f: Ally => Ally): Squad =
     copy(allies = allies.map(a => if (a.position == pos) f(a) else a))
@@ -178,7 +179,7 @@ final case class Squad(
 
   /** Поднятый занимает место того, кто на нём стоял. */
   def replaceAt(pos: Int, form: UndeadForm, lvl: Long, nowMs: Long, lasts: Long = 1L): Squad =
-    copy(allies = allies.filterNot(_.position == pos) :+ risen(form, pos, lvl, nowMs, lasts)).compact
+    copy(allies = allies.filterNot(_.position == pos) :+ risen(form, pos, lvl, nowMs, lasts))
 
   /** Крыса из-под ног встаёт на свободное место и держится [[AllyRates.RatMs]].
     * Мест нет — отряд как был: лишней крысе в строю стоять негде. */
@@ -218,18 +219,11 @@ final case class Squad(
   def sentAway(kind: AllyKind, nowMs: Long): Squad =
     dismiss(kind).copy(away = away.updated(kind.entryName, nowMs + AllyRates.AwayMs))
 
-  /** Пустые позиции схлопываются: герой и союзники в прежнем порядке встают на
-    * 1, 2, … — герой один всегда на 1, а не на месте, оставшемся от ушедших. */
-  def compact: Squad = {
-    val order = (None +: allies.map(Some(_))).sortBy {
-      case None    => heroPos
-      case Some(a) => a.position
-    }
-    val placed = order.zipWithIndex.map { case (who, i) => who -> (i + 1) }
-    copy(
-      heroPos = placed.collectFirst { case (None, p) => p }.getOrElse(1),
-      allies  = placed.collect { case (Some(a), p) => a.copy(position = p) })
-  }
+  /** На сколько мест строй съезжает к первому в бою: пустые места перед первым
+    * бойцом — героем или союзником — уходят, промежутки между бойцами остаются.
+    * Наёмник на 6-м и герой на 10-м встают в бою на 1-е и 5-е, герой один — на
+    * 1-е. В самом отряде места от этого не меняются. */
+  def frontShift: Int = (heroPos :: allies.map(_.position)).min - 1
 
   /** Переставить союзника с позиции `from` на позицию `pos`: занята другим —
     * меняются местами, занята героем — герой встаёт на его прежнюю. */

@@ -4601,10 +4601,25 @@ case class BattleState(
     * герое на [[pangea.model.squad.AllyRates.RatMs]]. */
   private def squadAfterBattle(hero: Hero, battle: SoloPveBattle, nowMs: Long): pangea.model.squad.Squad = {
     val (joined, fromSquad) = battle.group.allies.partition(_.home <= 0)
-    // Позиции могли поменяться за бой (Таран, «Переместиться») — вместе с героем.
-    val synced0 = fromSquad.foldLeft(hero.squad.copy(heroPos = battle.group.heroPos)) { (s, a) =>
-      s.updateAt(a.home)(old => a.toAlly.copy(hiredUntil = old.hiredUntil))
-    }
+    // Павших убираем первыми, по местам в отряде (`home`): их места пустеют,
+    // остальные стоят где стояли.
+    val (raised, hired) = battle.group.alliesGone.partition(_.undead.isDefined)
+    val left = hired.foldLeft(hero.squad.dismissAll(raised.map(_.home).toSet))((s, a) => s.sentAway(a.kind, nowMs))
+    // В бою строй съезжал к месту 1 (Squad.frontShift) — в отряд все
+    // возвращаются на столько же мест дальше: выбранная расстановка не сбивается.
+    // Позиции могли поменяться за бой (Таран, «Переместиться») — вместе с героем;
+    // за край строя при этом не выходим.
+    val battleEnd = (battle.group.heroPos :: fromSquad.map(_.toAlly.position)).max
+    val back      = hero.squad.frontShift.min(pangea.model.squad.AllyRates.Positions - battleEnd).max(0)
+    val byHome    = fromSquad.map(a => a.home -> a).toMap
+    val synced0 = left.copy(
+      heroPos = battle.group.heroPos + back,
+      allies  = left.allies.map { old =>
+        byHome.get(old.position).fold(old) { a =>
+          val after = a.toAlly
+          after.copy(position = after.position + back, hiredUntil = old.hiredUntil)
+        }
+      })
     // Выжившие, пришедшие не из отряда, — в отряд: крыса на сутки, восставший
     // на двое. Крысе мест не нашлось — разбежится, восставший будет ждать
     // ответа, кем за него пожертвовать (см. Squad.admitRisen).
@@ -4619,11 +4634,7 @@ case class BattleState(
         }
       }
     }
-    // Павших убираем разом: по одному нельзя — строй смыкается, и вторая
-    // позиция указала бы уже не на того.
-    val (raised, hired) = battle.group.alliesGone.partition(_.undead.isDefined)
-    val withoutRaised   = synced.dismissAll(raised.map(_.home).toSet)
-    hired.foldLeft(withoutRaised)((s, a) => s.sentAway(a.kind, nowMs))
+    synced
   }
 
   /** Ход мобов вне пары. Сосед героя (номер 2) достаёт его сбоку: обычная

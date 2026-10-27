@@ -5,7 +5,7 @@ import pangea.model.arena.{ArenaAlly, ArenaFight, ArenaSide, ArenaStatus}
 import pangea.model.battle.{BattleAlly, BattleEffects, Bleed, SoloPveBattle}
 import pangea.model.hero.Hero
 import pangea.model.item.ItemSet
-import pangea.model.squad.AllyKind
+import pangea.model.squad.{Ally, AllyKind, Squad}
 import pangea.model.stats.FightStats
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.state.UserAction
@@ -84,6 +84,13 @@ object ArenaAlliesSpec extends ZIOSpecDefault {
   private val slow  = fighter(twoId, 2L, agi = 5, int = 5)
 
   override def spec = suite("Союзники на песке")(
+
+    test("отряд выходит на песок, как в лабиринте: строй съезжает к месту 1, промежутки остаются") {
+      val h    = fighter(oneId, 1L, 10L, 10L).copy(squad = Squad(heroPos = 10,
+                   allies = List(Ally(AllyKind.Human, 6, 100L, 100L, 0L))))
+      val side = ArenaBattle.withSquad(ArenaSide(oneId, h.id, "Я", 10L), h)
+      assertTrue(side.pos == 5 && side.allies.map(_.ally.position) == List(1) && ArenaBattle.squadSize(h) == 1)
+    },
 
     test("крыса на старте: выходит на песок рядом с героем, а сопернику видна «мобом» под своим номером") {
       val ratter = quick.copy(equipment = TestFixtures.wearingSet(ItemSet.Rat, 12))
