@@ -153,7 +153,7 @@ object PassiveKind extends Enum[PassiveKind] {
 
   case object Robber extends PassiveKind(
     "Разбойник",
-    "Разбойник: +5% к итоговому урону.",
+    "Разбойник: +5% к урону обычной атаки.",
     Rings
   ) { val DamageBonusPct: Long = 5L }
 

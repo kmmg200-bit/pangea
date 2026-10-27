@@ -734,6 +734,60 @@ object GroupBattleSpec extends ZIOSpecDefault {
               assertTrue(screens.contains("отшвыриваете") && !screens.contains("отлетает в конец строя"))
     },
 
+    test("Отбросить башню рядом: удар проходит, а с места она не сходит") {
+      val h = heroWithSkills(Skill.SweepingStrike, Skill.Shove)
+      val b = SoloPveBattle.fromGroup(List(monster(1000L), towerMob(9000L), monster(2000L)), h, Nil)
+      for {
+        t <- makeState(h, b.copy(noKin = true))
+        (state, dao, r) = t
+        _       <- quietRound(99, 99) *> TestRandom.feedLongs(100L)
+        _       <- state.action(testUser, aimed("Skill_202", 2), r)
+        after   <- battleOf(dao)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+        byPos    = after.group.entries.toMap
+      } yield assertTrue(after.group.paired && after.monsterStats.hp == 1000L) &&
+              assertTrue(byPos(2).stats.hp == 9000L && byPos(2).currentHp < 9000L) &&
+              assertTrue(byPos(3).stats.hp == 2000L) &&
+              assertTrue(screens.contains("стоит намертво") && !screens.contains("отлетает в конец строя"))
+    },
+
+    test("Отбросить в караване: башня из хвоста не выходит — цель меняется с последним охранником") {
+      val h       = heroWithSkills(Skill.SweepingStrike, Skill.Shove)
+      val mobs    = List(monster(1000L), monster(2000L), monster(3000L), towerMob(9000L))
+      val caravan = SoloPveBattle.fromGroup(mobs, h, Nil, towers = 1)
+      for {
+        t <- makeState(h, caravan.copy(noKin = true))
+        (state, dao, r) = t
+        _       <- quietRound(99, 99, 99) *> TestRandom.feedLongs(100L)
+        _       <- state.action(testUser, aimed("Skill_202", 1), r)
+        after   <- battleOf(dao)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+        byPos    = after.group.entries.toMap
+      } yield assertTrue(after.group.paired && after.monsterStats.hp == 3000L) &&
+              assertTrue(byPos(3).stats.hp == 1000L && byPos(2).stats.hp == 2000L) &&
+              assertTrue(after.monsterAt(Formation.MonsterPlaces).exists(_.stats.hp == 9000L)) &&
+              assertTrue(screens.contains("отлетает в конец строя"))
+    },
+
+    test("«Ужасающий» режет врагам реген энергии — и тому, кто в паре, и строю") {
+      def energies(h: Hero) =
+        for {
+          t <- makeState(h, group(1000L, 1000L))
+          (state, dao, r) = t
+          _     <- quietRound(99, 99)
+          _     <- state.action(testUser, aimed("Attack", 1), r)
+          after <- battleOf(dao)
+        } yield (after.monsterCurrentEnergy, after.group.entries.toMap.get(2).map(_.currentEnergy))
+      val regen  = MonsterEnergy.regen(lvl, Rarity.Common)
+      val scared = (regen * 0.9).toLong
+      for {
+        calm  <- energies(hero())
+        timid <- energies(heroWithPassive(pangea.model.item.PassiveKind.Terrifying, 500000L))
+      } yield assertTrue(calm == ((regen, Some(regen)))) &&
+              assertTrue(timid == ((scared, Some(scared)))) &&
+              assertTrue(scared < regen)
+    },
+
     test("добил моба в паре — следующий встал: фляга снова доступна, кулдауны оттикали, а использованное умение — нет") {
       val h0 = heroWithSkills(Skill.SweepingStrike, Skill.MinorHeal)
       val h  = h0.copy(fightStats = h0.fightStats.copy(hp = 100L), equipment = h0.equipment.copy(belt = healBelt(3)))

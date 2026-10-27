@@ -2754,6 +2754,7 @@ battle:
     pinnedMark: " 📌"
     fanCut: "🩸 Порез задевает {monster} — {damage} урона, кровь (-{pct}%)."
     knockedBack: "🛡 {monster} отлетает в конец строя, на его место выходит {next}."
+    unshovable: "🛡 {monster} стоит намертво: сооружение с места не сдвинуть."
     victory: "Все повержены: {monster}. Получено {exp} опыта."
     chooseTarget: "🎯 {skill} — в кого?"
     targetLabel: "{n}. {monster} ❤ {hp}%"

@@ -49,6 +49,11 @@ final case class HeroPassives(kinds: Set[PassiveKind], strength: Map[PassiveKind
   def enemyAccuracyMult: Double =
     if (has(PassiveKind.Blending)) 1.0 - scaledPct(PassiveKind.Blending, PassiveKind.Blending.EnemyAccuracyReductionPct) / 100.0 else 1.0
 
+  /** Множитель энергии, которую ВРАГ копит за раунд: Ужасающий ×0.9 (−10%). Режет
+   *  реген и мобу, и минибоссу — тому, кто в паре, и всему строю. */
+  def enemyEnergyRegenMult: Double =
+    if (has(PassiveKind.Terrifying)) 1.0 - scaledPct(PassiveKind.Terrifying, PassiveKind.Terrifying.EnemyEnergyRegenPenaltyPct) / 100.0 else 1.0
+
   // ── Плоские бафы статов (не мультипликативные — как зелья пояса) ─────────────
   /** Плоская прибавка к защите: +5% от переданного значения защиты (Укреплённый). */
   def defenceFlatBonus(defence: Long): Long =
@@ -59,7 +64,7 @@ final case class HeroPassives(kinds: Set[PassiveKind], strength: Map[PassiveKind
     if (has(PassiveKind.Precise)) (accuracy * scaled(PassiveKind.Precise, PassiveKind.Precise.AccuracyBonusPct) / 100L).max(1L) else 0L
 
   // ── Урон и лечение ───────────────────────────────────────────────────────────
-  /** Множитель финального урона игрока: Разбойник ×1.05. */
+  /** Множитель урона обычной атаки героя: Разбойник ×1.05. Умения он не трогает. */
   def finalDamageMult: Double =
     if (has(PassiveKind.Robber)) 1.0 + scaled(PassiveKind.Robber, PassiveKind.Robber.DamageBonusPct) / 100.0 else 1.0
 

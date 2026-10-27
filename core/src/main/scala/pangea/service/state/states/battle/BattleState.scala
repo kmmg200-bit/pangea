@@ -1126,7 +1126,7 @@ case class BattleState(
             weaponMod: Double = if (noWeapon) 0.5 else 1.0
             // Из лука вблизи — на пятую часть слабее (см. rangedCloseMod).
             closeMod = BattleState.rangedCloseMod(hero, battle)
-            // «Разбойник» (+5%) множит итоговый урон. Усиление стихии сюда НЕ
+            // «Разбойник» (+5%) множит урон обычной атаки — умения он не трогает. Усиление стихии сюда НЕ
             // входит: оно сдвигает грани урона по броне/HP в splitElementalDamage.
             // Пыль, севшая неудачно (всполох магии или четвёртая горсть), режет
             // весь урон героя на четверть — ровно этот бой (см. WeaponDust).
@@ -2797,13 +2797,11 @@ case class BattleState(
         if (heroAlive) tickHeroEffects(finalHero, finalBattle, nowMs)
         else (finalHero, finalBattle, "")
       // Энергия копится в конце раунда — из неё оплачивается следующее умение.
-      // У минибосса свой реген от BossLvL, у обычного моба — от уровня и редкости.
+      // У минибосса свой реген от BossLvL, у обычного моба — от уровня и редкости;
+      // «Ужасающий» героя его урезает (см. [[mobEnergyGain]]).
       battleWithEnergy = {
         val maxEn = battleAfterHero.monsterStats.energy
-        val gain  = battleAfterHero.boss match {
-          case Some(e) => e.energyRegen(battleAfterHero.monsterLvl)
-          case None    => MonsterEnergy.regen(battleAfterHero.monsterLvl, battleAfterHero.rarity)
-        }
+        val gain  = mobEnergyGain(tickedHero, battleAfterHero)
         battleAfterHero.copy(monsterCurrentEnergy = (battleAfterHero.monsterCurrentEnergy + gain).min(maxEn))
       }
       (tickedBattle, monsterEffectLine, bleedDealt) =
@@ -3284,11 +3282,14 @@ case class BattleState(
         case Skill.Effect.Knockback =>
           // Урон без защиты; выживший отлетает в конец строя, а последний
           // выходит на его место — базовая атака и ответ идут уже по нему.
+          // Сооружение с места не сдвинуть; минибосса — можно.
           val line: Long => String = dealt =>
             tmpl.replaceFirst("\\{\\}", java.util.regex.Matcher.quoteReplacement(aimed.monsterName))
                 .replaceFirst("\\{\\}", dealt.toString)
           val thrown: (Hero, SoloPveBattle, Vector[String]) => Task[TurnResult] = (h, b, lines) =>
             if (b.monsterCurrentHp <= 0) next(h, b, lines)
+            else if (BattleState.isTower(b))
+              next(h, b, lines :+ content.format("battle.group.unshovable", "monster" -> b.monsterName))
             else knockBack(b) match {
               case None                    => next(h, b, lines)
               case Some((moved, newcomer)) =>
@@ -3539,11 +3540,14 @@ case class BattleState(
     b.withEffects(b.effects.copy(monsterRootedTurns = b.effects.monsterRootedTurns.max(turns + 1)))
 
   /** «Отбросить»: активный моб отлетает на последнее занятое место строя, а тот,
-    * кто там стоял, выходит на его место — и в поля. Активный и так последний
-    * (или один) — None. Возвращает бой и имя вышедшего. */
+    * кто там стоял, выходит на его место — и в поля. Сооружение в хвосте (башня
+    * каравана) с места не сходит: его место пропускаем, и цель меняется с
+    * последним из тех, кто не сооружение. Позади одни сооружения, или активный
+    * и так последний (или один) — None. Возвращает бой и имя вышедшего. */
   private def knockBack(battle: SoloPveBattle): Option[(SoloPveBattle, String)] = {
-    val g    = battle.group
-    val last = (g.activePos :: g.places).max
+    val g     = battle.group
+    val swaps = g.places.zip(g.others).collect { case (p, s) if !BattleState.isTowerSlot(s) => p }
+    val last  = (g.activePos :: swaps).max
     if (last == g.activePos) None
     else {
       val idx   = g.idxOf(last)
@@ -4844,7 +4848,7 @@ case class BattleState(
       (h2, castSideLine) = castSideTrauma
       log2 = log2raw ++ castSideLine.toVector
       // 3) конец хода этого моба: энергия и тик ран
-      regen      = t2.boss.map(_.energyRegen(t2.monsterLvl)).getOrElse(MonsterEnergy.regen(t2.monsterLvl, t2.rarity))
+      regen      = mobEnergyGain(h2, t2)
       withEnergy = t2.copy(monsterCurrentEnergy = (t2.monsterCurrentEnergy + regen).min(t2.monsterStats.energy))
       (ticked, dotLine, _) = tickMonsterEffects(withEnergy, withEnergy.monsterName, h2.sets.burnGrowthMult)
       log3 = log1 ++ log2 ++ (if (dotLine.isEmpty) Vector.empty else Vector(dotLine))
@@ -4886,6 +4890,14 @@ case class BattleState(
     monsterRootedTurns       = (e.monsterRootedTurns - 1).max(0),
     monsterDefenceDebuff     = e.monsterDefenceDebuff.flatMap(_.ticked)
   )
+
+  /** Сколько энергии враг копит за раунд: минибосс — от своего уровня, моб — от
+    * уровня и редкости. «Ужасающий» героя урезает реген, но хоть единицу враг
+    * накопит — если копил вообще. */
+  private def mobEnergyGain(hero: Hero, b: SoloPveBattle): Long = {
+    val base = b.boss.map(_.energyRegen(b.monsterLvl)).getOrElse(MonsterEnergy.regen(b.monsterLvl, b.rarity))
+    base.min((base * hero.passives.enemyEnergyRegenMult).toLong.max(1L))
+  }
 
   /** Помощь соседу: если у моба по карману лечение или починка, сам он цел, а
     * сосед по строю (место ±1) ранен — умение уходит соседу, цена списывается

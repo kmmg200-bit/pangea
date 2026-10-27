@@ -63,6 +63,12 @@ object PassivesSpec extends ZIOSpecDefault {
       assertTrue(HeroPassives.empty.enemyAccuracyMult == 1.0)
     },
 
+    test("Ужасающий режет врагу реген энергии на 10% (множитель ×0.9), с пониманием — сильнее") {
+      assertTrue(HeroPassives(Set(PassiveKind.Terrifying)).enemyEnergyRegenMult == 0.9) &&
+      assertTrue(HeroPassives(Set(PassiveKind.Terrifying), Map(PassiveKind.Terrifying -> 2.0)).enemyEnergyRegenMult == 0.8) &&
+      assertTrue(HeroPassives.empty.enemyEnergyRegenMult == 1.0)
+    },
+
     test("Сверкающий даёт бонус уклона только для бегства") {
       val p = HeroPassives(Set(PassiveKind.Glittering))
       assertTrue(p.dodgeBonusPct == 0L, p.fleeDodgeBonusPct == 25L)
