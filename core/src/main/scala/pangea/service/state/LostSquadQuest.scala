@@ -81,8 +81,10 @@ object LostSquadQuest {
   /** Груз забран — нести его Гуннару на Стройку. */
   def crateOnHands(q: NpcQuests): Boolean = q.onStep(NpcQuest.LostSquad, 4)
 
-  /** Под серебряной жилой откроется штольня: фонарь на руках или дружина всё ещё ждёт. */
-  def mineOpens(q: NpcQuests): Boolean = lanternOnHands(q) || mineFound(q)
+  /** Под серебряной жилой откроется штольня: фонарь на руках, дружина всё ещё
+    * за завалом — или уже наверху, но дары не приняты. Ушёл от неё (хоть по
+    * /home) — она ждёт у выхода, и дары не пропадают. */
+  def mineOpens(q: NpcQuests): Boolean = lanternOnHands(q) || mineFound(q) || giftsWait(q)
 
   /** Брамбл уже рассказал, что знал. */
   def bramblTold(q: NpcQuests): Boolean = q.of(NpcQuest.LostSquad).counter > 0L

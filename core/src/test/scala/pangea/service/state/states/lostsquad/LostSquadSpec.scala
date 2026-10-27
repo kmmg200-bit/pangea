@@ -187,6 +187,28 @@ object LostSquadSpec extends ZIOSpecDefault {
               assertTrue(!inv.snapshot.exists(_.questItem.contains(QuestItemKind.ForemanLantern)))
     },
 
+    test("дары не пропадают: ушёл с шага даров (хоть по /home) — жила снова ведёт в штольню, дружина ждёт у выхода") {
+      for {
+        d   <- dao(hero(), Some(quest(3)))
+        sch <- TestScheduler.make
+        r   <- TestRenderer.make
+        c   <- ZIO.attempt(SceneContent.load())
+        _   <- TestRandom.feedInts(15, 90, 90)
+        _   <- TestRandom.feedBooleans(true)
+        out <- SilverVeinState(d, sch, c).action(testUser, tap("Harvest"), r)
+        state = SquadMineState(d, TestInventoryRepository.withItems(List(lantern)), TestItemRepository.make, c)
+        _    <- state.enter(testUser, r)
+        wait <- r.sentScreens.map(_.last)
+        took <- state.action(testUser, tap("MineGifts"), r)
+        loot <- lootOf(d)
+        q    <- questOf(d)
+      } yield assertTrue(out == StateType.SquadMine) &&
+              // битва не повторяется: не «последний гоблин падает», а дружина у выхода
+              assertTrue(wait.text.contains("ждут вас у выхода из штольни") && !wait.text.contains("Последний гоблин")) &&
+              assertTrue(wait.choices.map(_.id) == List("MineGifts")) &&
+              assertTrue(took == StateType.Loot && loot.exists(_.items.size == 8) && q.isDone(NpcQuest.LostSquad))
+    },
+
     test("шлем — всегда с точностью, дары — только железо и магический камень, обоих примерно поровну") {
       val h = hero().copy(lvl = 30L)
       val helmets = (1L to 60L).toList.map(s => LostSquadQuest.helmet(h, Rng(s)))

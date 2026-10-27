@@ -37,7 +37,8 @@ import java.util.concurrent.TimeUnit
   * уходит по свитку, а за стол возвращается с двойной ценой; ящик ждёт
   * Гуннара на Стройке.
   *
-  * Погиб в бою — дружина снова за завалом: спуститься можно через любую жилу. */
+  * Погиб в бою — дружина снова за завалом: спуститься можно через любую жилу.
+  * Ушёл, не приняв даров, — дружина ждёт у выхода из штольни, вход тот же. */
 case class SquadMineState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
@@ -68,7 +69,9 @@ case class SquadMineState(
       _        <- if (progress.exists(_.step == Step.AfterEscort) && LostSquadQuest.mineFound(quests))
                     heroDao.writeSceneData(user.userId, Json.Null) *> LostSquadQuest.rescued(heroDao, user.userId) *>
                       renderer.show(user, thanksScreen(hero))
-                  else if (LostSquadQuest.giftsWait(quests)) renderer.show(user, thanksScreen(hero))
+                  // Бой позади, дары не приняты: дружина ждёт у выхода — и когда
+                  // герой вернулся через жилу, и когда написал что-то своё.
+                  else if (LostSquadQuest.giftsWait(quests)) renderer.show(user, giftsWaitingScreen)
                   else if (LostSquadQuest.lanternOnHands(quests))
                     LostSquadQuest.found(heroDao, user.userId) *>
                       renderer.show(user, Screen(content.text("lostSquad.mine.fall"), Nil)) *>
@@ -135,6 +138,10 @@ case class SquadMineState(
     Screen(content.text("lostSquad.mine." + LostSquadQuest.key(hero, "thanks")) + brambl.fold("")("\n\n" + _),
       List(content.choice("MineGifts", "lostSquad.mine.giftsLabel")))
   }
+
+  /** Дружина наверху, дары ещё не приняты: ждёт у выхода из штольни. */
+  private def giftsWaitingScreen: Screen =
+    Screen(content.text("lostSquad.mine.giftsWaiting"), List(content.choice("MineGifts", "lostSquad.mine.giftsLabel")))
 
   /** Принять дары: шлем и по куску на гнома — экраном добычи, задание
     * закрыто, «Друг подгорного народа». */
