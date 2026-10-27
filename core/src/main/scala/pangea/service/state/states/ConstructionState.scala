@@ -26,6 +26,9 @@ import java.util.concurrent.TimeUnit
   *
   * Формула серебра: `lvl(героя) × часы`, домноженное на `100 ± d` процентов, где
   * `d ∈ [10, 20]` (знак и величина роллятся отдельно).
+  *
+  * Работами заправляет прораб Гуннар Отвес — своя кнопка в меню: кто он и что
+  * говорит по ходу «Пропавшей дружины»; ящик дружины несут ему.
   */
 case class ConstructionState(
   heroDao: HeroDao,
@@ -57,7 +60,11 @@ case class ConstructionState(
         enter(user, renderer).as(StateType.Construction)
       },
       "Finish" -> Target.Run((user, _, renderer) => finish(user, renderer)),
-      "SquadCrate" -> Target.Run((user, _, renderer) => handOverCrate(user, renderer)),
+      "Foreman" -> Target.Run((user, _, renderer) => offShift(user, renderer)(showForeman(user, renderer))),
+      "SquadCrate" -> Target.Run((user, _, renderer) => offShift(user, renderer)(handOverCrate(user, renderer))),
+      "BackFromForeman" -> Target.Run { (user, _, renderer) =>
+        enter(user, renderer).as(StateType.Construction)
+      },
       "LeaveConstruction" -> Target.Goto(StateType.MarketSquare),
       CityExit.route
     ),
@@ -82,13 +89,10 @@ case class ConstructionState(
   ): Task[StateType] = branch.act(user, ua, renderer)
 
   private def showMenu(user: User, renderer: Renderer): Task[Unit] =
-    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
     renderer.show(
       user,
       Screen(
         content.text("construction.menu.text"),
-        // Ящик «Пропавшей дружины» на руках — Гуннар Отвес примет его здесь.
-        Option.when(LostSquadQuest.crateOnHands(quests))(content.choice("SquadCrate", "lostSquad.foreman.crateLabel")).toList ++
         List(
           content.choice(
             "CarryStone",
@@ -105,11 +109,32 @@ case class ConstructionState(
             "construction.buildWallLabel",
             "duration" -> formatHours(Job.BuildWall.hours)
           ),
+          content.choice("Foreman", "construction.foremanLabel"),
           content.choice("LeaveConstruction", "construction.back"),
           CityExit.button(content)
         )
       )
     )
+
+  /** Прораб Гуннар Отвес: кто он и что говорит — по ходу «Пропавшей дружины»
+    * (см. [[LostSquadQuest.foremanLine]]). Ящик дружины на руках — он его примет. */
+  private def showForeman(user: User, renderer: Renderer): Task[StateType] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      val line = LostSquadQuest.foremanLine(quests).getOrElse("construction.foreman.idle")
+      renderer.show(user, Screen(
+        content.text("construction.foreman.about") + "\n\n" + content.text(line),
+        Option.when(LostSquadQuest.crateOnHands(quests))(content.choice("SquadCrate", "lostSquad.foreman.crateLabel")).toList :+
+          content.choice("BackFromForeman", "construction.back")
+      )).as(StateType.Construction)
+    }
+
+  /** Пока идёт смена, к прорабу не отлучиться: старая кнопка покажет экран
+    * работы. Ящик, отданный посреди смены, стёр бы её из scene_data — и серебро
+    * за неё вместе с ней. */
+  private def offShift(user: User, renderer: Renderer)(run: => Task[StateType]): Task[StateType] =
+    activeJob(user).flatMap {
+      case Some(_) => showWork(user, renderer).as(StateType.Construction)
+      case None    => run
     }
 
   /** Ящик «Пропавшей дружины» — Гуннару: он узнаёт свою руду и всё понимает.

@@ -211,6 +211,8 @@ object LostSquadSpec extends ZIOSpecDefault {
         site = ConstructionState(d, sch, c, Some(inv))
         _    <- site.enter(testUser, r)
         menu <- r.sentScreens.map(_.last)
+        _      <- site.action(testUser, tap("Foreman"), r)
+        gunnar <- r.sentScreens.map(_.last)
         sold <- site.action(testUser, tap("SquadCrate"), r)
         h2   <- heroOf(d)
         q2   <- questOf(d)
@@ -223,11 +225,26 @@ object LostSquadSpec extends ZIOSpecDefault {
               assertTrue(!MercenariesState.available(h.squad, 0L, LostSquadQuest.bramblCalled(q)).contains(AllyKind.Gnome)) &&
               assertTrue(MercenariesState.available(h.squad, Long.MaxValue, LostSquadQuest.bramblCalled(q)).contains(AllyKind.Gnome)) &&
               assertTrue(LostSquadQuest.bramblBrews(q, 30L) == 12L) &&
-              assertTrue(menu.choices.headOption.exists(_.id == "SquadCrate")) &&
+              // ящик несут прорабу: на стройке — его кнопка, у него — «Отдать ящик»
+              assertTrue(menu.choices.exists(_.id == "Foreman") && !menu.choices.exists(_.id == "SquadCrate")) &&
+              assertTrue(gunnar.choices.headOption.exists(_.id == "SquadCrate") && gunnar.text.contains("ящик у вас на плече")) &&
               assertTrue(sold == StateType.Loot && h2.silver == 100L + LostSquadQuest.CrateSilver) &&
               assertTrue(loot.exists(_.items.map(_.material) == List(Some(MaterialKind.EverburningIron)))) &&
               assertTrue(q2.isDone(NpcQuest.LostSquad) && h2.hasAchievement(Achievement.MineLooter)) &&
               assertTrue(end.contains("поминальный колокол") && !inv.snapshot.exists(_.questItem.isDefined))
+    },
+
+    test("прораб Гуннар по ходу задания: ждёт дружину, замечает ящик, благодарит за выведенных, молчит после проданного груза") {
+      val rescued = quest(2).finish(NpcQuest.LostSquad)
+      val sold    = quest(4, gone = true).finish(NpcQuest.LostSquad)
+      assertTrue(LostSquadQuest.foremanLine(NpcQuests.empty).isEmpty) &&
+        assertTrue(LostSquadQuest.foremanLine(quest(1)).contains("lostSquad.foreman.waiting")) &&
+        assertTrue(LostSquadQuest.foremanLine(quest(2)).contains("lostSquad.foreman.waiting")) &&
+        // о том, что дружину вывели, Гуннару сказали сразу — ещё до даров
+        assertTrue(LostSquadQuest.foremanLine(quest(3)).contains("lostSquad.foreman.grateful")) &&
+        assertTrue(LostSquadQuest.foremanLine(quest(4, gone = true)).contains("lostSquad.foreman.crateSeen")) &&
+        assertTrue(LostSquadQuest.foremanLine(rescued).contains("lostSquad.foreman.grateful")) &&
+        assertTrue(LostSquadQuest.foremanLine(sold).contains("lostSquad.foreman.cold"))
     },
 
     test("в бою у завала с героем трое дружинников: гномы-предводители его уровня на 75% HP и брони") {

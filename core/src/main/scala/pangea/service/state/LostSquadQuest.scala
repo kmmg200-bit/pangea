@@ -93,6 +93,17 @@ object LostSquadQuest {
   /** Дружина выведена — Брамбл в долгу. */
   def bramblFriend(q: NpcQuests): Boolean = q.isDone(NpcQuest.LostSquad) && !squadAbandoned(q)
 
+  /** Что прораб Гуннар Отвес говорит о дружине — ключ текста по ходу задания.
+    * Ящик на руках — замечает его; дружина выведена — благодарит (о том, что
+    * вывели, ему сказали сразу, ещё до даров); задание идёт — ждёт своих; груз
+    * продан — молчит. Задание не начиналось — None: о дружине ни слова. */
+  def foremanLine(q: NpcQuests): Option[String] =
+    if (crateOnHands(q)) Some("lostSquad.foreman.crateSeen")
+    else if (giftsWait(q) || bramblFriend(q)) Some("lostSquad.foreman.grateful")
+    else if (q.isTaken(NpcQuest.LostSquad)) Some("lostSquad.foreman.waiting")
+    else if (q.isDone(NpcQuest.LostSquad)) Some("lostSquad.foreman.cold")
+    else None
+
   /** Пока задание идёт, Брамбл всегда за столом — даже если только что ушёл
     * отдыхать, — и идёт даром. Бросил дружину — за даром больше не пойдёт. */
   def bramblCalled(q: NpcQuests): Boolean = q.isTaken(NpcQuest.LostSquad) && !squadAbandoned(q)
