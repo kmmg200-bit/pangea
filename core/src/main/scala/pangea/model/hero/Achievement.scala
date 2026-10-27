@@ -34,6 +34,12 @@ object Achievement extends Enum[Achievement] {
   /** Вырезал деревню мурлоков. */
   case object MurlocBane extends Achievement("Гроза Мурлоков", "+1 к силе")
 
+  /** Вывел из-под Серебряной жилы гномью дружину «Двенадцать фонарей». */
+  case object SquadFriend extends Achievement("Друг подгорного народа", "+1 к телосложению")
+
+  /** Забрал груз дружины «Двенадцать фонарей» и оставил её у фонаря. */
+  case object MineLooter extends Achievement("Расхититель штолен", "+10% серебра с серебряных жил")
+
   // ── Собранные наборы ────────────────────────────────────────────────────────
   // За каждый набор, надетый целиком — все двенадцать вещей разом, — своё
   // достижение: прибавка к главному стату набора, та же, что у его двойки, но
@@ -104,6 +110,20 @@ object Achievement extends Enum[Achievement] {
   /** Плоская прибавка к силе от достижений героя. */
   def strBonus(hero: Hero): Long =
     if (hero.hasAchievement(MurlocBane)) MurlocBaneStrBonus else 0L
+
+  /** Сколько телосложения прибавляет «Друг подгорного народа». */
+  val SquadFriendVitBonus: Long = 1L
+
+  /** Плоская прибавка к телосложению от достижений героя. */
+  def vitBonus(hero: Hero): Long =
+    if (hero.hasAchievement(SquadFriend)) SquadFriendVitBonus else 0L
+
+  /** Сколько процентов сверху к серебру с серебряной жилы даёт «Расхититель штолен». */
+  val MineLooterVeinPct: Long = 10L
+
+  /** Множитель серебра с серебряной жилы с учётом достижений героя. */
+  def veinPct(hero: Hero): Long =
+    100L + (if (hero.hasAchievement(MineLooter)) MineLooterVeinPct else 0L)
 
   /** Сколько процентов сверху к серебру, выпадающему в лабиринте. */
   val SaviorSilverBonusPct: Long = 10L

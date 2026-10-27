@@ -15,7 +15,7 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
-import pangea.service.state.{AzatData, MarisaQuest, MurlocQuest, State, UserAction}
+import pangea.service.state.{AzatData, LostSquadQuest, MarisaQuest, MurlocQuest, State, UserAction}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
 
@@ -48,6 +48,9 @@ case class DeathState(
       // Смерть в налёте на деревню мурлоков: штрафы обычные, задание остаётся
       // (карта на руках), проснуться — в городе.
       raid          = battle.exists(_.story.contains(MurlocQuest.RaidStory))
+      // Смерть у завала в штольне: штрафы обычные, дружина снова ждёт за
+      // завалом, проснуться — в городе.
+      escort        = battle.exists(_.story.contains(LostSquadQuest.EscortStory))
       withMarisa   <- heroDao.readSceneData(user.userId).map(_.flatMap(_.as[LootData].toOption)
                         .flatMap(_.eventData).flatMap(_.as[MarisaHuntState.Progress].toOption).exists(_.withMarisa))
       // Благословение Азата смягчает штраф: теряется на BlessingBonusPct% меньше.
@@ -99,6 +102,9 @@ case class DeathState(
                       else if (raid) Json.obj(
                         "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
                         "wakeLines" -> List("murlocVillage.raid.death").asJson)
+                      else if (escort) Json.obj(
+                        "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
+                        "wakeLines" -> List("lostSquad.escort.death").asJson)
                       else Json.obj()
       _            <- heroDao.writeSceneData(user.userId, Json.obj(
                         "restDurationMs" -> deathRestMs.asJson,

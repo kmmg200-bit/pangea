@@ -4,12 +4,16 @@ import io.circe.Json
 import io.circe.syntax.EncoderOps
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
-import pangea.model.hero.Hero
+import pangea.generator.item.MaterialGenerator
+import pangea.model.hero.{Achievement, Hero}
+import pangea.model.quest.NpcQuest
+import pangea.repository.inventory.InventoryRepository
+import pangea.service.state.states.LootState.LootData
 import pangea.model.schedule.TaskKind
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.service.schedule.Scheduler
-import pangea.service.state.{CityExit, State, UserAction}
+import pangea.service.state.{CityExit, LostSquadQuest, NpcQuestLog, QuestSupport, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -26,7 +30,9 @@ import java.util.concurrent.TimeUnit
 case class ConstructionState(
   heroDao: HeroDao,
   scheduler: Scheduler,
-  content: SceneContent
+  content: SceneContent,
+  // Сумка — чтобы забрать ящик «Пропавшей дружины», когда его отдают Гуннару.
+  inventoryRepo: Option[InventoryRepository] = None
 ) extends State {
   import ConstructionState._
 
@@ -51,6 +57,7 @@ case class ConstructionState(
         enter(user, renderer).as(StateType.Construction)
       },
       "Finish" -> Target.Run((user, _, renderer) => finish(user, renderer)),
+      "SquadCrate" -> Target.Run((user, _, renderer) => handOverCrate(user, renderer)),
       "LeaveConstruction" -> Target.Goto(StateType.MarketSquare),
       CityExit.route
     ),
@@ -59,7 +66,7 @@ case class ConstructionState(
     }
   )
 
-  override def targetStates: Set[StateType] = branch.gotoTargets
+  override def targetStates: Set[StateType] = branch.gotoTargets + StateType.Loot
 
   // Вход: активная работа в scene_data → экран работы, иначе — меню выбора.
   override def enter(user: User, renderer: Renderer): Task[Unit] =
@@ -75,10 +82,13 @@ case class ConstructionState(
   ): Task[StateType] = branch.act(user, ua, renderer)
 
   private def showMenu(user: User, renderer: Renderer): Task[Unit] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
     renderer.show(
       user,
       Screen(
         content.text("construction.menu.text"),
+        // Ящик «Пропавшей дружины» на руках — Гуннар Отвес примет его здесь.
+        Option.when(LostSquadQuest.crateOnHands(quests))(content.choice("SquadCrate", "lostSquad.foreman.crateLabel")).toList ++
         List(
           content.choice(
             "CarryStone",
@@ -100,6 +110,30 @@ case class ConstructionState(
         )
       )
     )
+    }
+
+  /** Ящик «Пропавшей дружины» — Гуннару: он узнаёт свою руду и всё понимает.
+    * Серебро — сразу в руки, кусок железа — экраном добычи; задание закрыто,
+    * «Расхититель штолен». */
+  private def handOverCrate(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      hero   <- getHero(user)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      res    <- if (!LostSquadQuest.crateOnHands(quests)) enter(user, renderer).as(StateType.Construction)
+                else for {
+                  _    <- heroDao.updateSilver(user.userId, hero.silver + LostSquadQuest.CrateSilver)
+                  _    <- renderer.show(user, Screen(content.format("lostSquad.foreman.crate",
+                            "silver" -> LostSquadQuest.CrateSilver.toString), Nil))
+                  line <- inventoryRepo.fold(
+                            NpcQuestLog.modify(heroDao, user.userId)(_.finish(NpcQuest.LostSquad)).as(content.text("lostSquad.questDone")))(
+                            repo => LostSquadQuest.finish(heroDao, repo, content, user.userId, hero))
+                  _    <- renderer.show(user, Screen(line, Nil))
+                  _    <- QuestSupport.grant(heroDao, content, user, hero, Achievement.MineLooter, renderer)
+                  _    <- heroDao.writeSceneData(user.userId, LootData(items = List(MaterialGenerator.item(LostSquadQuest.CrateBonus)),
+                            silvers = Nil, returnState = Some(StateType.Construction),
+                            header = Some(content.text("lostSquad.foreman.ironHeader"))).asJson)
+                } yield StateType.Loot
+    } yield res
 
   // Локальная склонения для подписи кнопки: «1 час», «4 часа», «8 часов».
   private def formatHours(h: Int): String = {

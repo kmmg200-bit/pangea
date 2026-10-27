@@ -35,7 +35,7 @@ import pangea.model.arena.{ArenaAlly, ArenaRates, ArenaSide}
 import pangea.service.state.states.arena.ArenaBattle
 import pangea.service.state.states.battle.BattleState.{ArenaOwnActions, Victim}
 import pangea.service.schedule.Scheduler
-import pangea.service.state.{AzatData, BoardProgress, MarisaQuest, NpcQuestLog, State, UserAction, KillLogData}
+import pangea.service.state.{AzatData, BoardProgress, LostSquadQuest, MarisaQuest, NpcQuestLog, State, UserAction, KillLogData}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
 
@@ -473,7 +473,12 @@ case class BattleState(
       case Outcome.Fled =>
         // Сюжетный бой идёт не в лабиринте — бежать из него в город.
         val to = if (res.battle.story.isDefined) StateType.GlobalMap else StateType.Dungeon
-        (persistHero *> persistSquad *> afterBattle(user, res.hero) <* heroDao.clearActiveBattle(user.userId))
+        // Сбежал из налёта на мурлоков или из боя у завала — развязки «после
+        // боя» не будет: роутинг добычи стираем, иначе его подхватила бы
+        // следующая победа и засчитала несыгранный бой.
+        val dropRouting = res.battle.story.exists(s => s == MurlocQuest.RaidStory || s == LostSquadQuest.EscortStory)
+        (persistHero *> persistSquad *> afterBattle(user, res.hero) <* heroDao.clearActiveBattle(user.userId) <*
+           ZIO.when(dropRouting)(heroDao.writeSceneData(user.userId, Json.Null)))
           .uninterruptible.flatMap { refilled =>
             showLog *> showGroup *> showRefilled(user, refilled, renderer) *>
               renderer.show(user, Screen(content.text("battle.fled"), Nil)) *>
@@ -2312,8 +2317,7 @@ case class BattleState(
       val fallen  = ticked.filter(a => !a.alive && res.battle.group.allyAt(a.position).exists(_.alive))
       val updated = res.battle.copy(group = res.battle.group.copy(allies = ticked))
       val swept   = fallen.foldLeft(updated)((b, a) => b.copy(group = b.group.withoutAlly(a.position)))
-      val gone    = fallen.map(a => content.format(
-        if (a.undead.isDefined) "battle.ally.crumbled" else "battle.ally.scroll", "name" -> a.name))
+      val gone    = fallen.map(a => content.format(BattleState.goneKey(a), "name" -> a.name))
       res.copy(battle = swept, log = res.log ++ lines ++ gone)
     }
 
@@ -4585,10 +4589,8 @@ case class BattleState(
             if (hurt.alive) (after.copy(group = after.group.updateAlly(a.position)(_ => hurt)), line +: extras.toVector)
             else (after.copy(group = after.group.withoutAlly(a.position)),
                   // Наёмника уносит свиток, а поднятого с алтаря выносить
-                  // нечем: он рассыпается там же, где стоял.
-                  Vector(line, content.format(
-                    if (a.undead.isDefined) "battle.ally.crumbled" else "battle.ally.scroll",
-                    "name" -> a.name)))
+                  // нечем: он рассыпается там же, где стоял (см. goneKey).
+                  Vector(line, content.format(BattleState.goneKey(a), "name" -> a.name)))
         } yield result
     } yield out
 
@@ -4608,8 +4610,13 @@ case class BattleState(
     // ответа, кем за него пожертвовать (см. Squad.admitRisen).
     val synced = joined.filter(_.alive).foldLeft(synced0) { (s, a) =>
       a.undead.fold(s) { form =>
-        if (a.kind == pangea.model.squad.AllyKind.Rat) s.summonRat(form, a.lvl, nowMs)
-        else s.admitRisen(form, a.lvl, nowMs)
+        a.kind match {
+          // Дружинники «Пропавшей дружины» шли только на этот бой — после него
+          // они уходят наверх со своими, в отряд не встают.
+          case pangea.model.squad.AllyKind.SquadGnome => s
+          case pangea.model.squad.AllyKind.Rat        => s.summonRat(form, a.lvl, nowMs)
+          case _                                      => s.admitRisen(form, a.lvl, nowMs)
+        }
       }
     }
     // Павших убираем разом: по одному нельзя — строй смыкается, и вторая
@@ -5093,7 +5100,9 @@ case class BattleState(
       // бой, только этаж для неё — уровень героя (мурлоки его уровня). Задание
       // с доски называет свой уровень само (см. SoloPveBattle.lootLevel):
       // разбойники третьего уровня и падают как третьего.
-      raid       = battle.story.contains(MurlocQuest.RaidStory)
+      // Подъём «Пропавшей дружины» сквозь гоблинов — такой же: награда как за
+      // обычный бой, по уровню героя.
+      raid       = battle.story.exists(s => s == MurlocQuest.RaidStory || s == LostSquadQuest.EscortStory)
       storyFight = battle.story.isDefined && !raid
       killLevel  = battle.lootLevel.getOrElse(if (raid) hero.lvl else hero.dungeonLevel.toLong)
       // Минибосс боя — тот, кто пал минибоссом, когда бы он ни пал: Некроманта
@@ -5228,6 +5237,10 @@ case class BattleState(
       letterFound <- if (hero.kills < NpcQuest.MarisaLetterKill && kills >= NpcQuest.MarisaLetterKill)
                        MarisaQuest.giveLetter(heroDao, inventoryRepo, itemRepo, user.userId, hero)
                      else ZIO.succeed(false)
+      // Пятисотый убитый (или любой следующий у того, кто перевалил раньше) —
+      // фонарь старшины «Двенадцати фонарей».
+      lantern <- if (kills >= NpcQuest.LostSquadKill) LostSquadQuest.start(heroDao, inventoryRepo, itemRepo, user.userId, hero)
+                 else ZIO.none
       _ <- heroDao.updateExpAndLevel(
         user.userId,
         leveled.exp,
@@ -5253,6 +5266,7 @@ case class BattleState(
       wolfDefeated      = fallenBoss.contains(MiniBoss.WhiteWolf),
       slainCount        = fallen.size,
       letterFound       = letterFound,
+      lantern           = lantern,
       flaskRefill       = flaskRefill
     )
 
@@ -5316,6 +5330,13 @@ case class BattleState(
         renderer.show(user, Screen(content.text("marisa.letterFound") + "\n\n" +
           content.format("marisa.questItemAdded", "item" -> QuestItemKind.MarisaLetter.displayName), Nil))
       )
+      // Фонарь старшины: Брамбл в отряде узнаёт его сразу, иначе — подсказка
+      // про гнома за столом наёмников.
+      _ <- ZIO.foreachDiscard(outcome.lantern) { brambl =>
+        renderer.show(user, Screen(content.text("lostSquad.lanternFound") + "\n\n" +
+          content.format("marisa.questItemAdded", "item" -> QuestItemKind.ForemanLantern.displayName) + "\n\n" +
+          content.text(if (brambl) "lostSquad.bramblInSquad" else "lostSquad.tavernHint"), Nil))
+      }
       _ <- ZIO.when(outcome.unlocksDarkness)(
         renderer.show(
           user,
@@ -5779,6 +5800,13 @@ object BattleState {
     * рядов у ВК всего десять. */
   val AlliesPerRow: Int = 2
 
+  /** Чем кончается выбывший союзник: наёмника уносит свиток, поднятый
+    * рассыпается, а дружинника «Пропавшей дружины» оттаскивают свои. */
+  def goneKey(a: BattleAlly): String =
+    if (a.kind == pangea.model.squad.AllyKind.SquadGnome) "battle.ally.squadGnomeDown"
+    else if (a.undead.isDefined) "battle.ally.crumbled"
+    else "battle.ally.scroll"
+
   /** Уникальные трофеи павших — по порядку гибели. У именного — его трофей,
     * если у героя такого нет (`owned` — чьи трофеи у него уже есть) и в этом
     * бою он ещё не выпал; поднятый некромантом второй раз его не роняет. */
@@ -5872,6 +5900,8 @@ object BattleState {
       slainCount: Int = 1,
       // Пятидесятый убитый оставил письмо Марисе — отдельное сообщение после победы.
       letterFound: Boolean = false,
+      // Пятисотый — фонарь старшины «Двенадцати фонарей»; внутри — в отряде ли Брамбл.
+      lantern: Option[Boolean] = None,
       // Вампирская фляга напилась крови: сколько долила, стало, максимум.
       flaskRefill: Option[(Int, Int, Int)] = None
   )

@@ -5,10 +5,11 @@ import pangea.engine.{Branch, Choice, Renderer, SceneContent, Screen, Target}
 import pangea.model.hero.Hero
 import pangea.model.item.{BrewKind, Item}
 import pangea.model.squad.{AllyKind, AllyRates, Squad}
+import pangea.model.quest.NpcQuests
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
-import pangea.service.state.{CityExit, SquadDuty, State, UserAction}
+import pangea.service.state.{CityExit, LostSquadQuest, NpcQuestLog, SquadDuty, State, UserAction}
 import zio.{Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -57,7 +58,8 @@ case class MercenariesState(
               }
       squad = back.foldLeft(hero.squad)(_ welcomeBack _)
       _    <- ZIO.when(back.nonEmpty)(heroDao.updateSquad(user.userId, squad))
-      free  = available(squad, now)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      free  = available(squad, now, LostSquadQuest.bramblCalled(quests))
       text  = if (free.isEmpty) content.text("mercenaries.empty") else content.text("mercenaries.title")
       buttons = free.map(k => Choice("MercCard", Choice.fit(k.name), data = Map("kind" -> k.entryName), row = Some(0)))
       _    <- renderer.show(user, Screen(text, buttons ++ List(
@@ -65,12 +67,35 @@ case class MercenariesState(
                 CityExit.button(content, Some(1)))))
     } yield ()
 
-  /** Карточка: история, реплика с ценой, «Нанять». */
+  /** Карточка: история, реплика с ценой, «Нанять». Пока идёт «Пропавшая
+    * дружина», у Брамбла своя: в первый раз он узнаёт фонарь старшины и
+    * рассказывает, что знает, дальше просто зовёт в штольню — и идёт даром. */
   private def showCard(user: User, kind: AllyKind, renderer: Renderer): Task[Unit] =
-    getHero(user).flatMap { hero =>
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (kind == AllyKind.Gnome && LostSquadQuest.bramblCalled(quests)) showSquadCard(user, quests, renderer)
+      else showPlainCard(user, kind, renderer)
+    }
+
+  private def showSquadCard(user: User, quests: NpcQuests, renderer: Renderer): Task[Unit] =
+    for {
+      hero <- getHero(user)
+      told  = LostSquadQuest.bramblTold(quests)
+      _    <- ZIO.unless(told)(LostSquadQuest.told(heroDao, user.userId))
+      story = content.text("lostSquad.brambl." + (if (told) "again" else LostSquadQuest.key(hero, "story")))
+      _    <- renderer.show(user, Screen(story + "\n\n" + content.text("lostSquad.brambl.free"), List(
+                content.choice("MercHire", "lostSquad.brambl.takeLabel").copy(data = Map("kind" -> AllyKind.Gnome.entryName), row = Some(0)),
+                content.choice("MercList", "mercenaries.toList").copy(row = Some(1)))))
+    } yield ()
+
+  private def showPlainCard(user: User, kind: AllyKind, renderer: Renderer): Task[Unit] =
+    getHero(user).zip(NpcQuestLog.load(heroDao, user.userId)).flatMap { case (hero, quests) =>
       val story = content.text(s"mercenaries.${key(kind)}.story")
       val price = kind match {
         case AllyKind.Human => content.format("mercenaries.human.price", "cost" -> AllyRates.HumanDoubloons.toString)
+        // Брамбл помнит «Пропавшую дружину»: вывел — бутылка всегда, бросил — вдвое.
+        case AllyKind.Gnome if LostSquadQuest.bramblFriend(quests) => content.text("lostSquad.brambl.priceFriend")
+        case AllyKind.Gnome if LostSquadQuest.squadAbandoned(quests) =>
+          content.format("lostSquad.brambl.priceGrudge", "n" -> LostSquadQuest.bramblBrews(quests, hero.lvl).toString)
         case k              => content.format(s"mercenaries.${key(k)}.price", "n" -> AllyKind.brewsFor(hero.lvl).toString)
       }
       renderer.show(user, Screen(story + "\n\n" + price, List(
@@ -78,26 +103,32 @@ case class MercenariesState(
         content.choice("MercList", "mercenaries.toList").copy(row = Some(1)))))
     }
 
-  /** Найм: место в отряде, плата, и наёмник встаёт на первую свободную позицию. */
+  /** Найм: место в отряде, плата, и наёмник встаёт на первую свободную позицию.
+    * Брамбл, пока дружина ждёт, идёт даром — и отдых его не держит. */
   private def hire(user: User, kind: AllyKind, renderer: Renderer): Task[Unit] =
     for {
-      now  <- nowMs
-      hero <- getHero(user)
-      _    <-
-        if (!available(hero.squad, now).contains(kind)) showList(user, renderer)
+      now    <- nowMs
+      hero   <- getHero(user)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      called  = LostSquadQuest.bramblCalled(quests)
+      free    = called && kind == AllyKind.Gnome
+      _      <-
+        if (!available(hero.squad, now, called).contains(kind)) showList(user, renderer)
         else if (hero.squad.freePosition.isEmpty)
           renderer.show(user, Screen(content.text("mercenaries.squadFull"), Nil)) *> showCard(user, kind, renderer)
-        else pay(user, hero, kind).flatMap {
+        else (if (free) ZIO.none else pay(user, hero, kind, quests)).flatMap {
           case Some(refusal) => renderer.show(user, Screen(refusal, Nil)) *> showCard(user, kind, renderer)
           case None =>
-            heroDao.updateSquad(user.userId, hero.squad.hire(kind, hero.lvl, now)) *>
-              renderer.show(user, Screen(content.format("mercenaries.hired", "name" -> kind.name), Nil)) *>
+            heroDao.updateSquad(user.userId, hero.squad.welcomeBack(kind).hire(kind, hero.lvl, now)) *>
+              renderer.show(user, Screen(content.format(if (free) "lostSquad.brambl.joined" else "mercenaries.hired",
+                "name" -> kind.name), Nil)) *>
               showList(user, renderer)
         }
     } yield ()
 
-  /** Списать плату; текст отказа, если платить нечем. */
-  private def pay(user: User, hero: Hero, kind: AllyKind): Task[Option[String]] =
+  /** Списать плату; текст отказа, если платить нечем. Брамбл берёт по
+    * памяти о «Пропавшей дружине» (см. LostSquadQuest.bramblBrews). */
+  private def pay(user: User, hero: Hero, kind: AllyKind, quests: NpcQuests): Task[Option[String]] =
     kind match {
       case AllyKind.Human =>
         // Йорген берёт дублонами и всегда одну и ту же цену: в ячейке их не
@@ -109,7 +140,7 @@ case class MercenariesState(
         else heroDao.updateDoubloons(user.userId, hero.doubloons - cost).as(None)
       case k =>
         val brew = brewFor(k)
-        val n    = AllyKind.brewsFor(hero.lvl).toInt
+        val n    = (if (k == AllyKind.Gnome) LostSquadQuest.bramblBrews(quests, hero.lvl) else AllyKind.brewsFor(hero.lvl)).toInt
         inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
           val bottles = brews(inv.items.data, brew)
           if (bottles.size < n)
@@ -145,11 +176,15 @@ object MercenariesState {
     case AllyKind.Gnome  => "gnome"
     case AllyKind.Undead => "undead"
     case AllyKind.Rat    => "rat"
+    case AllyKind.SquadGnome => "squadGnome"
   }
 
-  /** Кто сейчас за столом. */
-  def available(squad: Squad, nowMs: Long): List[AllyKind] =
-    AllyKind.hireable.filterNot(k => squad.has(k) || squad.isAway(k, nowMs))
+  /** Кто сейчас за столом. Пока идёт «Пропавшая дружина» (`bramblCalled`),
+    * Брамбл сидит там, даже если только что ушёл отдыхать. */
+  def available(squad: Squad, nowMs: Long, bramblCalled: Boolean = false): List[AllyKind] =
+    AllyKind.hireable.filterNot { k =>
+      squad.has(k) || (squad.isAway(k, nowMs) && !(k == AllyKind.Gnome && bramblCalled))
+    }
 
 
   /** Чем берут Плюх и Брамбл. */

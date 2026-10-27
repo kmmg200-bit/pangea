@@ -105,6 +105,15 @@ object AllyKind extends Enum[AllyKind] {
     hpPerLvl = 80L, armorPerLvl = 175L, atkPerLvl = 20L, energyPerLvl = 100L,
     accuracyPerLvl = 100L, defencePerLvl = 50L, evasionPerLvl = 60L)
 
+  /** Дружинник «Пропавшей дружины»: гном-предводитель, который идёт с героем
+    * только на бой у завала (см. LostSquadQuest.escortAllies). Имя, уровень и
+    * статы у каждого свои — они лежат на самом союзнике ([[UndeadForm]]); нанять
+    * его негде, а после боя он уходит со своими наверх и в отряд не встаёт.
+    * Бьёт холодом, как вся его раса. */
+  case object SquadGnome extends AllyKind("Дружинник", Race.Gnome, Some(Element.Cold), maxLvl = 150L,
+    hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
+    accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
+
   /** Поднятый с алтаря: раса, имя и статы у него свои — они лежат на самом
     * союзнике ([[UndeadForm]]), а не на виде. Здесь только то, что общее у всей
     * нежити: она бьёт холодом и в таверне не сидит. */

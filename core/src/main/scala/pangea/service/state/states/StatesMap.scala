@@ -69,6 +69,7 @@ import pangea.model.state.StateType.{
   MarisaHunt,
   MurlocElder,
   MurlocVillage,
+  SquadMine,
   TreasureHunt,
   TreasureMobs,
   TreasureMobsFight,
@@ -129,6 +130,7 @@ import pangea.service.state.states.marisa.{MarisaHuntState, MarisaSearchState}
 import pangea.service.state.states.road.QuestRoadState
 import pangea.service.state.states.events.thieves.{ThievesSpoilsState, ThievesState}
 import pangea.service.state.states.murloc.{MurlocElderState, MurlocVillageState}
+import pangea.service.state.states.lostsquad.SquadMineState
 import pangea.service.state.states.merchant.MerchantState
 import pangea.service.state.states.gustavo.{
   GustavoBoostState,
@@ -302,6 +304,7 @@ object StatesMap {
           MarisaHunt        -> MarisaHuntState(heroDao, inventoryRepo, scheduler, content, bank),
           MurlocElder       -> MurlocElderState(heroDao, inventoryRepo, itemRepo, content),
           MurlocVillage     -> MurlocVillageState(heroDao, inventoryRepo, itemRepo, content),
+          SquadMine         -> SquadMineState(heroDao, inventoryRepo, itemRepo, content),
           Outskirts -> OutskirtsState(
             heroDao,
             inventoryRepo,
@@ -309,7 +312,7 @@ object StatesMap {
             content
           ),
           TreasureHunt -> TreasureHuntState(heroDao, scheduler, content, inventoryRepo, itemRepo),
-          Construction -> ConstructionState(heroDao, scheduler, content),
+          Construction -> ConstructionState(heroDao, scheduler, content, Some(inventoryRepo)),
           Guild        -> GuildState(heroDao, content),
           TrophyExchange -> TrophyExchangeState(
             heroDao,

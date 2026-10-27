@@ -203,7 +203,7 @@ case class Hero(
     // Достижения дают плоскую прибавку к базе — до расы, травм и зелий.
     BaseStats(
       agi = (b.applyAgi(baseStats.agi + Achievement.agiBonus(this)) * statBoosts.agiFactor(nowMs)).toLong.max(1L),
-      vit = (b.applyVit(baseStats.vit) * (1.0 - p.vitPct) * statBoosts.vitFactor(nowMs)).toLong.max(1L),
+      vit = (b.applyVit(baseStats.vit + Achievement.vitBonus(this)) * (1.0 - p.vitPct) * statBoosts.vitFactor(nowMs)).toLong.max(1L),
       str = (b.applyStr(baseStats.str + Achievement.strBonus(this)) * (1.0 - p.strPct) * statBoosts.strFactor(nowMs)).toLong.max(1L),
       // «Некромант» (порог 2) поднимает сам интеллект — последним, поверх расы,
       // травм и зелий: это прибавка к готовому числу. Процент от достижений
@@ -271,7 +271,7 @@ case class Hero(
    *  «своё». Показываются в скобках на «Персонаже» — только эти четыре числа. */
   def nativeBaseStats: BaseStats = BaseStats(
     agi = (baseStats.agi + Achievement.agiBonus(this)).max(1L),
-    vit = baseStats.vit.max(1L),
+    vit = (baseStats.vit + Achievement.vitBonus(this)).max(1L),
     str = (baseStats.str + Achievement.strBonus(this)).max(1L),
     int = (baseStats.int + Achievement.intBonus(this)).max(1L)
   )

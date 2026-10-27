@@ -159,6 +159,9 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   case object MurlocElder   extends StateType // старейшина выходит к герою после двухсотого убитого
   case object MurlocVillage extends StateType // по карте: налёт на деревню или помощь снаряжением
 
+  // «Пропавшая дружина».
+  case object SquadMine extends StateType // штольня под Серебряной жилой: вывести дружину или забрать груз
+
   /** Городские сцены — где герой «в городе»: отсюда передают вещи и серебро,
     * сюда выручку аукциона приносят в руки, только отсюда открывают сюжетную
     * карту (её смотрят по `returnState` меню персонажа). Город — любой его
