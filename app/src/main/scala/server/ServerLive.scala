@@ -47,8 +47,12 @@ final class ServerLive(
 //          case None => Ok("ok")
 //        }
 
-        event <- req.as[VkEvent].option
+        // Тело запроса читаем один раз: Ember отдаёт его только единожды, и
+        // второе чтение большого события (длинный текст, пересланные сообщения,
+        // посты для конкурса) падало — «Body Has Been Consumed Completely
+        // Already». Событие ВК разбираем из того же JSON.
         json  <- req.as[Json]
+        event  = json.as[VkEvent].toOption
         _ <- (event match {
           case Some(value) =>
             val msg = value.`object`.message
