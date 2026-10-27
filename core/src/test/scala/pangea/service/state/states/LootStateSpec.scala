@@ -3,13 +3,14 @@ package pangea.service.state.states
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
 import pangea.generator.item.GemGenerator
+import pangea.model.artifact.ArtifactKind
 import pangea.model.hero.Equipment
 import pangea.model.item.{GemKind, Item, ItemDetails, ItemType, Rarity, TrophyKind}
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.state.UserAction
 import pangea.service.state.states.LootState.{LootData, MonsterLoot}
-import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestJournal, TestRenderer}
+import pangea.test.{TestArtifactRepository, TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestJournal, TestRenderer}
 import zio.ZIO
 import zio.test._
 
@@ -56,7 +57,7 @@ object LootStateSpec extends ZIOSpecDefault {
         screens <- renderer.sentScreens
         hero    <- heroDao.getHeroByUserId(userId)
       } yield assertTrue(screens.exists(_.text.contains("Осматривая добычу"))) &&
-              assertTrue(screens.exists(s => s.choices.map(_.id).toSet == Set("Take", "Leave"))) &&
+              assertTrue(screens.exists(s => s.choices.map(_.id).toSet == Set("Take", "Backpack", "Leave"))) &&
               assertTrue(invRepo.snapshot.isEmpty) &&        // предметы ждут решения, не положены
               assertTrue(hero.exists(_.silver == 100L + 42L))  // серебро забрано сразу
     },
@@ -191,8 +192,8 @@ object LootStateSpec extends ZIOSpecDefault {
         hero   <- heroDao.getHeroByUserId(userId)
         took   <- state.action(testUser, tap("Take"), renderer)
       } yield assertTrue(typed == StateType.Loot && stale == StateType.Loot) &&
-              assertTrue(again.text.contains("Осматривая добычу") && again.choices.map(_.id).toSet == Set("Take", "Leave")) &&
-              assertTrue(again2.choices.map(_.id).toSet == Set("Take", "Leave")) &&
+              assertTrue(again.text.contains("Осматривая добычу") && again.choices.map(_.id).toSet == Set("Take", "Backpack", "Leave")) &&
+              assertTrue(again2.choices.map(_.id).toSet == Set("Take", "Backpack", "Leave")) &&
               assertTrue(loot.exists(_.items.size == 2) && hero.exists(_.silver == 100L + 30L)) &&
               // нужная кнопка, как и прежде, разбирает добычу
               assertTrue(took == StateType.Dungeon && invRepo.snapshot.size == 2)
@@ -255,7 +256,7 @@ object LootStateSpec extends ZIOSpecDefault {
       } yield assertTrue(result == StateType.Loot) &&
               assertTrue(invRepo.snapshot.isEmpty) &&
               assertTrue(last.text.contains("Орк-второй")) &&
-              assertTrue(last.choices.map(_.id).toSet == Set("Take", "Leave"))
+              assertTrue(last.choices.map(_.id).toSet == Set("Take", "Backpack", "Leave"))
     },
 
     test("вещь встаёт в пустой слот → «Забрать и надеть» второй кнопкой, под «Забрать»; не по уровню — кнопки нет") {
@@ -269,8 +270,8 @@ object LootStateSpec extends ZIOSpecDefault {
         (hs, hr, _, _) = high
         _       <- hs.enter(testUser, hr)
         highIds <- hr.sentScreens.map(_.last.choices.map(_.id))
-      } yield assertTrue(fitIds == List("Take", "TakeWear", "Leave")) &&
-              assertTrue(highIds == List("Take", "Leave"))
+      } yield assertTrue(fitIds == List("Take", "TakeWear", "Backpack", "Leave")) &&
+              assertTrue(highIds == List("Take", "Backpack", "Leave"))
     },
 
     test("«Забрать и надеть» → шлем на герое, мимо сумки; трофей в сумке; строка «Надето»") {
@@ -330,7 +331,7 @@ object LootStateSpec extends ZIOSpecDefault {
         (state, renderer, _, _) = t
         _       <- state.enter(testUser, renderer)
         choices <- renderer.sentScreens.map(_.last.choices)
-      } yield assertTrue(choices.map(_.id) == List("Take", "TakeSwap", "Leave")) &&
+      } yield assertTrue(choices.map(_.id) == List("Take", "TakeSwap", "Backpack", "Leave")) &&
               assertTrue(choices(1).label == "Надеть: Шлем") &&
               assertTrue(choices(1).data == Map("i" -> "0", "n" -> "Шлем"))
     },
@@ -399,13 +400,44 @@ object LootStateSpec extends ZIOSpecDefault {
       } yield assertTrue(stale == StateType.Loot && back == StateType.Loot) &&
               assertTrue(hero.exists(h => h.equipment.helmet.name == "Старый шлем" && h.silver == 130L)) &&
               assertTrue(invRepo.snapshot.isEmpty) &&
-              assertTrue(last.choices.map(_.id) == List("Take", "TakeSwap", "Leave"))
+              assertTrue(last.choices.map(_.id) == List("Take", "TakeSwap", "Backpack", "Leave"))
+    },
+
+    test("«🎒 Рюкзак» — над «Оставить»: ведёт в сумку, добыча ждёт; снова на экране — то же, а деньги не задвоились") {
+      for {
+        t <- makeState(LootData(items = List(gear("Шлем"), trophy), silvers = List(30L), doubloons = 2L))
+        (state, renderer, heroDao, invRepo) = t
+        _       <- state.enter(testUser, renderer)
+        first   <- renderer.sentScreens.map(_.last)
+        result  <- state.action(testUser, tap("Backpack"), renderer)
+        back    <- heroDao.readReturnState(userId)
+        waiting <- heroDao.readSceneData(userId).map(_.flatMap(_.as[LootData].toOption))
+        // вернулись из сумки — диспетчер снова зовёт enter
+        _       <- state.enter(testUser, renderer)
+        again   <- renderer.sentScreens.map(_.last)
+        hero    <- heroDao.getHeroByUserId(userId)
+      } yield assertTrue(first.choices.map(_.id) == List("Take", "Backpack", "Leave")) &&
+              assertTrue(first.choices.find(_.id == "Backpack").exists(_.label == "🎒 Рюкзак")) &&
+              assertTrue(result == StateType.Inventory && back.contains(StateType.Loot)) &&
+              assertTrue(waiting.exists(l => l.items.size == 2 && l.credited) && invRepo.snapshot.isEmpty) &&
+              assertTrue(again.text == first.text && again.choices == first.choices) &&
+              assertTrue(hero.exists(h => h.silver == 130L && h.doubloons == 2L))
+    },
+
+    test("«🎒 Рюкзак» у героя с хранилищем ведёт в рюкзак, как из «Персонажа»") {
+      val casket = TestArtifactRepository.of(casket = TestArtifactRepository.artifact(ArtifactKind.Casket, tier = 1))
+      for {
+        t <- makeState(LootData(items = List(gear("Шлем")), silvers = Nil))
+        (state, renderer, heroDao, _) = t
+        result <- state.copy(artifacts = Some(casket)).action(testUser, tap("Backpack"), renderer)
+        back   <- heroDao.readReturnState(userId)
+      } yield assertTrue(result == StateType.Backpack && back.contains(StateType.Loot))
     },
 
     test("старая запись добычи без полей группы читается как одиночная") {
       val json = io.circe.parser.parse("""{"items":[],"silvers":[3]}""").toOption.get
       val loot = json.as[LootData].toOption
-      assertTrue(loot.exists(l => l.monsterName.isEmpty && l.queue.isEmpty && l.silvers == List(3L)))
+      assertTrue(loot.exists(l => l.monsterName.isEmpty && l.queue.isEmpty && l.silvers == List(3L) && !l.credited))
     }
   )
 }

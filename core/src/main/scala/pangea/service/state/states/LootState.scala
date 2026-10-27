@@ -31,6 +31,9 @@ import zio.{Task, ZIO}
  *
  * После группового боя добыча идёт по одному павшему за экран (`queue`): каждый
  * исход показывает следующего, пока очередь не опустеет, и только тогда — уход.
+ *
+ * Над «Оставить» — «🎒 Рюкзак»: заглянуть в сумку, освободить место и вернуться
+ * к той же добыче (см. [[openBackpack]]).
  */
 case class LootState(
   heroDao:             HeroDao,
@@ -49,6 +52,7 @@ case class LootState(
       "TakeSwap" -> Target.Run { (user, ua, renderer) => swapLoot(user, ua, renderer) },
       "SwapBack" -> Target.Run { (user, _, renderer) => showPreview(user, renderer) },
       "Leave"    -> Target.Run { (user, _, renderer) => leaveLoot(user, renderer) },
+      "Backpack" -> Target.Run { (user, _, _) => openBackpack(user) },
       "Continue" -> Target.Run { (user, _, renderer) => readLoot(user).flatMap(finish(user, _, renderer)) }
     ),
     // Написал текст или нажал старую кнопку — добычу не пропускаем: тот же
@@ -69,24 +73,29 @@ case class LootState(
       case next :: rest =>
         val following = loot.copy(
           items = next.items, silvers = next.silvers, doubloons = next.doubloons,
-          monsterName = Some(next.monsterName), queue = rest)
+          monsterName = Some(next.monsterName), queue = rest, credited = false)
         heroDao.writeSceneData(user.userId, following.asJson) *> enter(user, renderer).as(StateType.Loot)
     }
 
   override def targetStates: Set[StateType] =
     Set(StateType.Dungeon, StateType.GlobalMap, StateType.TreasureMobsFight, StateType.TreasureSchron, StateType.Loot, StateType.Girl,
         StateType.MarisaHunt, StateType.FlowerMeadow, StateType.MonsterCave, StateType.Caravan,
-        StateType.MurlocElder, StateType.MurlocVillage, StateType.Home, StateType.SquadMine, StateType.Construction)
+        StateType.MurlocElder, StateType.MurlocVillage, StateType.Home, StateType.SquadMine, StateType.Construction,
+        StateType.Backpack, StateType.Inventory)
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     for {
       hero <- getHero(user)
       loot <- readLoot(user)
 
-      // серебро и дублоны забираются всегда и сразу, без выбора
-      silverTotal = silvers(hero, loot).sum
+      // серебро и дублоны забираются всегда и сразу, без выбора — но один раз:
+      // из рюкзака игрок возвращается сюда же, а деньги уже в кошельке
+      silverTotal = if (loot.credited) 0L else silvers(hero, loot).sum
+      doubloons   = if (loot.credited) 0L else loot.doubloons
+      _        <- ZIO.when(silverTotal > 0L || doubloons > 0L)(
+                    heroDao.writeSceneData(user.userId, loot.copy(credited = true).asJson))
       _        <- ZIO.when(silverTotal > 0L)(heroDao.updateSilver(user.userId, hero.silver + silverTotal))
-      _        <- ZIO.when(loot.doubloons > 0L)(heroDao.updateDoubloons(user.userId, hero.doubloons + loot.doubloons))
+      _        <- ZIO.when(doubloons > 0L)(heroDao.updateDoubloons(user.userId, hero.doubloons + doubloons))
       currency  = currencyLines(hero, loot)
 
       _ <- if (loot.items.isEmpty) {
@@ -140,7 +149,7 @@ case class LootState(
     * раз ([[showPreview]]): после «Назад» с выбора кольца или отказа «сумка полна».
     * Сверху «Забрать», под ним «Забрать и надеть» — если что-то встаёт в пустой
     * слот — и «Надеть: …» на каждую вещь, которая встанет вместо надетой;
-    * последней — «Оставить». */
+    * последней — «Оставить», над ней — «🎒 Рюкзак». */
   private def previewScreen(hero: Hero, loot: LootData): Screen = {
     val preview = currencyLines(hero, loot) ++ loot.items.map(it => itemLineWithEquipped(it, hero))
     val wearAll = Option.when(TakeAndEquip.pick(hero, loot.items).nonEmpty)(content.choice("TakeWear", "loot.takeWearLabel"))
@@ -148,7 +157,8 @@ case class LootState(
       content.choice("TakeSwap", "loot.swapLabel", "name" -> item.name).copy(data = swapData(i, item))
     }
     Screen(header(loot) + "\n\n" + preview.mkString("\n"),
-      List(content.choice("Take", "loot.takeLabel")) ++ wearAll.toList ++ swaps ++ List(content.choice("Leave", "loot.leaveLabel")))
+      List(content.choice("Take", "loot.takeLabel")) ++ wearAll.toList ++ swaps ++
+        List(content.choice("Backpack", "loot.backpackLabel"), content.choice("Leave", "loot.leaveLabel")))
   }
 
   /** Показать превью ещё раз — без начисления серебра. Вещей уже нет — выбирать
@@ -160,6 +170,20 @@ case class LootState(
       next <- if (loot.items.isEmpty) finish(user, loot, renderer)
               else renderer.show(user, previewScreen(hero, loot)).as(StateType.Loot)
     } yield next
+
+  /** «🎒 Рюкзак»: заглянуть в сумку, не бросая добычу. Она ждёт в scene_data —
+    * рюкзак, сумка и хранилища держат там только свои ключи. return_state — Loot:
+    * по нему выход из сумки и рюкзака ведёт обратно сюда, а карты из сумки не
+    * уводят в путь (они только из города). Вернувшись, игрок видит ту же добычу:
+    * `enter` покажет её снова, а деньги второй раз не начислит (`credited`).
+    * Хранилища есть — в рюкзак, нет — прямо в сумку, как из «Персонажа». */
+  private def openBackpack(user: User): Task[StateType] =
+    for {
+      hero  <- getHero(user)
+      keeps <- artifacts.fold(ZIO.succeed(false): Task[Boolean])(
+                 _.get(hero.id).map(_.anyOwned).orElseSucceed(false))
+      _     <- heroDao.writeReturnState(user.userId, Some(StateType.Loot))
+    } yield if (keeps) StateType.Backpack else StateType.Inventory
 
   /** Данные кнопки «Надеть: …»: номер вещи и её имя — старая кнопка не наденет
     * чужую вещь, если добыча на экране уже другая. */
@@ -308,7 +332,9 @@ object LootState {
   //   - queue       — добыча остальных павших, по одному экрану на каждого;
   //   - won         — это добыча за ПОБЕДУ (пишет BattleState.applyVictory), а не
   //                   роутинг, положенный сценой перед боем. По ней бой узнаёт
-  //                   свою же не доехавшую до экрана победу (см. BattleState.recover).
+  //                   свою же не доехавшую до экрана победу (см. BattleState.recover);
+  //   - credited    — серебро и дублоны этого павшего уже в кошельке: из рюкзака
+  //                   игрок возвращается на тот же экран, и второй раз их не дают.
   final case class LootData(
     items:       List[Item],
     silvers:     List[Long],
@@ -319,7 +345,8 @@ object LootState {
     queue:       List[MonsterLoot] = Nil,
     won:         Boolean           = false,
     // Свой заголовок экрана — у находки не с тела (хлам в домике).
-    header:      Option[String]    = None
+    header:      Option[String]    = None,
+    credited:    Boolean           = false
   )
   object LootData {
     implicit val encoder: Encoder[LootData] = deriveEncoder[LootData]
@@ -336,7 +363,8 @@ object LootState {
         queue       <- c.getOrElse[List[MonsterLoot]]("queue")(Nil)
         won         <- c.getOrElse[Boolean]("won")(false)
         header      <- c.getOrElse[Option[String]]("header")(None)
-      } yield LootData(items, silvers, doubloons, returnState, eventData, monsterName, queue, won, header)
+        credited    <- c.getOrElse[Boolean]("credited")(false)
+      } yield LootData(items, silvers, doubloons, returnState, eventData, monsterName, queue, won, header, credited)
   }
 
   /** Добыча с одного павшего в группе: ждёт своей очереди на экран. */

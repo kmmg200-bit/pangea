@@ -12,7 +12,8 @@ import pangea.service.state.{State, UserAction}
 import zio.{Task, ZIO}
 
 /** «Рюкзак» из меню персонажа: сама сумка и сборные артефакты из Лавки Фета.
- *  Кнопки Ларца и Живой сумки появляются только у того, кто их купил. */
+ *  Кнопки Ларца и Живой сумки появляются только у того, кто их купил. Открыт с
+ *  экрана добычи (return_state — Loot) — «Назад» ведёт обратно к ней. */
 case class BackpackState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
@@ -26,12 +27,13 @@ case class BackpackState(
       "OpenCasket"     -> Target.Goto(StateType.Casket),
       "OpenLivingBag"  -> Target.Goto(StateType.LivingBag),
       "OpenWardrobe"   -> Target.Goto(StateType.Wardrobe),
-      "BackFromBackpack" -> Target.Goto(StateType.HeroStats)
+      "BackFromBackpack" -> Target.Run { (u, _, _) =>
+        heroDao.readReturnState(u.userId).map(from => if (from.contains(StateType.Loot)) StateType.Loot else StateType.HeroStats) }
     ),
     fallback = Target.Run { (u, _, r) => enter(u, r).as(StateType.Backpack) }
   )
 
-  override def targetStates: Set[StateType] = branch.gotoTargets
+  override def targetStates: Set[StateType] = branch.gotoTargets + StateType.HeroStats + StateType.Loot
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     for {

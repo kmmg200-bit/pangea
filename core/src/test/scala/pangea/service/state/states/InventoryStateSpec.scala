@@ -641,6 +641,22 @@ object InventoryStateSpec extends ZIOSpecDefault {
       } yield assertTrue(result == StateType.Backpack)
     },
 
+    test("BackFromInventory, когда в сумку зашли с экрана добычи, → обратно к добыче; с ларцом — в рюкзак, как обычно") {
+      val casket = TestArtifactRepository.of(
+        casket = TestArtifactRepository.artifact(ArtifactKind.Casket, tier = 1))
+      for {
+        plain                  <- makeState(baseHero, List(sword), Some(TestArtifactRepository.empty))
+        (state, heroDao, _, r)  = plain
+        _                      <- heroDao.writeReturnState(userId, Some(StateType.Loot))
+        _                      <- state.enter(testUser, r)
+        toLoot                 <- state.action(testUser, tap("BackFromInventory"), r)
+        kept                   <- makeState(baseHero, List(sword), Some(casket))
+        (kState, kDao, _, kr)   = kept
+        _                      <- kDao.writeReturnState(userId, Some(StateType.Loot))
+        toPack                 <- kState.action(testUser, tap("BackFromInventory"), kr)
+      } yield assertTrue(toLoot == StateType.Loot && toPack == StateType.Backpack)
+    },
+
     test("Equip выбранного оружия в пустой слот → надет, удалён из инвентаря") {
       for {
         quad                             <- makeState(baseHero, List(sword))

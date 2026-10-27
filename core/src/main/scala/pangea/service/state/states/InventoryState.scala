@@ -40,7 +40,8 @@ case class InventoryState(
   private val branch = new Branch(
     routes = Map(
       // Есть хранилища — назад в рюкзак, откуда сюда и зашли; нет — сразу в
-      // «Персонаж»: рюкзак такому герою не показывают.
+      // «Персонаж»: рюкзак такому герою не показывают. Зашли с экрана добычи —
+      // обратно к ней.
       "BackFromInventory" -> Target.Run { (u, _, _) => backTarget(u) },
       // Возврат из карточки к списку: страницу держим ту же, с которой ушли, —
       // иначе после каждого взгляда на вещь приходится листать заново. Сбрасываем
@@ -93,14 +94,18 @@ case class InventoryState(
 
   override def targetStates: Set[StateType] =
     Set(StateType.HeroStats, StateType.Backpack, StateType.Inventory, StateType.Socketing,
-        StateType.MarisaHunt, StateType.MurlocVillage)
+        StateType.MarisaHunt, StateType.MurlocVillage, StateType.Loot)
 
+  // С экрана добычи сюда ведёт «🎒 Рюкзак» — он и кладёт Loot в return_state.
   private def backTarget(user: User): Task[StateType] =
     for {
       hero <- getHero(user)
       keeps <- artifacts.fold(ZIO.succeed(false): Task[Boolean])(
                  _.get(hero.id).map(_.anyOwned).orElseSucceed(false))
-    } yield if (keeps) StateType.Backpack else StateType.HeroStats
+      from  <- heroDao.readReturnState(user.userId)
+    } yield if (keeps) StateType.Backpack
+            else if (from.contains(StateType.Loot)) StateType.Loot
+            else StateType.HeroStats
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     readScene(user).flatMap { scene =>

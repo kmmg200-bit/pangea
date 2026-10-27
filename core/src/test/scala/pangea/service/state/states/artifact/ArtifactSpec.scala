@@ -267,6 +267,19 @@ object ArtifactSpec extends ZIOSpecDefault {
               assertTrue(toCasket == StateType.Casket && toBag == StateType.Inventory)
     },
 
+    test("рюкзак: «Назад» — в «Персонаж», а если открыт с экрана добычи — к добыче") {
+      for {
+        heroDao  <- TestHeroDao.withHero(userId, TestFixtures.hero(userId))
+        renderer <- TestRenderer.make
+        content  <- ZIO.attempt(SceneContent.load())
+        state     = BackpackState(heroDao, TestInventoryRepository.accepting, TestArtifactRepository.empty, content)
+        _        <- heroDao.writeReturnState(userId, Some(StateType.Dungeon))
+        toStats  <- state.action(testUser, tap("BackFromBackpack"), renderer)
+        _        <- heroDao.writeReturnState(userId, Some(StateType.Loot))
+        toLoot   <- state.action(testUser, tap("BackFromBackpack"), renderer)
+      } yield assertTrue(toStats == StateType.HeroStats && toLoot == StateType.Loot)
+    },
+
     suite("Миниатюрный шкаф")(
 
       test("три места на ступень, любые вещи со слотом и никакой магии") {
