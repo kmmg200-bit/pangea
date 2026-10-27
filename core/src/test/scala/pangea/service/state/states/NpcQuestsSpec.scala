@@ -174,6 +174,18 @@ object NpcQuestsSpec extends ZIOSpecDefault {
     ),
 
     suite("Густаво — «Подопытный»")(
+      test("«Давай своё зелье» — задание взято, «Полка вон там», и сразу к зельям Густаво") {
+        for {
+          dao <- TestHeroDao.withHero(userId, hero)
+          r   <- TestRenderer.make
+          c   <- content
+          to  <- GustavoState(dao, TestInventoryRepository.accepting, c).action(testUser, tap("GusQuestAccept"), r)
+          q   <- quests(dao)
+          all <- texts(r)
+        } yield assertTrue(to == StateType.GustavoBoost && q.onStep(NpcQuest.Gustavo, 1)) &&
+                assertTrue(all.contains("Полка вон там. Любое."))
+      },
+
       test("зелье закрывает первый шаг, победы под зельем копятся, третья ведёт к отчёту") {
         for {
           dao <- TestHeroDao.withHero(userId, hero)

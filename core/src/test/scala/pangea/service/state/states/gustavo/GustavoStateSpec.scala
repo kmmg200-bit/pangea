@@ -68,7 +68,8 @@ object GustavoStateSpec extends ZIOSpecDefault {
                 assertTrue(ids == List("Heal", "Boost", "Herbs", "HerbsTalk", "Belt", "GusQuest",
                   "GustavoDaily", "Back", "GoToCity")) &&
                 // «Пополнить припасы» больше нет: фляги живут в поясе
-                assertTrue(screens.last.choices.exists(c => c.id == "Belt" && c.label == "Пополнить пояс"))
+                assertTrue(screens.last.choices.exists(c => c.id == "Belt" && c.label == "Пополнить пояс")) &&
+                assertTrue(screens.last.choices.exists(c => c.id == "Boost" && c.label == "Зелья Густаво"))
       },
 
       test("«В город» уводит прямо на площадь — и от прилавка, и с предложения зелья") {
@@ -187,7 +188,7 @@ object GustavoStateSpec extends ZIOSpecDefault {
       }
     ),
 
-    // ── Увеличение характеристик ───────────────────────────────────────────────
+    // ── Зелья Густаво ──────────────────────────────────────────────────────────
     suite("GustavoBoostState")(
 
       test("enter → 4 кнопки характеристик (первая бесплатная — зелёная) + Назад") {

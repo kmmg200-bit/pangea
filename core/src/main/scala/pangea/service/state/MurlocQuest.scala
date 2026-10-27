@@ -6,7 +6,7 @@ import pangea.engine.SceneContent
 import pangea.generator.item.ItemGenerator
 import pangea.generator.monster.MonsterGenerator
 import pangea.model.hero.Hero
-import pangea.model.item.{Item, ItemType, QuestItemKind, Rarity => ItemRarity}
+import pangea.model.item.{Grip, Item, ItemType, QuestItemKind, Rarity => ItemRarity}
 import pangea.model.monster.{Monster, Race, Rarity}
 import pangea.model.quest.{NpcQuest, NpcQuests}
 import pangea.model.user.UserId
@@ -44,6 +44,11 @@ object MurlocQuest {
   val BladeName: String        = "Клинок старого мурлока"
   val TwoHandedBladeName: String = "Двуручный клинок старого мурлока"
   val BladeRarity: ItemRarity  = ItemRarity.Orange
+
+  /** Хват клинка — в одну руку или в обе, поровну. Лука, арбалета и
+    * парирующего кинжала у клинка не бывает: умение у него всегда из активных
+    * умений ближнего боя (Skill.weaponSkills). */
+  val BladeGrips: List[Grip] = List(Grip.OneHanded, Grip.TwoHanded)
 
   /** Герой той же крови — старейшина говорит с ним иначе. */
   def isKin(hero: Hero): Boolean = hero.race == Race.Murloc
@@ -115,11 +120,12 @@ object MurlocQuest {
       .sortBy(i => (ItemRarity.values.indexOf(i.rarity), i.lvl))
       .take(remaining.max(0L).toInt)
 
-  /** Клинок старого мурлока: легендарное оружие ровно уровня героя, со своим
-    * именем. Хват выпадает, как у всякого нового оружия, — двуручный клинок так
-    * и называется. */
+  /** Клинок старого мурлока: легендарное оружие ближнего боя ровно уровня
+    * героя, со своим именем. Хват — из [[BladeGrips]]; двуручный клинок так и
+    * называется. */
   def blade(hero: Hero, rng: Rng): Item = {
-    val item = ItemGenerator.createItemOfType(ItemType.Weapon, hero.lvl, BladeRarity, rng)._1
+    val (grip, next) = rng.pick(BladeGrips)
+    val item = ItemGenerator.createItemOfType(ItemType.Weapon, hero.lvl, BladeRarity, next, Some(grip))._1
     item.copy(name = if (item.twoHanded) TwoHandedBladeName else BladeName)
   }
 

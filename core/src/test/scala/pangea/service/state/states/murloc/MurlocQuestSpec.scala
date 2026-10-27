@@ -1,12 +1,14 @@
 package pangea.service.state.states.murloc
 
 import io.circe.syntax.EncoderOps
+import pangea.domain.Rng
 import pangea.engine.SceneContent
 import pangea.model.battle.{Formation, SoloPveBattle}
 import pangea.model.hero.{Achievement, Hero}
-import pangea.model.item.{Item, ItemType, QuestItemKind, Rarity}
+import pangea.model.item.{Grip, Item, ItemDetails, ItemType, QuestItemKind, Rarity}
 import pangea.model.monster.{Monster, Race, Rarity => MobRarity}
 import pangea.model.quest.{NpcQuest, NpcQuestProgress, NpcQuests}
+import pangea.model.skill.Skill
 import pangea.model.squad.{Ally, AllyKind, Squad}
 import pangea.model.state.StateType
 import pangea.model.stats.FightStats
@@ -34,6 +36,9 @@ object MurlocQuestSpec extends ZIOSpecDefault {
 
   private def hero: Hero = TestFixtures.hero(userId).copy(lvl = 7L)
   private def murloc: Hero = hero.copy(race = Race.Murloc)
+
+  /** Клинок выходит одно- или двуручным — имя у каждого своё. */
+  private val bladeNames: Set[String] = Set(MurlocQuest.BladeName, MurlocQuest.TwoHandedBladeName)
 
   private def map(id: Long = 12L): Item = QuestItemKind.item(QuestItemKind.MurlocVillageMap).copy(id = id)
   private def gear(id: Long, rarity: Rarity = Rarity.Gray, lvl: Long = 1L, itemType: ItemType = ItemType.ChestPlate): Item =
@@ -323,11 +328,11 @@ object MurlocQuestSpec extends ZIOSpecDefault {
           (state, dao, inv, r) = t
           res <- state.action(testUser, tap("GiveGray"), r)
           q   <- quests(dao)
-          left = inv.snapshot.filterNot(_.name == MurlocQuest.BladeName).map(_.id).sorted
+          left = inv.snapshot.filterNot(i => bladeNames.contains(i.name)).map(_.id).sorted
         } yield assertTrue(res == StateType.GlobalMap && q.isDone(NpcQuest.Murloc)) &&
                 // серые уровней 1–3 (id 5, 4, 3) ушли; 4-го и 5-го уровня (id 2, 1) и синий остались, карта — нет
                 assertTrue(left == List(1L, 2L, 6L)) &&
-                assertTrue(inv.snapshot.exists(_.name == MurlocQuest.BladeName))
+                assertTrue(inv.snapshot.exists(i => bladeNames.contains(i.name)))
       },
       test("двадцатая вещь: клинок старого мурлока (легендарный, уровня героя), карта уходит, «Любимец Мурлоков» и +1 к ловкости") {
         for {
@@ -337,14 +342,26 @@ object MurlocQuestSpec extends ZIOSpecDefault {
           all   <- texts(r)
           after <- heroOf(dao)
           q     <- quests(dao)
-          blade  = inv.snapshot.find(_.name == MurlocQuest.BladeName)
+          blade  = inv.snapshot.find(i => bladeNames.contains(i.name))
         } yield assertTrue(res == StateType.GlobalMap) &&
-                assertTrue(all.contains("Он твой, сухой") && all.contains("Вы получили «Клинок старого мурлока»") && all.contains("завершён")) &&
+                assertTrue(all.contains("Он твой, сухой") && blade.exists(b => all.contains(s"Вы получили «${b.name}»")) && all.contains("завершён")) &&
                 assertTrue(blade.exists(b => b.rarity == Rarity.Orange && b.itemType == ItemType.Weapon && b.lvl == 7L)) &&
                 assertTrue(!inv.snapshot.exists(_.questItem.contains(QuestItemKind.MurlocVillageMap)) && q.isDone(NpcQuest.Murloc)) &&
                 assertTrue(all.contains("«Любимец Мурлоков». +1 к ловкости")) &&
                 assertTrue(after.hasAchievement(Achievement.MurlocFavorite) && after.effectiveBaseStats(0L).agi == hero.effectiveBaseStats(0L).agi + 1L)
       },
+      test("клинок — только ближний бой: одно- или двуручный, умение из умений ближнего боя; ни лука, ни арбалета, ни парирующего кинжала") {
+        val blades = (1L to 200L).toList.map(s => MurlocQuest.blade(hero, Rng(s)))
+        assertTrue(blades.forall(b => !b.ranged && !b.grip.contains(Grip.Parrying))) &&
+          assertTrue(blades.forall(_.details match {
+            case ItemDetails.Weapon(skill) => Skill.weaponSkills.contains(skill)
+            case _                         => false
+          })) &&
+          assertTrue(blades.exists(_.twoHanded) && blades.exists(b => !b.twoHanded)) &&
+          assertTrue(blades.forall(b => b.name == (if (b.twoHanded) MurlocQuest.TwoHandedBladeName else MurlocQuest.BladeName))) &&
+          assertTrue(blades.forall(b => b.rarity == Rarity.Orange && b.lvl == hero.lvl))
+      },
+
       test("герой-мурлок: свои реплики в деревне, при сдаче и при награде") {
         for {
           t <- village(murloc, List(gear(1L), gear(2L)), handed = 18L)
@@ -373,7 +390,7 @@ object MurlocQuestSpec extends ZIOSpecDefault {
         } yield assertTrue(res == StateType.GlobalMap && all.contains("в карман не сунешь")) &&
                 assertTrue(q.onStep(NpcQuest.Murloc, 3) && MurlocQuest.rewardWaits(q) && inv.snapshot.exists(_.questItem.contains(QuestItemKind.MurlocVillageMap))) &&
                 assertTrue(wait.text.contains("с клинком в лапах") && wait.choices.map(_.id) == List("TakeBlade", "ToCity")) &&
-                assertTrue(res2 == StateType.GlobalMap && roomy.snapshot.exists(i => Set(MurlocQuest.BladeName, MurlocQuest.TwoHandedBladeName).contains(i.name)) && q2.isDone(NpcQuest.Murloc)) &&
+                assertTrue(res2 == StateType.GlobalMap && roomy.snapshot.exists(i => bladeNames.contains(i.name)) && q2.isDone(NpcQuest.Murloc)) &&
                 assertTrue(!roomy.snapshot.exists(_.questItem.contains(QuestItemKind.MurlocVillageMap)))
       }
     )

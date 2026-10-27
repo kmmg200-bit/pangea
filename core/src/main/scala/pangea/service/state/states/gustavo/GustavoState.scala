@@ -18,7 +18,7 @@ import zio.{Task, ZIO}
  * Лавка знахаря «Густаво» — второй уличный торговец на Торговой площади. Это только меню
  * из четырёх кнопок; каждая ведёт в свой отдельный стейт:
  *  1. «Исцеление травм»          → [[GustavoHealState]] (зелёная кнопка, краснеет на кулдауне);
- *  2. «Увеличение характеристик»  → [[GustavoBoostState]];
+ *  2. «Зелья Густаво»             → [[GustavoBoostState]];
  *  3. «Сдать травы»               → заглушка (трав пока нет);
  *  4. «Пополнить припасы»         → [[GustavoSuppliesState]] (фляга/пояс).
  * Цвет кнопки лечения зависит от кулдауна зелья ([[GustavoData.healCooldownUntil]]).
@@ -43,7 +43,8 @@ case class GustavoState(
   private val branch = new Branch(
     routes = Map(
       quest.questAction   -> Target.Run { (u, _, r) => questTalk(u, r) },
-      quest.acceptAction  -> Target.Run { (u, _, r) => quest.accept(u, r) *> renderMenu(u, r).as(StateType.Gustavo) },
+      // «Давай своё зелье» — и сразу к полке с зельями: выбрать первое.
+      quest.acceptAction  -> Target.Run { (u, _, r) => quest.accept(u, r).as(StateType.GustavoBoost) },
       quest.declineAction -> Target.Run { (u, _, r) => renderMenu(u, r).as(StateType.Gustavo) },
       "Heal"     -> Target.Goto(StateType.GustavoHeal),
       "Boost"    -> Target.Goto(StateType.GustavoBoost),
