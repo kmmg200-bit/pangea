@@ -11,6 +11,7 @@ import pangea.dao.auction.AuctionDao
 import pangea.dao.payment.PaymentDao
 import pangea.dao.payout.PayoutDao
 import pangea.dao.referral.ReferralDao
+import pangea.dao.promo.PromoDao
 import pangea.dao.bank.BankVaultDao
 import pangea.dao.barrel.BarrelDao
 import pangea.dao.hero.HeroDao
@@ -36,6 +37,7 @@ import pangea.service.donation.Donations
 import pangea.service.parcel.{Parcels, Transfers}
 import pangea.service.payout.Payouts
 import pangea.service.referral.Referrals
+import pangea.service.promo.PromoCodes
 import pangea.service.schedule.{Scheduler, SchedulerPoller}
 import pangea.service.sender.Api
 import pangea.service.sender.vk.config.VkConfig
@@ -77,6 +79,7 @@ object Main extends ZIOAppDefault {
       PayoutDao.live,
       ActivityDao.live,
       ReferralDao.live,
+      PromoDao.live,
       PaymentDao.live,
       ParcelDao.live,
       ItemDao.live,
@@ -99,6 +102,7 @@ object Main extends ZIOAppDefault {
       Payouts.live,
       ActivityContest.live,
       Referrals.live,
+      PromoCodes.live,
       TBankConfig.live,
       TBankClient.live,
       Donations.live,

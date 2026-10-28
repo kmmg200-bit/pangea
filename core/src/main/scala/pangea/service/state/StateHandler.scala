@@ -12,6 +12,7 @@ import pangea.service.activity.{ActivityContest, GroupEvent}
 import pangea.service.admin.{AdminPanel, HomeAlert}
 import pangea.engine.SceneContent
 import pangea.service.referral.Referrals
+import pangea.service.promo.PromoCodes
 import pangea.service.ErrorLog
 import pangea.service.chat.{ChatCommand, ChatProfile, Links}
 import pangea.service.parcel.{Parcels, TransferTarget, Transfers}
@@ -36,10 +37,12 @@ class StateHandler(
   admin: AdminPanel,
   content: SceneContent,
   lock: PlayerLock,
-  // Конкурс активности в группе и код друга. Без них (тесты) этих частей
-  // просто нет: события группы не считаются, бонус за 10 уровень не платится.
+  // Конкурс активности в группе, код друга и промокоды. Без них (тесты) этих
+  // частей просто нет: события группы не считаются, бонус за 10 уровень не
+  // платится, промокод уходит сцене обычным текстом.
   activity: Option[ActivityContest] = None,
-  referrals: Option[Referrals] = None
+  referrals: Option[Referrals] = None,
+  promo: Option[PromoCodes] = None
 ) {
 
   /** Событие группы ВК для конкурса активности: вышел пост, игрок поставил
@@ -343,8 +346,12 @@ class StateHandler(
       // Админ-панель стоит перед игровым автоматом: пока она открыта, ввод
       // идёт ей, а состояние героя и сцена остаются нетронутыми.
       inPanel <- admin.intercept(user, hero, action, renderer)
+      // Промокод — голым сообщением с любого экрана, как /home: ответ приходит
+      // письмом, а сцена и её кнопки остаются как были.
+      byCode  <- if (inPanel) ZIO.succeed(false)
+                 else ZIO.foreach(promo)(_.intercept(user, hero, action, renderer)).map(_.contains(true))
       _ <-
-        if (inPanel) ZIO.unit
+        if (inPanel || byCode) ZIO.unit
         else if (StateHandler.isHomeCommand(action))
           goHome(user, renderer) *> homeToAdmins(user, hero.state, messageId)
         else if (StateHandler.isRestartCommand(action))
@@ -504,7 +511,8 @@ object StateHandler {
 
   val live: ZLayer[
     Api with StatesMap with HeroRepository with UserRepository with HeroDao with Payouts with Parcels
-      with Transfers with AdminPanel with SceneContent with ActivityContest with Referrals with PlayerLock,
+      with Transfers with AdminPanel with SceneContent with ActivityContest with Referrals with PromoCodes
+      with PlayerLock,
     Nothing,
     StateHandler
   ] =
@@ -522,10 +530,11 @@ object StateHandler {
         content   <- ZIO.service[SceneContent]
         activity  <- ZIO.service[ActivityContest]
         referrals <- ZIO.service[Referrals]
+        promo     <- ZIO.service[PromoCodes]
         // Тот же лок, что у доставки посылок (см. Transfers): ход игрока и
         // посылка ему в ячейку не должны идти одновременно.
         lock      <- ZIO.service[PlayerLock]
       } yield new StateHandler(api, userRepo, heroRepo, heroDao, payouts, parcels, transfers, statesMap.states,
-                               admin, content, lock, Some(activity), Some(referrals))
+                               admin, content, lock, Some(activity), Some(referrals), Some(promo))
     )
 }
