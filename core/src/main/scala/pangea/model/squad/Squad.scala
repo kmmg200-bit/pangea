@@ -117,6 +117,11 @@ final case class Squad(
   def isAway(kind: AllyKind, nowMs: Long): Boolean =
     away.get(kind.entryName).exists(_ > nowMs) || offDuty.get(kind.entryName).exists(_ > nowMs)
 
+  /** Когда он вернётся в таверну, если сейчас в отлучке: по свитку или после
+    * отработанного найма — что позже. */
+  def backAt(kind: AllyKind, nowMs: Long): Option[Long] =
+    List(away.get(kind.entryName), offDuty.get(kind.entryName)).flatten.filter(_ > nowMs).maxOption
+
   /** Кто вернулся из отлучки по свитку к этому моменту — им нужна реплика. */
   def returned(nowMs: Long): List[AllyKind] =
     away.collect { case (k, until) if until <= nowMs => AllyKind.withNameOption(k) }.flatten.toList

@@ -276,16 +276,17 @@ case class Hero(
     int = (baseStats.int + Achievement.intBonus(this)).max(1L)
   )
 
-  /** Карточка персонажа. `blessed` (активно ли благословение Азата) и
-   *  `instantRests` (сколько быстрых отдыхов в запасе) живут в `azat_data`, а не
-   *  в самом герое, поэтому приходят параметрами. Отдыхи показываем и без
+  /** Карточка персонажа. `blessingUntil` (до какого момента идёт благословение
+   *  Азата) и `instantRests` (сколько быстрых отдыхов в запасе) живут в
+   *  `azat_data`, а не в самом герое, поэтому приходят параметрами. У
+   *  благословения пишем, сколько ему ещё идти. Отдыхи показываем и без
    *  благословения: заряды остаются, даже когда оно кончилось.
    *
    *  У четырёх характеристик — силы, тела, ловкости и ума — число текущее, со
    *  всем, что сейчас действует, а в скобках за ним родное: до расы, травм и
    *  зелий. Скобки появляются только там, где числа разошлись. Остальные
    *  строки — как и были, одним числом. */
-  def getInfo(nowMs: Long, blessed: Boolean = false, instantRests: Int = 0): String = {
+  def getInfo(nowMs: Long, blessingUntil: Option[Long] = None, instantRests: Int = 0): String = {
     val effB     = effectiveBaseStats(nowMs)
     val natB     = nativeBaseStats
     val eff      = effectiveFightStats(nowMs)
@@ -294,7 +295,8 @@ case class Hero(
     val curArm   = fightStats.armor.min(maxArm)
     val maxEn    = maxEnergy(nowMs)
     val curEn    = fightStats.energy.min(maxEn)
-    val blessingLine = if (blessed) "\n ✨ Благословение Активно" else ""
+    val blessingLine = blessingUntil.filter(_ > nowMs)
+                         .fold("")(until => s"\n ✨ Благословение: ещё ${pangea.util.TimeLeft.format(until - nowMs)}")
     val frozenLine   = if (expFrozen) "\n ❄ Опыт остановлен" else ""
     val restedLine   = statBoosts.remainingMs(pangea.model.home.HomeRates.RestedBoost, nowMs).fold("") { ms =>
       val mins = (ms / 60000L).max(1L)

@@ -7,6 +7,7 @@ import pangea.model.item.Item
 import pangea.model.parcel.Parcel
 import pangea.model.user.{User, UserId}
 import pangea.repository.bank.BankRepository
+import pangea.util.TimeLeft
 import zio.{Task, ZIO, ZLayer}
 
 import java.util.concurrent.TimeUnit
@@ -143,14 +144,8 @@ object Parcels {
     parcels.flatMap(_.mailedAt).minOption.map(_ + ShelfMs)
 
   /** Сколько ещё хранит почта: «6д 23ч», «5ч 20мин», «40мин» — как у
-    * благословения и травм. Меньше минуты не пишем: вот-вот сгорит. */
-  def left(ms: Long): String = {
-    val mins = (ms / 60000L).max(1L)
-    val d    = mins / 1440L
-    val h    = mins % 1440L / 60L
-    val m    = mins % 60L
-    if (d > 0) s"${d}д ${h}ч" else if (h > 0) s"${h}ч ${m}мин" else s"${m}мин"
-  }
+    * благословения и наёмников в отлучке (см. [[TimeLeft]]). */
+  def left(ms: Long): String = TimeLeft.format(ms)
 
   val live: ZLayer[ParcelDao with BankRepository with SceneContent, Nothing, Parcels] =
     ZLayer.fromFunction(Parcels(_, _, _))

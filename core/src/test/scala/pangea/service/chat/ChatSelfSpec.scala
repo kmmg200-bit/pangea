@@ -137,7 +137,7 @@ object ChatSelfSpec extends ZIOSpecDefault {
               assertTrue(said.head.startsWith(ChatProfile.profileHeader("Иван Иванов"))) &&
               // ровно то же тело, что и у кнопки: характеристики, опыт, очки
               assertTrue(said.head.contains(h.getInfo(0L))) &&
-              assertTrue(ChatProfile.profile("Иван Иванов", h, 0L, blessed = false, 0, content) ==
+              assertTrue(ChatProfile.profile("Иван Иванов", h, 0L, blessingUntil = None, 0, content) ==
                          ChatProfile.profileHeader("Иван Иванов") + "\n" + h.getInfo(0L))
     },
 

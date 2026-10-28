@@ -86,9 +86,9 @@ object AzatBlessingSpec extends ZIOSpecDefault {
 
     test("в карточке персонажа виден остаток быстрых отдыхов") {
       val hero = TestFixtures.hero(UserId(1L))
-      val card = hero.getInfo(0L, blessed = true, instantRests = 137)
+      val card = hero.getInfo(0L, blessingUntil = Some(3 * day), instantRests = 137)
       // Отдыхи остаются и после конца благословения — показываем их и без него.
-      val expired = hero.getInfo(0L, blessed = false, instantRests = 5)
+      val expired = hero.getInfo(5 * day, blessingUntil = Some(3 * day), instantRests = 5)
       assertTrue(card.contains("⚡ Быстрых отдыхов: 137")) &&
       assertTrue(expired.contains("⚡ Быстрых отдыхов: 5")) &&
       assertTrue(!expired.contains("Благословение")) &&
@@ -98,15 +98,29 @@ object AzatBlessingSpec extends ZIOSpecDefault {
 
     test("в карточке персонажа строка про благословение стоит под опытом") {
       val hero    = TestFixtures.hero(UserId(1L))
-      val blessed = hero.getInfo(0L, blessed = true)
+      val blessed = hero.getInfo(0L, blessingUntil = Some(3 * day))
       val plain   = hero.getInfo(0L)
       val lines   = blessed.linesIterator.toList
       val expIdx  = lines.indexWhere(_.contains("опыта"))
       assertTrue(!plain.contains("Благословение")) &&
-      assertTrue(lines(expIdx + 1).contains("Благословение Активно")) &&
+      assertTrue(lines(expIdx + 1).contains("✨ Благословение: ещё")) &&
       // между ним и статами — пустая строка (отступ)
       assertTrue(lines(expIdx + 2).trim.isEmpty) &&
       assertTrue(lines(expIdx + 3).contains("СИЛ"))
+    },
+
+    test("в карточке персонажа — сколько ещё идёт благословение: дни с часами, меньше суток — часы с минутами") {
+      val hero  = TestFixtures.hero(UserId(1L))
+      val hour  = 60L * 60L * 1000L
+      val until = 3 * day
+      def card(now: Long) = hero.getInfo(now, blessingUntil = Some(until))
+      assertTrue(card(until - (2 * day + 5 * hour)).contains("✨ Благословение: ещё 2д 5ч")) &&
+      assertTrue(card(until - (5 * hour + 20 * 60000L)).contains("✨ Благословение: ещё 5ч 20мин")) &&
+      assertTrue(card(until - 40 * 60000L).contains("✨ Благословение: ещё 40мин")) &&
+      // кончилось — строки нет
+      assertTrue(!card(until).contains("Благословение")) &&
+      // в храме — тот же счёт
+      assertTrue(AzatState(blessingUntil = Some(until)).blessingRemaining(until - (5 * hour + 20 * 60000L)).contains("5ч 20мин"))
     }
   )
 }

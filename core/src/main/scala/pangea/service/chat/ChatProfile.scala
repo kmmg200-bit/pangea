@@ -21,7 +21,7 @@ object ChatProfile {
   val Empty: String = "—"
 
   /** Карточка героя — то же, что по кнопке «Персонаж», с именем в заголовке. */
-  def profile(name: String, hero: Hero, nowMs: Long, blessed: Boolean,
+  def profile(name: String, hero: Hero, nowMs: Long, blessingUntil: Option[Long],
               instantRests: Int, content: SceneContent): String = {
     val trauma = hero.traumaRemainingText(nowMs).map { remaining =>
       val names = hero.activeTraumas(nowMs).map(_.name)
@@ -29,7 +29,7 @@ object ChatProfile {
         "traumaNames" -> (if (names.isEmpty) "Травмы" else names.mkString(", ")),
         "remaining"   -> remaining)
     }.getOrElse("")
-    s"${profileHeader(name)}\n${hero.getInfo(nowMs, blessed, instantRests)}$trauma"
+    s"${profileHeader(name)}\n${hero.getInfo(nowMs, blessingUntil, instantRests)}$trauma"
   }
 
   /** Слоты снаряжения: что надето и где пусто. Характеристики не показываем —

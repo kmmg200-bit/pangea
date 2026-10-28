@@ -60,7 +60,7 @@ case class HeroStatsState(
       hero  <- SquadDuty.settle(heroDao, content, user, hero0, now, renderer)
       azat  <- AzatData.load(heroDao, user.userId, now)
       keeps <- hasStorage(hero)
-      _     <- renderer.show(user, buildStatsScreen(hero, now, azat.blessingActive(now), azat.instantRests, keeps))
+      _     <- renderer.show(user, buildStatsScreen(hero, now, azat.blessingUntil, azat.instantRests, keeps))
     } yield ()
 
   /** Есть ли у героя хранилище сверх сумки. Репозитория нет — значит и хранилищ
@@ -81,7 +81,7 @@ case class HeroStatsState(
       keeps <- hasStorage(hero)
       text  <- QuestJournal.text(heroDao, content, hero, now)
       _     <- renderer.show(user, Screen(text,
-                 buildStatsScreen(hero, now, blessed = false, instantRests = 0, keeps).choices))
+                 buildStatsScreen(hero, now, blessingUntil = None, instantRests = 0, keeps).choices))
     } yield ()
 
   /** «Достижения»: счёт полученных из всех, полученные — с тем, что дают, а
@@ -93,7 +93,7 @@ case class HeroStatsState(
       hero  <- getHero(user)
       keeps <- hasStorage(hero)
       _     <- renderer.show(user, Screen(HeroStatsState.achievementsText(content, hero),
-                 buildStatsScreen(hero, now, blessed = false, instantRests = 0, keeps).choices))
+                 buildStatsScreen(hero, now, blessingUntil = None, instantRests = 0, keeps).choices))
     } yield ()
 
   private def showUpgradeScreen(user: User, renderer: Renderer): Task[Unit] =
@@ -103,7 +103,7 @@ case class HeroStatsState(
       keeps <- hasStorage(hero)
       _    <- if (hero.upgradePoints <= 0)
                 renderer.show(user, Screen(content.text("heroStats.noPoints"),
-                  buildStatsScreen(hero, now, blessed = false, instantRests = 0, keeps).choices))
+                  buildStatsScreen(hero, now, blessingUntil = None, instantRests = 0, keeps).choices))
               else {
                 val text = content.format("heroStats.upgradeScreen", "points" -> hero.upgradePoints.toString)
                 val choices = List(
@@ -161,7 +161,7 @@ case class HeroStatsState(
     }
   }
 
-  private def buildStatsScreen(hero: Hero, nowMs: Long, blessed: Boolean, instantRests: Int,
+  private def buildStatsScreen(hero: Hero, nowMs: Long, blessingUntil: Option[Long], instantRests: Int,
                                hasStorage: Boolean): Screen = {
     val traumaLine = hero.traumaRemainingText(nowMs).map { remaining =>
       val names = hero.activeTraumas(nowMs).map(_.name)
@@ -188,7 +188,7 @@ case class HeroStatsState(
       // «Назад» — отдельным последним рядом: в третьем ряду ему уже тесно.
       Some(content.choice("Back", "heroStats.leave").copy(color = ChoiceColor.Negative, row = Some(3)))
     ).flatten
-    Screen(hero.getInfo(nowMs, blessed, instantRests) + traumaLine, choices)
+    Screen(hero.getInfo(nowMs, blessingUntil, instantRests) + traumaLine, choices)
   }
 
   private def getHero(user: User): Task[Hero] =

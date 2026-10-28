@@ -5,6 +5,7 @@ import io.circe.generic.semiauto.deriveEncoder
 import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder, HCursor}
 import pangea.model.item.Item
+import pangea.util.TimeLeft
 
 /** Статус куба Азата у героя. */
 sealed trait CubeStatus extends EnumEntry
@@ -80,14 +81,10 @@ case class AzatState(
     case scala.None => this
   }
 
-  /** Осталось времени благословения в человекочитаемом виде (или None, если нет). */
+  /** Сколько ещё идёт благословение: «6д 23ч», меньше суток — «5ч 20мин» (см.
+    * [[TimeLeft]]). `None` — его нет. */
   def blessingRemaining(nowMs: Long): Option[String] =
-    blessingUntil.filter(_ > nowMs).map { until =>
-      val secs  = (until - nowMs) / 1000L
-      val days  = secs / 86400
-      val hours = (secs % 86400) / 3600
-      s"${days}д ${hours}ч"
-    }
+    blessingUntil.filter(_ > nowMs).map(until => TimeLeft.format(until - nowMs))
 }
 
 object AzatState {

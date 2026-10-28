@@ -143,6 +143,35 @@ object MercenariesStateSpec extends ZIOSpecDefault {
               assertTrue(bScr.last.choices.filter(_.id == "MercCard").flatMap(_.data.get("kind")) == List("Human", "Murloc", "Gnome")) &&
               assertTrue(bHero.squad.away.isEmpty) &&
               assertTrue(again.count(_.text.contains("снова в таверне")) == 1)
+    },
+
+    test("у стола сказано, кто в отлучке и когда вернётся: по свитку и после найма; кто в отряде — не в отлучке") {
+      val hour  = 60L * 60L * 1000L
+      // Йорген ушёл по свитку (сутки), Плюх отработал найм и отдыхает (12 часов),
+      // Брамбл в отряде.
+      val squad = Squad.empty.sentAway(AllyKind.Human, 0L).hire(AllyKind.Gnome, 10L, 0L)
+                    .copy(offDuty = Map("Murloc" -> 12L * hour))
+      for {
+        t <- makeState(baseHero.copy(squad = squad))
+        (state, _, _, renderer) = t
+        // Прошло 6 часов 40 минут: Йоргену ещё 17ч 20мин, Плюху — 5ч 20мин.
+        _    <- TestClock.adjust(zio.Duration.fromMillis(6L * hour + 40L * 60000L))
+        _    <- state.enter(testUser, renderer)
+        list <- renderer.sentScreens.map(_.last)
+      } yield assertTrue(list.text.contains("За дальним столом сегодня пусто.")) &&
+              assertTrue(list.text.contains("🕓 Йорген Кремень вернётся через 17ч 20мин.")) &&
+              assertTrue(list.text.contains("🕓 Плюх вернётся через 5ч 20мин.")) &&
+              assertTrue(!list.text.contains("Брамбл")) &&
+              assertTrue(list.choices.count(_.id == "MercCard") == 0)
+    },
+
+    test("никто не в отлучке — строк о возвращении нет") {
+      for {
+        t <- makeState(baseHero)
+        (state, _, _, renderer) = t
+        _    <- state.enter(testUser, renderer)
+        list <- renderer.sentScreens.map(_.last)
+      } yield assertTrue(!list.text.contains("вернётся через"))
     }
   )
 }

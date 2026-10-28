@@ -10,6 +10,7 @@ import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
 import pangea.service.state.{CityExit, LostSquadQuest, NpcQuestLog, SquadDuty, State, UserAction}
+import pangea.util.TimeLeft
 import zio.{Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -60,7 +61,12 @@ case class MercenariesState(
       _    <- ZIO.when(back.nonEmpty)(heroDao.updateSquad(user.userId, squad))
       quests <- NpcQuestLog.load(heroDao, user.userId)
       free  = available(squad, now, LostSquadQuest.bramblCalled(quests))
-      text  = if (free.isEmpty) content.text("mercenaries.empty") else content.text("mercenaries.title")
+      // Кого за столом нет, потому что он в отлучке, — с тем, когда вернётся.
+      gone  = absent(squad, now, LostSquadQuest.bramblCalled(quests)).map { case (k, at) =>
+                content.format("mercenaries.away", "name" -> k.name, "left" -> TimeLeft.format(at - now))
+              }
+      head  = if (free.isEmpty) content.text("mercenaries.empty") else content.text("mercenaries.title")
+      text  = if (gone.isEmpty) head else head + "\n\n" + gone.mkString("\n")
       buttons = free.map(k => Choice("MercCard", Choice.fit(k.name), data = Map("kind" -> k.entryName), row = Some(0)))
       _    <- renderer.show(user, Screen(text, buttons ++ List(
                 content.choice("BackFromMercs", "mercenaries.back").copy(row = Some(1)),
@@ -185,6 +191,12 @@ object MercenariesState {
     AllyKind.hireable.filterNot { k =>
       squad.has(k) || (squad.isAway(k, nowMs) && !(k == AllyKind.Gnome && bramblCalled))
     }
+
+  /** Кто в отлучке и когда вернётся — в том же порядке, что и за столом. Кто в
+    * отряде, тот не в отлучке; Брамбл, пока его зовёт дружина, сидит за столом. */
+  def absent(squad: Squad, nowMs: Long, bramblCalled: Boolean = false): List[(AllyKind, Long)] =
+    AllyKind.hireable.filterNot(k => squad.has(k) || (k == AllyKind.Gnome && bramblCalled))
+      .flatMap(k => squad.backAt(k, nowMs).map(k -> _))
 
 
   /** Чем берут Плюх и Брамбл. */

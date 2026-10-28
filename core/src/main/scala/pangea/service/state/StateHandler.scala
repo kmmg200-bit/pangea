@@ -163,7 +163,7 @@ class StateHandler(
                       activity.fold[Task[String]](ZIO.succeed(content.text("activity.off")))(_.board(now))
                     case ChatCommand.Self.Profile =>
                       AzatData.load(heroDao, sender.userId, now).map(azat =>
-                        ChatProfile.profile(name, hero, now, azat.blessingActive(now), azat.instantRests, content))
+                        ChatProfile.profile(name, hero, now, azat.blessingUntil, azat.instantRests, content))
                   }
           _    <- api.sendToChat(text)
         } yield ()
