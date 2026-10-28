@@ -107,7 +107,7 @@ object RatKingBattleSpec extends ZIOSpecDefault {
     test("статы от BossLvL, а BossLvL — раз в три уровня героя") {
       val s = king.stats(bossLvl)
       assertTrue(king.bossLvl(10L) == 3L && king.bossLvl(1L) == 1L && king.bossLvl(3L) == 1L) &&
-      assertTrue(king.bossLvl(4L) == 1L && king.bossLvl(7L) == 2L && king.levelDivisor == 3L) &&
+      assertTrue(king.bossLvl(5L) == 1L && king.bossLvl(6L) == 2L && king.levelDivisor == 3L) &&
       assertTrue(s.hp == 450L * bossLvl && s.armor == 400L * bossLvl && s.atk == 50L * bossLvl) &&
       assertTrue(s.energy == 100L * bossLvl && s.accuracy == 100L * bossLvl) &&
       assertTrue(s.defence == 100L * bossLvl && s.evasion == 50L * bossLvl) &&

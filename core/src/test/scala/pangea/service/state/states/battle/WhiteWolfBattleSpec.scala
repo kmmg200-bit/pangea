@@ -101,8 +101,8 @@ object WhiteWolfBattleSpec extends ZIOSpecDefault {
     // ── Статы и особенности ───────────────────────────────────────────────────
     test("статы считаются от BossLvL, а BossLvL — раз в четыре уровня героя") {
       val s = wolf.stats(bossLvl)
-      assertTrue(wolf.bossLvl(9L) == 2L && wolf.bossLvl(4L) == 1L && wolf.bossLvl(5L) == 1L && wolf.bossLvl(1L) == 1L) &&
-      assertTrue(wolf.bossLvl(13L) == 3L && MiniBoss.bossLvl(13L) == 2L) && // у элементалей по-прежнему раз в пять
+      assertTrue(wolf.bossLvl(8L) == 2L && wolf.bossLvl(7L) == 1L && wolf.bossLvl(4L) == 1L && wolf.bossLvl(1L) == 1L) &&
+      assertTrue(wolf.bossLvl(12L) == 3L && MiniBoss.bossLvl(12L) == 2L) && // у элементалей по-прежнему раз в пять
       assertTrue(s.hp == 1000L * bossLvl && s.armor == 650L * bossLvl && s.atk == 300L * bossLvl) &&
       assertTrue(s.energy == 200L * bossLvl && s.accuracy == 225L * bossLvl) &&
       assertTrue(s.defence == 50L * bossLvl && s.evasion == 200L * bossLvl) &&

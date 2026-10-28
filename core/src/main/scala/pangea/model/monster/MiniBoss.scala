@@ -123,11 +123,11 @@ object MiniBoss extends Enum[MiniBoss] {
    *  узелком можно и раньше — это уже выбор самого героя. */
   val AmbushMinHeroLvl: Long = 4L
 
-  /** Уровень босса: `(уровень героя − 1) / divisor`, округление вниз, минимум 1.
-   *  Элементали и Джо растут раз в пять уровней, Белый волк — раз в четыре
-   *  (см. [[MiniBoss.levelDivisor]]). */
+  /** Уровень босса: `уровень героя / divisor`, округление вниз, минимум 1 — у
+   *  волка на 8-м уровне героя уже второй. Элементали и Джо растут раз в пять
+   *  уровней, Белый волк — раз в четыре (см. [[MiniBoss.levelDivisor]]). */
   def bossLvl(heroLvl: Long, divisor: Long = DefaultLevelDivisor): Long =
-    ((heroLvl - 1L) / divisor).max(1L)
+    (heroLvl / divisor).max(1L)
 
   // ── Огненный элементаль ────────────────────────────────────────────────────────────────
   case object FireElemental extends MiniBoss("Огненный", "Огненного", Race.Elemental) {

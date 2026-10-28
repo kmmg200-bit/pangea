@@ -130,9 +130,9 @@ object ElementalLairStateSpec extends ZIOSpecDefault {
     },
 
     test("напасть на огненного → бой: раса, статы по BossLvL и вид записаны") {
-      // Уровень героя 15 → BossLvL = (15−1)/5 = 2.
+      // Уровень героя 14 → BossLvL = 14 / 5 = 2.
       for {
-        t <- makeState(heroLvl = 15L)
+        t <- makeState(heroLvl = 14L)
         (state, dao, renderer) = t
         _      <- TestRandom.feedInts(fireIdx)
         _      <- state.action(testUser, tap("ApproachElemental"), renderer)
@@ -154,7 +154,7 @@ object ElementalLairStateSpec extends ZIOSpecDefault {
 
     test("напасть на каменного → его собственные статы по BossLvL") {
       for {
-        t <- makeState(heroLvl = 15L)
+        t <- makeState(heroLvl = 14L)
         (state, dao, renderer) = t
         _      <- TestRandom.feedInts(stoneIdx)
         _      <- state.action(testUser, tap("ApproachElemental"), renderer)
@@ -217,10 +217,10 @@ object ElementalLairStateSpec extends ZIOSpecDefault {
     },
 
     // ── Уровень босса ─────────────────────────────────────────────────────────
-    test("BossLvL = (уровень героя − 1) / 5 вниз, но не меньше 1") {
+    test("BossLvL = уровень героя / 5 вниз, но не меньше 1") {
       val cases = List(
-        1L -> 1L, 5L -> 1L, 6L -> 1L, 10L -> 1L, // до 10 уровня босс держится на первом
-        11L -> 2L, 15L -> 2L, 16L -> 3L, 51L -> 10L, 150L -> 29L)
+        1L -> 1L, 4L -> 1L, 5L -> 1L, 9L -> 1L, // до 9 уровня босс держится на первом
+        10L -> 2L, 14L -> 2L, 15L -> 3L, 50L -> 10L, 150L -> 30L)
       assertTrue(cases.forall { case (heroLvl, expected) => MiniBoss.bossLvl(heroLvl) == expected })
     }
   )

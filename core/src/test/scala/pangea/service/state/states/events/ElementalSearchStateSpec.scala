@@ -24,7 +24,7 @@ object ElementalSearchStateSpec extends ZIOSpecDefault {
     heroLvl:   Long = 15L,
     bagFull:   Boolean = false,
     artifacts: Option[pangea.test.TestArtifactRepository] = None
-  ) = // BossLvL = 2
+  ) = // BossLvL = 15 / 5 = 3
     for {
       dao       <- TestHeroDao.withHero(userId, TestFixtures.hero(userId).copy(lvl = heroLvl))
       invRepo    = if (bagFull) TestInventoryRepository.full else TestInventoryRepository.accepting
@@ -49,7 +49,7 @@ object ElementalSearchStateSpec extends ZIOSpecDefault {
         scene    <- sceneOf(dao)
         tasks    <- scheduler.scheduled
         screens  <- renderer.sentScreens
-      } yield assertTrue(scene.exists(_.triesLeft == 3)) && // BossLvL 2 + бонус 1
+      } yield assertTrue(scene.exists(_.triesLeft == 4)) && // BossLvL 3 + бонус 1
               assertTrue(tasks.exists(_.kind == TaskKind.ElementalSearch)) &&
               assertTrue(screens.last.text.contains("изучаете окрестности")) &&
               // время до находки не раскрываем ни в тексте, ни в кнопках
@@ -71,7 +71,7 @@ object ElementalSearchStateSpec extends ZIOSpecDefault {
         screens <- renderer.sentScreens
       } yield assertTrue(result == StateType.ElementalSearch) &&
               assertTrue(invRepo.snapshot.size == 1) &&
-              assertTrue(scene.exists(_.triesLeft == 2)) &&
+              assertTrue(scene.exists(_.triesLeft == 3)) &&
               assertTrue(screens.map(_.text).mkString.contains("Вы нашли"))
     },
 

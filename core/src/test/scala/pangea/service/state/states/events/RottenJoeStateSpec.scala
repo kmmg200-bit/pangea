@@ -62,7 +62,7 @@ object RottenJoeStateSpec extends ZIOSpecDefault {
 
     test("напасть → бой с Гнилым Джо: раса, статы по BossLvL и вид записаны") {
       for {
-        t <- makeState(heroLvl = 15L) // BossLvL = 2
+        t <- makeState(heroLvl = 14L) // BossLvL = 14 / 5 = 2
         (state, dao, renderer) = t
         result <- state.action(testUser, tap("AttackJoe"), renderer)
         battle <- battleOf(dao).map(_.get)
