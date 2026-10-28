@@ -886,7 +886,7 @@ object AllyBattleSpec extends ZIOSpecDefault {
               assertTrue(after.group.allies.headOption.exists(_.hp == 100L))
     },
 
-    test("Таран по мобу на месте 2 (напротив него — союзник): герой встаёт на 2, союзник — на 1; целью Таран берёт только мобов") {
+    test("Таран по мобу на месте 2 (напротив него — союзник): герой встаёт на 2, союзник — на 1; в целях — мобы и свободное место") {
       val h = heroWithSkills(hero(), Skill.SweepingStrike, Skill.Ram)
       for {
         t <- makeState(h, group(h, 1000L, 2000L))
@@ -897,7 +897,7 @@ object AllyBattleSpec extends ZIOSpecDefault {
         _       <- TestRandom.feedInts(60, 99, 60, 99, 99, 99) *> TestRandom.feedLongs(100L, 100L, 100L, 100L)
         _       <- state.action(testUser, aimed("Skill_202", 2), r)
         after   <- battleOf(dao)
-      } yield assertTrue(targets == List("1", "2")) &&
+      } yield assertTrue(targets == List("1", "2", "3")) &&
               assertTrue(after.group.heroPos == 2 && after.monsterStats.hp == 2000L) &&
               assertTrue(after.group.allies.head.position == 1) &&
               assertTrue(after.group.others.head.stats.hp == 1000L && after.group.places == List(1))

@@ -843,6 +843,70 @@ object GroupBattleSpec extends ZIOSpecDefault {
               assertTrue(!screens.contains("Таран сработал"))
     },
 
+    test("Таран достаёт через одного: урон по мобу на месте 3 сразу, а в конце раунда герой встаёт напротив него") {
+      val h = heroWithSkills(Skill.SweepingStrike, Skill.Ram)
+      for {
+        t <- makeState(h, groupFor(h, 1000L, 2000L, 3000L))
+        (state, dao, r) = t
+        _       <- quietRound(99, 99, 99) *> TestRandom.feedLongs(100L, 100L)
+        _       <- state.action(testUser, aimed("Skill_202", 3), r)
+        after   <- battleOf(dao)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(after.group.heroPos == 3 && after.group.paired) &&
+              assertTrue(after.monsterStats.hp == 3000L && after.monsterCurrentHp < 3000L) &&
+              assertTrue(screens.contains("Таран сработал: вы шагнули на место 3"))
+    },
+
+    test("Таран на свободное место: рывок без удара — герой встаёт туда сразу, мобы целы, умение на перезарядке") {
+      val h  = heroWithSkills(Skill.SweepingStrike, Skill.Ram)
+      val b0 = groupFor(h, 1000L, 2000L, 3000L)
+      // место 2 пустеет: мобы стоят на 1 и 3
+      val b  = b0.sideFallen(b0.group.idxOf(2))
+      for {
+        t <- makeState(h, b)
+        (state, dao, r) = t
+        _       <- state.action(testUser, tap("Skill_202"), r)
+        ask     <- r.sentScreens.map(_.last)
+        _       <- TestRandom.feedInts(99, 99, 99, 99, 99, 99) *> TestRandom.feedLongs(100L, 100L, 100L, 100L)
+        _       <- state.action(testUser, aimed("Skill_202", 2), r)
+        after   <- battleOf(dao)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+        hps      = (after.monsterCurrentHp :: after.group.others.map(_.currentHp)).sorted
+      } yield assertTrue(ask.text.contains("Таран — куда?")) &&
+              assertTrue(ask.choices.filter(_.id == "Skill_202").map(_.data("target")) == List("1", "2", "3")) &&
+              assertTrue(after.group.heroPos == 2) &&
+              assertTrue(hps == List(1000L, 3000L)) &&
+              assertTrue(screens.contains("🛡 Таран: вы рванули на место 2.") && !screens.contains("врезаетесь")) &&
+              assertTrue(after.slotByItem(202L).exists(_.cooldown == Skill.Ram.cooldown))
+    },
+
+    test("в бою один на один без строя Таран — просто удар, без вопроса «куда»") {
+      val h = heroWithSkills(Skill.SweepingStrike, Skill.Ram)
+      for {
+        t <- makeState(h, groupFor(h, 1000L))
+        (state, dao, r) = t
+        _       <- quietRound(99) *> TestRandom.feedLongs(100L)
+        _       <- state.action(testUser, tap("Skill_202"), r)
+        after   <- battleOf(dao)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(!screens.contains("куда?") && !screens.contains("в кого?")) &&
+              assertTrue(after.monsterCurrentHp < 1000L && after.group.heroPos == 1)
+    },
+
+    test("куда рвётся Таран: свободные места своей стороны в двух шагах; без строя и пригвождённому — некуда") {
+      val h    = heroWithSkills(Skill.SweepingStrike, Skill.Ram)
+      val b0   = groupFor(h, 1000L, 1000L, 1000L)
+      val gap  = b0.sideFallen(b0.group.idxOf(2))
+      val edge = gap.copy(group = gap.group.copy(heroPos = Formation.HeroPlaces))
+      assertTrue(BattleState.skillReach(h, Skill.Ram) == 2 && BattleState.skillReach(h, Skill.Shove) == 1) &&
+      assertTrue(BattleState.ramSpots(groupFor(h, 1000L)).isEmpty) &&
+      // мобы на 1 и 3: свободно только второе
+      assertTrue(BattleState.ramSpots(gap) == List(2)) &&
+      // за край своей стороны не рвануть
+      assertTrue(BattleState.ramSpots(edge) == List(Formation.HeroPlaces - 2, Formation.HeroPlaces - 1)) &&
+      assertTrue(BattleState.ramSpots(gap.copy(effects = gap.effects.copy(heroRootedTurns = 1))).isEmpty)
+    },
+
     test("победа над группой: опыт одной суммой за всех, добыча — по каждому павшему по очереди") {
       val h = hero(atk = 100000L)
       for {

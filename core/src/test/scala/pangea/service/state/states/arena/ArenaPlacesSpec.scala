@@ -52,6 +52,17 @@ object ArenaPlacesSpec extends ZIOSpecDefault {
   private def archer(skill: Skill): Hero = fighter(oneId, 1L, agi = 20, int = 20, weapon = bow(skill))
   private val swordsman: Hero = fighter(twoId, 2L, agi = 5, int = 5)
 
+  /** Первый с Тараном на кирасе (умение под номером 202). */
+  private val rammer: Hero = {
+    val h     = fighter(oneId, 1L, agi = 20, int = 20)
+    val chest = Item(202L, "Кираса", 10L, Rarity.Blue, ItemType.ChestPlate,
+      attack = 0, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0,
+      details = ItemDetails.Armor(Skill.Ram))
+    h.copy(equipment = h.equipment.copy(chestPlate = chest))
+  }
+
+  private def hpOf(dao: TestHeroDao, id: UserId): Task[Long] = dao.getHeroByUserId(id).map(_.get.fightStats.hp)
+
   private def arena(heroes: (UserId, Hero)*) =
     for {
       dao   <- TestHeroDao.make
@@ -178,6 +189,74 @@ object ArenaPlacesSpec extends ZIOSpecDefault {
         after  = fight(fights)
       } yield assertTrue(said.contains("до соперника не достать")) &&
               assertTrue(after.isTurn(oneId) && after.lastLog.exists(_.contains("выжидает")))
+    },
+
+    test("Таран достаёт на два места: соперник на третьем — урон, и герой встаёт напротив него, о чём ему и сказано") {
+      for {
+        t <- started(rammer, swordsman)
+        (_, battle, dao, fights, _, r) = t
+        far    = fight(fights)
+        _     <- fights.update(far.withSide(far.b.get.copy(pos = 3)), 0L)
+        _     <- battle.action(one, tap("ArenaPoke"), r)
+        _     <- ready(dao, oneId)
+        hpWas <- hpOf(dao, twoId)
+        _     <- r.reset
+        _     <- battle.action(one, aimed("Skill_202", 3), r)
+        after  = fight(fights)
+        said  <- texts(r)
+        hpNow <- hpOf(dao, twoId)
+      } yield assertTrue(after.a.pos == 3 && after.b.exists(_.pos == 3)) &&
+              assertTrue(hpNow < hpWas) &&
+              // шаг — в конце хода, и строка о нём доходит до ходящего
+              assertTrue(said.contains("Таран сработал: вы шагнули на место 3")) &&
+              assertTrue(after.isTurn(twoId))
+    },
+
+    test("Таран на свободное место: рывок без удара — соперник цел и из сводки знает, что вы перешли") {
+      for {
+        t <- started(rammer, swordsman)
+        (_, battle, dao, fights, _, r) = t
+        _     <- ready(dao, oneId)
+        _     <- battle.action(one, tap("Skill_202"), r)
+        ask   <- r.sentScreens.map(_.last)
+        hpWas <- hpOf(dao, twoId)
+        _     <- battle.action(one, aimed("Skill_202", 2), r)
+        said  <- texts(r)
+        after  = fight(fights)
+        hpNow <- hpOf(dao, twoId)
+        _     <- r.reset
+        _     <- battle.action(two, tap("ArenaPoke"), r)
+        told  <- texts(r)
+      } yield assertTrue(ask.text.contains("Таран — куда?")) &&
+              // соперник напротив и два свободных места рядом
+              assertTrue(ask.choices.filter(_.id == "Skill_202").flatMap(_.data.get("target")) == List("1", "2", "3")) &&
+              assertTrue(ask.choices.exists(_.label.contains("2. — пусто —"))) &&
+              assertTrue(said.contains("Таран: вы рванули на место 2.")) &&
+              assertTrue(after.a.pos == 2 && after.b.exists(_.pos == 1) && hpNow == hpWas) &&
+              // ход потрачен: умение на перезарядке, ход у соперника
+              assertTrue(after.isTurn(twoId) && after.a.slots.exists(s => s.itemId == 202L && s.cooldown > 0)) &&
+              assertTrue(told.contains("соперник перешёл на позицию 2") && !told.contains("вам нанесено"))
+    },
+
+    test("пригвождённый: Тараном бьёт, но с места не сходит — и знает почему; на пустое место не рвануть, ход цел") {
+      for {
+        t <- started(rammer, swordsman)
+        (_, battle, dao, fights, _, r) = t
+        f0    = fight(fights)
+        _    <- fights.update(f0.withSide(f0.a.copy(rooted = 2)).withSide(f0.b.get.copy(pos = 2)), 0L)
+        _    <- battle.action(one, tap("ArenaPoke"), r)
+        _    <- ready(dao, oneId)
+        _    <- r.reset
+        _    <- battle.action(one, aimed("Skill_202", 3), r)
+        spot <- texts(r)
+        stay  = fight(fights)
+        _    <- r.reset
+        _    <- battle.action(one, aimed("Skill_202", 2), r)
+        hit  <- texts(r)
+        after = fight(fights)
+      } yield assertTrue(spot.contains("с места Тараном не сойти") && stay.isTurn(oneId) && stay.a.pos == 1) &&
+              assertTrue(hit.contains("врезаетесь во врага") && hit.contains("Таран не сдвинул вас с места")) &&
+              assertTrue(after.a.pos == 1 && after.isTurn(twoId))
     },
 
     test("лук на арене слабее только вплотную: издалека — в полную силу") {

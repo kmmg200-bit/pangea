@@ -552,7 +552,10 @@ case class BattleState(
     val persistHero =
       heroDao.updateEquipmentAndFightStats(user.userId, res.hero.equipment, res.hero.fightStats) *>
         persistExtras(user, res, before, nowMs)
-    val msg         = res.log.mkString("\n")
+    // Конец раунда — тоже часть хода: шаг Тараном, раны, протикавшие на
+    // бойцах соперника, и кто от них пал. Строя после хода здесь не рисуют —
+    // эти строки идут вслед за логом.
+    val msg         = (res.log ++ res.sideLog).mkString("\n")
     val showLog     = ZIO.when(msg.nonEmpty)(renderer.show(user, Screen(msg, Nil)))
     res.outcome match {
       // Ход раунда не кончил — сопернику он не уходит, но бой всё равно пишем:
@@ -637,8 +640,10 @@ case class BattleState(
               _ <- wake(foeUser, nowMs)
               _ <- scheduler.schedule(foeUser, nowMs + ArenaRates.TurnMs, TaskKind.ArenaTurn,
                      StateType.Battle, BattleState.ArenaTurnAction)
+              // Имя — самого соперника: в полях после Тарана или «Отбросить»
+              // может стоять и его союзник.
               _ <- renderer.show(user, Screen(content.format("arena.passed",
-                     "name" -> res.battle.monsterName), Nil))
+                     "name" -> fight.sideOf(foeUser).fold(res.battle.monsterName)(_.name)), Nil))
             } yield ()
         }
     }
@@ -772,16 +777,20 @@ case class BattleState(
 
   /** Что ход сделал с местами — для соперника: кто куда встал и надолго ли он
     * пригвождён. Строй он увидит и сам, но сводка должна объяснять, почему
-    * соперник вдруг далеко. */
-  private def arenaMoves(me: Option[ArenaSide], foe: Option[ArenaSide], battle: SoloPveBattle): List[String] =
+    * соперник вдруг далеко. Где сам соперник — смотрим по его номеру: в полях
+    * после Тарана или «Отбросить» может стоять и его союзник. */
+  private def arenaMoves(me: Option[ArenaSide], foe: Option[ArenaSide], battle: SoloPveBattle): List[String] = {
+    val foeUnit = battle.arenaUnit(ArenaBattle.HeroUnit)
+    val rooted  = foeUnit.fold(0)(_._2.effects.monsterRootedTurns)
     List(
       me.filter(_.pos != battle.group.heroPos).map(_ =>
         content.format("arena.turn.moved", "n" -> battle.group.heroPos.toString)),
-      foe.filter(_.pos != battle.group.activePos).map(_ =>
-        content.format("arena.turn.pushedYou", "n" -> battle.group.activePos.toString)),
-      foe.filter(_.rooted < battle.effects.monsterRootedTurns).map(_ =>
-        content.format("arena.turn.pinnedYou", "n" -> battle.effects.monsterRootedTurns.toString))
+      foe.zip(foeUnit).collect { case (f, (at, _)) if f.pos != at =>
+        content.format("arena.turn.pushedYou", "n" -> at.toString) },
+      foe.filter(_.rooted < rooted).map(_ =>
+        content.format("arena.turn.pinnedYou", "n" -> rooted.toString))
     ).flatten
+  }
 
   /** Пересказать сопернику чужой ход — один раз: прочитанное помечаем. */
   private def tellFoeTurn(user: User, fight: pangea.model.arena.ArenaFight, dao: ArenaDao,
@@ -3095,17 +3104,18 @@ case class BattleState(
           battle.slotByItem(itemId).map(_.skill.label).getOrElse(""))(
           skillTurn(itemId, target
             .orElse(battle.slotByItem(itemId).filterNot(s => BattleState.supports(s.skill.effect))
-              .flatMap(s => skillTargets(hero, battle, s.skill).headOption))
+              .flatMap(s => skillAims(hero, battle, s.skill).headOption))
             .getOrElse(battle.group.heroPos)))
     } yield state
 
-  /** Спрашивать ли цель: умение готово, и выбрать есть из кого — бьёт, а рядом
-    * больше одного врага, или лечит, а рядом стоит союзник. */
+  /** Спрашивать ли цель: умение готово, и выбрать есть из чего — бьёт, а рядом
+    * больше одного врага (у Тарана — врага или свободного места), или лечит, а
+    * рядом стоит союзник. */
   private def needsTarget(hero: Hero, battle: SoloPveBattle, itemId: Long): Boolean =
     battle.slotByItem(itemId).exists { slot =>
       val ready = slot.cooldown <= 0 && hero.fightStats.energy >= slot.skill.energyCost(hero)
       ready && (
-        (BattleState.dealsDamage(slot.skill.effect) && skillTargets(hero, battle, slot.skill).size > 1) ||
+        (BattleState.dealsDamage(slot.skill.effect) && skillAims(hero, battle, slot.skill).size > 1) ||
         (BattleState.supports(slot.skill.effect) && supportAllies(battle).nonEmpty))
     }
 
@@ -3122,7 +3132,8 @@ case class BattleState(
     val skillLabel = slot.map(_.skill.label).getOrElse("")
     val support    = slot.exists(s => BattleState.supports(s.skill.effect))
     targetChoices(battle, s"Skill_$itemId", skillLabel, support,
-      slot.fold(battle.group.attackTargets)(s => skillTargets(hero, battle, s.skill)))
+      slot.fold(battle.group.attackTargets)(s => skillTargets(hero, battle, s.skill)),
+      if (slot.exists(_.skill == Skill.Ram)) BattleState.ramSpots(battle) else Nil)
   }
 
   /** По кому герой может ударить оружием: мечом — соседей, из лука — дальше
@@ -3134,6 +3145,12 @@ case class BattleState(
   private def skillTargets(hero: Hero, battle: SoloPveBattle, skill: Skill): List[Int] =
     battle.group.targetsWithin(BattleState.skillReach(hero, skill))
 
+  /** Куда можно применить умение: по врагам в досягаемости, а Таран — ещё и на
+    * свободное место рядом (см. [[BattleState.ramSpots]]). */
+  private def skillAims(hero: Hero, battle: SoloPveBattle, skill: Skill): List[Int] =
+    if (skill == Skill.Ram) (skillTargets(hero, battle, skill) ++ BattleState.ramSpots(battle)).sorted
+    else skillTargets(hero, battle, skill)
+
   /** До каких союзников достают лечение и броня: живые соседи героя по ряду
     * (см. [[BattleState.SupportReach]]) — так же, как удар по врагам. */
   private def supportAllies(battle: SoloPveBattle): List[BattleAlly] =
@@ -3141,9 +3158,10 @@ case class BattleState(
 
   /** Кнопки целей под действие `choiceId`: лечение и броня — себе или
     * союзнику рядом (см. [[supportAllies]]); урон — `enemies`, моб в паре и все,
-    * до кого достаёт оружие (см. [[heroTargets]]). */
+    * до кого достаёт оружие (см. [[heroTargets]]), а вперемешку с ними по
+    * местам — свободные `spots`, куда можно рвануть Тараном. */
   private def targetChoices(battle: SoloPveBattle, choiceId: String, label: String, support: Boolean,
-                            enemies: List[Int]): Screen = {
+                            enemies: List[Int], spots: List[Int] = Nil): Screen = {
     val targets =
       if (support) {
         val me = pangea.engine.Choice(choiceId, content.text("battle.group.targetSelf"),
@@ -3155,17 +3173,22 @@ case class BattleState(
             data = Map("target" -> a.position.toString), row = Some(1 + i / BattleState.AlliesPerRow))
         }
       } else
-        enemies.zipWithIndex.flatMap { case (pos, i) =>
-          battle.monsterAt(pos).map(m => pangea.engine.Choice(
+        (enemies ++ spots).sorted.zipWithIndex.flatMap { case (pos, i) =>
+          val text = battle.monsterAt(pos) match {
+            case Some(m) => Some(content.format("battle.group.targetLabel",
+                              "n" -> pos.toString, "monster" -> m.shortName, "hp" -> m.hpPct.toString))
+            case None    => Option.when(spots.contains(pos))(content.format("battle.group.moveToFree", "n" -> pos.toString))
+          }
+          text.map(t => pangea.engine.Choice(
             id    = choiceId,
-            label = pangea.engine.Choice.fit(
-              content.format("battle.group.targetLabel", "n" -> pos.toString, "monster" -> m.shortName, "hp" -> m.hpPct.toString)),
+            label = pangea.engine.Choice.fit(t),
             data  = Map("target" -> pos.toString),
             row   = Some(i)))
         }
     val cancel = pangea.engine.Choice("CancelTarget", content.text("battle.group.cancelTarget"),
       color = pangea.engine.ChoiceColor.Negative, row = Some(targets.size))
-    Screen(content.format("battle.group.chooseTarget", "skill" -> label), targets :+ cancel)
+    val title  = if (spots.isEmpty) "battle.group.chooseTarget" else "battle.group.chooseSpot"
+    Screen(content.format(title, "skill" -> label), targets :+ cancel)
   }
 
   /** Применение активного навыка. Проверки (слот существует / готов / хватает
@@ -3189,6 +3212,13 @@ case class BattleState(
             "energy" -> hero.fightStats.energy.toString
           )
         )
+      // Таран туда, где врага нет: рывок на свободное место без удара.
+      // Пригвождённому рваться некуда — ход не тратится.
+      case Some(slot) if slot.skill == Skill.Ram && !battle.group.hasMonster(target) =>
+        if (battle.effects.heroRooted) cont(hero, battle, content.text("battle.group.ramPinnedSpot"))
+        else if (BattleState.ramSpots(battle).contains(target)) ramDash(paid(hero, slot), battle, slot, target, nowMs)
+        else if (skillTargets(hero, battle, slot.skill).isEmpty) cont(hero, battle, content.text("battle.group.noTarget"))
+        else cont(hero, battle, content.text("battle.group.targetGone"))
       case Some(slot) if BattleState.needsEnemy(slot.skill.effect) && skillTargets(hero, battle, slot.skill).isEmpty =>
         cont(hero, battle, content.text("battle.group.noTarget"))
       // Лечение и броня — себе или союзнику рядом; до дальнего не дотянуться.
@@ -3199,11 +3229,29 @@ case class BattleState(
       case Some(slot) if BattleState.bonusAction(slot.skill.effect) && battle.consumableUsedThisRound =>
         cont(hero, battle, content.text("battle.consumableAlreadyUsed"))
       case Some(slot) =>
-        val cost      = slot.skill.energyCost(hero)
-        val heroAfter = hero.copy(fightStats =
-          hero.fightStats.copy(energy = (hero.fightStats.energy - cost).max(0L)))
-        skillHit(heroAfter, battle, slot, nowMs, target)
+        skillHit(paid(hero, slot), battle, slot, nowMs, target)
     }
+
+  /** Герой, заплативший энергией за умение. */
+  private def paid(hero: Hero, slot: SkillSlotState): Hero =
+    hero.copy(fightStats = hero.fightStats.copy(energy = (hero.fightStats.energy - slot.skill.energyCost(hero)).max(0L)))
+
+  /** Таран на свободное место: рывок без удара. Герой встаёт туда сразу —
+    * союзник с того места уступает его и встаёт на прежнее место героя, — и ход
+    * на этом кончается: ни урона, ни базовой атаки. Энергия уже списана, а
+    * умение уходит на перезарядку, как после удара. */
+  private def ramDash(hero: Hero, battle: SoloPveBattle, slot: SkillSlotState, target: Int, nowMs: Long): Task[TurnResult] = {
+    val from    = battle.group.heroPos
+    val ally    = battle.group.allyAt(target).filter(_.alive)
+    val bumped  = battle.updateSlot(slot.itemId)(s => s.copy(cooldown = s.skill.cooldown, uses = s.uses + 1))
+    val swapped = ally.fold(bumped)(a => bumped.copy(group = bumped.group.updateAlly(a.position)(_.copy(position = from))))
+    val moved   = swapped.copy(group = swapped.group.copy(heroPos = target))
+    val line    = ally match {
+      case Some(a) => content.format("battle.group.ramDashSwap", "n" -> target.toString, "name" -> a.name)
+      case None    => content.format("battle.group.ramDash", "n" -> target.toString)
+    }
+    closeTurn(TurnResult(hero, moved, Vector(line), Outcome.Continue), nowMs, Set(slot.itemId))
+  }
 
   /** Применяет эффект навыка (матч по Skill.Effect). После урона/лечения идёт
     * базовая атака игрока (кроме случая, когда моб убит самим скиллом). Кулдаун
@@ -5120,6 +5168,10 @@ case class BattleState(
               if (a.position == pos) a.copy(position = b2.group.heroPos) else a)))
             (b.copy(group = b.group.copy(pendingMove = None)),
              Vector(content.format("battle.group.ram", "pos" -> pos.toString, "monster" -> b.monsterName)))
+          // Пригвождённый (так бывает на арене) Тараном бьёт, но с места не
+          // сходит — и должен знать почему.
+          case Some(pos) if b2.group.hasMonster(pos) =>
+            (b2.copy(group = b2.group.copy(pendingMove = None)), Vector(content.text("battle.group.ramPinned")))
           case _ => (b2.copy(group = b2.group.copy(pendingMove = None)), Vector.empty[String])
         }
         (b3, log3) = rammed
@@ -5155,10 +5207,12 @@ case class BattleState(
 
   /** Строки группового экрана: кто с кем в паре, у кого сколько осталось. С
     * отрядом строй двухрядный: слева герой и союзники по позициям, справа мобы. */
-  /** Значки ран союзника для строки строя: пусто, если на нём ничего нет. */
+  /** Значки ран союзника для строки строя: пусто, если на нём ничего нет.
+    * Пригвождённый — с булавкой, как моб. */
   private def allyDots(a: BattleAlly): String = {
     val marks = List(a.poison.map(_ => Poison.Icon), a.bleed.map(_ => Bleed.Icon), a.burn.map(_ => Burn.Icon),
-                     Option.when(a.cold)(Element.Cold.emoji)).flatten
+                     Option.when(a.cold)(Element.Cold.emoji),
+                     Option.when(a.rooted > 0)(content.text("battle.group.pinnedMark").trim)).flatten
     if (marks.isEmpty) "" else " " + marks.mkString
   }
 
@@ -6205,9 +6259,28 @@ object BattleState {
     if (hero.equipment.weapon.ranged) GripRates.RangedReach else GroupState.Reach
 
   /** Досягаемость умения: умения оружия бьют как оружие героя, а умения
-    * нагрудника — Таран и «Отбросить», удары телом и щитом, — только вблизи. */
+    * нагрудника, удары телом и щитом, — вблизи: «Отбросить» — соседей, Таран —
+    * на [[RamReach]] места. */
   def skillReach(hero: Hero, skill: Skill): Int =
-    if (Skill.armorSkills.contains(skill)) GroupState.Reach else heroReach(hero)
+    if (skill == Skill.Ram) RamReach
+    else if (Skill.armorSkills.contains(skill)) GroupState.Reach
+    else heroReach(hero)
+
+  /** На сколько мест в обе стороны рвётся Таран: и к врагу через одного, и на
+    * свободное место. */
+  val RamReach: Int = 2
+
+  /** Свободные места, куда герой может рвануть Тараном без удара: в его
+    * досягаемости, на своей стороне строя и без врага напротив — союзник оттуда
+    * уступит место. Только там, где места что-то значат и строй виден: в
+    * группе, с отрядом, на арене. Пригвождённому — никуда. */
+  def ramSpots(battle: SoloPveBattle): List[Int] =
+    if (battle.effects.heroRooted || !(battle.group.hasFormation || battle.arena.isDefined)) Nil
+    else {
+      val here = battle.group.heroPos
+      (1 to RamReach).toList.flatMap(d => List(here - d, here + d))
+        .filter(p => p >= 1 && p <= Formation.HeroPlaces && !battle.group.hasMonster(p)).sorted
+    }
 
   /** Крыса из-под ног героя (набор «Крыса»): обычная на пороге 6, чумная на
     * пороге 12 ([[HeroSets.summonsPlagueRats]]), уровнем в самого героя.

@@ -148,11 +148,13 @@ object ArenaBattle {
     * Щит, поднятый этим ходом, держится весь ход соперника. */
   def harvest(side: ArenaSide, battle: SoloPveBattle): ArenaSide = {
     // Свои союзники: кто вышел на песок только что (крыса из-под ног), тот
-    // получает номер; павшие с песка уходят.
-    val (allies, next) = battle.group.allies.filter(_.alive).foldLeft((Vector.empty[ArenaAlly], side.nextAlly)) {
-      case ((acc, n), a) if a.home > 0 => (acc :+ ArenaAlly(a.home, a), n)
-      case ((acc, n), a)               => (acc :+ ArenaAlly(n, a.copy(home = n)), n + 1)
-    }
+    // получает номер; павшие с песка уходят. Пригвождённый свой ход отстоял —
+    // путы на ход короче, как у самого героя.
+    val (allies, next) = battle.group.allies.filter(_.alive).map(a => a.copy(rooted = (a.rooted - 1).max(0)))
+      .foldLeft((Vector.empty[ArenaAlly], side.nextAlly)) {
+        case ((acc, n), a) if a.home > 0 => (acc :+ ArenaAlly(a.home, a), n)
+        case ((acc, n), a)               => (acc :+ ArenaAlly(n, a.copy(home = n)), n + 1)
+      }
     // Что сторона наложила на соперника и его отряд: на самого соперника — в
     // effects, на его союзников — в marks. Путы — и свои, и наложенные — живут
     // на сторонах боя, а не в эффектах зеркала: иначе их считали бы дважды.
@@ -180,9 +182,11 @@ object ArenaBattle {
       blocked = hero.fold(0)(_._2.effects.monsterSkillBlockedTurns.max(0)),
       pos     = hero.fold(foe.pos)(_._1),
       rooted  = foe.rooted.max(hero.fold(0)(_._2.effects.monsterRootedTurns)),
-      // Его отряд — по номерам: раны, место после отброса; павшего больше нет.
+      // Его отряд — по номерам: раны, место после отброса, путы (залп задевает
+      // и их); павшего больше нет.
       allies  = foe.allies.flatMap(a => battle.arenaUnit(a.id).map { case (place, s) =>
-                  a.copy(ally = a.ally.copy(hp = s.currentHp, armor = s.currentArmor, position = place))
+                  a.copy(ally = a.ally.copy(hp = s.currentHp, armor = s.currentArmor, position = place,
+                                            rooted = a.ally.rooted.max(s.effects.monsterRootedTurns)))
                 }))
   }
 

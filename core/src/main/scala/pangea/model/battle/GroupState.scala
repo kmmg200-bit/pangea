@@ -40,7 +40,12 @@ final case class BattleAlly(
   kills:      Int              = 0,
   /** Кто из врагов задел его последним. Выбыл — значит, этот его и добил:
     * ударом, умением или раной, которую оставил. */
-  lastHitBy:  Option[String]   = None
+  lastHitBy:  Option[String]   = None,
+  /** Сколько своих ходов он не сходит с места сам: его пригвоздили. Пока так
+    * бывает только на арене — соперник «Пригвоздил» его или накрыл
+    * «Заградительным залпом» (см. `ArenaBattle.foeAfterTurn`); отходит на
+    * стороне боя, ход за ходом, как у самого героя. */
+  rooted:     Int              = 0
 ) {
   /** Нежить ли он: миазмы её лечат, а живых — травят. */
   def isUndead: Boolean = kind.race == Race.Undead
@@ -103,8 +108,9 @@ object BattleAlly {
       coldCut  <- c.getOrElse[Int]("coldCut")(0)
       kills    <- c.getOrElse[Int]("kills")(0)
       hitBy    <- c.getOrElse[Option[String]]("lastHitBy")(None)
+      rooted   <- c.getOrElse[Int]("rooted")(0)
     } yield BattleAlly(kind, position, hp, armor, energy, stats, lvl, undead, home, poison, bleed, burn, stood,
-                       coldCut, kills, hitBy)
+                       coldCut, kills, hitBy, rooted)
 }
 
 /** Моб группы, стоящий НЕ в паре с героем: всё, что описывает его и его текущее

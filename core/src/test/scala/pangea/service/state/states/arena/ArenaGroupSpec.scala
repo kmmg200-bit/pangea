@@ -1,9 +1,12 @@
 package pangea.service.state.states.arena
 
+import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
 import pangea.model.arena.{ArenaFight, ArenaMode}
 import pangea.model.battle.SoloPveBattle
 import pangea.model.hero.Hero
+import pangea.model.item.{Grip, Item, ItemDetails, ItemType, Rarity}
+import pangea.model.skill.Skill
 import pangea.model.squad.{AllyKind, Squad}
 import pangea.model.stats.FightStats
 import pangea.model.user.{TelegramId, User, UserId, VkId}
@@ -46,6 +49,33 @@ object ArenaGroupSpec extends ZIOSpecDefault {
 
   private val withOne = Squad.empty.hire(AllyKind.Human, 10L, 0L)
   private val withTwo = Squad.empty.hire(AllyKind.Human, 10L, 0L).hire(AllyKind.Gnome, 10L, 0L)
+
+  /** Умение нагрудника под номером 202. */
+  private def withChest(h: Hero, skill: Skill): Hero =
+    h.copy(equipment = h.equipment.copy(chestPlate = Item(202L, "Кираса", 10L, Rarity.Blue, ItemType.ChestPlate,
+      attack = 0, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0, details = ItemDetails.Armor(skill))))
+
+  /** Лук с умением под номером 101. */
+  private def withBow(h: Hero, skill: Skill): Hero =
+    h.copy(equipment = h.equipment.copy(weapon = Item(101L, "Лук", 10L, Rarity.Blue, ItemType.Weapon,
+      attack = 0, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0,
+      grip = Some(Grip.Bow), details = ItemDetails.Weapon(skill))))
+
+  /** Двое в групповом бою: первый записался, второй вписал код, первого позвали. */
+  private def startedGroup(first: Hero, second: Hero) =
+    for {
+      t <- arena(oneId -> first, twoId -> second)
+      (state, _, _, fights, _, r) = t
+      _ <- state.action(one, inMode("ArenaByCode", ArenaMode.Group), r)
+      _ <- state.action(two, typed(fight(fights).code), r)
+      _ <- state.action(one, tap("ArenaPoke"), r)
+    } yield t
+
+  /** Умения с раскачкой в тесте отдаём готовыми. */
+  private def ready(dao: TestHeroDao, id: UserId): Task[Unit] =
+    battleOf(dao, id).flatMap(b => dao.writeActiveBattle(id, b.copy(skillSlots = b.skillSlots.map(_.copy(cooldown = 0))).asJson))
+
+  private def texts(r: TestRenderer): Task[String] = r.sentScreens.map(_.map(_.text).mkString("\n"))
 
   private def arena(heroes: (UserId, Hero)*) =
     for {
@@ -133,6 +163,75 @@ object ArenaGroupSpec extends ZIOSpecDefault {
               // рана легла на сторону второго, а в «Отряде» у него всё как было
               assertTrue(hurt.exists(hp => started.b.flatMap(_.allies.find(_.ally.position == 2)).exists(_.ally.hp > hp))) &&
               assertTrue(squadNow == slow.squad)
+    },
+
+    test("Таран по союзнику соперника: герой встаёт напротив него, свой союзник — на место героя; соперник читает правду") {
+      val ram  = withChest(fighter(oneId, 1L, agi = 20, int = 20, squad = withOne), Skill.Ram)
+      val slow = fighter(twoId, 2L, agi = 5, int = 5, squad = withTwo)
+      for {
+        t <- startedGroup(ram, slow)
+        (_, battle, dao, fights, _, r) = t
+        _     <- ready(dao, oneId)
+        _     <- r.reset
+        // напротив союзника второго (место 2) стоит свой Йорген — он уступит место
+        _     <- battle.action(one, aimed("Skill_202", 2), r)
+        said  <- texts(r)
+        after  = fight(fights)
+        _     <- r.reset
+        _     <- battle.action(two, tap("ArenaPoke"), r)
+        told  <- texts(r)
+      } yield assertTrue(after.a.pos == 2 && after.a.allies.map(_.ally.position) == List(1)) &&
+              assertTrue(after.b.exists(_.pos == 1)) &&
+              assertTrue(said.contains("Таран сработал: вы шагнули на место 2")) &&
+              // в полях теперь его союзник, а ход передан ему самому
+              assertTrue(said.contains("Ход передан сопернику (Безымянный боец)")) &&
+              assertTrue(told.contains("соперник перешёл на позицию 2") && !told.contains("вас отбросило"))
+    },
+
+    test("«Отбросить» самого соперника: он отлетает в конец строя — и узнаёт об этом из сводки") {
+      val shover = withChest(fighter(oneId, 1L, agi = 20, int = 20, squad = withOne), Skill.Shove)
+      val slow   = fighter(twoId, 2L, agi = 5, int = 5, squad = withTwo)
+      for {
+        t <- startedGroup(shover, slow)
+        (_, battle, dao, fights, _, r) = t
+        _     <- ready(dao, oneId)
+        _     <- battle.action(one, aimed("Skill_202", 1), r)
+        after  = fight(fights)
+        _     <- r.reset
+        _     <- battle.action(two, tap("ArenaPoke"), r)
+        told  <- texts(r)
+      } yield assertTrue(after.b.exists(_.pos == 3)) &&
+              // на его место вышел последний из отряда
+              assertTrue(after.b.exists(_.allies.exists(a => a.ally.kind == AllyKind.Gnome && a.ally.position == 1))) &&
+              assertTrue(told.contains("вас отбросило на позицию 3"))
+    },
+
+    test("«Заградительный залп» держит и отряд соперника: в его ход задетый союзник не шагает, а после хода путы спадают") {
+      val archer = withBow(fighter(oneId, 1L, agi = 20, int = 20), Skill.Barrage)
+      // у второго Йорген стоит через место: бить ему некого, и в свой ход он шагнул бы к врагу
+      val slow   = fighter(twoId, 2L, agi = 5, int = 5, squad = withOne.move(AllyKind.Human, 3))
+      def jorgen(f: ArenaFight) = f.b.flatMap(_.allies.find(_.ally.kind == AllyKind.Human)).map(_.ally)
+      for {
+        t <- startedGroup(archer, slow)
+        (_, battle, dao, fights, _, r) = t
+        _      <- ready(dao, oneId)
+        _      <- battle.action(one, aimed("Skill_101", 1), r)
+        pinned  = jorgen(fight(fights))
+        _      <- r.reset
+        _      <- battle.action(two, tap("ArenaPoke"), r)
+        lines  <- r.sentScreens.map(_.flatMap(_.text.linesIterator))
+        _      <- battle.action(two, tap("Wait"), r)
+        stood   = jorgen(fight(fights))
+        // путы спали: следующим своим ходом он идёт к врагу
+        _      <- battle.action(one, tap("Wait"), r)
+        _      <- battle.action(two, tap("ArenaPoke"), r)
+        _      <- battle.action(two, tap("Wait"), r)
+        walked  = jorgen(fight(fights))
+      } yield assertTrue(pinned.exists(a => a.rooted == 1 && a.position == 3)) &&
+              // в своём строю второй видит его с булавкой
+              assertTrue(lines.exists(l => l.contains("Йорген Кремень") && l.contains("📌"))) &&
+              assertTrue(stood.exists(a => a.rooted == 0 && a.position == 3)) &&
+              assertTrue(walked.exists(_.position == 2))
     },
 
     test("один на один отряд остаётся за оградой") {

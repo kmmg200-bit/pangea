@@ -122,9 +122,9 @@ object BowSpec extends ZIOSpecDefault {
       val bare = hero(Item.NoItem)
       assertTrue(BattleState.heroReach(bow) == 3 && BattleState.heroReach(arb) == 3) &&
       assertTrue(BattleState.heroReach(two) == 1 && BattleState.heroReach(bare) == 1) &&
-      // умения оружия бьют как оружие, Таран и «Отбросить» — только вблизи
+      // умения оружия бьют как оружие, «Отбросить» — только соседей, Таран — на два места
       assertTrue(BattleState.skillReach(bow, Skill.QuickStrike) == 3) &&
-      assertTrue(BattleState.skillReach(bow, Skill.Ram) == 1 && BattleState.skillReach(bow, Skill.Shove) == 1)
+      assertTrue(BattleState.skillReach(bow, Skill.Ram) == 2 && BattleState.skillReach(bow, Skill.Shove) == 1)
     },
 
     test("с четвёртого места лук достаёт места с первого по седьмое") {
@@ -164,7 +164,7 @@ object BowSpec extends ZIOSpecDefault {
               assertTrue(close < far && close >= far * 3 / 4 && close <= far * 85 / 100)
     },
 
-    test("умение лука целится на всю дальность оружия, Таран с кирасы — только вблизи") {
+    test("умение лука целится на всю дальность оружия, Таран с кирасы — на два места") {
       val h = hero(weapon(Grip.Bow, Some(Skill.PinningShot)))
       for {
         t <- makeState(h, group(h, 5))
@@ -174,7 +174,7 @@ object BowSpec extends ZIOSpecDefault {
         _      <- state.action(testUser, tap("CancelTarget"), r)
         _      <- state.action(testUser, tap("Skill_202"), r)
         ram    <- targets(r)
-      } yield assertTrue(weapon == List(1, 2, 3, 4) && ram == List(1, 2))
+      } yield assertTrue(weapon == List(1, 2, 3, 4) && ram == List(1, 2, 3))
     }
   )
 }
