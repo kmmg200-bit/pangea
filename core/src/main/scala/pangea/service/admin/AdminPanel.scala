@@ -92,7 +92,8 @@ class AdminPanelLive(
   adminDao:      AdminDao,
   states:        Map[StateType, State],
   config:        AdminConfig,
-  sessions:      Ref[Map[UserId, AdminScreen]]
+  sessions:      Ref[Map[UserId, AdminScreen]],
+  names:         NameBackfill
 ) extends AdminPanel {
 
   import AdminPanel._
@@ -158,6 +159,7 @@ class AdminPanelLive(
       case Some("AdminMoney")                   => goTo(user, AdminScreen.Money, renderer)
       case Some("AdminEquip")                   => goTo(user, AdminScreen.EquipType, renderer)
       case Some(Level1Id)                       => toggleLevel1(user, renderer)
+      case Some(NamesId)                        => backfillNames(user, renderer)
       case Some(a) if a.startsWith(SectionPrefix) =>
         goTo(user, AdminScreen.Listing(a.drop(SectionPrefix.length), 0), renderer)
       case Some(a) if a.startsWith(GivePrefix)  => give(user, hero, a.drop(GivePrefix.length), screen, renderer)
@@ -195,6 +197,13 @@ class AdminPanelLive(
   private def goTo(user: User, screen: AdminScreen, renderer: Renderer): Task[Unit] =
     sessions.update(_.updated(user.userId, screen)) *> show(user, screen, renderer)
 
+  /** Имена из ВК тем, кто прошёл пролог до имён: идёт в фоне, сводка придёт
+    * письмом (см. [[NameBackfill]]). Панель остаётся на главном экране. */
+  private def backfillNames(user: User, renderer: Renderer): Task[Unit] =
+    names.start(user).flatMap(started =>
+      renderer.show(user, Screen(if (started) NameBackfill.Started else NameBackfill.Busy, Nil))) *>
+      show(user, AdminScreen.Main, renderer)
+
   /** Уйти из панели и вернуть игрока в ту сцену, где он был. */
   private def leave(user: User, renderer: Renderer): Task[Unit] =
     for {
@@ -217,7 +226,8 @@ class AdminPanelLive(
           Choice("AdminStats", "📊 Статистика", row = Some(1)),
           if (level >= Level1) Choice(Level1Id, "✅ Админ 1", color = ChoiceColor.Positive, row = Some(1))
           else Choice(Level1Id, "Админ 1", row = Some(1)),
-          cancelButton.copy(row = Some(2)))))
+          Choice(NamesId, "🏷 Имена из ВК", row = Some(2)),
+          cancelButton.copy(row = Some(3)))))
       }
 
     case AdminScreen.Items =>
@@ -385,6 +395,7 @@ object AdminPanel {
   val SilverPrefix: String   = "AdminSilver_"
   val DoubloonPrefix: String = "AdminDoubloon_"
   val Level1Id: String       = "AdminLevel1"
+  val NamesId: String        = "AdminNames"
 
   /** Уровень «Админ 1»: вход без пароля и пересылка /home в личку. */
   val Level1: Int = 1
@@ -464,7 +475,7 @@ object AdminPanel {
   }
 
   val live: ZLayer[
-    HeroDao with InventoryRepository with ItemRepository with AdminDao with StatesMap with AdminConfig,
+    HeroDao with InventoryRepository with ItemRepository with AdminDao with StatesMap with AdminConfig with NameBackfill,
     Nothing,
     AdminPanel
   ] =
@@ -477,7 +488,8 @@ object AdminPanel {
         statesMap <- ZIO.service[StatesMap]
         config    <- ZIO.service[AdminConfig]
         sessions  <- Ref.make(Map.empty[UserId, AdminScreen])
-      } yield new AdminPanelLive(heroDao, inventory, items, admin, statesMap.states, config, sessions))
+        names     <- ZIO.service[NameBackfill]
+      } yield new AdminPanelLive(heroDao, inventory, items, admin, statesMap.states, config, sessions, names))
 
   /** Панель, которой нет: для тестов и сборок без админки. */
   val disabled: AdminPanel = new AdminPanel {

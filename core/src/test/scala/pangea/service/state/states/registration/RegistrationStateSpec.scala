@@ -1,7 +1,7 @@
 package pangea.service.state.states.registration
 
 import pangea.engine.SceneContent
-import pangea.model.hero.LoreData
+import pangea.model.hero.{HeroId, LoreData}
 import pangea.model.item.{BeltSlot, FlaskKind, Grip, ItemDetails, ItemType, Rarity}
 import pangea.model.monster.Race
 import pangea.model.state.StateType
@@ -43,8 +43,12 @@ object RegistrationStateSpec extends ZIOSpecDefault {
       invRepo   = TestInventoryRepository.accepting
     } yield (RegistrationState(new TestPlayers, heroDao, invRepo, TestItemRepository.make, journal, content), renderer, heroDao, invRepo)
 
-  /** Пробуждение до последней кнопки: обыск, мысли вслух. */
-  private val arrivalPath = List("ArrivalSearch", "Monologue1", "Monologue2", "Monologue3")
+  /** Сообщение текстом, без кнопки. */
+  private def typed(t: String): UserAction = UserAction(t, None)
+
+  /** Пробуждение до последней кнопки: обыск, мысли вслух, имя — и последние мысли. */
+  private val arrivalPath: List[UserAction] =
+    List(tap("ArrivalSearch"), tap("Monologue1"), tap("Monologue2"), tap("ArrivalName"), typed("Тарен"), tap("ArrivalNameYes"))
 
   override def spec = suite("RegistrationState")(
 
@@ -263,7 +267,7 @@ object RegistrationStateSpec extends ZIOSpecDefault {
         quad                         <- makeStateWithHero
         (state, renderer, heroDao, _) = quad
         _      <- state.action(testUser, confirmRace(Race.Human), renderer)
-        _      <- ZIO.foreach(arrivalPath)(id => state.action(testUser, tap(id), renderer))
+        _      <- ZIO.foreach(arrivalPath)(ua => state.action(testUser, ua, renderer))
         beat3  <- renderer.sentScreens.map(_.last)
         result <- state.action(testUser, tap("ArrivalStand"), renderer)
         shown  <- renderer.sentScreens
@@ -295,7 +299,7 @@ object RegistrationStateSpec extends ZIOSpecDefault {
         _      <- ZIO.foreach(path)(id => state.action(testUser, tap(id), renderer))
         _      <- state.action(testUser, raceDescription(Race.Human), renderer)
         _      <- state.action(testUser, confirmRace(Race.Human), renderer)
-        _      <- ZIO.foreach(arrivalPath)(id => state.action(testUser, tap(id), renderer))
+        _      <- ZIO.foreach(arrivalPath)(ua => state.action(testUser, ua, renderer))
         result <- state.action(testUser, tap("ArrivalStand"), renderer)
         snap   <- heroDao.raceSnapshot
         lore   <- heroDao.readLoreData(userId).map(_.flatMap(_.as[LoreData].toOption))
@@ -314,6 +318,59 @@ object RegistrationStateSpec extends ZIOSpecDefault {
         _      <- state.action(testUser, confirmRace(Race.Elf), renderer)
         lore   <- heroDao.readLoreData(userId).map(_.flatMap(_.as[LoreData].toOption))
       } yield assertTrue(lore.exists(_.prologueBranch.contains("Human")))
+    },
+    test("после мыслей о Братстве — имя: текстом, с отказами по правилам и за занятое, потом подтверждение") {
+      for {
+        quad                         <- makeStateWithHero
+        (state, renderer, heroDao, _) = quad
+        // «Тарен» уже у другого героя
+        _      <- heroDao.insertHero(TestFixtures.hero(UserId(2L)).copy(id = HeroId(2L), name = Some("Тарен")))
+        _      <- state.action(testUser, confirmRace(Race.Human), renderer)
+        _      <- ZIO.foreach(List("ArrivalSearch", "Monologue1"))(id => state.action(testUser, tap(id), renderer))
+        _      <- state.action(testUser, tap("Monologue2"), renderer)
+        beat2  <- renderer.sentScreens.map(_.last)
+        _      <- state.action(testUser, tap("ArrivalName"), renderer)
+        ask    <- renderer.sentScreens.map(_.last)
+        short  <- state.action(testUser, typed("Ли"), renderer) *> renderer.sentScreens.map(_.last.text)
+        digits <- state.action(testUser, typed("Воин2000"), renderer) *> renderer.sentScreens.map(_.last.text)
+        npc    <- state.action(testUser, typed("Фет Великий"), renderer) *> renderer.sentScreens.map(_.last.text)
+        taken  <- state.action(testUser, typed("тарен"), renderer) *> renderer.sentScreens.map(_.last.text)
+        _      <- state.action(testUser, typed("  Ли   Вэй "), renderer)
+        ok     <- renderer.sentScreens.map(_.last)
+        unnamed <- heroDao.getHeroByUserId(userId).map(_.flatMap(_.name))
+        _      <- state.action(testUser, tap("ArrivalNameYes"), renderer)
+        after  <- renderer.sentScreens
+        hero   <- heroDao.getHeroByUserId(userId)
+      } yield assertTrue(beat2.choices.map(_.id) == List("ArrivalName")) &&
+              assertTrue(ask.text.contains("Напишите имя героя") && ask.hideKeyboard) &&
+              assertTrue(short.contains("от 3 до 16")) &&
+              assertTrue(digits.contains("только русские или латинские буквы")) &&
+              assertTrue(npc.contains("жителей Пангеи")) &&
+              assertTrue(taken.contains("«тарен» уже занято")) &&
+              // имя — с пробелами схлопнутыми; пока не подтвердил, не записано
+              assertTrue(ok.text.contains("Отныне меня зовут Ли Вэй") && unnamed.isEmpty) &&
+              assertTrue(ok.choices.map(_.id) == List("ArrivalNameYes", "ArrivalName")) &&
+              assertTrue(hero.flatMap(_.name).contains("Ли Вэй")) &&
+              assertTrue(after.init.last.text.startsWith("Ли Вэй.")) &&
+              assertTrue(after.last.choices.map(_.id) == List("ArrivalStand"))
+    },
+
+    test("без имени из сторожки не выйти; подпись старой кнопки — не имя") {
+      for {
+        quad                         <- makeStateWithHero
+        (state, renderer, heroDao, _) = quad
+        _      <- state.action(testUser, confirmRace(Race.Human), renderer)
+        _      <- ZIO.foreach(List("ArrivalSearch", "Monologue1", "Monologue2"))(id => state.action(testUser, tap(id), renderer))
+        // старая кнопка «Дальше» вела сразу к последним мыслям — и к «Встать»
+        _      <- state.action(testUser, tap("Monologue3"), renderer)
+        stand  <- state.action(testUser, tap("ArrivalStand"), renderer)
+        ask    <- renderer.sentScreens.map(_.last)
+        // нажатие чужой кнопки приходит с подписью и payload: это не имя
+        _      <- state.action(testUser, UserAction("Дальше", Some("""{"action":"Whatever"}""")), renderer)
+        hero   <- heroDao.getHeroByUserId(userId)
+        last   <- renderer.sentScreens.map(_.last)
+      } yield assertTrue(stand == StateType.Registration && ask.text.contains("Напишите имя героя")) &&
+              assertTrue(hero.exists(_.name.isEmpty) && !last.text.contains("Отныне меня зовут"))
     }
   )
 }

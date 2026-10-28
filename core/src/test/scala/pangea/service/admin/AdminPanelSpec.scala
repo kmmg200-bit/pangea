@@ -8,7 +8,7 @@ import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.state.UserAction
 import pangea.test._
 import zio.test._
-import zio.{Ref, Task, ZIO}
+import zio.{Duration, Ref, Task, ZIO}
 
 /** Админ-панель: вход по паролю, выдача вещей, деньги и сводка по серверу.
   * Панель живёт поверх игры — ни состояние героя, ни сцена от неё не меняются. */
@@ -38,6 +38,14 @@ object AdminPanelSpec extends ZIOSpecDefault {
       levels.get.map(_.toList.collect { case (id, l) if l >= min => (id, VkId(s"vk${id.value}")) }.sortBy(_._1.value))
   }
 
+  /** Имена из ВК без пауз: в тестах время не идёт. */
+  private def names(dao: TestHeroDao) =
+    for {
+      users   <- TestUserRepository.withUser(testUser)
+      api     <- TestApi.make
+      running <- Ref.make(false)
+    } yield new NameBackfill(dao, users, api, running, Duration.Zero)
+
   private def panel(hero: Hero = TestFixtures.hero(userId), password: Option[String] = Some(Password)) =
     for {
       dao      <- TestHeroDao.withHero(userId, hero)
@@ -45,8 +53,9 @@ object AdminPanelSpec extends ZIOSpecDefault {
       sessions <- Ref.make(Map.empty[UserId, AdminScreen])
       levels   <- Ref.make(Map.empty[UserId, Int])
       r        <- TestRenderer.make
+      backfill <- names(dao)
     } yield (new AdminPanelLive(dao, inv, TestItemRepository.make, new StubAdminDao(levels), Map.empty,
-               AdminConfig(password), sessions), dao, inv, r)
+               AdminConfig(password), sessions, backfill), dao, inv, r)
 
   /** Панель с заданными уровнями прав: их видно и после нажатий. */
   private def leveled(start: Map[UserId, Int], password: Option[String] = Some(Password)) =
@@ -55,8 +64,9 @@ object AdminPanelSpec extends ZIOSpecDefault {
       sessions <- Ref.make(Map.empty[UserId, AdminScreen])
       levels   <- Ref.make(start)
       r        <- TestRenderer.make
+      backfill <- names(dao)
     } yield (new AdminPanelLive(dao, TestInventoryRepository.accepting, TestItemRepository.make, new StubAdminDao(levels),
-               Map.empty, AdminConfig(password), sessions), levels, r)
+               Map.empty, AdminConfig(password), sessions, backfill), levels, r)
 
   private def said(r: TestRenderer): Task[String] = r.sentScreens.map(_.map(_.text).mkString("\n"))
 
@@ -85,7 +95,7 @@ object AdminPanelSpec extends ZIOSpecDefault {
       } yield assertTrue(opened && ok) &&
               assertTrue(ask.text.contains("Пришлите пароль")) &&
               assertTrue(main.choices.map(_.id) ==
-                List("AdminItems", "AdminMoney", "AdminStats", AdminPanel.Level1Id, AdminPanel.CancelId)) &&
+                List("AdminItems", "AdminMoney", "AdminStats", AdminPanel.Level1Id, AdminPanel.NamesId, AdminPanel.CancelId)) &&
               assertTrue(wrong.contains("Неверно") && !after)
     },
 

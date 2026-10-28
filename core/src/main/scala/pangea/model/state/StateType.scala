@@ -165,6 +165,9 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   // Смена расы: купон из лавки Фета — история расы до пробуждения в новом теле.
   case object RaceQuest extends StateType
 
+  // Смена имени: купон из лавки Фета — новое имя текстом.
+  case object NameChange extends StateType
+
   /** Городские сцены — где герой «в городе»: отсюда передают вещи и серебро,
     * сюда выручку аукциона приносят в руки, только отсюда открывают сюжетную
     * карту (её смотрят по `returnState` меню персонажа). Город — любой его

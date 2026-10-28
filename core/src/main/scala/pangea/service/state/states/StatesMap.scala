@@ -71,6 +71,7 @@ import pangea.model.state.StateType.{
   MurlocVillage,
   SquadMine,
   RaceQuest,
+  NameChange,
   TreasureHunt,
   TreasureMobs,
   TreasureMobsFight,
@@ -133,6 +134,7 @@ import pangea.service.state.states.events.thieves.{ThievesSpoilsState, ThievesSt
 import pangea.service.state.states.murloc.{MurlocElderState, MurlocVillageState}
 import pangea.service.state.states.lostsquad.SquadMineState
 import pangea.service.state.states.race.RaceQuestState
+import pangea.service.state.states.name.NameChangeState
 import pangea.service.state.states.merchant.MerchantState
 import pangea.service.state.states.gustavo.{
   GustavoBoostState,
@@ -308,6 +310,7 @@ object StatesMap {
           MurlocVillage     -> MurlocVillageState(heroDao, inventoryRepo, itemRepo, content),
           SquadMine         -> SquadMineState(heroDao, inventoryRepo, itemRepo, content),
           RaceQuest         -> RaceQuestState(heroDao, inventoryRepo, content),
+          NameChange        -> NameChangeState(heroDao, inventoryRepo, content),
           Outskirts -> OutskirtsState(
             heroDao,
             inventoryRepo,

@@ -104,7 +104,8 @@ object HomeAlert {
       MurlocElder      -> "старейшина мурлоков",
       MurlocVillage    -> "деревня мурлоков",
       SquadMine        -> "штольня под Серебряной жилой",
-      RaceQuest        -> "квест смены расы"
+      RaceQuest        -> "квест смены расы",
+      NameChange       -> "смена имени"
     )
   }
 }

@@ -35,6 +35,14 @@ trait HeroDao {
   def updateKills(userId: UserId, kills: Long): Task[Unit]
   /** Остановить или запустить опыт (зелья Фета, см. [[pangea.model.hero.Hero.expFrozen]]). */
   def updateExpFrozen(userId: UserId, frozen: Boolean): Task[Unit]
+  /** Занято ли имя другим героем (без учёта регистра). */
+  def nameTaken(userId: UserId, name: String): Task[Boolean]
+  /** Дать герою имя. `false` — его только что занял другой: уникальность
+    * держит индекс в базе, так что двое одно имя не получат. */
+  def updateName(userId: UserId, name: String): Task[Boolean]
+  /** Герои без имени, уже вышедшие из пролога: прошли его до имён (см.
+    * [[pangea.service.admin.NameBackfill]]). */
+  def unnamedUserIds: Task[List[UserId]]
   /** Достижения героя — ключи [[pangea.model.hero.Achievement]]. */
   def updateAchievements(userId: UserId, achievements: List[String]): Task[Unit]
   /** Отряд героя (см. [[pangea.model.squad.Squad]]). */

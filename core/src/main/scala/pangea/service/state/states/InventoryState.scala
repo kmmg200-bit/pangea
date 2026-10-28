@@ -93,14 +93,16 @@ case class InventoryState(
       "ReadTreatise"      -> Target.Run { (u, _,  r) => readTreatise(u, r) },
       "IdentifyFlower"    -> Target.Run { (u, _,  r) => identifyFlower(u, r) },
       // Купон на смену расы: квест начинается сразу — только из города.
-      "RaceChange"        -> Target.Run { (u, _,  r) => startRaceChange(u, r) }
+      "RaceChange"        -> Target.Run { (u, _,  r) => startRaceChange(u, r) },
+      // Купон на смену имени: новое имя пишут текстом — тоже только из города.
+      "NameChange"        -> Target.Run { (u, _,  r) => startNameChange(u, r) }
     ),
     fallback = Target.Run { (u, ua, r) => handleFallback(u, ua, r) }
   )
 
   override def targetStates: Set[StateType] =
     Set(StateType.HeroStats, StateType.Backpack, StateType.Inventory, StateType.Socketing,
-        StateType.MarisaHunt, StateType.MurlocVillage, StateType.RaceQuest) ++ BackpackOrigins
+        StateType.MarisaHunt, StateType.MurlocVillage, StateType.RaceQuest, StateType.NameChange) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.
@@ -478,6 +480,9 @@ case class InventoryState(
         case Some(QuestItemKind.RaceCoupon) =>
           Screen(s"${item.displayTitle}\n\n${QuestItemKind.RaceCoupon.description}", List(
             content.choice("RaceChange", "raceQuest.useLabel").copy(row = Some(0)), exit))
+        case Some(QuestItemKind.NameCoupon) =>
+          Screen(s"${item.displayTitle}\n\n${QuestItemKind.NameCoupon.description}", List(
+            content.choice("NameChange", "nameChange.useLabel").copy(row = Some(0)), exit))
         // Ключ магической стойки: повернул — надетое и стойка дома меняются местами.
         case Some(key) if QuestItemKind.rackOf(key).isDefined =>
           Screen(s"${item.displayTitle}\n\n${key.description}", List(
@@ -579,6 +584,14 @@ case class InventoryState(
               else
                 heroDao.writeSceneData(user.userId, RaceQuestState.Progress.start.asJson).as(StateType.RaceQuest)
     } yield res
+
+  /** Купон на смену имени: из города — к выбору имени (см. NameChangeState);
+    * не из города — отказ, как у купона расы. */
+  private def startNameChange(user: User, renderer: Renderer): Task[StateType] =
+    heroDao.readReturnState(user.userId).flatMap { from =>
+      if (from.exists(StateType.cityStates.contains)) ZIO.succeed(StateType.NameChange)
+      else renderer.show(user, Screen(content.text("nameChange.onlyInCity"), Nil)) *> showList(user, renderer)
+    }
 
   /** Карта деревни мурлоков: только из города; дальше развилку показывает сама деревня. */
   private def useMurlocMap(user: User, renderer: Renderer): Task[StateType] =

@@ -32,7 +32,7 @@ import pangea.repository.item.ItemRepository
 import pangea.repository.user.UserRepository
 import pangea.client.tbank.{TBankClient, TBankConfig}
 import pangea.service.activity.ActivityContest
-import pangea.service.admin.{AdminConfig, AdminPanel}
+import pangea.service.admin.{AdminConfig, AdminPanel, NameBackfill}
 import pangea.service.donation.Donations
 import pangea.service.parcel.{Parcels, Transfers}
 import pangea.service.payout.Payouts
@@ -67,7 +67,8 @@ object Main extends ZIOAppDefault {
       PostgresConfig.live,
       Transactor.live,
       Api.vk,
-      ZLayer.fromZIO(ZIO.service[Api].map(VkPlayers(_))).asInstanceOf[ZLayer[Api, Nothing, Players]],
+      // Имя героя — из игры, а нет его — из ВК (см. VkPlayers).
+      ZLayer.fromFunction((api: Api, heroDao: HeroDao) => VkPlayers(api, heroDao): Players),
       HeroDao.live,
       UserDao.live,
       InventoryDao.live,
@@ -86,6 +87,7 @@ object Main extends ZIOAppDefault {
       AdminDao.live,
       AdminConfig.live,
       AdminPanel.live,
+      NameBackfill.live,
       ScheduledTaskDao.live,
       SendFailureDao.live,
       ItemRepository.live,

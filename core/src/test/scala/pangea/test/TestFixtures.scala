@@ -65,6 +65,7 @@ object TestFixtures {
     guildReputation = 0L,
     masterHornBoosts = MasterHornBoosts.empty,
     doubloons    = 0L,
-    statBoosts   = pangea.model.stats.StatBoosts.none
+    statBoosts   = pangea.model.stats.StatBoosts.none,
+    name         = None
   )
 }

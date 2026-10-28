@@ -19,7 +19,7 @@ import pangea.service.parcel.{Parcels, TransferTarget, Transfers}
 import pangea.service.payout.Payouts
 import pangea.service.state.states.parcel.TransferState
 import pangea.service.sender.Api
-import pangea.service.sender.vk.VkRenderer
+import pangea.service.sender.vk.{VkPlayers, VkRenderer}
 import pangea.service.state.states.StatesMap
 import zio.{Task, ZIO, ZLayer}
 
@@ -44,6 +44,9 @@ class StateHandler(
   referrals: Option[Referrals] = None,
   promo: Option[PromoCodes] = None
 ) {
+
+  /** Имена игроков в беседе: имя героя, а нет его — из ВК. */
+  private val players = VkPlayers(api, heroDao)
 
   /** Событие группы ВК для конкурса активности: вышел пост, игрок поставил
     * лайк или оставил комментарий. Лок игрока не нужен — героя это не трогает,
@@ -153,8 +156,7 @@ class StateHandler(
       case Some(hero) =>
         for {
           now  <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
-          name <- api.getName(sender).map(r => s"${r.response.head.firstName} ${r.response.head.lastName}")
-                    .orElse(ZIO.succeed(StateHandler.TransferSomeone))
+          name <- players.getDisplayName(sender).orElse(ZIO.succeed(StateHandler.TransferSomeone))
           text <- command match {
                     case ChatCommand.Self.Gear => ZIO.succeed(ChatProfile.gear(name, hero))
                     // Таблица конкурса активности: она общая, но спрашивают её тоже
@@ -185,8 +187,7 @@ class StateHandler(
             api.sendMessage(sender, StateHandler.TransferNotInCity, List.empty, None).as(None)
           else
             for {
-              name   <- api.getName(target).map(r => s"${r.response.head.firstName} ${r.response.head.lastName}")
-                          .orElse(ZIO.succeed(StateHandler.TransferSomeone))
+              name   <- players.getDisplayName(target).orElse(ZIO.succeed(StateHandler.TransferSomeone))
               to      = TransferTarget(theirHero.id, target.userId, name)
               tail   <- money match {
                           case Some((ChatCommand.Money.Doubloons, Some(amount))) =>

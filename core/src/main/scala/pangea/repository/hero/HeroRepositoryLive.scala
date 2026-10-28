@@ -75,7 +75,8 @@ object HeroRepositoryLive {
       guildReputation = 0L,
       masterHornBoosts = MasterHornBoosts.empty,
       doubloons = 0L,
-      statBoosts = pangea.model.stats.StatBoosts.none
+      statBoosts = pangea.model.stats.StatBoosts.none,
+      name = None
     )
     // Новичок без травм/бустов/экипировки → effectiveMaxHp = applyVit(vit) * 24,
     // maxEnergy = 5·int + 2·agi. Стартуем с полными HP и Энергией.

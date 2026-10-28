@@ -3,6 +3,7 @@ package pangea.dao.hero
 import doobie.util.transactor.Transactor
 import doobie.implicits._
 import doobie.postgres.circe.json.implicits._
+import doobie.postgres.sqlstate
 import io.circe.Json
 import io.circe.syntax.EncoderOps
 import pangea.dao.hero.TraumaInstances._
@@ -109,6 +110,18 @@ class HeroDaoLive(xa: Transactor[Task]) extends HeroDao {
 
   override def updateExpFrozen(userId: UserId, frozen: Boolean): Task[Unit] =
     Queries.updateExpFrozen(userId, frozen).update.run.transact(xa).unit
+
+  override def nameTaken(userId: UserId, name: String): Task[Boolean] =
+    Queries.nameTaken(userId, name).query[Boolean].unique.transact(xa)
+
+  override def unnamedUserIds: Task[List[UserId]] =
+    Queries.unnamedUserIds.query[UserId].to[List].transact(xa)
+
+  override def updateName(userId: UserId, name: String): Task[Boolean] =
+    Queries.updateName(userId, name).update.run
+      .attemptSomeSqlState { case sqlstate.class23.UNIQUE_VIOLATION => () }
+      .transact(xa)
+      .map(_.isRight)
 
   override def updateSquad(userId: UserId, squad: pangea.model.squad.Squad): Task[Unit] =
     Queries.updateSquad(userId, squad.asJson).update.run.transact(xa).unit

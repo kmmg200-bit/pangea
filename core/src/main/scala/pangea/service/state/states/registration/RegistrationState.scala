@@ -1,6 +1,6 @@
 package pangea.service.state.states.registration
 
-import io.circe.Json
+import io.circe.{Json, JsonObject}
 import io.circe.jawn.decode
 import io.circe.syntax.EncoderOps
 import pangea.dao.hero.HeroDao
@@ -18,7 +18,7 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.chat.Links
 import pangea.service.state.states.InventoryState
-import pangea.service.state.{FirstStepsQuest, NpcQuestLog, State, UserAction}
+import pangea.service.state.{FirstStepsQuest, NamePick, NpcQuestLog, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 case class RegistrationState(
@@ -77,10 +77,15 @@ case class RegistrationState(
   private lazy val arrival: Map[String, Target] =
     new Narrative(content.beats("registration.arrival")).toRoutes(Registration)
 
-  /** Маршруты поверх пробуждения: обыск выдаёт тайник, «Встать» — задание. */
+  private val names = NamePick(heroDao, content)
+
+  /** Маршруты поверх пробуждения: обыск выдаёт тайник, имя — спрашивается
+    * текстом, «Встать» — задание. */
   private lazy val arrivalRoutes: Map[String, Target] = Map(
-    "ArrivalSearch" -> Target.Run { (user, _, renderer) => search(user, renderer) },
-    "ArrivalStand"  -> Target.Run { (user, _, renderer)  => stand(user, renderer) }
+    "ArrivalSearch"  -> Target.Run { (user, _, renderer) => search(user, renderer) },
+    "ArrivalName"    -> Target.Run { (user, _, renderer) => askName(user, None, renderer) },
+    "ArrivalNameYes" -> Target.Run { (user, _, renderer) => acceptName(user, renderer) },
+    "ArrivalStand"   -> Target.Run { (user, _, renderer) => stand(user, renderer) }
   )
 
   private lazy val branch: Branch = new Branch(
@@ -89,7 +94,12 @@ case class RegistrationState(
       "RaceDescription" -> Target.Run { (user, ua, renderer)  => getRaceDescription(user, ua.text, renderer) },
       "Race"            -> Target.Run { (user, _, renderer)   => getRace(user, renderer) }
     ),
-    fallback = Target.Run { (user, _, renderer) => showWelcome(user, renderer) }
+    fallback = Target.Run { (user, ua, renderer) =>
+      awaitingName(user).flatMap(waits => names.typed(ua) match {
+        case Some(raw) if waits => proposeName(user, raw, renderer)
+        case _                  => showWelcome(user, renderer)
+      })
+    }
   )
 
   /** Раса выбрана и подтверждена — герой падает на крышу сторожки в лабиринте
@@ -162,12 +172,71 @@ case class RegistrationState(
         } yield kit.rangedNoun
     }
 
+  // ── Имя ──────────────────────────────────────────────────────────────────
+
+  /** Спросить имя текстом (с отказом над вопросом, если прошлое не подошло).
+    * Клавиатуру прячем: отвечают сообщением. */
+  private def askName(user: User, refusal: Option[String], renderer: Renderer): Task[StateType] =
+    content.beats("registration.arrival").collectFirst { case ("ArrivalName", beat) => beat } match {
+      case None => ZIO.succeed(Registration)
+      case Some(beat) =>
+        updateScene(user)(_.add(NamePick.AwaitKey, true.asJson).remove(NamePick.PendingKey)) *>
+          renderer.show(user, Screen(refusal.fold(beat.text)(r => s"$r\n\n${beat.text}"), Nil, hideKeyboard = true))
+            .as(Registration)
+    }
+
+  /** Имя пришло текстом: подошло — переспросить, нет — сказать почему. */
+  private def proposeName(user: User, raw: String, renderer: Renderer): Task[StateType] =
+    names.check(user, raw).flatMap {
+      case Left(refusal) =>
+        renderer.show(user, Screen(refusal, Nil, hideKeyboard = true)).as(Registration)
+      case Right(name) =>
+        updateScene(user)(_.add(NamePick.PendingKey, name.asJson)) *>
+          renderer.show(user, Screen(content.format("registration.name.confirm", "name" -> name), List(
+            content.choice("ArrivalNameYes", "registration.name.yesLabel").copy(row = Some(0)),
+            content.choice("ArrivalName", "registration.name.otherLabel").copy(row = Some(1))
+          ))).as(Registration)
+    }
+
+  /** «Да, так меня зовут»: имя — герою, дальше — последние мысли. Пока игрок
+    * подтверждал, имя занял другой — спрашиваем снова. */
+  private def acceptName(user: User, renderer: Renderer): Task[StateType] =
+    readScene(user).map(_.flatMap(_.hcursor.get[String](NamePick.PendingKey).toOption)).flatMap {
+      case None => askName(user, None, renderer)
+      case Some(name) =>
+        names.claim(user, name).flatMap {
+          case Left(refusal) => askName(user, Some(refusal), renderer)
+          case Right(_) =>
+            updateScene(user)(_.remove(NamePick.AwaitKey).remove(NamePick.PendingKey)) *>
+              renderer.show(user, Screen(content.format("registration.name.done", "name" -> name), Nil)) *>
+              showArrival("Monologue3", user, UserAction("", None), renderer)
+        }
+    }
+
+  private def awaitingName(user: User): Task[Boolean] =
+    readScene(user).map(_.exists(_.hcursor.get[Boolean](NamePick.AwaitKey).contains(true)))
+
+  private def readScene(user: User): Task[Option[Json]] = heroDao.readSceneData(user.userId)
+
+  /** Поправить scene_data, не трогая остального: там же лежит отметка об
+    * обысканном тайнике. */
+  private def updateScene(user: User)(f: JsonObject => JsonObject): Task[Unit] =
+    readScene(user).flatMap(scene =>
+      heroDao.writeSceneData(user.userId, Json.fromJsonObject(f(scene.flatMap(_.asObject).getOrElse(JsonObject.empty)))))
+
   /** «Встать»: герой ставит себе задание «Встать на ноги» (см.
     * [[pangea.model.quest.FirstSteps]]) и уходит в лабиринт — к городу ему ещё
     * идти. Это единственный выход из регистрации. Задание пишется один раз,
     * сцена регистрации стирается. Следом за заданием — отдельное сообщение с
     * туториалом по игре и приглашением в общую беседу (см. [[Links]]). */
   private def stand(user: User, renderer: Renderer): Task[StateType] =
+    heroDao.getHeroByUserId(user.userId).flatMap {
+      // Без имени из сторожки не выйти: старая кнопка «Дальше» могла его обойти.
+      case Some(h) if h.name.isEmpty => askName(user, None, renderer)
+      case _                         => takeFirstSteps(user, renderer)
+    }
+
+  private def takeFirstSteps(user: User, renderer: Renderer): Task[StateType] =
     for {
       lore   <- loreOf(user)
       _      <- ZIO.unless(lore.firstSteps)(heroDao.writeLoreData(user.userId, lore.copy(firstSteps = true).asJson))

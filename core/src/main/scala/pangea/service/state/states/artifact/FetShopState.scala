@@ -19,14 +19,16 @@ import zio.{Task, ZIO}
  *  [[HeroArtifacts.StepPriceDoubloons]] дублонов, и за ту же цену Фет трижды
  *  его улучшит — каждая ступень добавляет мест внутри. С краю прилавка — три
  *  зелья ([[FetPotion]]) по [[FetShopState.PotionPriceDoubloons]] дублонов: их
- *  выпивают сразу, при покупке. И купон на смену расы за
- *  [[FetShopState.CouponPriceDoubloons]] — он ложится в сумку (см. RaceQuestState). */
+ *  выпивают сразу, при покупке. И два купона — каждый своей сценой: на смену
+ *  расы за [[FetShopState.CouponPriceDoubloons]] (см. RaceQuestState) и на смену
+ *  имени за [[FetShopState.NameCouponPriceDoubloons]] (см. NameChangeState). Оба
+ *  ложатся в сумку, а в ход идут с карточки предмета. */
 case class FetShopState(
   heroDao:       HeroDao,
   artifacts:     ArtifactRepository,
   inventoryRepo: InventoryRepository,
   content:       SceneContent,
-  // Купон на смену расы — новый предмет в сумке: без хранилища вещей его не продать.
+  // Купоны — новые предметы в сумке: без хранилища вещей их не продать.
   itemRepo:      Option[ItemRepository] = None
 ) extends State {
 
@@ -48,6 +50,9 @@ case class FetShopState(
       "FetCoupon"     -> Target.Run { (u, _, r)  => showCoupon(u, r).as(StateType.FetShop) },
       "FetCouponBuy"  -> Target.Run { (u, _, r)  => confirmCoupon(u, r).as(StateType.FetShop) },
       "FetCouponYes"  -> Target.Run { (u, _, r)  => buyCoupon(u, r).as(StateType.FetShop) },
+      "FetNameCoupon"    -> Target.Run { (u, _, r) => showNameCoupon(u, r).as(StateType.FetShop) },
+      "FetNameCouponBuy" -> Target.Run { (u, _, r) => confirmNameCoupon(u, r).as(StateType.FetShop) },
+      "FetNameCouponYes" -> Target.Run { (u, _, r) => buyNameCoupon(u, r).as(StateType.FetShop) },
       "LeaveFetShop" -> Target.Goto(StateType.TradeHouse),
       CityExit.route
     ),
@@ -71,13 +76,16 @@ case class FetShopState(
         Choice("FetPotion", content.text(s"fet.potions.${p.key}.title"), data = Map("potion" -> p.entryName),
           row = Some(ArtifactKind.values.size + i))
       }
+      // Оба купона — в одном ряду: у ВК не больше десяти рядов на клавиатуре.
       val couponRow = ArtifactKind.values.size + FetPotion.values.size
-      val coupon    = Option.when(itemRepo.isDefined)(
-                        Choice("FetCoupon", content.text("fet.coupon.title"), row = Some(couponRow)))
-      val questRow = couponRow + coupon.size
+      val coupons   = if (itemRepo.isEmpty) Nil
+                      else List(
+                        Choice("FetCoupon", content.text("fet.coupon.title"), row = Some(couponRow)),
+                        Choice("FetNameCoupon", content.text("fet.nameCoupon.title"), row = Some(couponRow)))
+      val questRow = couponRow + (if (coupons.isEmpty) 0 else 1)
       val leaveRow = questRow + quest.button(quests).size
       renderer.show(user, Screen(content.text("fet.counter"),
-        goods ++ potions ++ coupon.toList ++ quest.button(quests).map(_.copy(row = Some(questRow))).toList ++ List(
+        goods ++ potions ++ coupons ++ quest.button(quests).map(_.copy(row = Some(questRow))).toList ++ List(
           Choice("LeaveFetShop", content.text("fet.leave"),
             color = ChoiceColor.Negative, row = Some(leaveRow)),
           CityExit.button(content, Some(leaveRow)))))
@@ -292,6 +300,47 @@ case class FetShopState(
         }
     }
 
+  // ── Купон на смену имени ─────────────────────────────────────────────────
+
+  private def showNameCoupon(user: User, renderer: Renderer): Task[Unit] =
+    if (itemRepo.isEmpty) showShop(user, renderer)
+    else renderer.show(user, Screen(content.text("fet.nameCoupon.pitch"), List(
+      Choice("FetNameCouponBuy", Choice.fit(content.format("fet.buyLabel", "price" -> FetShopState.NameCouponPriceDoubloons.toString)),
+        color = ChoiceColor.Positive, row = Some(0)),
+      Choice("FetShop", content.text("fet.back"), color = ChoiceColor.Negative, row = Some(1)))))
+
+  private def confirmNameCoupon(user: User, renderer: Renderer): Task[Unit] =
+    getHero(user).flatMap { hero =>
+      val price = FetShopState.NameCouponPriceDoubloons
+      if (itemRepo.isEmpty) showShop(user, renderer)
+      else if (hero.doubloons < price)
+        renderer.show(user, Screen(content.format("fet.notEnough", "price" -> price.toString), backRow))
+      else
+        renderer.show(user, Screen(content.format("fet.nameCoupon.confirm", "price" -> price.toString), List(
+          Choice("FetNameCouponYes", content.text("fet.confirmYes"), color = ChoiceColor.Positive, row = Some(0)),
+          Choice("FetShop", content.text("fet.confirmNo"), color = ChoiceColor.Negative, row = Some(0))
+        ), inline = true))
+    }
+
+  /** Купить купон на смену имени: дублоны — Фету, купон — в сумку. Места он
+    * не занимает. Дублонов не хватает (старая кнопка) — ничего не тратим. */
+  private def buyNameCoupon(user: User, renderer: Renderer): Task[Unit] =
+    itemRepo match {
+      case None => showShop(user, renderer)
+      case Some(items) =>
+        getHero(user).flatMap { hero =>
+          val price = FetShopState.NameCouponPriceDoubloons
+          if (hero.doubloons < price)
+            renderer.show(user, Screen(content.format("fet.notEnough", "price" -> price.toString), backRow))
+          else
+            heroDao.updateDoubloons(user.userId, hero.doubloons - price) *>
+              items.persist(hero.id, QuestItemKind.item(QuestItemKind.NameCoupon))
+                .flatMap(inventoryRepo.addItem(hero.id, _).mapError(asThrowable)) *>
+              renderer.show(user, Screen(content.text("fet.nameCoupon.done"), Nil)) *>
+              showShop(user, renderer)
+        }
+    }
+
   // ── Вспомогательное ────────────────────────────────────────────────────────
 
   private def backRow: List[Choice] =
@@ -326,6 +375,9 @@ object FetShopState {
 
   /** Почём купон на смену расы. */
   val CouponPriceDoubloons: Long = 100L
+
+  /** Почём купон на смену имени. */
+  val NameCouponPriceDoubloons: Long = 50L
 
   /** Кожа упыря — остаётся только от Гнилого Джо. */
   def ghoulSkin(item: Item): Boolean = item.material.contains(MaterialKind.GhoulSkin)

@@ -40,7 +40,10 @@ case class Hero(
   // Руны: клейма на теле и понимание рун (см. RuneData).
   runes: RuneData = RuneData.empty,
   // Опыт остановлен зельем Фета: не идёт ни из боёв, ни из заданий (см. gainExp).
-  expFrozen: Boolean = false
+  expFrozen: Boolean = false,
+  // Имя, выбранное в конце пролога или купоном Фета (см. HeroName). Нет его —
+  // герой прошёл пролог до имён, и другим виден по имени из ВК.
+  name: Option[String]
 ) {
   def hasAchievement(a: Achievement): Boolean = achievements.contains(a.entryName)
 

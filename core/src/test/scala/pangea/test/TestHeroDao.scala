@@ -107,6 +107,18 @@ class TestHeroDao(
   def updateExpFrozen(userId: UserId, frozen: Boolean): Task[Unit] =
     heroRef.update(m => m.get(userId).fold(m)(h => m.updated(userId, h.copy(expFrozen = frozen))))
 
+  def nameTaken(userId: UserId, name: String): Task[Boolean] =
+    heroRef.get.map(_.exists { case (id, h) => id != userId && h.name.exists(_.equalsIgnoreCase(name)) })
+
+  def unnamedUserIds: Task[List[UserId]] =
+    heroRef.get.map(_.collect { case (id, h) if h.name.isEmpty && h.state != StateType.Registration => id }
+      .toList.sortBy(_.value))
+
+  def updateName(userId: UserId, name: String): Task[Boolean] =
+    nameTaken(userId, name).flatMap(taken =>
+      if (taken) ZIO.succeed(false)
+      else heroRef.update(m => m.get(userId).fold(m)(h => m.updated(userId, h.copy(name = Some(name))))).as(true))
+
   def updateAchievements(userId: UserId, achievements: List[String]): Task[Unit] =
     heroRef.update(m => m.get(userId).fold(m)(h => m.updated(userId, h.copy(achievements = achievements))))
 
