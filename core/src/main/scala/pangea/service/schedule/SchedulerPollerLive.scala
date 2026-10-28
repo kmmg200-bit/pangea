@@ -14,7 +14,12 @@ class SchedulerPollerLive(dao: ScheduledTaskDao, handler: StateHandler) extends 
     for {
       now <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
       due <- dao.claimDue(now, BatchLimit)
-      _   <- ZIO.foreachDiscard(due)(process)
+      // Игроки — параллельно: медленный ответ ВК одному не держит остальных.
+      // Задачи одного игрока — по очереди, в порядке fire_at (claimDue уже
+      // отсортировал, groupBy порядок внутри группы сохраняет).
+      _   <- ZIO
+               .foreachParDiscard(due.groupBy(_.userId).values)(ZIO.foreachDiscard(_)(process))
+               .withParallelism(Parallelism)
     } yield ()
 
   override def start: Task[Unit] =
@@ -45,6 +50,9 @@ object SchedulerPollerLive {
   val BatchLimit: Int = 64
   /** После скольких неудачных попыток задача помечается `Dead`. */
   val MaxAttempts: Int = 5
+  /** Сколько игроков исполнять одновременно: в пределах пула БД (Hikari — 10)
+    * и лимитов ВК на отправку сообщений. */
+  val Parallelism: Int = 8
   /** Период опроса очереди. */
   val PollInterval: Duration = Duration.fromSeconds(5)
 }
