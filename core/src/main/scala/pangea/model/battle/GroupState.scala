@@ -138,7 +138,10 @@ final case class MonsterSlot(
   /** На арене: кто это из бойцов соперника — сам он
     * ([[SoloPveBattle.ArenaHeroUnit]]) или его союзник под своим номером. По
     * этому номеру урон и путы возвращаются его стороне. */
-  arenaUnit:     Option[Int]    = None
+  arenaUnit:     Option[Int]    = None,
+  /** Кто из отряда бил его последним (имя союзника). Истёк он ранами — пламенем,
+    * ядом, кровью, — значит, этот его и добил: ему и в счёт (см. `BattleAlly.kills`). */
+  lastAllyHit:   Option[String] = None
 ) {
   def toMonster: Monster =
     Monster(0L, lvl, Race.withName(race), Rarity.withName(rarity), stats, marked, customName, undead)
@@ -177,8 +180,9 @@ object MonsterSlot {
       customName    <- c.getOrElse[Option[String]]("customName")(None)
       undead        <- c.getOrElse[Boolean]("undead")(false)
       arenaUnit     <- c.getOrElse[Option[Int]]("arenaUnit")(None)
+      lastAllyHit   <- c.getOrElse[Option[String]]("lastAllyHit")(None)
     } yield MonsterSlot(lvl, race, rarity, stats, currentHp, currentArmor, marked, currentEnergy, effects,
-                        boss, customName, undead, arenaUnit)
+                        boss, customName, undead, arenaUnit, lastAllyHit)
 }
 
 /** Убитый моб — ровно то, что нужно, чтобы после боя накатать за него добычу. */

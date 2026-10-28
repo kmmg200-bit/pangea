@@ -121,6 +121,25 @@ object SquadAutoResolveSpec extends ZIOSpecDefault {
               assertTrue(text.contains("отряд отбился, и вы приходите в себя"))
     },
 
+    test("моба добило пламя — в сводке он засчитан тому, кто бил его последним") {
+      // Йорген бьёт в непробиваемую броню — HP моба не трогает, — а горение
+      // снимает последние 50 HP. Раньше такого добитого не засчитывали никому:
+      // у всех стояло «убито врагов: 0», хотя бой выиграл отряд.
+      val h  = downHero(List(ally(AllyKind.Human)))
+      val b0 = fight(h, hp = 1000L, atk = 0L, rounds = BattleState.ShownDownRounds)
+      val b  = b0.copy(monsterCurrentHp = 50L, monsterCurrentArmor = 1000000L,
+                 effects = b0.effects.copy(monsterBurn = Some(pangea.model.battle.Burn(10))))
+      for {
+        t <- world(h, b)
+        (state, dao, r, _) = t
+        // Йорген попал, без прока; моб попал (в броню)
+        _    <- TestRandom.feedInts(99, 99, 99) *> TestRandom.feedLongs(100L, 100L)
+        out  <- state.action(testUser, tap("SquadTick"), r)
+        text <- said(r)
+      } yield assertTrue(out == StateType.Loot) &&
+              assertTrue(text.contains("⚔ Йорген Кремень — убито врагов: 1"))
+    },
+
     test("доигранный бой проигран: пал весь отряд — смерть героя, в сводке — кто кого добил, павший не вернётся") {
       val h = downHero(List(ally(AllyKind.Gnome, hp = Some(50L), armor = Some(0L))))
       val b = fight(h, hp = 1000000000L, atk = 1000L, rounds = BattleState.ShownDownRounds)

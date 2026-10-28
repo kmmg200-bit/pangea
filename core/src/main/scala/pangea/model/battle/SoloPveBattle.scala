@@ -118,7 +118,9 @@ case class SoloPveBattle(
   bonusSlots: List[Long] = Nil,
   // Стена трофеев дома героя: прибавка к его урону по расам (entryName → %).
   // Перечитывается из дома каждый ход (см. BattleState.resolveLoaded).
-  trophyWall: Map[String, Int] = Map.empty
+  trophyWall: Map[String, Int] = Map.empty,
+  // Кто из отряда бил того, кто в полях, последним (см. MonsterSlot.lastAllyHit).
+  monsterLastAllyHit: Option[String] = None
 ) {
 
   /** Множитель Стены трофеев к урону героя по тому, кто сейчас в полях. */
@@ -133,7 +135,8 @@ case class SoloPveBattle(
     lvl = monsterLvl, race = monsterRace, rarity = monsterRarity, stats = monsterStats,
     currentHp = monsterCurrentHp, currentArmor = monsterCurrentArmor, marked = monsterMarked,
     currentEnergy = monsterCurrentEnergy, effects = effects.monsterPart, boss = bossKind,
-    customName = customName, undead = monsterUndead, arenaUnit = monsterArenaUnit)
+    customName = customName, undead = monsterUndead, arenaUnit = monsterArenaUnit,
+    lastAllyHit = monsterLastAllyHit)
 
   /** Поставить слот в пару: его состояние и эффекты — в поля активного моба,
     * геройская половина эффектов (и разовые флаги героя вроде «Крепкости»)
@@ -146,7 +149,7 @@ case class SoloPveBattle(
     monsterCurrentHp = slot.currentHp, monsterCurrentArmor = slot.currentArmor, monsterMarked = slot.marked,
     monsterCurrentEnergy = slot.currentEnergy, effects = effects.withMonsterPart(slot.effects),
     bossKind = slot.boss, customName = slot.customName, monsterUndead = slot.undead,
-    monsterArenaUnit = slot.arenaUnit)
+    monsterArenaUnit = slot.arenaUnit, monsterLastAllyHit = slot.lastAllyHit)
 
   /** Кто на чужой стороне держит ауру и сколько у него энергии: минибосс со
     * своей аурой, где бы он ни стоял — в паре или в строю (см. [[Aura]]). Нет
@@ -897,13 +900,15 @@ object SoloPveBattle {
       midRound            <- c.getOrElse[Boolean]("midRound")(false)
       bonusSlots          <- c.getOrElse[List[Long]]("bonusSlots")(Nil)
       trophyWall          <- c.getOrElse[Map[String, Int]]("trophyWall")(Map.empty)
+      monsterLastAllyHit  <- c.getOrElse[Option[String]]("monsterLastAllyHit")(None)
     } yield SoloPveBattle(monsterLvl, monsterRace, monsterRarity, monsterStats,
                          monsterCurrentHp, monsterCurrentArmor, heroBattleState, consumableUsed, monsterMarked,
                          monsterUndead,
                          skillSlots, effects, toughnessUsed, bossKind, bossTurn, charges, revives, firstSkill, monsterEnergy, group,
                          story, customName, divineUsed, escapesAfter, noKin, arena, minionLvl, bossTaken,
                          noFlee, lootLevel, holyWater, heroBlockPct, monsterBlockPct,
-                         heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall)
+                         heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall,
+                         monsterLastAllyHit)
 
   /** Номер самого соперника среди «мобов» зеркала арены; его союзники — от
     * единицы (см. `ArenaSide.allies`). */

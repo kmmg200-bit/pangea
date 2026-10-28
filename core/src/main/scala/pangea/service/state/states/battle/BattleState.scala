@@ -3082,8 +3082,27 @@ case class BattleState(
       eff = eff.copy(monsterBurn = Some((1L to steps).foldLeft(bn)((b, _) => b.grown)))
       lines = lines :+ dotTick(Burn.Icon, Burn.Label, dmg, monsterName)
     }
-    (battle.copy(monsterCurrentHp = hp, effects = eff), lines.mkString("\n"), bled)
+    val after = battle.copy(monsterCurrentHp = hp, effects = eff)
+    // Истёк ранами — в счёт тому из отряда, кто бил его последним: пламя,
+    // яд и кровь от его ударов и добили.
+    val credited = if (battle.monsterCurrentHp > 0L && hp <= 0L) creditKill(after, after.monsterLastAllyHit) else after
+    (credited, lines.mkString("\n"), bled)
   }
+
+  /** Добитый засчитывается союзнику по имени `by` — стоит он ещё или уже выбыл
+    * (по нему сводка доигранного боя, см. `BattleAlly.kills`). */
+  private def creditKill(battle: SoloPveBattle, by: Option[String]): SoloPveBattle =
+    by.fold(battle) { name =>
+      val g = battle.group
+      g.allies.find(_.name == name) match {
+        case Some(a) => battle.copy(group = g.updateAlly(a.position)(x => x.copy(kills = x.kills + 1)))
+        case None =>
+          val i = g.alliesGone.lastIndexWhere(_.name == name)
+          if (i < 0) battle
+          else battle.copy(group = g.copy(alliesGone =
+                 g.alliesGone.updated(i, g.alliesGone(i).copy(kills = g.alliesGone(i).kills + 1))))
+      }
+    }
 
   // ── Ход игрока: активный навык ──────────────────────────────────────────────
 
@@ -4642,8 +4661,10 @@ case class BattleState(
             (aDmg, ((rawHp * hpMult).toLong + lightning).max(0L))
           }
           newHp    = (tmp.monsterCurrentHp - hpDmg).max(0L)
+          // Кто бил последним, запоминаем: истечёт моб ранами — убит им.
           hit      = noteBossDamage(tmp, armorDmg + hpDmg)
-                       .copy(monsterCurrentHp = newHp, monsterCurrentArmor = tmp.monsterCurrentArmor - armorDmg)
+                       .copy(monsterCurrentHp = newHp, monsterCurrentArmor = tmp.monsterCurrentArmor - armorDmg,
+                             monsterLastAllyHit = Some(a.name))
           dealt    = armorDmg + hpDmg
           // Прок стихии считается молча — строки его в лог союзника не идут.
           procRoll <- if (newHp > 0L) Random.nextIntBetween(1, 101) else ZIO.succeed(100)
