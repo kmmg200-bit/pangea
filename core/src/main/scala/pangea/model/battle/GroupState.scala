@@ -34,7 +34,13 @@ final case class BattleAlly(
   /** Холод обгрызает защиту: на столько процентных пунктов меньше она режет
     * удар — копится и не затухает, как у героя (`heroColdDefenceCut`); огонь
     * его растапливает. */
-  coldCut:    Int              = 0
+  coldCut:    Int              = 0,
+  /** Скольких врагов он добил за этот бой — для сводки, когда отряд доводит
+    * бой до конца сам (см. `BattleState.autoResolve`). */
+  kills:      Int              = 0,
+  /** Кто из врагов задел его последним. Выбыл — значит, этот его и добил:
+    * ударом, умением или раной, которую оставил. */
+  lastHitBy:  Option[String]   = None
 ) {
   /** Нежить ли он: миазмы её лечат, а живых — травят. */
   def isUndead: Boolean = kind.race == Race.Undead
@@ -95,8 +101,10 @@ object BattleAlly {
       burn     <- c.getOrElse[Option[Burn]]("burn")(None)
       stood    <- c.getOrElse[Option[Int]]("stood")(None)
       coldCut  <- c.getOrElse[Int]("coldCut")(0)
+      kills    <- c.getOrElse[Int]("kills")(0)
+      hitBy    <- c.getOrElse[Option[String]]("lastHitBy")(None)
     } yield BattleAlly(kind, position, hp, armor, energy, stats, lvl, undead, home, poison, bleed, burn, stood,
-                       coldCut)
+                       coldCut, kills, hitBy)
 }
 
 /** Моб группы, стоящий НЕ в паре с героем: всё, что описывает его и его текущее
@@ -205,6 +213,8 @@ object SlainMonster {
   *    боя считает его шансы против этой цели;
   *  - `heroDown` — герой обнулён, но отряд ещё на ногах: бой идёт без него,
   *    раунд за раундом по таймеру, а его смерть отложена до исхода;
+  *  - `downRounds` — сколько раундов отряд отыграл без героя: первые идут по
+  *    таймеру, дальше бой доигрывается сразу (см. `BattleState.autoResolve`);
   *  - `queue` — кому не хватило места в строю (их всего [[Formation.MonsterPlaces]]):
   *    ждут за спинами и входят, как только место освободится;
   *  - `slain`   — павшие, в порядке гибели, для выдачи добычи после победы;
@@ -229,7 +239,8 @@ final case class GroupState(
   activePos:   Int                = 1,
   lastTarget:  Option[MonsterSlot] = None,
   heroDown:    Boolean            = false,
-  queue:       List[MonsterSlot]  = Nil
+  queue:       List[MonsterSlot]  = Nil,
+  downRounds:  Int                = 0
 ) {
   def isGroup: Boolean = others.nonEmpty
 
@@ -413,5 +424,7 @@ object GroupState {
       lastTarget  <- c.getOrElse[Option[MonsterSlot]]("lastTarget")(None)
       heroDown    <- c.getOrElse[Boolean]("heroDown")(false)
       queue       <- c.getOrElse[List[MonsterSlot]]("queue")(Nil)
-    } yield GroupState(others, slain, round, pendingMove, originRace, heroPos, places, allies, gone, activePos, lastTarget, heroDown, queue)
+      downRounds  <- c.getOrElse[Int]("downRounds")(0)
+    } yield GroupState(others, slain, round, pendingMove, originRace, heroPos, places, allies, gone, activePos, lastTarget,
+                       heroDown, queue, downRounds)
 }

@@ -456,13 +456,15 @@ case class BattleState(
         } yield StateType.Loot
       case Outcome.Death if res.battle.group.allies.exists(_.alive) && !res.battle.group.heroDown =>
         // Отряд ещё на ногах: герой падает, но не умирает — бой идёт без него,
-        // раунд за раундом по таймеру, а смерть отложена до исхода.
-        val fell = res.battle.copy(group = res.battle.group.copy(heroDown = true))
+        // раунд за раундом по таймеру, а смерть отложена до исхода. Сколько
+        // раундов показать, а с какого доиграть сразу — см. squadTick.
+        val fell = res.battle.copy(group = res.battle.group.copy(heroDown = true, downRounds = 0))
         val (down, turned) = fell.leaveDownedHero
         (persistHero *> heroDao.writeActiveBattle(user.userId, down.asJson)).uninterruptible *>
           showLog *> showGroup *>
           scheduler.schedule(user.userId, nowMs + BattleState.SquadTickMs, TaskKind.SquadFight, StateType.Battle, BattleState.SquadTickAction) *>
-          renderer.show(user, Screen(content.text("battle.squad.heroDown") + turnsAwayLine(down, turned), Nil)) *>
+          renderer.show(user, Screen(content.format("battle.squad.heroDown",
+            "rounds" -> BattleState.ShownDownRounds.toString) + turnsAwayLine(down, turned), Nil)) *>
           showDown(user, down, renderer)
       case Outcome.Death =>
         (persistHero *> persistSquad *> afterBattle(user, res.hero)).uninterruptible.flatMap { refilled =>
@@ -477,11 +479,14 @@ case class BattleState(
         // боя» не будет: роутинг добычи стираем, иначе его подхватила бы
         // следующая победа и засчитала несыгранный бой.
         val dropRouting = res.battle.story.exists(s => s == MurlocQuest.RaidStory || s == LostSquadQuest.EscortStory)
+        // Лежачий сам не бежит: это отряд доигрывал бой и не взял верх — ничья,
+        // все отступают и выносят его (см. autoResolve).
+        val fledKey = if (res.battle.group.heroDown) "battle.squad.retreat" else "battle.fled"
         (persistHero *> persistSquad *> afterBattle(user, res.hero) <* heroDao.clearActiveBattle(user.userId) <*
            ZIO.when(dropRouting)(heroDao.writeSceneData(user.userId, Json.Null)))
           .uninterruptible.flatMap { refilled =>
             showLog *> showGroup *> showRefilled(user, refilled, renderer) *>
-              renderer.show(user, Screen(content.text("battle.fled"), Nil)) *>
+              renderer.show(user, Screen(content.text(fledKey), Nil)) *>
               failQuestBehind(user, renderer).as(to)
           }
     }
@@ -903,13 +908,12 @@ case class BattleState(
         closeTurn(TurnResult(hero, moved, Vector(line), Outcome.Continue), nowMs, Set.empty)
     }
 
-  /** Раунд без героя (он обнулён): союзники бьют, мобы отвечают им — ударом и
-    * умениями, минибоссы идут по своему кругу; раны тикают, аура держит поле,
-    * Гнилой Джо встаёт. Конец раунда — как обычно, но героя никто не трогает, а
-    * кому некого бить, идёт к врагу: мобы к отряду, отряд к мобам. Мобов не осталось — герой
-    * приходит в себя с [[BattleState.DownReviveHp]] HP и забирает победу;
-    * не осталось союзников — смерть, отложенная до этого момента; иначе —
-    * следующий раунд по таймеру. */
+  /** Такт боя без героя (он обнулён). Первые [[BattleState.ShownDownRounds]]
+    * раунда идут по таймеру и с логом (см. [[squadRound]]); на следующем такте
+    * отряд доводит бой до конца сам, и игрок видит только сводку (см.
+    * [[autoResolve]]). Мобов не осталось — герой приходит в себя с
+    * [[BattleState.DownReviveHp]] HP и забирает победу; не осталось союзников —
+    * смерть, отложенная до этого момента. */
   private def squadTick(user: User, renderer: Renderer): Task[StateType] =
     for {
       now    <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
@@ -917,66 +921,133 @@ case class BattleState(
       battle <- getBattle(user)
       state  <-
         if (!battle.group.heroDown) showScreen(user, renderer).as(StateType.Battle)
-        else for {
-          // Место напротив союзника могло освободиться и позже — смотрим каждый раунд.
-          moved    <- ZIO.succeed(battle.leaveDownedHero)
-          (walked, turnedTo) = moved
-          allied   <- allyPhase(TurnResult(hero, walked,
-                        Vector(turnsAwayLine(walked, turnedTo)).filter(_.nonEmpty), Outcome.Continue))
-          // Гнилой Джо встаёт, кто бы его ни добил: союзник — тоже.
-          promoted  = promoteAfterKill(joeRises(allied))
-          // Раунд идёт и без героя: временное на поле сходит за свои раунды, как
-          // в его ход (tickBuffs). Иначе пригвождённый (📌) так и стоял бы
-          // пригвождённым до конца боя, а дым не рассеивался бы вовсе.
-          ticked    = promoted.copy(battle = promoted.battle.tickBuffs())
-          sided    <- sideMobsPhase(ticked, now)
-          // Истёк ранами на своём ходу — тоже смерть, и от неё Джо тоже встаёт.
-          promoted2 = promoteAfterKill(joeRises(sided))
-          // Дальше — как в обычном раунде: раны на союзниках тикают, аура держит
-          // поле. Свою ауру лежачий не держит — держать её нечем; чужая (миазмы
-          // Некроманта) работает как всегда.
-          allyTicked = tickAllyEffects(promoted2)
-          fogged     = promoteAfterKill(auraTick(allyTicked, on = false))
-          // Охрану доломали союзники, пока герой лежал, — башням некого
-          // прикрывать, и бой кончается так же, как если бы её добил он сам.
-          abandoned = towersAlone(fogged)
-          ended    <- endRound(battle, abandoned)
-          // Конец раунда: кому некого бить, идёт к врагу — мобы к отряду, отряд
-          // к мобам. Каждый раунд, даже если в этом никто никого не задел: иначе
-          // такой раунд ничем бы не кончался, и следующий тоже — бой стоял бы.
-          res       = if (ended.outcome != Outcome.Continue) ended
-                      else ended.copy(battle = ended.battle.closeInOnSquad._1.squadAdvance._1)
-          state    <- res.outcome match {
-            case Outcome.Victory =>
-              val revived = res.hero.copy(fightStats = res.hero.fightStats.copy(hp = BattleState.DownReviveHp))
-              commit(user, res.copy(hero = revived, log = res.log :+ content.text("battle.squad.heroUp")), now, renderer, hero, "")
-            case _ if res.battle.group.allies.forall(!_.alive) =>
-              commit(user, res.copy(outcome = Outcome.Death, log = res.log :+ content.text("battle.squad.allGone")), now, renderer, hero, "")
-            // Приговорённый дотерпел свои раунды и ушёл — и пока герой лежал тоже:
-            // добычи нет, а герой приходит в себя, как после победы отряда.
-            case _ if res.battle.escapesAfter > 0 && res.battle.group.round >= res.battle.escapesAfter =>
-              val revived = res.hero.copy(fightStats = res.hero.fightStats.copy(hp = BattleState.DownReviveHp))
-              commit(user, res.copy(hero = revived), now, renderer, hero, "")
-            case _ =>
-              val msg      = (res.log ++ res.sideLog).mkString("\n")
-              val standing = groupLines(res.battle).mkString("\n")
-              heroDao.writeActiveBattle(user.userId, res.battle.asJson) *>
-                ZIO.when(msg.nonEmpty)(renderer.show(user, Screen(msg, Nil))) *>
-                renderer.show(user, Screen(standing, Nil)) *>
-                scheduler.schedule(user.userId, now + BattleState.SquadTickMs, TaskKind.SquadFight, StateType.Battle, BattleState.SquadTickAction) *>
-                showDown(user, res.battle, renderer)
+        else if (battle.group.downRounds >= BattleState.ShownDownRounds) autoResolve(user, hero, battle, now, renderer)
+        else squadRound(hero, battle, now).flatMap { res =>
+          if (squadOver(res)) settleSquad(user, hero, res, now, renderer)
+          else {
+            val msg      = (res.log ++ res.sideLog).mkString("\n")
+            val standing = groupLines(res.battle).mkString("\n")
+            heroDao.writeActiveBattle(user.userId, res.battle.asJson) *>
+              ZIO.when(msg.nonEmpty)(renderer.show(user, Screen(msg, Nil))) *>
+              renderer.show(user, Screen(standing, Nil)) *>
+              scheduler.schedule(user.userId, now + BattleState.SquadTickMs, TaskKind.SquadFight, StateType.Battle, BattleState.SquadTickAction) *>
+              showDown(user, res.battle, renderer)
           }
-        } yield state
+        }
     } yield state
+
+  /** Раунд без героя: союзники бьют, мобы отвечают им — ударом и умениями,
+    * минибоссы идут по своему кругу; раны тикают, аура держит поле, Гнилой Джо
+    * встаёт. Конец раунда — как обычно, но героя никто не трогает, а кому некого
+    * бить, идёт к врагу: мобы к отряду, отряд к мобам. Только считает — ничего не
+    * пишет и не показывает. */
+  private def squadRound(hero: Hero, battle: SoloPveBattle, now: Long): Task[TurnResult] =
+    for {
+      // Место напротив союзника могло освободиться и позже — смотрим каждый раунд.
+      moved    <- ZIO.succeed(battle.leaveDownedHero)
+      (walked, turnedTo) = moved
+      allied   <- allyPhase(TurnResult(hero, walked,
+                    Vector(turnsAwayLine(walked, turnedTo)).filter(_.nonEmpty), Outcome.Continue))
+      // Гнилой Джо встаёт, кто бы его ни добил: союзник — тоже.
+      promoted  = promoteAfterKill(joeRises(allied))
+      // Раунд идёт и без героя: временное на поле сходит за свои раунды, как
+      // в его ход (tickBuffs). Иначе пригвождённый (📌) так и стоял бы
+      // пригвождённым до конца боя, а дым не рассеивался бы вовсе.
+      ticked    = promoted.copy(battle = promoted.battle.tickBuffs())
+      sided    <- sideMobsPhase(ticked, now)
+      // Истёк ранами на своём ходу — тоже смерть, и от неё Джо тоже встаёт.
+      promoted2 = promoteAfterKill(joeRises(sided))
+      // Дальше — как в обычном раунде: раны на союзниках тикают, аура держит
+      // поле. Свою ауру лежачий не держит — держать её нечем; чужая (миазмы
+      // Некроманта) работает как всегда.
+      allyTicked = tickAllyEffects(promoted2)
+      fogged     = promoteAfterKill(auraTick(allyTicked, on = false))
+      // Охрану доломали союзники, пока герой лежал, — башням некого
+      // прикрывать, и бой кончается так же, как если бы её добил он сам.
+      abandoned = towersAlone(fogged)
+      ended    <- endRound(battle, abandoned)
+      // Конец раунда: кому некого бить, идёт к врагу — мобы к отряду, отряд
+      // к мобам. Каждый раунд, даже если в этом никто никого не задел: иначе
+      // такой раунд ничем бы не кончался, и следующий тоже — бой стоял бы.
+      res       = if (ended.outcome != Outcome.Continue) ended
+                  else ended.copy(battle = ended.battle.closeInOnSquad._1.squadAdvance._1)
+    } yield res.copy(battle = res.battle.copy(group = res.battle.group.copy(downRounds = res.battle.group.downRounds + 1)))
+
+  /** Кончился ли бой без героя: мобов не осталось, союзников не осталось или
+    * приговорённый дотерпел свои раунды и ушёл. */
+  private def squadOver(res: TurnResult): Boolean =
+    res.outcome == Outcome.Victory || res.battle.group.allies.forall(!_.alive) ||
+      (res.battle.escapesAfter > 0 && res.battle.group.round >= res.battle.escapesAfter)
+
+  /** Исход боя без героя (см. [[squadOver]]): победа, смерть или ушедший враг. */
+  private def settleSquad(user: User, before: Hero, res: TurnResult, now: Long, renderer: Renderer): Task[StateType] =
+    res.outcome match {
+      case Outcome.Victory =>
+        val revived = res.hero.copy(fightStats = res.hero.fightStats.copy(hp = BattleState.DownReviveHp))
+        commit(user, res.copy(hero = revived, log = res.log :+ content.text("battle.squad.heroUp")), now, renderer, before, "")
+      case _ if res.battle.group.allies.forall(!_.alive) =>
+        commit(user, res.copy(outcome = Outcome.Death, log = res.log :+ content.text("battle.squad.allGone")), now, renderer, before, "")
+      // Приговорённый дотерпел свои раунды и ушёл — и пока герой лежал тоже:
+      // добычи нет, а герой приходит в себя, как после победы отряда.
+      case _ =>
+        val revived = res.hero.copy(fightStats = res.hero.fightStats.copy(hp = BattleState.DownReviveHp))
+        commit(user, res.copy(hero = revived), now, renderer, before, "")
+    }
+
+  /** Отряд доводит бой до конца сам: раунд за раундом, без таймера и без лога,
+    * пока бой не кончится (см. [[squadOver]]), но не дольше
+    * [[BattleState.AutoResolveRounds]] раундов. Игроку — одна сводка: скольких
+    * добил каждый и кто кого выбил. Награда, смерть и ушедший враг — как после
+    * обычного раунда без героя. Не кончился и за этот срок — ничья: обе стороны
+    * отступают, добычи нет, а отряд выносит героя, и тот приходит в себя, как
+    * после победы. Выбывшие так и остаются выбывшими. */
+  private def autoResolve(user: User, before: Hero, battle: SoloPveBattle, now: Long, renderer: Renderer): Task[StateType] = {
+    def play(res: TurnResult, left: Int): Task[TurnResult] =
+      if (squadOver(res) || left <= 0) ZIO.succeed(res)
+      else squadRound(res.hero, res.battle, now).flatMap(play(_, left - 1))
+    play(TurnResult(before, battle, Vector.empty, Outcome.Continue), BattleState.AutoResolveRounds).flatMap { played =>
+      val res = played.copy(log = squadSummary(played.battle), sideLog = Vector.empty)
+      if (squadOver(res)) settleSquad(user, before, res, now, renderer)
+      else {
+        // Ничья — побег всем отрядом: исход тот же, что у бегства (см. dungeonCommit).
+        val revived = res.hero.copy(fightStats = res.hero.fightStats.copy(hp = BattleState.DownReviveHp))
+        commit(user, res.copy(hero = revived, outcome = Outcome.Fled), now, renderer, before, "")
+      }
+    }
+  }
+
+  /** Сводка доигранного боя: по строке на каждого, кто дрался в нём рядом с
+    * героем, по местам в отряде. Сколько врагов добил, а выбывший — ещё и кто
+    * его выбил. */
+  private def squadSummary(battle: SoloPveBattle): Vector[String] = {
+    // Выбывшие — все, кого унесло из строя, и лежащий в строю без HP.
+    val (standing, down) = battle.group.allies.partition(_.alive)
+    val fought = standing.map(_ -> false) ++ (down ++ battle.group.alliesGone).map(_ -> true)
+    // Пришедшие уже в бою (крыса из-под ног, восставший) места в отряде не
+    // имеют (`home = 0`) — они в конце.
+    val lines = fought.sortBy { case (a, _) => (if (a.home > 0) a.home else Int.MaxValue, a.position) }.map {
+      case (a, false) => content.format("battle.squad.summary.standing", "name" -> a.name, "kills" -> a.kills.toString)
+      case (a, true) =>
+        a.lastHitBy match {
+          case Some(by) => content.format("battle.squad.summary.fallenBy",
+                             "name" -> a.name, "kills" -> a.kills.toString, "monster" -> by)
+          case None     => content.format("battle.squad.summary.fallen", "name" -> a.name, "kills" -> a.kills.toString)
+        }
+    }
+    content.text("battle.squad.summary.title") +: lines.toVector
+  }
 
   /** Экран героя, лежащего без сил: только строй. Кнопок нет и не нужно —
     * жать лежачему нечего, бой идёт своей чередой по таймеру. Клавиатуру
     * убираем явно: иначе так и висели бы кнопки боя, которые всё равно ничего
-    * не делают. */
-  private def showDown(user: User, battle: SoloPveBattle, renderer: Renderer): Task[StateType] =
+    * не делают. Показанные раунды кончились — следующим тактом отряд доведёт
+    * бой до конца, о чём и говорим. */
+  private def showDown(user: User, battle: SoloPveBattle, renderer: Renderer): Task[StateType] = {
+    val key = if (battle.group.downRounds >= BattleState.ShownDownRounds) "battle.squad.downScreenLast" else "battle.squad.downScreen"
     renderer.show(user, Screen(
-      content.text("battle.squad.downScreen") + "\n\n" + groupLines(battle).mkString("\n"),
+      content.text(key) + "\n\n" + groupLines(battle).mkString("\n"),
       Nil, hideKeyboard = true)).as(StateType.Battle)
+  }
 
   /** Строка о том, что моб ушёл от лежащего к союзнику; пустая, если не ушёл. */
   private def turnsAwayLine(battle: SoloPveBattle, to: Option[Int]): String =
@@ -2207,7 +2278,7 @@ case class BattleState(
             val reduced  = (damage * (1.0 - allyReduction(a, battle.monsterStats.atk))).toLong.max(1L)
             val toArmor  = reduced.min(a.armor)
             val toHp     = reduced - toArmor
-            val hurt     = a.copy(armor = a.armor - toArmor, hp = (a.hp - toHp).max(0L))
+            val hurt     = a.copy(armor = a.armor - toArmor, hp = (a.hp - toHp).max(0L), lastHitBy = Some(battle.monsterName))
             (hero, battle.copy(group = battle.group.updateAlly(pos)(_ => hurt)), reduced)
         }
     }
@@ -2716,7 +2787,8 @@ case class BattleState(
         val raw = (battle.monsterStats.atk * hit.factor).toLong.max(1L)
         val (struck, dealt) =
           if (hit.ignoresArmor)
-            (battle.copy(group = battle.group.updateAlly(pos)(x => x.copy(hp = (x.hp - raw).max(0L)))), raw)
+            (battle.copy(group = battle.group.updateAlly(pos)(x =>
+              x.copy(hp = (x.hp - raw).max(0L), lastHitBy = Some(battle.monsterName)))), raw)
           else {
             val (_, b, d) = hurtVictim(Victim.Ally(pos), hero, battle, raw)
             (b, d)
@@ -4477,7 +4549,12 @@ case class BattleState(
         else content.format("battle.ally.miss", "name" -> a.name, "monster" -> m)
       }.toVector
       slewLog = blows.collect { case (m, _, true) => content.format("battle.ally.slew", "name" -> a.name, "monster" -> m) }.toVector
-    } yield (b3, hitLog ++ aidLog ++ slewLog)
+      // Добитые — ему в счёт, и стоявший в полях тоже (строки «добивает» у того
+      // нет: его смерть — победа или промоут): по ним сводка доигранного боя.
+      finished = List(struck, blow2).count(_.killed)
+      b4 = if (finished == 0) b3
+           else b3.copy(group = b3.group.updateAlly(a.position)(x => x.copy(kills = x.kills + finished)))
+    } yield (b4, hitLog ++ aidLog ++ slewLog)
 
   /** Удар союзника по мобу на месте `pos`: бросок на попадание против уклонения
     * моба, разброс ±20%, защита моба (кроме дробящего — тот идёт прямо в HP),
@@ -4524,14 +4601,16 @@ case class BattleState(
           procRoll <- if (newHp > 0L) Random.nextIntBetween(1, 101) else ZIO.succeed(100)
           procced  = if (newHp > 0L && procRoll <= Element.ProcChancePct) applyProcs(hit, elem.toSet)._1 else hit
           guarded  = procced.withEffects(procced.effects)
+          // Этим ударом добил — был жив до него, а после него нет.
+          killed   = tmp.monsterCurrentHp > 0L && guarded.monsterCurrentHp <= 0L
           // обратно: активный — как есть, слот — в строй; добитый слот — в павшие
           result =
-            if (active) AllyBlow(guarded, Some(tmp.monsterName), dealt, slew = false)
+            if (active) AllyBlow(guarded, Some(tmp.monsterName), dealt, slew = false, killed = killed)
             else {
               // Счёт предела живёт на бою: босс в бою один, где бы он ни стоял.
               val restored = battle.copy(bossTaken = guarded.bossTaken,
                                group = battle.group.copy(others = battle.group.others.updated(idx, guarded.activeSlot)))
-              if (guarded.monsterCurrentHp <= 0L) AllyBlow(restored.sideFallen(idx), Some(tmp.monsterName), dealt, slew = true)
+              if (guarded.monsterCurrentHp <= 0L) AllyBlow(restored.sideFallen(idx), Some(tmp.monsterName), dealt, slew = true, killed = killed)
               else AllyBlow(restored, Some(tmp.monsterName), dealt, slew = false)
             }
         } yield result
@@ -4569,7 +4648,7 @@ case class BattleState(
           bites    = mobProc && procElement.contains(Element.Cold)
           quenched = bites && (a.burn.isDefined || (ignites && !thawed))
           airy     = mobProc && procElement.contains(Element.Air)
-          struck   = a.copy(armor = a.armor - armorDmg, hp = (a.hp - hpDmg).max(0L))
+          struck   = a.copy(armor = a.armor - armorDmg, hp = (a.hp - hpDmg).max(0L), lastHitBy = Some(tmp.monsterName))
           burned   =
             if (!ignites) struck
             else if (thawed) struck.copy(coldCut = 0)
@@ -4591,12 +4670,26 @@ case class BattleState(
           ).flatten
           result   =
             if (hurt.alive) (after.copy(group = after.group.updateAlly(a.position)(_ => hurt)), line +: extras.toVector)
-            else (after.copy(group = after.group.withoutAlly(a.position)),
+            // В павшие — уже битым: с нулём HP и тем, кто его выбил (сводка
+            // доигранного боя читает это оттуда).
+            else (after.copy(group = after.group.updateAlly(a.position)(_ => hurt).withoutAlly(a.position)),
                   // Наёмника уносит свиток, а поднятого с алтаря выносить
                   // нечем: он рассыпается там же, где стоял (см. goneKey).
                   Vector(line, content.format(BattleState.goneKey(a), "name" -> a.name)))
         } yield result
     } yield out
+
+  /** Союзник, которого умение моба или минибосса обнулило, уходит из строя так
+    * же, как от удара (см. [[mobStrikesAlly]]): наёмника уносит свиток,
+    * поднятый рассыпается. Раньше такой оставался лежать в строю с нулём HP, а
+    * после боя возвращался в отряд и вставал с первым же отдыхом. */
+  private def sweepFallenAlly(battle: SoloPveBattle, ally: Option[BattleAlly]): (SoloPveBattle, Option[String]) =
+    ally.flatMap(a => battle.group.allyAt(a.position)).filter(!_.alive) match {
+      case Some(a) =>
+        (battle.copy(group = battle.group.withoutAlly(a.position)),
+          Some(content.format(BattleState.goneKey(a), "name" -> a.name)))
+      case None => (battle, None)
+    }
 
   /** Отряд после боя: состояние союзников из боя, выбывшие — кто в отлучку,
     * кто насовсем. Наёмника уносит свиток на сутки, а поднятый с алтаря
@@ -4843,10 +4936,12 @@ case class BattleState(
               }
             else selfAid(h1, t1, nowMs).map { case (t2, line) => (h1, t2, battle, if (line.isEmpty) Vector.empty else Vector(line)) }
         }
-      (h2raw, t2, b2, log2raw) = casted
+      (h2raw, t2cast, b2, log2raw) = casted
+      // Союзника добило умение — уходит тем же путём, что и от удара.
+      (t2, goneLine) = sweepFallenAlly(t2cast, facing)
       castSideTrauma <- hitTrauma(h1, h2raw, nowMs)
       (h2, castSideLine) = castSideTrauma
-      log2 = log2raw ++ castSideLine.toVector
+      log2 = log2raw ++ goneLine.toVector ++ castSideLine.toVector
       // 3) конец хода этого моба: энергия и тик ран
       regen      = mobEnergyGain(h2, t2)
       withEnergy = t2.copy(monsterCurrentEnergy = (t2.monsterCurrentEnergy + regen).min(t2.monsterStats.energy))
@@ -5948,7 +6043,11 @@ object BattleState {
     mirrored:   Boolean = false)
 
   /** Удар союзника: бой после него, кого бил, сколько снял, добил ли соседа. */
-  final case class AllyBlow(battle: SoloPveBattle, target: Option[String], damage: Long, slew: Boolean)
+  /** Удар союзника: `slew` — добитый стоял в строю и уходит в павшие со своей
+    * строкой «добивает»; `killed` — этот удар вообще кого-то добил, в том числе
+    * стоявшего в полях боя. */
+  final case class AllyBlow(battle: SoloPveBattle, target: Option[String], damage: Long, slew: Boolean,
+                            killed: Boolean = false)
 
   /** Кто зовёт сородичей в конце первого раунда. */
   def summons(rarity: Rarity): Boolean = rarity == Rarity.Legendary || rarity == Rarity.Mythical
@@ -5958,6 +6057,12 @@ object BattleState {
   val SquadTickAction: String = """{"action":"SquadTick"}"""
   /** С каким HP герой приходит в себя, когда отряд добил всех без него. */
   val DownReviveHp: Long = 1L
+  /** Сколько раундов без героя идут по таймеру и с логом. На следующем такте
+    * отряд доводит бой до конца сам (см. `autoResolve`). */
+  val ShownDownRounds: Int = 3
+  /** Сколько раундов отряд доигрывает самое большее. Не кончился бой и за них —
+    * ничья: все отступают, герой цел, добычи нет. */
+  val AutoResolveRounds: Int = 97
 
   /** С каким HP остаётся тот, кого вытащил пузырьковый нектар. */
   val BubbleHp: Long = 1L
