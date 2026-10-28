@@ -35,6 +35,14 @@ object LootGeneratorSpec extends ZIOSpecDefault {
   }
 
   def spec = suite("LootGeneratorSpec")(
+    test("благословение после минибосса: лишняя вещь — из его набора, а не случайная") {
+      val bosses = pangea.model.monster.MiniBoss.values.toList
+      val got    = bosses.map(b => b -> LootGenerator.rollBlessingBossGear(100L, b, 10L, Rng(7L))._1)
+      val none   = LootGenerator.rollBlessingBossGear(0L, pangea.model.monster.MiniBoss.FireElemental, 10L, Rng(7L))._1
+      assertTrue(got.forall { case (b, item) => item.exists(_.set == b.set) && item.exists(_.set.isDefined) }) &&
+      assertTrue(none.isEmpty)
+    },
+
 
     test("детерминизм: один seed → одинаковый дроп") {
       val (a, _) = LootGenerator.roll(Rarity.Legendary, Race.Orc, 20L, Rng(123L))

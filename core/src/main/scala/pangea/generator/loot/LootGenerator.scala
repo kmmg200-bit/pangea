@@ -539,6 +539,17 @@ object LootGenerator {
     (List(trophy, silver).flatten, r2)
   }
 
+  /** Благословение Азата после минибосса: с шансом `chancePct`% — лишняя вещь его
+    * набора, той же редкости, что и в его добыче (см. [[setRarity]]). Лишняя
+    * вещь — с того, кого убили, а не случайная. RNG тратится всегда. */
+  def rollBlessingBossGear(chancePct: Long, boss: MiniBoss, heroLvl: Long, rng: Rng): (Option[Item], Rng) = {
+    val (roll, r1) = rng.between(0L, 100L)
+    if (roll < chancePct && boss.set.isDefined) {
+      val (drop, r2) = setDrop(boss, heroLvl, 1L, 1L, r1)
+      (drop.itemOpt, r2)
+    } else (None, r1)
+  }
+
   /** Благословение Азата: с шансом `chancePct`% — дополнительная экипировка (редкость
     * по тиру моба). RNG тратится всегда. */
   def rollBlessingExtraGear(chancePct: Long, tier: MobRarity, killLevel: Long, rng: Rng): (Option[Item], Rng) = {

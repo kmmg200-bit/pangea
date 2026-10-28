@@ -5373,8 +5373,11 @@ case class BattleState(
       }
       // Благословение: 5% шанс дополнительной экипировки после боя.
       (blessingGear, _) =
-        if (blessed) LootGenerator.rollBlessingExtraGear(BattleState.BlessingExtraDropPct, battle.rarity, killLevel, rngAfter2)
-        else (Option.empty[pangea.model.item.Item], rngAfter2)
+        if (!blessed) (Option.empty[pangea.model.item.Item], rngAfter2)
+        // С минибосса лишняя вещь — из его набора: она с того, кого убили.
+        else fallenBoss.fold(
+          LootGenerator.rollBlessingExtraGear(BattleState.BlessingExtraDropPct, battle.rarity, killLevel, rngAfter2))(b =>
+          LootGenerator.rollBlessingBossGear(BattleState.BlessingExtraDropPct, b, hero.lvl, rngAfter2))
       // Именной оставляет свой уникальный трофей — если у героя такого ещё
       // нет. Сюжетный бой — нет: там добычу кладёт сюжет.
       owned <- if (storyFight) ZIO.succeed(Set.empty[String]) else ownedNamedTrophies(user, hero, fallen)
