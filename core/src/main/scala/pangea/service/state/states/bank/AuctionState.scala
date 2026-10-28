@@ -133,7 +133,8 @@ case class AuctionState(
       _     <- showBrowse(user, renderer)
     } yield ()
 
-  /** Карточка лота: всё о вещи, цена и что с лотом можно сделать. */
+  /** Карточка лота: всё о вещи, цена, что с лотом можно сделать и что надето
+    * в тот же слот — для сравнения. */
   private def showLot(user: User, lotId: Long, renderer: Renderer): Task[Unit] =
     for {
       now  <- nowMs
@@ -158,7 +159,8 @@ case class AuctionState(
                                           color = ChoiceColor.Positive, data = Map("id" -> lot.id.toString), row = Some(0)))
             else                        Nil
           val state = lotStateLine(lot, now, own)
-          renderer.show(user, Screen(card + state, buttons :+
+          // Под лотом — что надето в тот же слот: брать ли, видно сразу.
+          renderer.show(user, Screen(ItemMenu.withEquipped(card + state, lot.item, hero), buttons :+
             Choice("Auction", content.text("bank.auction.back"), color = ChoiceColor.Negative, row = Some(1))))
       }
     } yield ()

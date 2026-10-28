@@ -55,10 +55,13 @@ object AuctionSpec extends ZIOSpecDefault {
     silver:      Long             = 0L,
     doubloons:   Long             = 0L,
     cells:       Int              = 1,
-    vaultSilver: Long             = 0L
-  ) =
+    vaultSilver: Long             = 0L,
+    weapon:      Option[Item]     = None
+  ) = {
+    val buyer = TestFixtures.hero(userId).copy(silver = silver, doubloons = doubloons)
     for {
-      heroDao  <- TestHeroDao.withHero(userId, TestFixtures.hero(userId).copy(silver = silver, doubloons = doubloons))
+      heroDao  <- TestHeroDao.withHero(userId,
+                    weapon.fold(buyer)(w => buyer.copy(equipment = buyer.equipment.copy(weapon = w))))
       // Второй герой — продавец: ему приходит выручка.
       _        <- heroDao.insertHero(TestFixtures.hero(sellerUs).copy(id = seller, silver = 0L, doubloons = 0L))
       invRepo   = TestInventoryRepository.withItems(inventory)
@@ -73,6 +76,7 @@ object AuctionSpec extends ZIOSpecDefault {
     } yield Fix(
       AuctionState(heroDao, invRepo, TestItemRepository.make, aucRepo, userRepo, bankRepo, payouts, players, content),
       heroDao, invRepo, aucRepo, bankRepo, payoutDao, players, renderer)
+  }
 
   override def spec = suite("Аукцион")(
 
@@ -144,6 +148,22 @@ object AuctionSpec extends ZIOSpecDefault {
               // ничего не куплено: карточка только показывает
               assertTrue(f.lots.snapshot.size == 1) &&
               assertTrue(confirm.last.choices.map(_.id) == List("BuyLotYes", "Auction"))
+    },
+
+    test("на карточке лота — что надето в тот же слот; слот пуст — сравнения нет") {
+      val worn = gear(90L, "Старый меч").copy(attack = 3)
+      for {
+        f     <- auction(lots = List(lotOf(7L)), weapon = Some(worn))
+        _     <- f.state.action(testUser, tap("ShowLot", "id" -> "7"), f.renderer)
+        card  <- f.renderer.sentScreens.map(_.last.text)
+        g     <- auction(lots = List(lotOf(7L)))
+        _     <- g.state.action(testUser, tap("ShowLot", "id" -> "7"), g.renderer)
+        bare  <- g.renderer.sentScreens.map(_.last.text)
+      } yield assertTrue(card.contains(Item.ComparisonSeparator) && card.contains("Надето: " + worn.displayTitle)) &&
+              assertTrue(card.contains("⚔ +3")) &&
+              // сравнение — под лотом, после цены
+              assertTrue(card.indexOf("Цена:") < card.indexOf(Item.ComparisonSeparator)) &&
+              assertTrue(!bare.contains(Item.ComparisonSeparator) && !bare.contains("Надето"))
     },
 
     test("номер лота текстом открывает карточку со всеми характеристиками") {

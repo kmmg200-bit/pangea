@@ -15,7 +15,7 @@ import pangea.repository.item.ItemRepository
 import pangea.repository.artifact.ArtifactRepository
 import pangea.service.artifact.{ArtifactIntake, Intake}
 import pangea.service.state.states.LootState.LootData
-import pangea.service.state.{InventoryFeedback, QuestSupport, SlotChoice, State, TakeAndEquip, UserAction}
+import pangea.service.state.{InventoryFeedback, ItemMenu, QuestSupport, SlotChoice, State, TakeAndEquip, UserAction}
 import zio.{Task, ZIO}
 
 /**
@@ -151,7 +151,7 @@ case class LootState(
     * слот — и «Надеть: …» на каждую вещь, которая встанет вместо надетой;
     * последней — «Оставить», над ней — «🎒 Рюкзак». */
   private def previewScreen(hero: Hero, loot: LootData): Screen = {
-    val preview = currencyLines(hero, loot) ++ loot.items.map(it => itemLineWithEquipped(it, hero))
+    val preview = currencyLines(hero, loot) ++ loot.items.map(it => ItemMenu.withEquipped(itemLine(it), it, hero))
     val wearAll = Option.when(TakeAndEquip.pick(hero, loot.items).nonEmpty)(content.choice("TakeWear", "loot.takeWearLabel"))
     val swaps   = loot.items.zipWithIndex.collect { case (item, i) if TakeAndEquip.replaces(hero, item) =>
       content.choice("TakeSwap", "loot.swapLabel", "name" -> item.name).copy(data = swapData(i, item))
@@ -296,23 +296,6 @@ case class LootState(
       val tail  = if (lines.isEmpty) "" else "\n" + lines.mkString("\n")
       s"🎁 ${item.displayTitle}$tail"
     }
-
-  /** Карточка дропа + строки с надетым в том же слоте — чтобы сразу сравнить.
-   *  Между дропом и надетым — тот же разделитель, что при находке предмета
-   *  ([[Item.ComparisonSeparator]]). Трофеи не сравниваются. */
-  private def itemLineWithEquipped(item: Item, hero: Hero): String = {
-    val base = itemLine(item)
-    if (item.itemType == ItemType.Trophy || item.isNamedTrophy) base
-    else {
-      val equipped = hero.equipment.equippedFor(item.itemType)
-                       .filter(_.itemType != ItemType.NoItem)
-      if (equipped.isEmpty) base
-      else {
-        val blocks = equipped.map(_.equippedComparison("Надето"))
-        base + "\n" + Item.ComparisonSeparator + "\n" + blocks.mkString("\n")
-      }
-    }
-  }
 }
 
 object LootState {

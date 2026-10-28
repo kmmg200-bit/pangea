@@ -28,13 +28,18 @@ object ItemMenu {
     if (s.length <= MaxButtonLen) s else s.take(MaxButtonLen - 1) + "…"
 
   /** Строка товара в списке на продажу: номер, предмет с характеристиками, цена
-   *  и сравнение с тем, что надето в тот же слот, — тот же формат и
-   *  разделитель, что при находке ([[Item.ComparisonSeparator]]). Прилавок
-   *  Ришелье и обоз каравана читаются одинаково. Слот пуст — сравнивать не с чем. */
+   *  и сравнение с надетым (см. [[withEquipped]]). Прилавок Ришелье и обоз
+   *  каравана читаются одинаково. */
   def saleLine(n: Int, item: Item, price: Long, hero: Hero): String = {
-    val stats    = item.statsLines
-    val head     = s"$n) ${item.displayTitle}" + (if (stats.isEmpty) "" else "\n" + stats.mkString("\n"))
-    val base     = s"$head\n🪙 Цена: $price"
+    val stats = item.statsLines
+    val head  = s"$n) ${item.displayTitle}" + (if (stats.isEmpty) "" else "\n" + stats.mkString("\n"))
+    withEquipped(s"$head\n🪙 Цена: $price", item, hero)
+  }
+
+  /** Описание вещи `base` и под ним — что надето в тот же слот, через
+   *  [[Item.ComparisonSeparator]]: единый вид сравнения на добыче, прилавке и
+   *  аукционе. Слот пуст или у вещи слота нет (трофей, камень) — только `base`. */
+  def withEquipped(base: String, item: Item, hero: Hero): String = {
     val equipped = hero.equipment.equippedFor(item.itemType).filter(_.itemType != ItemType.NoItem)
     if (equipped.isEmpty) base
     else base + "\n" + Item.ComparisonSeparator + "\n" + equipped.map(_.equippedComparison("Надето")).mkString("\n")
