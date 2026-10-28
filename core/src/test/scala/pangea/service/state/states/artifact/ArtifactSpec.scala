@@ -135,7 +135,7 @@ object ArtifactSpec extends ZIOSpecDefault {
         } yield assertTrue(screens.last.text.contains("2/4") && screens.last.text.contains("1/30")) &&
                 assertTrue(screens.last.text.contains("7/25")) &&
                 assertTrue(screens.last.choices.map(_.id) ==
-                  List("ArtifactPut", "ArtifactTake", "ArtifactMagic", "LeaveArtifact"))
+                  List("ArtifactPut", "ArtifactTake", "ArtifactTakeAll", "ArtifactMagic", "LeaveArtifact"))
       },
 
       test("положить камень и забрать обратно") {

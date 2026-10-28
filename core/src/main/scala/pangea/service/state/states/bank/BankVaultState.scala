@@ -7,7 +7,7 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.bank.{BankVault, StowGroup, StowSettings}
 import pangea.model.hero.Hero
-import pangea.model.item.ItemStack
+import pangea.model.item.{Item, ItemStack}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
@@ -15,7 +15,7 @@ import pangea.repository.bank.{BankRepoError, BankRepository}
 import pangea.repository.inventory.{InventoryRepoError, InventoryRepository}
 import pangea.service.state.ItemMenu
 import pangea.service.state.states.bank.BankVaultState._
-import pangea.service.state.{CityExit, InventoryFeedback, State, UserAction}
+import pangea.service.state.{CityExit, InventoryFeedback, StackMove, State, UserAction}
 import zio.{Task, ZIO}
 
 /** «Моё хранилище» в Торговом доме: ячейки, выкупленные у Рахадима. Работает
@@ -90,25 +90,30 @@ case class BankVaultState(
 
   // --- Списки предметов ---
 
-  private def showDepositItems(user: User, renderer: Renderer): Task[Unit] =
+  /** Список сумки, из которой кладут. `note` — что только что случилось: оно
+    * идёт строкой над списком, а не отдельным сообщением. `hot` — стопка, из
+    * которой только что положили одну: рядом с ней «⏬ все N». */
+  private def showDepositItems(user: User, renderer: Renderer, note: Option[String] = None,
+                               hot: Option[String] = None): Task[Unit] =
     for {
       hero  <- getHero(user)
       inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
       vault <- getVault(user)
       scene <- readScene(user)
       items  = inv.items.data.filterNot(_.isQuestItem) // сюжетное в хранилище не кладётся
-      _ <- if (items.isEmpty) renderer.show(user, Screen(content.text("bank.vault.emptyInventory"), backRow))
+      _ <- if (items.isEmpty) renderer.show(user, Screen(StackMove.withNote(note, content.text("bank.vault.emptyInventory")), backRow))
            else {
              val (pageItems, totalPages, page) =
                ItemMenu.page(ItemStack.grouped(items), scene.depositPage.getOrElse(0))
              val header = content.format("bank.vault.depositHeader",
                "free" -> vault.freeSlots.toString, "page" -> (page + 1).toString, "total" -> totalPages.toString)
-             val buttons = ItemMenu.stackButtons(pageItems, DepositItemPrefix)
+             val buttons = ItemMenu.stackButtons(pageItems, DepositItemPrefix) ++
+                           StackMove.allButton(pageItems, hot, DepositAllPrefix, content)
              val nav = navRow(
                back = Some(Choice("VaultMenu", content.text("bank.vault.back"), color = ChoiceColor.Negative, row = Some(ItemMenu.NavRow))),
                prev = Option.when(page > 0)(Choice("VaultDepositPrev", content.text("common.prev"), row = Some(ItemMenu.NavRow))),
                next = Option.when(page < totalPages - 1)(Choice("VaultDepositNext", content.text("common.next"), row = Some(ItemMenu.NavRow))))
-             renderer.show(user, Screen(header, buttons ++ nav))
+             renderer.show(user, Screen(StackMove.withNote(note, header), buttons ++ nav))
            }
     } yield ()
 
@@ -123,25 +128,28 @@ case class BankVaultState(
       _     <- showDepositItems(user, renderer)
     } yield ()
 
-  private def showWithdrawItems(user: User, renderer: Renderer): Task[Unit] =
+  /** Список ячейки, из которой забирают; `note` и `hot` — как у [[showDepositItems]]. */
+  private def showWithdrawItems(user: User, renderer: Renderer, note: Option[String] = None,
+                                hot: Option[String] = None): Task[Unit] =
     for {
       hero  <- getHero(user)
       inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
       vault <- getVault(user)
       scene <- readScene(user)
       items  = vault.items.data
-      _ <- if (items.isEmpty) renderer.show(user, Screen(content.text("bank.vault.emptyVault"), backRow))
+      _ <- if (items.isEmpty) renderer.show(user, Screen(StackMove.withNote(note, content.text("bank.vault.emptyVault")), backRow))
            else {
              val (pageItems, totalPages, page) =
                ItemMenu.page(ItemStack.grouped(items), scene.withdrawPage.getOrElse(0))
              val header = content.format("bank.vault.withdrawHeader", "free" -> inv.freeSlots.toString) +
                           (if (totalPages > 1) s" (${page + 1}/$totalPages)" else "")
-             val buttons = ItemMenu.stackButtons(pageItems, WithdrawItemPrefix)
+             val buttons = ItemMenu.stackButtons(pageItems, WithdrawItemPrefix) ++
+                           StackMove.allButton(pageItems, hot, WithdrawAllPrefix, content)
              val nav = navRow(
                back = Some(Choice("VaultMenu", content.text("bank.vault.back"), color = ChoiceColor.Negative, row = Some(ItemMenu.NavRow))),
                prev = Option.when(page > 0)(Choice("VaultWithdrawPrev", content.text("common.prev"), row = Some(ItemMenu.NavRow))),
                next = Option.when(page < totalPages - 1)(Choice("VaultWithdrawNext", content.text("common.next"), row = Some(ItemMenu.NavRow))))
-             renderer.show(user, Screen(header, buttons ++ nav))
+             renderer.show(user, Screen(StackMove.withNote(note, header), buttons ++ nav))
            }
     } yield ()
 
@@ -280,6 +288,12 @@ case class BankVaultState(
       case Some(a) if a.startsWith(WithdrawItemPrefix) =>
         a.drop(WithdrawItemPrefix.length).toLongOption.fold(showMenu(user, renderer))(withdrawItem(user, _, renderer))
           .as(StateType.BankVault)
+      case Some(a) if a.startsWith(DepositAllPrefix) =>
+        a.drop(DepositAllPrefix.length).toLongOption.fold(showMenu(user, renderer))(depositAll(user, _, renderer))
+          .as(StateType.BankVault)
+      case Some(a) if a.startsWith(WithdrawAllPrefix) =>
+        a.drop(WithdrawAllPrefix.length).toLongOption.fold(showMenu(user, renderer))(withdrawAll(user, _, renderer))
+          .as(StateType.BankVault)
       case Some(a) if a.startsWith(StowTogglePrefix) =>
         StowGroup.withId(a.drop(StowTogglePrefix.length))
           .fold(showStowSettings(user, renderer))(toggleStow(user, _, renderer))
@@ -311,54 +325,87 @@ case class BankVaultState(
       _ <- inv.items.data.find(i => i.id == itemId && !i.isQuestItem) match {
         case None => showDepositItems(user, renderer)
         case Some(item) =>
-          bankRepo.deposit(hero.id, item).foldZIO(
-            {
-              case BankRepoError.VaultFull => renderer.show(user, Screen(content.text("bank.vault.full"), Nil)) *> showDepositItems(user, renderer)
-              case BankRepoError.DustLimitReached =>
-                renderer.show(user, Screen(InventoryFeedback.refusalLine(content, item, storage = true), Nil)) *>
-                  showDepositItems(user, renderer)
-              case BankRepoError.NoVault => renderer.show(user, Screen(content.text("bank.vault.none"), leaveRow))
-              case e                     => ZIO.fail(asThrowable(e))
-            },
-            _ => inventoryRepo.removeItem(item.id, hero.id).mapError(asThrowable) *>
-                 renderer.show(user, Screen(content.format("bank.vault.itemDeposited", "name" -> item.name), Nil)) *>
-                 showDepositItems(user, renderer)
-          )
+          depositOne(hero, item).flatMap {
+            case None         => showDepositItems(user, renderer,
+                                   Some(content.format("bank.vault.itemDeposited", "name" -> item.name)), StackMove.hotOf(item))
+            case Some(reason) => showDepositItems(user, renderer, Some(reason))
+          }
       }
     } yield ()
 
   private def withdrawItem(user: User, itemId: Long, renderer: Renderer): Task[Unit] =
     for {
-      hero   <- getHero(user)
-      inv    <- inventoryRepo.get(hero.id).mapError(asThrowable)
-      vault  <- getVault(user)
-      chosen  = vault.items.data.find(_.id == itemId)
-      // Пыль и малые руны места в сумке не занимают — им мешает только свой предел.
-      noRoom  = chosen.exists(i => if (i.weightless) !inv.hasRoomForHoard(i) else inv.freeSlots <= 0)
-      _ <- if (noRoom)
-             renderer.show(user, Screen(
-               chosen.map(InventoryFeedback.refusalLine(content, _, storage = true))
-                 .getOrElse(content.text("bank.vault.inventoryFull")), Nil)) *> showWithdrawItems(user, renderer)
-           else
-             bankRepo.withdraw(hero.id, itemId).foldZIO(
-               {
-                 case BankRepoError.CantFindItemToRemove => showWithdrawItems(user, renderer)
-                 case e                                  => ZIO.fail(asThrowable(e))
-               },
-               item => inventoryRepo.addItem(hero.id, item).foldZIO(
-                 {
-                   // редкая гонка: пока проверяли — сумку успели забить. Возвращаем в ячейку.
-                   case InventoryRepoError.NoMorePlaceForItems | InventoryRepoError.DustLimitReached =>
-                     bankRepo.deposit(hero.id, item).mapError(asThrowable) *>
-                       renderer.show(user, Screen(InventoryFeedback.refusalLine(content, item, storage = true), Nil)) *>
-                       showWithdrawItems(user, renderer)
-                   case e => ZIO.fail(asThrowable(e))
-                 },
-                 _ => renderer.show(user, Screen(content.format("bank.vault.itemWithdrawn", "name" -> item.name), Nil)) *>
-                      showWithdrawItems(user, renderer)
-               )
-             )
+      hero  <- getHero(user)
+      vault <- getVault(user)
+      _ <- vault.items.data.find(_.id == itemId) match {
+        case None => showWithdrawItems(user, renderer)
+        case Some(item) =>
+          withdrawOne(hero, item).flatMap {
+            case None         => showWithdrawItems(user, renderer,
+                                   Some(content.format("bank.vault.itemWithdrawn", "name" -> item.name)), StackMove.hotOf(item))
+            case Some(reason) => showWithdrawItems(user, renderer, Some(reason))
+          }
+      }
     } yield ()
+
+  /** «⏬ все N» у стопки сумки: остаток — в ячейку, пока принимает. */
+  private def depositAll(user: User, itemId: Long, renderer: Renderer): Task[Unit] =
+    for {
+      hero  <- getHero(user)
+      inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
+      items  = inv.items.data.filterNot(_.isQuestItem)
+      _ <- items.find(_.id == itemId) match {
+        case None => showDepositItems(user, renderer)
+        case Some(item) =>
+          StackMove.run(StackMove.stack(items, item))(depositOne(hero, _)).flatMap(moved =>
+            showDepositItems(user, renderer, Some(StackMove.summary(content, moved, "bank.vault.itemsDeposited"))))
+      }
+    } yield ()
+
+  /** «⏬ все N» у стопки в ячейке: остаток — в сумку, сколько влезет. */
+  private def withdrawAll(user: User, itemId: Long, renderer: Renderer): Task[Unit] =
+    for {
+      hero  <- getHero(user)
+      vault <- getVault(user)
+      _ <- vault.items.data.find(_.id == itemId) match {
+        case None => showWithdrawItems(user, renderer)
+        case Some(item) =>
+          StackMove.run(StackMove.stack(vault.items.data, item))(withdrawOne(hero, _)).flatMap(moved =>
+            showWithdrawItems(user, renderer, Some(StackMove.summary(content, moved, "bank.vault.itemsWithdrawn"))))
+      }
+    } yield ()
+
+  /** Вещь из сумки в ячейку: сперва в ячейку и только потом из сумки — если
+    * ячейка откажет, вещь останется при герое. `None` — легла, иначе — почему нет. */
+  private def depositOne(hero: Hero, item: Item): Task[Option[String]] =
+    bankRepo.deposit(hero.id, item).either.flatMap {
+      case Right(_)                             => inventoryRepo.removeItem(item.id, hero.id).mapError(asThrowable).as(None)
+      case Left(BankRepoError.VaultFull)        => ZIO.some(content.text("bank.vault.full"))
+      case Left(BankRepoError.DustLimitReached) => ZIO.some(InventoryFeedback.refusalLine(content, item, storage = true))
+      case Left(BankRepoError.NoVault)          => ZIO.some(content.text("bank.vault.none"))
+      case Left(e)                              => ZIO.fail(asThrowable(e))
+    }
+
+  /** Вещь из ячейки в сумку. Пыль и малые руны места в сумке не занимают — им
+    * мешает только свой предел. Не легла в сумку — возвращается в ячейку. */
+  private def withdrawOne(hero: Hero, item: Item): Task[Option[String]] =
+    inventoryRepo.get(hero.id).mapError(asThrowable).flatMap { inv =>
+      val noRoom = if (item.weightless) !inv.hasRoomForHoard(item) else inv.freeSlots <= 0
+      if (noRoom) ZIO.some(InventoryFeedback.refusalLine(content, item, storage = true))
+      else
+        bankRepo.withdraw(hero.id, item.id).either.flatMap {
+          case Left(BankRepoError.CantFindItemToRemove) => ZIO.some(content.text("stack.gone"))
+          case Left(e)                                  => ZIO.fail(asThrowable(e))
+          case Right(got) =>
+            inventoryRepo.addItem(hero.id, got).either.flatMap {
+              case Right(_) => ZIO.none
+              // редкая гонка: пока проверяли — сумку успели забить. Возвращаем в ячейку.
+              case Left(InventoryRepoError.NoMorePlaceForItems | InventoryRepoError.DustLimitReached) =>
+                bankRepo.deposit(hero.id, got).mapError(asThrowable).as(Some(InventoryFeedback.refusalLine(content, got, storage = true)))
+              case Left(e) => ZIO.fail(asThrowable(e))
+            }
+        }
+    }
 
   private def depositAllSilver(user: User, renderer: Renderer): Task[Unit] =
     for {
@@ -438,6 +485,9 @@ case class BankVaultState(
 object BankVaultState {
   val DepositItemPrefix  = "VaultPut_"
   val WithdrawItemPrefix = "VaultTake_"
+  // «⏬ все N»: за префиксом — id любой вещи стопки.
+  val DepositAllPrefix   = "VaultPutAll_"
+  val WithdrawAllPrefix  = "VaultTakeAll_"
   val StowTogglePrefix   = "VaultStow_"
   val ModeDepositSilver  = "vaultDepositSilver"
   val ModeWithdrawSilver = "vaultWithdrawSilver"

@@ -8,14 +8,14 @@ import pangea.domain.Rng
 import pangea.generator.item.CubeCraft
 import pangea.model.artifact.{Artifact, ArtifactKind, HeroArtifacts}
 import pangea.model.hero.{Achievement, Hero}
-import pangea.model.item.{BrewKind, ItemStack}
+import pangea.model.item.{BrewKind, Item, ItemStack}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.artifact.{ArtifactRepoError, ArtifactRepository}
 import pangea.repository.inventory.{InventoryRepoError, InventoryRepository}
 import pangea.repository.item.ItemRepository
 import pangea.service.state.states.artifact.ArtifactState._
-import pangea.service.state.{HerbLore, InventoryFeedback, ItemMenu, MarisaQuest, State, UiScene, UserAction}
+import pangea.service.state.{HerbLore, InventoryFeedback, ItemMenu, MarisaQuest, StackMove, State, UiScene, UserAction}
 import zio.{Random, Task, ZIO}
 
 /** Экран сборного артефакта: Ларца Азата или Живой сумки (вид задаётся при
@@ -43,6 +43,7 @@ case class ArtifactState(
       "ArtifactTakePrev" -> Target.Run { (u, _, r) => turnTake(u, r, -1).as(self) },
       "ArtifactTakeNext" -> Target.Run { (u, _, r) => turnTake(u, r, +1).as(self) },
       "ArtifactMagic" -> Target.Run { (u, _, r) => magic(u, r).as(self) },
+      "ArtifactTakeAll" -> Target.Run { (u, _, r) => takeEverything(u, r).as(self) },
       "LeaveArtifact" -> Target.Goto(StateType.Backpack)
     ),
     fallback = Target.Run { (u, ua, r) => handleFallback(u, ua, r) }
@@ -58,12 +59,16 @@ case class ArtifactState(
 
   // ── Меню артефакта ─────────────────────────────────────────────────────────
 
-  private def showMenu(user: User, renderer: Renderer): Task[Unit] =
+  /** Меню артефакта. `note` — что только что случилось («Забрать всё»):
+    * строкой над меню, а не отдельным сообщением. */
+  private def showMenu(user: User, renderer: Renderer, note: Option[String] = None): Task[Unit] =
     mine(user).flatMap { a =>
       if (!a.owned) renderer.show(user, Screen(content.text(s"artifact.$key.notOwned"), leaveRow))
-      else renderer.show(user, Screen(menuText(a), List(
+      else renderer.show(user, Screen(StackMove.withNote(note, menuText(a)), List(
         Some(Choice("ArtifactPut",   content.text("artifact.putLabel"),  row = Some(0))),
         Some(Choice("ArtifactTake",  content.text("artifact.takeLabel"), row = Some(0))),
+        // Выгрести артефакт целиком — как почту.
+        Option.when(a.items.data.nonEmpty)(Choice("ArtifactTakeAll", content.text("stack.takeAll"), row = Some(0))),
         Option.when(kind.hasMagic)(Choice("ArtifactMagic", content.text(s"artifact.$key.magicLabel"),
           color = ChoiceColor.Positive, row = Some(1))),
         Some(Choice("LeaveArtifact", content.text("artifact.back"), color = ChoiceColor.Negative, row = Some(2)))
@@ -83,37 +88,45 @@ case class ArtifactState(
 
   // ── Положить / забрать ─────────────────────────────────────────────────────
 
-  private def showPutList(user: User, renderer: Renderer): Task[Unit] =
+  /** Что можно положить. `note` — что только что случилось: оно идёт строкой
+    * над списком, а не отдельным сообщением. `hot` — стопка, из которой только
+    * что положили одну: рядом с ней «⏬ все N». */
+  private def showPutList(user: User, renderer: Renderer, note: Option[String] = None,
+                          hot: Option[String] = None): Task[Unit] =
     for {
       hero  <- getHero(user)
       inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
       a     <- mine(user)
       scene <- readScene(user)
       items  = inv.items.data.filter(i => kind.accepts(i) && !i.isQuestItem)
-      _ <- if (items.isEmpty) renderer.show(user, Screen(content.text(s"artifact.$key.nothingToPut"), backRow))
+      _ <- if (items.isEmpty) renderer.show(user, Screen(StackMove.withNote(note, content.text(s"artifact.$key.nothingToPut")), backRow))
            else {
              val (pageItems, pages, p) = ItemMenu.page(ItemStack.grouped(items), scene.putPage.getOrElse(0))
              val header = content.format("artifact.putHeader",
                "free" -> a.freeSlots.toString, "page" -> (p + 1).toString, "total" -> pages.toString)
-             renderer.show(user, Screen(header,
+             renderer.show(user, Screen(StackMove.withNote(note, header),
                ItemMenu.stackButtons(pageItems, PutPrefix) ++
+                 StackMove.allButton(pageItems, hot, PutAllPrefix, content) ++
                  navRow("ArtifactPutPrev", "ArtifactPutNext", p, pages)))
            }
     } yield ()
 
-  private def showTakeList(user: User, renderer: Renderer): Task[Unit] =
+  /** Что лежит внутри; `note` и `hot` — как у [[showPutList]]. */
+  private def showTakeList(user: User, renderer: Renderer, note: Option[String] = None,
+                           hot: Option[String] = None): Task[Unit] =
     for {
       hero  <- getHero(user)
       inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
       a     <- mine(user)
       scene <- readScene(user)
-      _ <- if (a.items.data.isEmpty) renderer.show(user, Screen(content.text(s"artifact.$key.empty"), backRow))
+      _ <- if (a.items.data.isEmpty) renderer.show(user, Screen(StackMove.withNote(note, content.text(s"artifact.$key.empty")), backRow))
            else {
              val (pageItems, pages, p) = ItemMenu.page(ItemStack.grouped(a.items.data), scene.takePage.getOrElse(0))
              val header = content.format("artifact.takeHeader",
                "free" -> inv.freeSlots.toString, "page" -> (p + 1).toString, "total" -> pages.toString)
-             renderer.show(user, Screen(header,
+             renderer.show(user, Screen(StackMove.withNote(note, header),
                ItemMenu.stackButtons(pageItems, TakePrefix) ++
+                 StackMove.allButton(pageItems, hot, TakeAllPrefix, content) ++
                  navRow("ArtifactTakePrev", "ArtifactTakeNext", p, pages)))
            }
     } yield ()
@@ -130,48 +143,102 @@ case class ArtifactState(
     for {
       hero <- getHero(user)
       inv  <- inventoryRepo.get(hero.id).mapError(asThrowable)
-      _ <- inv.items.data.find(i => i.id == itemId && kind.accepts(i)) match {
+      _ <- inv.items.data.find(i => i.id == itemId && kind.accepts(i) && !i.isQuestItem) match {
         case None => showPutList(user, renderer)
         case Some(item) =>
-          artifacts.put(hero.id, kind, item).foldZIO(
-            {
-              case ArtifactRepoError.NoRoom => renderer.show(user, Screen(content.text(s"artifact.$key.full"), Nil)) *> showPutList(user, renderer)
-              case e                        => ZIO.fail(asThrowable(e))
-            },
-            a => inventoryRepo.removeItem(item.id, hero.id).mapError(asThrowable) *>
-                   renderer.show(user, Screen(content.format("artifact.putDone",
-                     "name" -> item.displayTitle, "free" -> a.freeSlots.toString), Nil)) *>
-                   showPutList(user, renderer)
-          )
+          putOne(hero, item).flatMap {
+            case Right(a)     => showPutList(user, renderer, Some(content.format("artifact.putDone",
+                                   "name" -> item.displayTitle, "free" -> a.freeSlots.toString)), StackMove.hotOf(item))
+            case Left(reason) => showPutList(user, renderer, Some(reason))
+          }
       }
     } yield ()
 
   private def takeItem(user: User, itemId: Long, renderer: Renderer): Task[Unit] =
     for {
       hero <- getHero(user)
-      inv  <- inventoryRepo.get(hero.id).mapError(asThrowable)
       a    <- mine(user)
-      item  = a.items.data.find(_.id == itemId)
-      _ <- if (item.isEmpty) showTakeList(user, renderer)
-           else if (inv.freeSlots <= 0)
-             renderer.show(user, Screen(content.text("common.inventoryFull"), Nil)) *> showTakeList(user, renderer)
-           else
-             artifacts.take(hero.id, kind, itemId).foldZIO(
-               _ => showTakeList(user, renderer),
-               got => inventoryRepo.addItem(hero.id, got).foldZIO(
-                 {
-                   // Сумку успели забить — возвращаем вещь артефакту.
-                   case InventoryRepoError.NoMorePlaceForItems | InventoryRepoError.DustLimitReached =>
-                     artifacts.put(hero.id, kind, got).mapError(asThrowable) *>
-                       renderer.show(user, Screen(InventoryFeedback.refusalLine(content, got), Nil)) *>
-                       showTakeList(user, renderer)
-                   case e => ZIO.fail(asThrowable(e))
-                 },
-                 _ => renderer.show(user, Screen(content.format("artifact.takeDone",
-                        "name" -> got.displayTitle), Nil)) *> showTakeList(user, renderer)
-               )
-             )
+      _ <- a.items.data.find(_.id == itemId) match {
+        case None => showTakeList(user, renderer)
+        case Some(item) =>
+          takeOne(hero, item).flatMap {
+            case None         => showTakeList(user, renderer, Some(content.format("artifact.takeDone",
+                                   "name" -> item.displayTitle)), StackMove.hotOf(item))
+            case Some(reason) => showTakeList(user, renderer, Some(reason))
+          }
+      }
     } yield ()
+
+  /** «⏬ все N» у стопки сумки: остаток — внутрь, пока есть место. */
+  private def putAll(user: User, itemId: Long, renderer: Renderer): Task[Unit] =
+    for {
+      hero  <- getHero(user)
+      inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
+      items  = inv.items.data.filter(i => kind.accepts(i) && !i.isQuestItem)
+      _ <- items.find(_.id == itemId) match {
+        case None => showPutList(user, renderer)
+        case Some(item) =>
+          for {
+            moved <- StackMove.run(StackMove.stack(items, item))(putOne(hero, _).map(_.left.toOption))
+            a     <- mine(user)
+            _     <- showPutList(user, renderer,
+                       Some(StackMove.summary(content, moved, "artifact.putAll", "free" -> a.freeSlots.toString)))
+          } yield ()
+      }
+    } yield ()
+
+  /** «⏬ все N» у стопки внутри: остаток — в сумку, сколько влезет. */
+  private def takeAll(user: User, itemId: Long, renderer: Renderer): Task[Unit] =
+    for {
+      hero <- getHero(user)
+      a    <- mine(user)
+      _ <- a.items.data.find(_.id == itemId) match {
+        case None => showTakeList(user, renderer)
+        case Some(item) =>
+          StackMove.run(StackMove.stack(a.items.data, item))(takeOne(hero, _)).flatMap(moved =>
+            showTakeList(user, renderer, Some(StackMove.summary(content, moved, "artifact.takenAll"))))
+      }
+    } yield ()
+
+  /** «⏬ Забрать всё»: артефакт целиком — в сумку, сколько влезет. Не влезла
+    * одна вещь — пробуем следующую: пыли и рунам сумкино место не нужно. */
+  private def takeEverything(user: User, renderer: Renderer): Task[Unit] =
+    for {
+      hero <- getHero(user)
+      a    <- mine(user)
+      note <- if (a.items.data.isEmpty) ZIO.succeed(content.text(s"artifact.$key.empty"))
+              else StackMove.run(a.items.data, stopAtFirst = false)(takeOne(hero, _))
+                     .map(StackMove.summary(content, _, "artifact.takenAll"))
+      _    <- showMenu(user, renderer, Some(note))
+    } yield ()
+
+  /** Вещь из сумки внутрь: сперва внутрь и только потом из сумки — откажет
+    * артефакт, вещь останется при герое. Справа — артефакт после, слева — почему нет. */
+  private def putOne(hero: Hero, item: Item): Task[Either[String, Artifact]] =
+    artifacts.put(hero.id, kind, item).either.flatMap {
+      case Right(a)                         => inventoryRepo.removeItem(item.id, hero.id).mapError(asThrowable).as(Right(a))
+      case Left(ArtifactRepoError.NoRoom)   => ZIO.left(content.text(s"artifact.$key.full"))
+      case Left(e)                          => ZIO.fail(asThrowable(e))
+    }
+
+  /** Вещь изнутри в сумку. Не легла в сумку — возвращается в артефакт. */
+  private def takeOne(hero: Hero, item: Item): Task[Option[String]] =
+    inventoryRepo.get(hero.id).mapError(asThrowable).flatMap { inv =>
+      val noRoom = if (item.weightless) !inv.hasRoomForHoard(item) else inv.freeSlots <= 0
+      if (noRoom) ZIO.some(InventoryFeedback.refusalLine(content, item))
+      else
+        artifacts.take(hero.id, kind, item.id).either.flatMap {
+          case Left(_) => ZIO.some(content.text("stack.gone"))
+          case Right(got) =>
+            inventoryRepo.addItem(hero.id, got).either.flatMap {
+              case Right(_) => ZIO.none
+              // Сумку успели забить — возвращаем вещь артефакту.
+              case Left(InventoryRepoError.NoMorePlaceForItems | InventoryRepoError.DustLimitReached) =>
+                artifacts.put(hero.id, kind, got).mapError(asThrowable).as(Some(InventoryFeedback.refusalLine(content, got)))
+              case Left(e) => ZIO.fail(asThrowable(e))
+            }
+        }
+    }
 
   // ── Магия Азата ────────────────────────────────────────────────────────────
 
@@ -229,6 +296,10 @@ case class ArtifactState(
         a.drop(PutPrefix.length).toLongOption.fold(showMenu(user, renderer))(putItem(user, _, renderer)).as(self)
       case Some(a) if a.startsWith(TakePrefix) =>
         a.drop(TakePrefix.length).toLongOption.fold(showMenu(user, renderer))(takeItem(user, _, renderer)).as(self)
+      case Some(a) if a.startsWith(PutAllPrefix) =>
+        a.drop(PutAllPrefix.length).toLongOption.fold(showMenu(user, renderer))(putAll(user, _, renderer)).as(self)
+      case Some(a) if a.startsWith(TakeAllPrefix) =>
+        a.drop(TakeAllPrefix.length).toLongOption.fold(showMenu(user, renderer))(takeAll(user, _, renderer)).as(self)
       case _ => showMenu(user, renderer).as(self)
     }
 
@@ -277,6 +348,9 @@ case class ArtifactState(
 object ArtifactState {
   val PutPrefix  = "ArtPut_"
   val TakePrefix = "ArtTake_"
+  // «⏬ все N»: за префиксом — id любой вещи стопки.
+  val PutAllPrefix  = "ArtPutAll_"
+  val TakeAllPrefix = "ArtTakeAll_"
 
   case class ArtifactScene(putPage: Option[Int] = None, takePage: Option[Int] = None)
   object ArtifactScene {

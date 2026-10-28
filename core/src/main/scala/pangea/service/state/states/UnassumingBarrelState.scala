@@ -7,14 +7,14 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.barrel.Barrel
 import pangea.model.hero.Hero
-import pangea.model.item.ItemStack
+import pangea.model.item.{Item, ItemStack}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.barrel.{BarrelRepoError, BarrelRepository}
 import pangea.repository.inventory.{InventoryRepoError, InventoryRepository}
 import pangea.service.state.ItemMenu
 import pangea.service.state.states.UnassumingBarrelState._
-import pangea.service.state.{CityExit, InventoryFeedback, State, UserAction}
+import pangea.service.state.{CityExit, InventoryFeedback, StackMove, State, UserAction}
 import zio.{Task, ZIO}
 
 /** Неприметная бочка в Портовом квартале — личное хранилище игрока: до
@@ -79,7 +79,11 @@ case class UnassumingBarrelState(
 
   // --- Списки предметов ---
 
-  private def showDepositItems(user: User, renderer: Renderer): Task[Unit] =
+  /** Список сумки, из которой кладут. `note` — что только что случилось: оно
+    * идёт строкой над списком, а не отдельным сообщением. `hot` — стопка, из
+    * которой только что положили одну: рядом с ней «⏬ все N». */
+  private def showDepositItems(user: User, renderer: Renderer, note: Option[String] = None,
+                               hot: Option[String] = None): Task[Unit] =
     for {
       hero   <- getHero(user)
       inv    <- inventoryRepo.get(hero.id).mapError(asThrowable)
@@ -87,7 +91,7 @@ case class UnassumingBarrelState(
       scene  <- readScene(user)
       items   = inv.items.data.filterNot(_.isQuestItem) // сюжетное в бочку не кладётся
       _ <- if (items.isEmpty)
-             renderer.show(user, Screen(content.text("barrel.emptyInventory"), backRow))
+             renderer.show(user, Screen(StackMove.withNote(note, content.text("barrel.emptyInventory")), backRow))
            else {
              // Одинаковые вещи — одной кнопкой; слот в бочке каждая занимает свой.
              val (pageItems, totalPages, page) =
@@ -96,12 +100,13 @@ case class UnassumingBarrelState(
                                 "free"  -> barrel.freeSlots.toString,
                                 "page"  -> (page + 1).toString,
                                 "total" -> totalPages.toString)
-             val itemBtns   = ItemMenu.stackButtons(pageItems, DepositItemPrefix)
+             val itemBtns   = ItemMenu.stackButtons(pageItems, DepositItemPrefix) ++
+                              StackMove.allButton(pageItems, hot, DepositAllPrefix, content)
              val nav        = navRow(
                                 back  = Some(Choice("BarrelMenu", content.text("barrel.back"), color = ChoiceColor.Negative, row = Some(ItemMenu.NavRow))),
                                 prev  = Option.when(page > 0)(Choice("DepositItemsPrev", content.text("common.prev"), row = Some(ItemMenu.NavRow))),
                                 next  = Option.when(page < totalPages - 1)(Choice("DepositItemsNext", content.text("common.next"), row = Some(ItemMenu.NavRow))))
-             renderer.show(user, Screen(header, itemBtns ++ nav))
+             renderer.show(user, Screen(StackMove.withNote(note, header), itemBtns ++ nav))
            }
     } yield ()
 
@@ -117,7 +122,9 @@ case class UnassumingBarrelState(
       _      <- showDepositItems(user, renderer)
     } yield ()
 
-  private def showWithdrawItems(user: User, renderer: Renderer): Task[Unit] =
+  /** Список бочки, из которой забирают; `note` и `hot` — как у [[showDepositItems]]. */
+  private def showWithdrawItems(user: User, renderer: Renderer, note: Option[String] = None,
+                                hot: Option[String] = None): Task[Unit] =
     for {
       hero   <- getHero(user)
       inv    <- inventoryRepo.get(hero.id).mapError(asThrowable)
@@ -125,18 +132,19 @@ case class UnassumingBarrelState(
       scene  <- readScene(user)
       items   = barrel.items.data
       _ <- if (items.isEmpty)
-             renderer.show(user, Screen(content.text("barrel.emptyBarrel"), backRow))
+             renderer.show(user, Screen(StackMove.withNote(note, content.text("barrel.emptyBarrel")), backRow))
            else {
              val (pageItems, totalPages, page) =
                ItemMenu.page(ItemStack.grouped(items), scene.withdrawPage.getOrElse(0))
              val header  = content.format("barrel.withdrawItemsHeader", "free" -> inv.freeSlots.toString) +
                            (if (totalPages > 1) s" (${page + 1}/$totalPages)" else "")
-             val buttons = ItemMenu.stackButtons(pageItems, WithdrawItemPrefix)
+             val buttons = ItemMenu.stackButtons(pageItems, WithdrawItemPrefix) ++
+                           StackMove.allButton(pageItems, hot, WithdrawAllPrefix, content)
              val nav     = navRow(
                              back = Some(Choice("BarrelMenu", content.text("barrel.back"), color = ChoiceColor.Negative, row = Some(ItemMenu.NavRow))),
                              prev = Option.when(page > 0)(Choice("WithdrawItemsPrev", content.text("common.prev"), row = Some(ItemMenu.NavRow))),
                              next = Option.when(page < totalPages - 1)(Choice("WithdrawItemsNext", content.text("common.next"), row = Some(ItemMenu.NavRow))))
-             renderer.show(user, Screen(header, buttons ++ nav))
+             renderer.show(user, Screen(StackMove.withNote(note, header), buttons ++ nav))
            }
     } yield ()
 
@@ -199,6 +207,12 @@ case class UnassumingBarrelState(
       case Some(a) if a.startsWith(WithdrawItemPrefix) =>
         a.drop(WithdrawItemPrefix.length).toLongOption.fold(showMenu(user, renderer))(withdrawItem(user, _, renderer))
           .as(StateType.UnassumingBarrel)
+      case Some(a) if a.startsWith(DepositAllPrefix) =>
+        a.drop(DepositAllPrefix.length).toLongOption.fold(showMenu(user, renderer))(depositAll(user, _, renderer))
+          .as(StateType.UnassumingBarrel)
+      case Some(a) if a.startsWith(WithdrawAllPrefix) =>
+        a.drop(WithdrawAllPrefix.length).toLongOption.fold(showMenu(user, renderer))(withdrawAll(user, _, renderer))
+          .as(StateType.UnassumingBarrel)
       case _ =>
         readScene(user).flatMap { scene =>
           scene.barrelMode match {
@@ -223,59 +237,92 @@ case class UnassumingBarrelState(
 
   private def depositItem(user: User, itemId: Long, renderer: Renderer): Task[Unit] =
     for {
-      hero   <- getHero(user)
-      inv    <- inventoryRepo.get(hero.id).mapError(asThrowable)
+      hero <- getHero(user)
+      inv  <- inventoryRepo.get(hero.id).mapError(asThrowable)
       _ <- inv.items.data.find(i => i.id == itemId && !i.isQuestItem) match {
         case None => showDepositItems(user, renderer)
         case Some(item) =>
-          barrelRepo.deposit(hero.id, item).foldZIO(
-            {
-              case BarrelRepoError.BarrelFull => renderer.show(user, Screen(content.text("barrel.barrelFull"), Nil)) *> showDepositItems(user, renderer)
-              // Пыли этого вида в бочке уже сотня — горсть остаётся в сумке.
-              case BarrelRepoError.DustLimitReached =>
-                renderer.show(user, Screen(InventoryFeedback.refusalLine(content, item, storage = true), Nil)) *>
-                  showDepositItems(user, renderer)
-              case e                          => ZIO.fail(asThrowable(e))
-            },
-            _ => inventoryRepo.removeItem(item.id, hero.id).mapError(asThrowable) *>
-                 renderer.show(user, Screen(content.format("barrel.itemDeposited", "name" -> item.name), Nil)) *>
-                 showDepositItems(user, renderer)
-          )
+          depositOne(hero, item).flatMap {
+            case None         => showDepositItems(user, renderer,
+                                   Some(content.format("barrel.itemDeposited", "name" -> item.name)), StackMove.hotOf(item))
+            case Some(reason) => showDepositItems(user, renderer, Some(reason))
+          }
       }
     } yield ()
 
   private def withdrawItem(user: User, itemId: Long, renderer: Renderer): Task[Unit] =
     for {
       hero   <- getHero(user)
-      inv    <- inventoryRepo.get(hero.id).mapError(asThrowable)
       barrel <- getBarrel(user)
-      chosen  = barrel.items.data.find(_.id == itemId)
-      // Пыль и малые руны места в сумке не занимают — им мешает только свой предел.
-      noRoom  = chosen.exists(i => if (i.weightless) !inv.hasRoomForHoard(i) else inv.freeSlots <= 0)
-      _ <- if (noRoom)
-             renderer.show(user, Screen(
-               chosen.map(InventoryFeedback.refusalLine(content, _, storage = true))
-                 .getOrElse(content.text("barrel.inventoryFull")), Nil)) *> showWithdrawItems(user, renderer)
-           else
-             barrelRepo.withdraw(hero.id, itemId).foldZIO(
-               {
-                 case BarrelRepoError.CantFindItemToRemove => showWithdrawItems(user, renderer)
-                 case e                                    => ZIO.fail(asThrowable(e))
-               },
-               item => inventoryRepo.addItem(hero.id, item).foldZIO(
-                 {
-                   // редкая гонка: пока проверяли — кто-то заполнил. Возвращаем предмет в бочку.
-                   case InventoryRepoError.NoMorePlaceForItems | InventoryRepoError.DustLimitReached =>
-                     barrelRepo.deposit(hero.id, item).mapError(asThrowable) *>
-                       renderer.show(user, Screen(InventoryFeedback.refusalLine(content, item, storage = true), Nil)) *>
-                       showWithdrawItems(user, renderer)
-                   case e => ZIO.fail(asThrowable(e))
-                 },
-                 _ => renderer.show(user, Screen(content.format("barrel.itemWithdrawn", "name" -> item.name), Nil)) *>
-                      showWithdrawItems(user, renderer)
-               )
-             )
+      _ <- barrel.items.data.find(_.id == itemId) match {
+        case None => showWithdrawItems(user, renderer)
+        case Some(item) =>
+          withdrawOne(hero, item).flatMap {
+            case None         => showWithdrawItems(user, renderer,
+                                   Some(content.format("barrel.itemWithdrawn", "name" -> item.name)), StackMove.hotOf(item))
+            case Some(reason) => showWithdrawItems(user, renderer, Some(reason))
+          }
+      }
     } yield ()
+
+  /** «⏬ все N» у стопки сумки: остаток — в бочку, пока принимает. */
+  private def depositAll(user: User, itemId: Long, renderer: Renderer): Task[Unit] =
+    for {
+      hero  <- getHero(user)
+      inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
+      items  = inv.items.data.filterNot(_.isQuestItem)
+      _ <- items.find(_.id == itemId) match {
+        case None => showDepositItems(user, renderer)
+        case Some(item) =>
+          StackMove.run(StackMove.stack(items, item))(depositOne(hero, _)).flatMap(moved =>
+            showDepositItems(user, renderer, Some(StackMove.summary(content, moved, "barrel.itemsDeposited"))))
+      }
+    } yield ()
+
+  /** «⏬ все N» у стопки в бочке: остаток — в сумку, сколько влезет. */
+  private def withdrawAll(user: User, itemId: Long, renderer: Renderer): Task[Unit] =
+    for {
+      hero   <- getHero(user)
+      barrel <- getBarrel(user)
+      _ <- barrel.items.data.find(_.id == itemId) match {
+        case None => showWithdrawItems(user, renderer)
+        case Some(item) =>
+          StackMove.run(StackMove.stack(barrel.items.data, item))(withdrawOne(hero, _)).flatMap(moved =>
+            showWithdrawItems(user, renderer, Some(StackMove.summary(content, moved, "barrel.itemsWithdrawn"))))
+      }
+    } yield ()
+
+  /** Вещь из сумки в бочку: сперва в бочку и только потом из сумки — если бочка
+    * откажет, вещь останется при герое. `None` — легла, иначе — почему нет. */
+  private def depositOne(hero: Hero, item: Item): Task[Option[String]] =
+    barrelRepo.deposit(hero.id, item).either.flatMap {
+      case Right(_)                               => inventoryRepo.removeItem(item.id, hero.id).mapError(asThrowable).as(None)
+      case Left(BarrelRepoError.BarrelFull)       => ZIO.some(content.text("barrel.barrelFull"))
+      // Пыли этого вида в бочке уже сотня — горсть остаётся в сумке.
+      case Left(BarrelRepoError.DustLimitReached) => ZIO.some(InventoryFeedback.refusalLine(content, item, storage = true))
+      case Left(e)                                => ZIO.fail(asThrowable(e))
+    }
+
+  /** Вещь из бочки в сумку. Пыль и малые руны места в сумке не занимают — им
+    * мешает только свой предел. Не легла в сумку — возвращается в бочку. */
+  private def withdrawOne(hero: Hero, item: Item): Task[Option[String]] =
+    inventoryRepo.get(hero.id).mapError(asThrowable).flatMap { inv =>
+      val noRoom = if (item.weightless) !inv.hasRoomForHoard(item) else inv.freeSlots <= 0
+      if (noRoom) ZIO.some(InventoryFeedback.refusalLine(content, item, storage = true))
+      else
+        barrelRepo.withdraw(hero.id, item.id).either.flatMap {
+          case Left(BarrelRepoError.CantFindItemToRemove) => ZIO.some(content.text("stack.gone"))
+          case Left(e)                                    => ZIO.fail(asThrowable(e))
+          case Right(got) =>
+            inventoryRepo.addItem(hero.id, got).either.flatMap {
+              case Right(_) => ZIO.none
+              // редкая гонка: пока проверяли — кто-то заполнил. Возвращаем предмет в бочку.
+              case Left(InventoryRepoError.NoMorePlaceForItems | InventoryRepoError.DustLimitReached) =>
+                barrelRepo.deposit(hero.id, got).mapError(asThrowable).as(Some(InventoryFeedback.refusalLine(content, got, storage = true)))
+              case Left(e) => ZIO.fail(asThrowable(e))
+            }
+        }
+    }
 
   /** «Положить всё»: кладём максимум, что позволяют кошелёк героя и место в бочке. */
   private def depositAllSilver(user: User, renderer: Renderer): Task[Unit] =
@@ -358,6 +405,9 @@ case class UnassumingBarrelState(
 object UnassumingBarrelState {
   val DepositItemPrefix  = "DepositItem_"
   val WithdrawItemPrefix = "WithdrawItem_"
+  // «⏬ все N»: за префиксом — id любой вещи стопки.
+  val DepositAllPrefix   = "DepositAll_"
+  val WithdrawAllPrefix  = "WithdrawAll_"
   val ModeDepositSilver  = "depositSilver"
   val ModeWithdrawSilver = "withdrawSilver"
 

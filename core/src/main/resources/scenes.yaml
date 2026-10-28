@@ -1259,6 +1259,9 @@ cube:
   inventoryFull:  "В инвентаре нет места."
   deposited: "{name} помещён в куб."
   withdrawn: "{name} забран из куба."
+  # «все N» — остаток стопки разом; «Забрать всё» — куб целиком.
+  depositedAll: "Положено в куб: {items}."
+  withdrawnAll: "Забрано из куба: {items}."
   activated: "Магия в кубе переливается всеми цветами радуги…"
   # Пополнить куб прямо на нём — дома без алтаря Азата, по цене жреца.
   refill: "✨ +{charges} — {price} 🪙"
@@ -1284,6 +1287,9 @@ barrel:
   barrelFull:    "В бочке нет места."
   itemDeposited: "{name} убран в бочку."
   itemWithdrawn: "{name} забран из бочки."
+  # «все N» — остаток стопки разом.
+  itemsDeposited: "Убрано в бочку: {items}."
+  itemsWithdrawn: "Забрано из бочки: {items}."
   depositSilverPrompt:  "Напишите сумму, которую хотите положить в бочку.\n🪙 У вас: {heroSilver}. Свободно в бочке: {free}."
   withdrawSilverPrompt: "Напишите сумму, которую хотите забрать из бочки.\n🪙 В бочке: {barrelSilver}."
   depositSilverAll:    "Положить всё"
@@ -1359,6 +1365,9 @@ bank:
     full:           "В хранилище нет места — выкупите ещё ячейку у Рахадима."
     itemDeposited:  "{name} убран в хранилище."
     itemWithdrawn:  "{name} забран из хранилища."
+    # «все N» — остаток стопки разом.
+    itemsDeposited: "Убрано в хранилище: {items}."
+    itemsWithdrawn: "Забрано из хранилища: {items}."
     depositSilverPrompt:  "Напишите сумму, которую хотите положить в хранилище.\n🪙 У вас: {heroSilver}. Свободно в хранилище: {free}."
     withdrawSilverPrompt: "Напишите сумму, которую хотите забрать из хранилища.\n🪙 В хранилище: {vaultSilver}."
     depositSilverAll:  "Положить всё"
@@ -1562,6 +1571,15 @@ parcel:
   burned: "🔥 Срок хранения на почте вышел — всё, что там лежало, сгорело: {items}."
   andMore: " и ещё {count}"
 
+# Стопка одинаковых вещей целиком (см. StackMove): взял или положил одну —
+# рядом встаёт «все N»; куб и артефакты выгребаются одной кнопкой.
+stack:
+  all: "⏬ все {n}"
+  takeAll: "⏬ Забрать всё"
+  rest: "Не поместилось: {n}."
+  # Вещь успела уйти, пока игрок жал кнопку.
+  gone: "Этой вещи там уже нет."
+
 mail:
   empty: "На почте для вас ничего нет."
   header: "📮 Почта Торгового дома.\n🎒 Свободно в сумке: {free}"
@@ -1628,6 +1646,9 @@ artifact:
   takeHeader: "Что забираем?\n🎒 Свободно в сумке: {free}\nСтраница {page}/{total}"
   putDone:  "{name} внутри. Свободно мест: {free}"
   takeDone: "{name} снова у вас в сумке."
+  # «все N» — остаток стопки разом; «Забрать всё» — артефакт целиком.
+  putAll:   "Внутри: {items}. Свободно мест: {free}"
+  takenAll: "Снова у вас в сумке: {items}."
   noCharges: "Магия кончилась. Жрец Азата пополнит заряды за {cost} серебра."
   casket:
     title: "💠 Ларец Азата"
@@ -2358,6 +2379,11 @@ merchant:
     color: "negative"
   sold: "Вы продали {name} за {price} серебра."
   soldDoubloons: "Вы продали {name} за {price} 🟡."
+  # Стопка одинаковых вещей — продать разом.
+  sellAllLabel: "🪙 Продать все {n} — {price}"
+  sellAllLabelDoubloons: "🟡 Продать все {n} — {price}"
+  soldAll: "Вы продали {name} ×{n} за {price} серебра."
+  soldAllDoubloons: "Вы продали {name} ×{n} за {price} 🟡."
 
 dungeon:
   enter:
@@ -4206,6 +4232,12 @@ inventory:
   beltNoRoom: "❌ Новый пояс меньше: не всё с пояса в нём поместится, а лишнему нет места в сумке."
   stackCount: "🧮 В сумке таких: {count} шт."
   dropped: "{name} выброшен."
+  # Стопка одинаковых вещей — выбросить разом, но сперва спросить.
+  dropAll: "🗑 Выбросить все {n}"
+  dropAllConfirm: "Выбросить {name} ×{n}? Вернуть их будет нельзя."
+  dropAllYes: "🗑 Выбросить"
+  dropAllNo: "↩ Передумал"
+  droppedAll: "Выброшено: {name} ×{n}."
   tooHighLevel: "❌ Недостаточный уровень! Требуется {required}, ваш уровень {current}."
   notEquippable: "❌ Этот предмет нельзя надеть."
   flaskToBelt: "Флягу не надевают — её кладут на пояс: кнопка «👝 На пояс»."

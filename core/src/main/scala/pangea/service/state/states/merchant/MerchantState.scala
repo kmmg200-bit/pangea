@@ -18,7 +18,7 @@ import pangea.repository.bank.BankRepository
 import pangea.service.purse.Purse
 import pangea.service.state.states.merchant.MerchantState._
 import pangea.model.quest.{DailyKind, DailyNpc, DailyRates}
-import pangea.service.state.{CharacterMenu, CityExit, DailyDialog, DailyQuestLog, InventoryFeedback, ItemMenu, NpcQuestDialog, QuestSupport, SlotChoice, State, TakeAndEquip, UserAction}
+import pangea.service.state.{CharacterMenu, CityExit, DailyDialog, DailyQuestLog, InventoryFeedback, ItemMenu, NpcQuestDialog, QuestSupport, SlotChoice, StackMove, State, TakeAndEquip, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -73,6 +73,7 @@ case class MerchantState(
       "SellListPrev"    -> Target.Run { (u, _,  r) => navigateSell(u, r, -1) },
       "SellListNext"    -> Target.Run { (u, _,  r) => navigateSell(u, r, +1) },
       "ConfirmSellItem" -> Target.Run { (u, _,  r) => doSell(u, r) },
+      "ConfirmSellAll"  -> Target.Run { (u, ua, r) => doSellAll(u, ua, r) },
       "CancelSellItem"  -> Target.Run { (u, _,  r) => currentSellPage(u).flatMap(p => showSellList(u, r, p)) },
       "BackFromSell"    -> Target.Run { (u, _,  r) => showMenu(u, r).as(StateType.Merchant) },
       "OpenCharacter"   -> Target.Run { (u, _,  _) => CharacterMenu.open(heroDao, u.userId, StateType.Merchant) },
@@ -217,12 +218,14 @@ case class MerchantState(
 
   // ── Продажа ─────────────────────────────────────────────────────────────────
 
-  private def showSellList(user: User, renderer: Renderer, page: Int): Task[StateType] =
+  /** Список на продажу. `note` — что только что продано: строкой над списком,
+    * а не отдельным сообщением. */
+  private def showSellList(user: User, renderer: Renderer, page: Int, note: Option[String] = None): Task[StateType] =
     for {
       hero  <- getHero(user)
       items <- inventoryItems(hero)
       _ <- if (items.isEmpty)
-             renderer.show(user, Screen(content.text("merchant.sellEmpty"),
+             renderer.show(user, Screen(StackMove.withNote(note, content.text("merchant.sellEmpty")),
                List(content.choice("BackFromSell", "merchant.sellBackLabel"))))
            else {
              val (pageItems, totalPages, p) = ItemMenu.page(ItemStack.grouped(items), page)
@@ -233,7 +236,7 @@ case class MerchantState(
              val btns    = ItemMenu.stackButtons(pageItems, SellItemPrefix)
              val nav     = sellNavRow(p, totalPages)
              heroDao.writeSceneData(user.userId, SellScene(page = p).asJson) *>
-               renderer.show(user, Screen(header, btns ++ nav))
+               renderer.show(user, Screen(StackMove.withNote(note, header), btns ++ nav))
            }
     } yield StateType.Merchant
 
@@ -249,10 +252,21 @@ case class MerchantState(
           val text =
             if (gold > 0) s"${itemDesc(item)}\n🟡 Цена продажи: $gold"
             else s"${itemDesc(item)}\n🪙 Цена продажи: ${sellPrice(item)}"
+          // Стопку одинаковых можно сдать разом — за общую цену. Сколько в ней,
+          // едет в кнопке: продаём не больше, чем обещали.
+          val stack   = StackMove.same(items, item)
+          val sellAll = Option.when(stack.size > 1) {
+            val total = stack.map(i => if (gold > 0) doubloonPrice(i) else sellPrice(i)).sum
+            Choice("ConfirmSellAll",
+              content.format(if (gold > 0) "merchant.sellAllLabelDoubloons" else "merchant.sellAllLabel",
+                "n" -> stack.size.toString, "price" -> total.toString),
+              color = ChoiceColor.Positive, data = Map("n" -> stack.size.toString), row = Some(1))
+          }
           val choices = List(
-            content.choice("ConfirmSellItem", "merchant.sellItemLabel").copy(data = Map("id" -> itemId.toString), row = Some(0)),
-            content.choice("CancelSellItem",  "merchant.sellBackLabel").copy(row = Some(1))
-          )
+            Some(content.choice("ConfirmSellItem", "merchant.sellItemLabel").copy(data = Map("id" -> itemId.toString), row = Some(0))),
+            sellAll,
+            Some(content.choice("CancelSellItem",  "merchant.sellBackLabel").copy(row = Some(2)))
+          ).flatten
           currentSellPage(user).flatMap(p => heroDao.writeSceneData(user.userId,
             SellScene(page = p, selectedId = Some(itemId)).asJson)) *>
             renderer.show(user, Screen(text, choices, inline = true))
@@ -268,24 +282,49 @@ case class MerchantState(
       items  <- inventoryItems(hero)
       scene  <- currentSellScene(user)
       itemId  = scene.selectedId.getOrElse(-1L)
-      _ <- items.find(_.id == itemId) match {
-        case Some(item) =>
-          val gold  = doubloonPrice(item)
-          val price = if (gold > 0) gold else sellPrice(item)
-          val pay =
-            if (gold > 0) heroDao.updateDoubloons(user.userId, hero.doubloons + gold)
-            else heroDao.updateSilver(user.userId, hero.silver + price)
-          val line = if (gold > 0) "merchant.soldDoubloons" else "merchant.sold"
-          inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)) *>
-            pay *>
-            // Проданная вещь идёт в уговор с Ришелье.
-            DailyQuestLog.add(heroDao, user.userId, DailyNpc.Richelieu, DailyKind.SellItems, 1L) *>
-            renderer.show(user, Screen(
-              content.format(line, "name" -> item.name, "price" -> price.toString), Nil))
-        case None => ZIO.unit
-      }
-      _ <- showSellList(user, renderer, scene.page).unit
+      note   <- items.find(_.id == itemId) match {
+                  case Some(item) => sell(user, hero, List(item)).map(Some(_))
+                  case None       => ZIO.none
+                }
+      _      <- showSellList(user, renderer, scene.page, note).unit
     } yield StateType.Merchant
+
+  /** «Продать все N»: стопка выбранной вещи — разом, но не больше `n` из кнопки
+    * (пока игрок жал, стопка могла и подрасти). */
+  private def doSellAll(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
+    for {
+      hero   <- getHero(user)
+      items  <- inventoryItems(hero)
+      scene  <- currentSellScene(user)
+      limit   = ua.payload.flatMap(p => io.circe.jawn.decode[Map[String, String]](p).toOption)
+                  .flatMap(_.get("n")).flatMap(_.toIntOption).getOrElse(1)
+      note   <- scene.selectedId.flatMap(id => items.find(_.id == id)) match {
+                  case Some(item) => sell(user, hero, StackMove.same(items, item).takeRight(limit)).map(Some(_))
+                  case None       => ZIO.none
+                }
+      _      <- showSellList(user, renderer, scene.page, note).unit
+    } yield StateType.Merchant
+
+  /** Продать вещи одной стопки: деньги — разом, в уговор с Ришелье — каждая.
+    * Материалы Ришелье выкупает золотом. Возвращает строку для списка. */
+  private def sell(user: User, hero: Hero, sold: List[Item]): Task[String] = {
+    val first = sold.headOption
+    val gold  = sold.map(doubloonPrice).sum
+    val price = if (gold > 0) gold else sold.map(sellPrice).sum
+    val name  = first.fold("")(_.name)
+    val line  =
+      if (sold.size > 1) content.format(if (gold > 0) "merchant.soldAllDoubloons" else "merchant.soldAll",
+                           "name" -> name, "n" -> sold.size.toString, "price" -> price.toString)
+      else content.format(if (gold > 0) "merchant.soldDoubloons" else "merchant.sold",
+             "name" -> name, "price" -> price.toString)
+    val pay =
+      if (gold > 0) heroDao.updateDoubloons(user.userId, hero.doubloons + gold)
+      else heroDao.updateSilver(user.userId, hero.silver + price)
+    inventoryRepo.removeItems(sold.map(_.id).toSet, hero.id).mapError(e => new Throwable(e.toString)) *>
+      pay *>
+      // Проданное идёт в уговор с Ришелье — каждая вещь.
+      DailyQuestLog.add(heroDao, user.userId, DailyNpc.Richelieu, DailyKind.SellItems, sold.size.toLong).as(line)
+  }
 
   /** Быстрая продажа всего «хлама» — по настройке игрока (см. [[JunkSaleSettings]],
     * по умолчанию Серая и Белая редкости). Трофеи и камни не продаются никогда. */

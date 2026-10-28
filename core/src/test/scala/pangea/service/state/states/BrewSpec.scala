@@ -469,7 +469,7 @@ object BrewSpec extends ZIOSpecDefault {
         _     <- state2.action(testUser, selectItem(12L), r2)
         _     <- state2.action(testUser, tap("CoatWeapon"), r2)
         h4    <- dao2.getHeroByUserId(userId).map(_.get)
-      } yield assertTrue(card.choices.map(_.id) == List("BeltPut", "CoatWeapon", "RefillByBrew", "Drop", "InventoryList")) &&
+      } yield assertTrue(card.choices.map(_.id) == List("BeltPut", "CoatWeapon", "RefillByBrew", "Drop", "DropAll", "InventoryList")) &&
               assertTrue(h1.weaponDust.coat.contains(pangea.model.hero.WeaponCoat.Poison) && log.contains("смазано ядом")) &&
               assertTrue(beltSlots(h2) == List(BeltSlot.Flask(FlaskKind.Poison, Rarity.Blue, 6))) &&
               assertTrue(left == List(12L)) &&

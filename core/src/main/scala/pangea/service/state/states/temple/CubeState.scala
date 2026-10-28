@@ -13,12 +13,12 @@ import pangea.model.item.{BrewKind, Item, ItemStack}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.bank.BankRepository
-import pangea.repository.inventory.InventoryRepository
+import pangea.repository.inventory.{InventoryRepoError, InventoryRepository}
 import pangea.repository.item.ItemRepository
 import pangea.service.purse.Purse
 import pangea.service.state.ItemMenu
 import pangea.service.state.states.temple.CubeState._
-import pangea.service.state.{AzatData, HerbLore, InventoryFeedback, MarisaQuest, State, UserAction}
+import pangea.service.state.{AzatData, HerbLore, InventoryFeedback, MarisaQuest, StackMove, State, UserAction}
 import java.util.concurrent.TimeUnit
 import zio.{Random, Task, ZIO}
 
@@ -53,6 +53,7 @@ case class CubeState(
       "CubeWithdrawPrev" -> Target.Run { (u, _, r) => navigateWithdraw(u, r, -1).as(StateType.Cube) },
       "CubeWithdrawNext" -> Target.Run { (u, _, r) => navigateWithdraw(u, r, +1).as(StateType.Cube) },
       "CubeActivate"     -> Target.Run { (u, _, r) => activate(u, r).as(StateType.Cube) },
+      "CubeTakeAll"      -> Target.Run { (u, _, r) => withdrawEverything(u, r).as(StateType.Cube) },
       "CubeRefillFull"   -> Target.Run { (u, _, r) => refill(u, r, HallAzatState.RechargeFullSilver, HallAzatState.RechargeFullCharges).as(StateType.Cube) },
       "CubeRefillHalf"   -> Target.Run { (u, _, r) => refill(u, r, HallAzatState.RechargeHalfSilver, HallAzatState.RechargeHalfCharges).as(StateType.Cube) },
       // Куб дома — назад домой, в Храме — в зал Азата.
@@ -71,7 +72,9 @@ case class CubeState(
 
   // --- Меню куба ---
 
-  private def showMenu(user: User, renderer: Renderer): Task[Unit] =
+  /** Меню куба. `note` — что только что случилось («Забрать всё»): строкой
+    * над меню, а не отдельным сообщением. */
+  private def showMenu(user: User, renderer: Renderer, note: Option[String] = None): Task[Unit] =
     for {
       azat <- loadAzat(user)
       home <- loadHome(user)
@@ -91,12 +94,15 @@ case class CubeState(
                   Choice("CubeRefillHalf", content.format("cube.refill", "charges" -> HallAzatState.RechargeHalfCharges.toString,
                     "price" -> HallAzatState.RechargeHalfSilver.toString), row = Some(2)))
                 else Nil
+      // Куб выгребается и одной кнопкой — как почта.
+      takeAll = Option.when(azat.cubeItems.nonEmpty)(Choice("CubeTakeAll", content.text("stack.takeAll"), row = Some(0)))
       choices = List(
         Choice("CubeDeposit",  content.text("cube.menu.deposit"),  row = Some(0)),
-        Choice("CubeWithdraw", content.text("cube.menu.withdraw"), row = Some(0)),
+        Choice("CubeWithdraw", content.text("cube.menu.withdraw"), row = Some(0))
+      ) ++ takeAll.toList ++ List(
         Choice("CubeActivate", content.text("cube.menu.activate"), color = ChoiceColor.Positive, row = Some(1))
       ) ++ refills :+ Choice("LeaveCube", content.text("cube.menu.leave"), color = ChoiceColor.Negative, row = Some(3))
-      _ <- renderer.show(user, Screen(text, choices))
+      _ <- renderer.show(user, Screen(StackMove.withNote(note, text), choices))
     } yield ()
 
   /** Пополнить куб прямо на нём — по цене жреца; только дома и без святилища. */
@@ -122,7 +128,11 @@ case class CubeState(
 
   // --- Списки ---
 
-  private def showDeposit(user: User, renderer: Renderer): Task[Unit] =
+  /** Список сумки, из которой кладут. `note` — что только что случилось: оно
+    * идёт строкой над списком, а не отдельным сообщением. `hot` — стопка, из
+    * которой только что положили одну: рядом с ней «⏬ все N». */
+  private def showDeposit(user: User, renderer: Renderer, note: Option[String] = None,
+                          hot: Option[String] = None): Task[Unit] =
     for {
       hero  <- getHero(user)
       inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
@@ -131,20 +141,23 @@ case class CubeState(
       items  = inv.items.data.filterNot(_.isQuestItem) // сюжетное в куб не кладётся
       free   = AzatState.CubeCapacity - azat.cubeItems.length
       _ <- if (items.isEmpty)
-             renderer.show(user, Screen(content.text("cube.emptyInventory"), backRow))
+             renderer.show(user, Screen(StackMove.withNote(note, content.text("cube.emptyInventory")), backRow))
            else {
              val (pageItems, totalPages, page) = ItemMenu.page(ItemStack.grouped(items), scene.depositPage.getOrElse(0))
              val header  = content.format("cube.depositHeader", "free" -> free.toString) +
                            (if (totalPages > 1) s" (${page + 1}/$totalPages)" else "")
-             val btns    = ItemMenu.stackButtons(pageItems, DepositPrefix)
+             val btns    = ItemMenu.stackButtons(pageItems, DepositPrefix) ++
+                           StackMove.allButton(pageItems, hot, DepositAllPrefix, content)
              val nav     = navRow("CubeMenu",
                              Option.when(page > 0)(Choice("CubeDepositPrev", content.text("common.prev"), row = Some(ItemMenu.NavRow))),
                              Option.when(page < totalPages - 1)(Choice("CubeDepositNext", content.text("common.next"), row = Some(ItemMenu.NavRow))))
-             renderer.show(user, Screen(header, btns ++ nav))
+             renderer.show(user, Screen(StackMove.withNote(note, header), btns ++ nav))
            }
     } yield ()
 
-  private def showWithdraw(user: User, renderer: Renderer): Task[Unit] =
+  /** Список куба, из которого забирают; `note` и `hot` — как у [[showDeposit]]. */
+  private def showWithdraw(user: User, renderer: Renderer, note: Option[String] = None,
+                           hot: Option[String] = None): Task[Unit] =
     for {
       hero  <- getHero(user)
       inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
@@ -152,16 +165,17 @@ case class CubeState(
       scene <- readScene(user)
       items  = azat.cubeItems
       _ <- if (items.isEmpty)
-             renderer.show(user, Screen(content.text("cube.emptyCube"), backRow))
+             renderer.show(user, Screen(StackMove.withNote(note, content.text("cube.emptyCube")), backRow))
            else {
              val (pageItems, totalPages, page) = ItemMenu.page(ItemStack.grouped(items), scene.withdrawPage.getOrElse(0))
              val header  = content.format("cube.withdrawHeader", "free" -> inv.freeSlots.toString) +
                            (if (totalPages > 1) s" (${page + 1}/$totalPages)" else "")
-             val btns    = ItemMenu.stackButtons(pageItems, WithdrawPrefix)
+             val btns    = ItemMenu.stackButtons(pageItems, WithdrawPrefix) ++
+                           StackMove.allButton(pageItems, hot, WithdrawAllPrefix, content)
              val nav     = navRow("CubeMenu",
                              Option.when(page > 0)(Choice("CubeWithdrawPrev", content.text("common.prev"), row = Some(ItemMenu.NavRow))),
                              Option.when(page < totalPages - 1)(Choice("CubeWithdrawNext", content.text("common.next"), row = Some(ItemMenu.NavRow))))
-             renderer.show(user, Screen(header, btns ++ nav))
+             renderer.show(user, Screen(StackMove.withNote(note, header), btns ++ nav))
            }
     } yield ()
 
@@ -200,6 +214,10 @@ case class CubeState(
         a.drop(DepositPrefix.length).toLongOption.fold(showMenu(user, renderer))(depositItem(user, _, renderer)).as(StateType.Cube)
       case Some(a) if a.startsWith(WithdrawPrefix) =>
         a.drop(WithdrawPrefix.length).toLongOption.fold(showMenu(user, renderer))(withdrawItem(user, _, renderer)).as(StateType.Cube)
+      case Some(a) if a.startsWith(DepositAllPrefix) =>
+        a.drop(DepositAllPrefix.length).toLongOption.fold(showMenu(user, renderer))(depositAll(user, _, renderer)).as(StateType.Cube)
+      case Some(a) if a.startsWith(WithdrawAllPrefix) =>
+        a.drop(WithdrawAllPrefix.length).toLongOption.fold(showMenu(user, renderer))(withdrawAll(user, _, renderer)).as(StateType.Cube)
       case _ => showMenu(user, renderer).as(StateType.Cube)
     }
 
@@ -207,40 +225,98 @@ case class CubeState(
     for {
       hero <- getHero(user)
       inv  <- inventoryRepo.get(hero.id).mapError(asThrowable)
-      azat <- loadAzat(user)
       _ <- inv.items.data.find(i => i.id == itemId && !i.isQuestItem) match {
         case None => showDeposit(user, renderer)
         case Some(item) =>
-          if (azat.cubeItems.length >= AzatState.CubeCapacity)
-            renderer.show(user, Screen(content.text("cube.full"), Nil)) *> showDeposit(user, renderer)
-          else
-            inventoryRepo.removeItem(item.id, hero.id).mapError(asThrowable) *>
-              saveAzat(user, azat.copy(cubeItems = azat.cubeItems :+ item)) *>
-              renderer.show(user, Screen(content.format("cube.deposited", "name" -> item.name), Nil)) *>
-              showDeposit(user, renderer)
+          depositOne(user, hero, item).flatMap {
+            case None         => showDeposit(user, renderer,
+                                   Some(content.format("cube.deposited", "name" -> item.name)), StackMove.hotOf(item))
+            case Some(reason) => showDeposit(user, renderer, Some(reason))
+          }
       }
     } yield ()
 
   private def withdrawItem(user: User, itemId: Long, renderer: Renderer): Task[Unit] =
     for {
       hero <- getHero(user)
-      inv  <- inventoryRepo.get(hero.id).mapError(asThrowable)
       azat <- loadAzat(user)
       _ <- azat.cubeItems.find(_.id == itemId) match {
         case None => showWithdraw(user, renderer)
         case Some(item) =>
-          // Пыль и малые руны места не занимают — им мешает только свой предел.
-          if (if (item.weightless) !inv.hasRoomForHoard(item) else inv.freeSlots <= 0)
-            renderer.show(user, Screen(
-              if (item.weightless) InventoryFeedback.refusalLine(content, item, storage = true)
-              else content.text("cube.inventoryFull"), Nil)) *> showWithdraw(user, renderer)
-          else
-            inventoryRepo.addItem(hero.id, item).mapError(asThrowable) *>
-              saveAzat(user, azat.copy(cubeItems = removeFirst(azat.cubeItems, itemId))) *>
-              renderer.show(user, Screen(content.format("cube.withdrawn", "name" -> item.name), Nil)) *>
-              showWithdraw(user, renderer)
+          withdrawOne(user, hero, item).flatMap {
+            case None         => showWithdraw(user, renderer,
+                                   Some(content.format("cube.withdrawn", "name" -> item.name)), StackMove.hotOf(item))
+            case Some(reason) => showWithdraw(user, renderer, Some(reason))
+          }
       }
     } yield ()
+
+  /** «⏬ все N» у стопки сумки: остаток — в куб, пока есть место. */
+  private def depositAll(user: User, itemId: Long, renderer: Renderer): Task[Unit] =
+    for {
+      hero  <- getHero(user)
+      inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
+      items  = inv.items.data.filterNot(_.isQuestItem)
+      _ <- items.find(_.id == itemId) match {
+        case None => showDeposit(user, renderer)
+        case Some(item) =>
+          StackMove.run(StackMove.stack(items, item))(depositOne(user, hero, _)).flatMap(moved =>
+            showDeposit(user, renderer, Some(StackMove.summary(content, moved, "cube.depositedAll"))))
+      }
+    } yield ()
+
+  /** «⏬ все N» у стопки в кубе: остаток — в сумку, сколько влезет. */
+  private def withdrawAll(user: User, itemId: Long, renderer: Renderer): Task[Unit] =
+    for {
+      hero <- getHero(user)
+      azat <- loadAzat(user)
+      _ <- azat.cubeItems.find(_.id == itemId) match {
+        case None => showWithdraw(user, renderer)
+        case Some(item) =>
+          StackMove.run(StackMove.stack(azat.cubeItems, item))(withdrawOne(user, hero, _)).flatMap(moved =>
+            showWithdraw(user, renderer, Some(StackMove.summary(content, moved, "cube.withdrawnAll"))))
+      }
+    } yield ()
+
+  /** «⏬ Забрать всё»: куб целиком — в сумку, сколько влезет. Не влезла одна
+    * вещь — пробуем следующую: пыли и рунам сумкино место не нужно. */
+  private def withdrawEverything(user: User, renderer: Renderer): Task[Unit] =
+    for {
+      hero  <- getHero(user)
+      azat  <- loadAzat(user)
+      note  <- if (azat.cubeItems.isEmpty) ZIO.succeed(content.text("cube.emptyCube"))
+               else StackMove.run(azat.cubeItems, stopAtFirst = false)(withdrawOne(user, hero, _))
+                      .map(StackMove.summary(content, _, "cube.withdrawnAll"))
+      _     <- showMenu(user, renderer, Some(note))
+    } yield ()
+
+  /** Вещь из сумки в куб. `None` — легла, иначе — почему нет. */
+  private def depositOne(user: User, hero: Hero, item: Item): Task[Option[String]] =
+    loadAzat(user).flatMap { azat =>
+      if (azat.cubeItems.length >= AzatState.CubeCapacity) ZIO.some(content.text("cube.full"))
+      else
+        inventoryRepo.removeItem(item.id, hero.id).mapError(asThrowable) *>
+          saveAzat(user, azat.copy(cubeItems = azat.cubeItems :+ item)).as(None)
+    }
+
+  /** Вещь из куба в сумку. Пыль и малые руны места не занимают — им мешает
+    * только свой предел. */
+  private def withdrawOne(user: User, hero: Hero, item: Item): Task[Option[String]] =
+    for {
+      inv  <- inventoryRepo.get(hero.id).mapError(asThrowable)
+      azat <- loadAzat(user)
+      res  <- if (!azat.cubeItems.exists(_.id == item.id)) ZIO.some(content.text("stack.gone"))
+              else if (if (item.weightless) !inv.hasRoomForHoard(item) else inv.freeSlots <= 0)
+                ZIO.some(if (item.weightless) InventoryFeedback.refusalLine(content, item, storage = true)
+                         else content.text("cube.inventoryFull"))
+              else
+                inventoryRepo.addItem(hero.id, item).either.flatMap {
+                  case Right(_) => saveAzat(user, azat.copy(cubeItems = removeFirst(azat.cubeItems, item.id))).as(None)
+                  case Left(InventoryRepoError.NoMorePlaceForItems | InventoryRepoError.DustLimitReached) =>
+                    ZIO.some(InventoryFeedback.refusalLine(content, item, storage = true))
+                  case Left(e) => ZIO.fail(asThrowable(e))
+                }
+    } yield res
 
   // --- Активация: просчёт рецептов ---
 
@@ -327,6 +403,9 @@ case class CubeState(
 object CubeState {
   val DepositPrefix  = "CubeDeposit_"
   val WithdrawPrefix = "CubeWithdraw_"
+  // «⏬ все N»: за префиксом — id любой вещи стопки.
+  val DepositAllPrefix  = "CubeDepositAll_"
+  val WithdrawAllPrefix = "CubeWithdrawAll_"
 
   /** Откуда куб берёт силу. */
   sealed trait Power { def charges: Int }
