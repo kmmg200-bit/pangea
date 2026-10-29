@@ -1,5 +1,6 @@
 package server
 
+import pangea.service.Background
 import pangea.service.admin.AdminConfig
 import pangea.service.donation.Donations
 import pangea.service.state.StateHandler
@@ -11,13 +12,14 @@ trait Server {
 }
 
 object Server {
-  val live: ZLayer[ServerConfig with StateHandler with AdminConfig with Donations, Nothing, Server] =
+  val live: ZLayer[ServerConfig with StateHandler with AdminConfig with Donations with Background, Nothing, Server] =
     ZLayer {
       for {
         config       <- ZIO.service[ServerConfig]
         stateHandler <- ZIO.service[StateHandler]
         adminConfig  <- ZIO.service[AdminConfig]
         donations    <- ZIO.service[Donations]
-      } yield new ServerLive(config, stateHandler, adminConfig, donations)
+        background   <- ZIO.service[Background]
+      } yield new ServerLive(config, stateHandler, adminConfig, donations, background)
     }
 }

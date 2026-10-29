@@ -22,9 +22,6 @@ class SchedulerPollerLive(dao: ScheduledTaskDao, handler: StateHandler) extends 
                .withParallelism(Parallelism)
     } yield ()
 
-  override def start: Task[Unit] =
-    (poll.catchAllCause(c => ZIO.logErrorCause("Scheduler poll failed", c)) *> ZIO.sleep(PollInterval)).forever
-
   /** Исполнить одну задачу и проставить итоговый статус. Поломка — и ошибка,
     * и падение кода (defect) — это попытка: причина целиком в лог, после
     * [[MaxAttempts]] задача мертва. Раньше падение кода проходило мимо: задача

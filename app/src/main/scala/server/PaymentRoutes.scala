@@ -4,7 +4,7 @@ import io.circe.Json
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 import org.http4s.dsl.Http4sDsl
-import pangea.service.ErrorLog
+import pangea.service.{Background, ErrorLog}
 import pangea.service.donation.Donations
 import zio.interop.catz._
 import zio.{Task, ZIO}
@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit
   * Страниц возврата у нас нет: `SuccessURL` и `FailURL` ведут прямо в диалог с
   * сообществом, так что после оплаты игрок попадает туда, где игра и
   * продолжается, а бот через секунду пишет ему о зачислении. */
-final class PaymentRoutes(donations: Donations) {
+final class PaymentRoutes(donations: Donations, background: Background) {
 
   private val dsl = Http4sDsl[Task]
   import dsl._
@@ -39,9 +39,8 @@ final class PaymentRoutes(donations: Donations) {
           case Donations.Notified.Granted(payment) =>
             // Письмо игроку не должно задерживать ответ банку: он ждёт его 10
             // секунд, а дублоны к этому моменту уже начислены.
-            donations.announce(payment)
-              .catchAllCause(ErrorLog.logged(s"donation: письмо о зачислении не ушло: ${payment.orderId.value}"))
-              .forkDaemon *> accepted
+            background.fork(donations.announce(payment)
+              .catchAllCause(ErrorLog.logged(s"donation: письмо о зачислении не ушло: ${payment.orderId.value}"))) *> accepted
 
           // Заказ не найден, сумма не та, тело не объект — повтор это не
           // вылечит, а слать его банк будет месяц. Отвечаем `OK` и шумим в лог.

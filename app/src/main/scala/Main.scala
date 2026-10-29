@@ -31,6 +31,7 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.repository.user.UserRepository
 import pangea.client.tbank.{TBankClient, TBankConfig}
+import pangea.service.Background
 import pangea.service.activity.ActivityContest
 import pangea.service.admin.{AdminConfig, AdminPanel, NameBackfill}
 import pangea.service.donation.Donations
@@ -38,7 +39,7 @@ import pangea.service.parcel.{Parcels, Transfers}
 import pangea.service.payout.Payouts
 import pangea.service.referral.Referrals
 import pangea.service.promo.PromoCodes
-import pangea.service.schedule.{Scheduler, SchedulerPoller}
+import pangea.service.schedule.{Scheduler, SchedulerPoller, SchedulerPollerLive}
 import pangea.service.sender.Api
 import pangea.service.sender.vk.config.VkConfig
 import pangea.service.sender.vk.VkPlayers
@@ -59,10 +60,11 @@ object Main extends ZIOAppDefault {
   override val bootstrap: ZLayer[ZIOAppArgs, Nothing, Unit] =
     (Runtime.removeDefaultLoggers >>> SLF4J.slf4j) ++ Runtime.setUnhandledErrorLogLevel(LogLevel.Error)
 
-  private type Env = Server with SchedulerPoller with Donations with ActivityContest with Transfers
+  private type Env = Server with SchedulerPoller with Donations with ActivityContest with Transfers with Background
 
   private val env =
     ZLayer.make[Env](
+      Background.live,
       VkConfig.live,
       PostgresConfig.live,
       Transactor.live,
@@ -121,48 +123,47 @@ object Main extends ZIOAppDefault {
   /** Сверка платежей: добирает потерянные нотификации и застрявшие выдачи.
     * Нотификация обычно приходит за секунды, так что это страховка, а не
     * основной путь — раз в минуту более чем достаточно. */
-  private val reconcileLoop =
+  private def reconcileLoop(background: Background) =
     ZIO.serviceWithZIO[Donations] { donations =>
-      (ZIO
-        .clockWith(_.currentTime(TimeUnit.MILLISECONDS))
-        .flatMap(donations.reconcile)
-        .catchAllCause(cause => ZIO.logErrorCause("Сверка платежей упала", cause)) *>
-        ZIO.sleep(1.minute)).forever
+      background.repeat(1.minute, "Сверка платежей упала")(now.flatMap(donations.reconcile))
     }
 
   /** Итоги недели конкурса активности: раз в минуту смотрим, не началась ли
     * новая неделя и подведена ли прошлая. Подведённая повторно ничего не
     * платит — минута тут лишь задержка до наград после полуночи понедельника. */
-  private val contestLoop =
+  private def contestLoop(background: Background) =
     ZIO.serviceWithZIO[ActivityContest] { contest =>
-      (ZIO
-        .clockWith(_.currentTime(TimeUnit.MILLISECONDS))
-        .flatMap(contest.settle)
-        .catchAllCause(cause => ZIO.logErrorCause("Итоги конкурса активности упали", cause)) *>
-        ZIO.sleep(1.minute)).forever
+      background.repeat(1.minute, "Итоги конкурса активности упали")(now.flatMap(contest.settle))
     }
 
   /** Почта: срок хранения вышел — всё, что лежит на почте, сгорает, и хозяину
     * уходит письмо; посылки, что не разложились сразу, раскладываются.
     * Хода хозяина не ждём; минута — лишь задержка после срока. */
-  private val mailLoop =
+  private def mailLoop(background: Background) =
     ZIO.serviceWithZIO[Transfers] { transfers =>
-      (ZIO
-        .clockWith(_.currentTime(TimeUnit.MILLISECONDS))
-        .flatMap(transfers.mailRound)
-        .catchAllCause(cause => ZIO.logErrorCause("Обход почты упал", cause)) *>
-        ZIO.sleep(1.minute)).forever
+      background.repeat(1.minute, "Обход почты упал")(now.flatMap(transfers.mailRound))
     }
 
+  /** Отложенные события: готовые задачи из очереди — каждые пять секунд. */
+  private def pollerLoop(background: Background) =
+    ZIO.serviceWithZIO[SchedulerPoller] { poller =>
+      background.repeat(SchedulerPollerLive.PollInterval, "Scheduler poll failed")(poller.poll)
+    }
+
+  private val now = ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+
+  /** Фон и сервер. Остановка (SIGTERM от `docker stop` → прерывание главного
+    * fiber'а): сервер закрывает порт, затем фон дожидается начатых ходов и
+    * витков циклов — и лишь потом закрываются слои: пул базы, клиенты ВК и
+    * банка. Раньше фон шёл через `forkDaemon`, и пул закрывался прямо под ним. */
   private val program =
-    for {
-      poller <- ZIO.service[SchedulerPoller]
-      _      <- poller.start.forkDaemon
-      _      <- reconcileLoop.forkDaemon
-      _      <- contestLoop.forkDaemon
-      _      <- mailLoop.forkDaemon
-      _      <- ZIO.serviceWithZIO[Server](_.run())
-    } yield ()
+    ZIO.serviceWithZIO[Background] { background =>
+      (pollerLoop(background) *>
+        reconcileLoop(background) *>
+        contestLoop(background) *>
+        mailLoop(background) *>
+        ZIO.serviceWithZIO[Server](_.run())).ensuring(background.shutdown)
+    }
 
   // Сервер упал целиком (не поднялся слой, не открылся порт) — причина в лог,
   // а не только в консоль.

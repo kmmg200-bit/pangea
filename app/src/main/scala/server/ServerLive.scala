@@ -9,7 +9,7 @@ import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.implicits._
 import org.http4s.{HttpApp, HttpRoutes}
 import pangea.model.user.VkId
-import pangea.service.ErrorLog
+import pangea.service.{Background, ErrorLog}
 import pangea.service.admin.{AdminConfig, AdminPanel}
 import pangea.service.donation.Donations
 import pangea.service.state.{StateHandler, UserAction}
@@ -19,14 +19,17 @@ import server.model.{ServerConfig, VkEvent}
 import zio.interop.catz._
 import zio.{Task, UIO, ZIO}
 
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
+
 final class ServerLive(
   config: ServerConfig,
   stateHandler: StateHandler,
   adminConfig: AdminConfig,
-  donations: Donations
+  donations: Donations,
+  background: Background
 ) extends Server {
 
-  private val payments = new PaymentRoutes(donations)
+  private val payments = new PaymentRoutes(donations, background)
 
   private val logs = new LogsRoutes(adminConfig)
 
@@ -55,9 +58,11 @@ final class ServerLive(
         // «ok» — сразу, событие — в фоне. ВК ждёт ответа: не дождавшись, он
         // повторяет событие, а после череды таймаутов притормаживает отправку
         // всем игрокам разом. Порядок ходов одного игрока держит его лок,
-        // повтор ВК отсекает номер события. Именно forkDaemon: обычный fork
-        // прервался бы вместе с запросом, как только мы ответим.
-        _    <- handle(json).forkDaemon
+        // повтор ВК отсекает номер события. В фон — не обычным fork: тот
+        // прервался бы вместе с запросом, как только мы ответим. И не
+        // forkDaemon: остановка сервера оборвала бы ход посреди записей, а ВК
+        // после «ok» его уже не повторит, — фон ход дождётся (см. Background).
+        _    <- background.fork(handle(json))
         resp <- Ok("ok")
       } yield resp
   }
@@ -142,8 +147,16 @@ final class ServerLive(
       .withHost(config.host)
       .withPort(config.port)
       .withHttpApp(httpApp)
+      // Остановка: запросы, что уже идут, ждём не дольше этого — ответ ВК и
+      // кассе занимает миллисекунды. А вот простаивающие keep-alive
+      // соединения ВК держали бы остановку все 30 секунд по умолчанию.
+      .withShutdownTimeout(ServerLive.ShutdownTimeout)
       .build
       .useForever
       .orDie
   }
+}
+
+object ServerLive {
+  val ShutdownTimeout: FiniteDuration = 5.seconds
 }

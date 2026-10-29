@@ -39,6 +39,10 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    # SIGTERM → SIGKILL. Остановке нужно до 5 с на HTTP-сервер и до 15 с на
+    # фоновые дела (ServerLive.ShutdownTimeout, Background.Grace); по
+    # умолчанию Docker даёт лишь 10.
+    stop_grace_period: 30s
 
 volumes:
   postgres_data:

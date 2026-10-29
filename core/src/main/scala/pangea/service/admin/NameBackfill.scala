@@ -4,6 +4,7 @@ import pangea.dao.hero.HeroDao
 import pangea.model.hero.HeroName
 import pangea.model.user.{User, UserId}
 import pangea.repository.user.UserRepository
+import pangea.service.Background
 import pangea.service.sender.Api
 import zio.{Duration, Ref, Task, ZIO, ZLayer, durationInt}
 
@@ -12,8 +13,10 @@ import zio.{Duration, Ref, Task, ZIO, ZLayer, durationInt}
   * упереться в лимиты. Каждому ставится первое из [[NameBackfill.candidates]],
   * что проходит правила [[HeroName]] и ещё свободно. Не подошло ничего —
   * герой остаётся без имени и по-прежнему виден по имени из ВК. Повторный
-  * запуск трогает только тех, кто так и остался без имени. */
-final class NameBackfill(heroDao: HeroDao, userRepo: UserRepository, api: Api, running: Ref[Boolean], pause: Duration) {
+  * запуск трогает только тех, кто так и остался без имени. Поэтому при
+  * остановке сервера обход не ждут, а обрывают сразу. */
+final class NameBackfill(heroDao: HeroDao, userRepo: UserRepository, api: Api, background: Background,
+                         running: Ref[Boolean], pause: Duration) {
   import NameBackfill._
 
   /** Начать в фоне; по окончании — сводка админу `admin`. `false` — уже идёт. */
@@ -21,13 +24,14 @@ final class NameBackfill(heroDao: HeroDao, userRepo: UserRepository, api: Api, r
     running.getAndSet(true).flatMap {
       case true  => ZIO.succeed(false)
       case false =>
-        run
-          .foldCauseZIO(
-            cause => ZIO.logErrorCause("Имена из ВК не проставлены", cause) *> notify(admin, Failed),
-            report => notify(admin, summary(report)))
-          .ensuring(running.set(false))
-          .forkDaemon
-          .as(true)
+        background.forkUntilShutdown(
+          run
+            .foldCauseZIO(
+              cause => ZIO.logErrorCause("Имена из ВК не проставлены", cause) *> notify(admin, Failed),
+              report => notify(admin, summary(report)))
+            .onInterrupt(ZIO.logWarning("Имена из ВК: оборваны остановкой сервера — повторный запуск доделает"))
+            .ensuring(running.set(false))
+        ).as(true)
     }
 
   /** Пройти всех безымянных героев. */
@@ -100,12 +104,13 @@ object NameBackfill {
        |  без имени (ничего не подошло или занято): ${r.skipped}
        |  ВК не ответил: ${r.failed}""".stripMargin
 
-  val live: ZLayer[HeroDao with UserRepository with Api, Nothing, NameBackfill] =
+  val live: ZLayer[HeroDao with UserRepository with Api with Background, Nothing, NameBackfill] =
     ZLayer.fromZIO(
       for {
-        heroDao  <- ZIO.service[HeroDao]
-        userRepo <- ZIO.service[UserRepository]
-        api      <- ZIO.service[Api]
-        running  <- Ref.make(false)
-      } yield new NameBackfill(heroDao, userRepo, api, running, Pause))
+        heroDao    <- ZIO.service[HeroDao]
+        userRepo   <- ZIO.service[UserRepository]
+        api        <- ZIO.service[Api]
+        background <- ZIO.service[Background]
+        running    <- Ref.make(false)
+      } yield new NameBackfill(heroDao, userRepo, api, background, running, Pause))
 }

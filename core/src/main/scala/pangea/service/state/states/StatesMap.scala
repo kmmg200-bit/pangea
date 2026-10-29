@@ -97,6 +97,7 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.repository.user.UserRepository
 import pangea.service.parcel.{Parcels, Transfers}
+import pangea.service.Background
 import pangea.service.payout.Payouts
 import pangea.service.donation.Donations
 import pangea.service.schedule.Scheduler
@@ -177,7 +178,8 @@ object StatesMap {
       with Journal
       with SceneContent
       with Scheduler
-      with Referrals,
+      with Referrals
+      with Background,
     Throwable,
     StatesMap
   ] =
@@ -201,6 +203,7 @@ object StatesMap {
         scheduler     <- ZIO.service[Scheduler]
         arenaDao      <- ZIO.service[ArenaDao]
         referrals     <- ZIO.service[Referrals]
+        background    <- ZIO.service[Background]
         // Кошель героя: своё серебро, а следом — ячейка в Торговом доме.
         bank           = Some(bankRepo)
         // Ларец Азата и Живая сумка ловят добычу до того, как она попадёт в сумку.
@@ -256,7 +259,7 @@ object StatesMap {
           Socketing -> SocketingState(heroDao, inventoryRepo, content),
           CityCenter -> CityCenterState(content),
           TradeHouse -> TradeHouseState(heroDao, userRepo, bankRepo, parcels, inventoryRepo, donations, content, artifacts),
-          Transfer   -> TransferState(heroDao, inventoryRepo, transfers, content),
+          Transfer   -> TransferState(heroDao, inventoryRepo, transfers, content, background),
           Mail       -> MailState(heroDao, inventoryRepo, parcels, content),
           BankVault  -> BankVaultState(heroDao, inventoryRepo, bankRepo, content, artifacts),
           Auction    -> AuctionState(heroDao, inventoryRepo, itemRepo, auctionRepo, userRepo, bankRepo, payouts, players, content),

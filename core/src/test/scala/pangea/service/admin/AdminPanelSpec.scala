@@ -5,6 +5,7 @@ import pangea.model.hero.Hero
 import pangea.model.item.{GemKind, ItemSet, ItemType, Rarity}
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
+import pangea.service.Background
 import pangea.service.state.UserAction
 import pangea.test._
 import zio.test._
@@ -43,8 +44,9 @@ object AdminPanelSpec extends ZIOSpecDefault {
     for {
       users   <- TestUserRepository.withUser(testUser)
       api     <- TestApi.make
+      bg      <- Background.make(Background.Grace)
       running <- Ref.make(false)
-    } yield new NameBackfill(dao, users, api, running, Duration.Zero)
+    } yield new NameBackfill(dao, users, api, bg, running, Duration.Zero)
 
   private def panel(hero: Hero = TestFixtures.hero(userId), password: Option[String] = Some(Password)) =
     for {

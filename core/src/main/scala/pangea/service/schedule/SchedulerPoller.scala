@@ -12,11 +12,10 @@ import zio.{Task, ZLayer}
  */
 trait SchedulerPoller {
 
-  /** Один тик: забрать готовые задачи и исполнить. */
+  /** Один тик: забрать готовые задачи и исполнить. Крутит его `Main` — циклом
+    * фона ([[pangea.service.Background.repeat]]) раз в
+    * [[SchedulerPollerLive.PollInterval]]. */
   def poll: Task[Unit]
-
-  /** Бесконечный цикл поллера (форкается в `Main`). Никогда не падает. */
-  def start: Task[Unit]
 }
 
 object SchedulerPoller {

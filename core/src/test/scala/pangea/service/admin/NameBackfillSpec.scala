@@ -3,6 +3,7 @@ package pangea.service.admin
 import pangea.model.hero.HeroId
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
+import pangea.service.Background
 import pangea.test._
 import zio.test._
 import zio.{Duration, Ref, ZIO}
@@ -36,10 +37,11 @@ object NameBackfillSpec extends ZIOSpecDefault {
                        .copy(id = HeroId(n), name = Option.when(n == 2L)("Тарен"))))
         users   <- TestUserRepository.withUsers(ids.map(user): _*)
         api     <- TestApi.make
+        bg      <- Background.make(Background.Grace)
         running <- Ref.make(false)
-        report  <- new NameBackfill(dao, users, api, running, Duration.Zero).run
+        report  <- new NameBackfill(dao, users, api, bg, running, Duration.Zero).run
         names   <- ZIO.foreach(ids)(n => dao.getHeroByUserId(UserId(n)).map(_.flatMap(_.name)))
-        again   <- new NameBackfill(dao, users, api, running, Duration.Zero).run
+        again   <- new NameBackfill(dao, users, api, bg, running, Duration.Zero).run
       } yield assertTrue(names == List(Some("Иван Иванов"), Some("Тарен"), None, Some("Иван"), Some("Иван И"), None)) &&
               assertTrue(report == NameBackfill.Report(named = 3, skipped = 1, failed = 0)) &&
               // повторный запуск — только по тем, кто так и остался без имени

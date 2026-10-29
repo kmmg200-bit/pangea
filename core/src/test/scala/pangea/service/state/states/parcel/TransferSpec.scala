@@ -6,6 +6,7 @@ import pangea.model.hero.HeroId
 import pangea.model.item.{Item, ItemType, Rarity}
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
+import pangea.service.Background
 import pangea.service.chat.ChatCommand
 import pangea.service.parcel.{Parcels, TransferTarget, Transfers}
 import pangea.service.state.{PlayerLock, UserAction}
@@ -85,7 +86,8 @@ object TransferSpec extends ZIOSpecDefault {
       lock     <- PlayerLock.make
       transfers = Transfers(invRepo, userRepo, parcels, players, content, heroDao, bank,
                     pangea.service.payout.Payouts(TestPayoutDao.empty, heroDao, content), lock)
-    } yield (TransferState(heroDao, invRepo, transfers, content),
+      bg       <- Background.make(Background.Grace)
+    } yield (TransferState(heroDao, invRepo, transfers, content, bg),
              invRepo, parcelDao, bank, players, renderer)
 
   override def spec = suite("Передача вещей")(
