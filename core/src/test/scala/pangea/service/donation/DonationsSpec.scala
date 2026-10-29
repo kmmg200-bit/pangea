@@ -175,6 +175,27 @@ object DonationsSpec extends ZIOSpecDefault {
                 assertTrue(events.count(_.eventType == "donation_granted") == 1)
       },
 
+      test("выданный донат — письмом каждому админу, ровно раз на заказ; неоплаченный — без письма") {
+        for {
+          k       <- kit()
+          _       <- k.donations.start(user, pack, "player@mail.ru", now)
+          order   <- orderOf(k.payments)
+          _       <- k.donations.notified(notification(order.orderId.value, "AUTHORIZED"), now)
+          early   <- k.api.forwards
+          _       <- k.donations.notified(notification(order.orderId.value, "CONFIRMED"), now)
+          _       <- k.donations.notified(notification(order.orderId.value, "CONFIRMED"), now + 10L)
+          fresh   <- orderOf(k.payments)
+          _       <- k.bank.setState("CONFIRMED")
+          _       <- k.donations.refresh(fresh, now + 20L)
+          letters <- k.api.forwards
+        } yield assertTrue(early.isEmpty) &&
+                assertTrue(letters.map(_._1) == DonationsLive.Admins) &&
+                assertTrue(letters.map(_._1).toSet == Set(VkId("178812631"), VkId("51422811"))) &&
+                assertTrue(letters.forall { case (_, text, fwd) =>
+                  text.contains("99 ₽") && text.contains("🟡 100 дублонов") &&
+                    text.contains("vk.com/idvk_7") && text.contains(order.orderId.value) && fwd.isEmpty })
+      },
+
       test("AUTHORIZED не выдаёт: при одностадийной оплате он приходит вместе с CONFIRMED") {
         for {
           k     <- kit()

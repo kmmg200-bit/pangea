@@ -6,7 +6,7 @@ import pangea.dao.payment.{GrantResult, PaymentDao}
 import pangea.engine.Journal
 import pangea.model.GameEvent
 import pangea.model.payment.{DonationSku, OrderId, Payment, PaymentStatus}
-import pangea.model.user.{User, UserId}
+import pangea.model.user.{User, UserId, VkId}
 import pangea.repository.user.UserRepository
 import pangea.service.ErrorLog
 import pangea.service.sender.Api
@@ -162,6 +162,7 @@ final case class DonationsLive(
             "doubloons" -> Json.fromLong(payment.doubloons)
           ))) *>
             ZIO.logInfo(s"donation: выдано ${payment.doubloons} дублонов по ${payment.orderId.value}") *>
+            tellAdmins(payment) *>
             ZIO.succeed(Donations.Settle.Granted(payment.doubloons))
       }
 
@@ -221,6 +222,20 @@ final case class DonationsLive(
           )
     }
 
+  // ── Письмо админам ────────────────────────────────────────────────────────
+
+  /** Каждый выданный донат — письмом админам ([[DonationsLive.Admins]]). Зовётся
+    * из ветки выдачи, а она случается ровно раз на заказ, каким бы путём ни
+    * пришла оплата: нотификация, кнопка или сверка. Недоставленное письмо
+    * выдачу не ломает, а один недоступный админ не оставляет без письма другого. */
+  private def tellAdmins(payment: Payment): Task[Unit] =
+    users.getUserById(payment.userId).map(_.map(_.vkId)).orElseSucceed(None).flatMap { vk =>
+      val text = DonationsLive.adminNote(payment, vk)
+      ZIO.foreachDiscard(DonationsLive.Admins)(admin =>
+        api.forwardToUser(admin, text, None)
+          .catchAll(err => ZIO.logWarning(s"donation: админ ${admin.value} не узнал о ${payment.orderId.value}: ${err.getMessage}")))
+    }
+
   // ── Сверка ────────────────────────────────────────────────────────────────
 
   /** Что чинит сверка: потерянную нотификацию (деньги взяты, мы не знаем) и
@@ -241,6 +256,15 @@ final case class DonationsLive(
 }
 
 object DonationsLive {
+
+  /** Кому в ВК приходят письма о каждом выданном донате. */
+  val Admins: List[VkId] = List(VkId("178812631"), VkId("51422811"))
+
+  /** Письмо админам: сколько заплатили, что выдано, кто и по какому заказу. */
+  def adminNote(payment: Payment, vk: Option[VkId]): String =
+    s"💰 Донат: ${payment.rubles} ₽ → 🟡 ${payment.doubloons} дублонов\n" +
+      s"Игрок: ${vk.fold(s"#${payment.userId.value}")(v => s"vk.com/id${v.value}")}\n" +
+      s"Пакет: ${payment.sku}, заказ ${payment.orderId.value}"
 
   def granted(payment: Payment): String =
     s"✨ Оплата прошла: зачислено 🟡 ${payment.doubloons} дублонов.\n" +
