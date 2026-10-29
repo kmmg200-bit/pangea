@@ -8,8 +8,11 @@ import pangea.model.squad.{AllyKind, AllyRates, Squad}
 import pangea.model.quest.NpcQuests
 import pangea.model.state.StateType
 import pangea.model.user.User
+import pangea.repository.bank.BankRepository
 import pangea.repository.inventory.InventoryRepository
-import pangea.service.state.{CityExit, LostSquadQuest, NpcQuestLog, SquadDuty, State, UserAction}
+import pangea.service.purse.Purse
+import pangea.model.hero.Achievement
+import pangea.service.state.{CityExit, LostSquadQuest, NpcQuestLog, QuestSupport, SquadDuty, State, UserAction}
 import pangea.util.TimeLeft
 import zio.{Task, ZIO}
 
@@ -23,15 +26,22 @@ import java.util.concurrent.TimeUnit
 case class MercenariesState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
-  content:       SceneContent
+  content:       SceneContent,
+  bank:          Option[BankRepository] = None
 ) extends State {
   import MercenariesState._
+
+  /** Кошель: своё серебро, а следом — ячейка в Торговом доме. */
+  private val purse = Purse(heroDao, bank)
 
   private val branch = new Branch(
     routes = Map(
       "MercList"      -> Target.Run { (u, _, r) => showList(u, r).as(StateType.Mercenaries) },
       "MercCard"      -> Target.Run { (u, ua, r) => withKind(ua, u, r)(k => showCard(u, k, r)).as(StateType.Mercenaries) },
       "MercHire"      -> Target.Run { (u, ua, r) => withKind(ua, u, r)(k => hire(u, k, r)).as(StateType.Mercenaries) },
+      // Поднять из-за стола того, кто ещё отдыхает, — за серебро сверх обычной платы.
+      "MercRush"      -> Target.Run { (u, ua, r) => withKind(ua, u, r)(k => showRush(u, k, r)).as(StateType.Mercenaries) },
+      "MercRushHire"  -> Target.Run { (u, ua, r) => withKind(ua, u, r)(k => rush(u, k, r)).as(StateType.Mercenaries) },
       "BackFromMercs" -> Target.Goto(StateType.Tavern),
       CityExit.route
     ),
@@ -62,15 +72,20 @@ case class MercenariesState(
       quests <- NpcQuestLog.load(heroDao, user.userId)
       free  = available(squad, now, LostSquadQuest.bramblCalled(quests))
       // Кого за столом нет, потому что он в отлучке, — с тем, когда вернётся.
-      gone  = absent(squad, now, LostSquadQuest.bramblCalled(quests)).map { case (k, at) =>
+      away  = absent(squad, now, LostSquadQuest.bramblCalled(quests))
+      gone  = away.map { case (k, at) =>
                 content.format("mercenaries.away", "name" -> k.name, "left" -> TimeLeft.format(at - now))
               }
       head  = if (free.isEmpty) content.text("mercenaries.empty") else content.text("mercenaries.title")
       text  = if (gone.isEmpty) head else head + "\n\n" + gone.mkString("\n")
       buttons = free.map(k => Choice("MercCard", Choice.fit(k.name), data = Map("kind" -> k.entryName), row = Some(0)))
-      _    <- renderer.show(user, Screen(text, buttons ++ List(
-                content.choice("BackFromMercs", "mercenaries.back").copy(row = Some(1)),
-                CityExit.button(content, Some(1)))))
+      // Кто отдыхает, того можно поднять раньше срока — за серебро.
+      rushes  = away.map { case (k, _) => Choice("MercRush",
+                  Choice.fit(content.format("mercenaries.rushButton", "name" -> k.name)),
+                  data = Map("kind" -> k.entryName), row = Some(1)) }
+      _    <- renderer.show(user, Screen(text, buttons ++ rushes ++ List(
+                content.choice("BackFromMercs", "mercenaries.back").copy(row = Some(2)),
+                CityExit.button(content, Some(2)))))
     } yield ()
 
   /** Карточка: история, реплика с ценой, «Нанять». Пока идёт «Пропавшая
@@ -125,12 +140,72 @@ case class MercenariesState(
         else (if (free) ZIO.none else pay(user, hero, kind, quests)).flatMap {
           case Some(refusal) => renderer.show(user, Screen(refusal, Nil)) *> showCard(user, kind, renderer)
           case None =>
-            heroDao.updateSquad(user.userId, hero.squad.welcomeBack(kind).hire(kind, hero.lvl, now)) *>
+            // Нанят, отдохнув как положено, — переработки забыты.
+            heroDao.updateSquad(user.userId, hero.squad.welcomeBack(kind).rested(kind).hire(kind, hero.lvl, now)) *>
               renderer.show(user, Screen(content.format(if (free) "lostSquad.brambl.joined" else "mercenaries.hired",
                 "name" -> kind.name), Nil)) *>
               showList(user, renderer)
         }
     } yield ()
+
+  /** Сценка «поднять раньше срока»: наёмник готов встать без отдыха — за
+    * серебро сверх обычной платы. Каждый следующий раз дороже. */
+  private def showRush(user: User, kind: AllyKind, renderer: Renderer): Task[Unit] =
+    for {
+      now    <- nowMs
+      hero   <- getHero(user)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      _      <-
+        if (!absent(hero.squad, now, LostSquadQuest.bramblCalled(quests)).exists(_._1 == kind)) showList(user, renderer)
+        else {
+          val silver = rushSilver(hero.squad, kind)
+          val line   = content.format(s"mercenaries.${key(kind)}.rush",
+            "silver" -> silver.toString, "cost" -> AllyRates.HumanDoubloons.toString,
+            "n" -> brewCount(kind, hero, quests).toString)
+          renderer.show(user, Screen(content.text("mercenaries.rushIntro") + "\n\n" + line, List(
+            Choice("MercRushHire", Choice.fit(content.format("mercenaries.rushLabel", "silver" -> silver.toString)),
+              data = Map("kind" -> kind.entryName), row = Some(0)),
+            content.choice("MercList", "mercenaries.toList").copy(row = Some(1)))))
+        }
+    } yield ()
+
+  /** Поднять отдыхающего: серебро и обычная плата, и он в отряде. Больше
+    * десяти таких раз — «Переработки наше всё». */
+  private def rush(user: User, kind: AllyKind, renderer: Renderer): Task[Unit] =
+    for {
+      now    <- nowMs
+      hero   <- getHero(user)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      silver  = rushSilver(hero.squad, kind)
+      _      <-
+        if (!absent(hero.squad, now, LostSquadQuest.bramblCalled(quests)).exists(_._1 == kind)) showList(user, renderer)
+        else if (hero.squad.freePosition.isEmpty)
+          renderer.show(user, Screen(content.text("mercenaries.squadFull"), Nil)) *> showRush(user, kind, renderer)
+        else purse.wallet(hero).flatMap { wallet =>
+          if (!wallet.canAfford(silver))
+            renderer.show(user, Screen(content.format("mercenaries.notEnoughSilver",
+              "cost" -> silver.toString, "have" -> wallet.total.toString), Nil)) *> showRush(user, kind, renderer)
+          else pay(user, hero, kind, quests).flatMap {
+          case Some(refusal) => renderer.show(user, Screen(refusal, Nil)) *> showRush(user, kind, renderer)
+          case None =>
+            val squad = hero.squad.rushed(kind, hero.lvl, now)
+            for {
+              // Йорген берёт дублонами: героя читаем заново, чтобы не затереть их списание.
+              fresh <- getHero(user)
+              _     <- purse.charge(user.userId, fresh, silver)
+              _     <- heroDao.updateSquad(user.userId, squad)
+              _     <- renderer.show(user, Screen(content.format("mercenaries.rushed", "name" -> kind.name), Nil))
+              _     <- ZIO.when(squad.overtimeTotal > OvertimeGoal)(
+                         QuestSupport.grant(heroDao, content, user, fresh, Achievement.Overtime, renderer))
+              _     <- showList(user, renderer)
+            } yield ()
+          }
+        }
+    } yield ()
+
+  /** Сколько бутылок берут Плюх и Брамбл — как при обычном найме. */
+  private def brewCount(kind: AllyKind, hero: Hero, quests: NpcQuests): Long =
+    if (kind == AllyKind.Gnome) LostSquadQuest.bramblBrews(quests, hero.lvl) else AllyKind.brewsFor(hero.lvl)
 
   /** Списать плату; текст отказа, если платить нечем. Брамбл берёт по
     * памяти о «Пропавшей дружине» (см. LostSquadQuest.bramblBrews). */
@@ -146,7 +221,7 @@ case class MercenariesState(
         else heroDao.updateDoubloons(user.userId, hero.doubloons - cost).as(None)
       case k =>
         val brew = brewFor(k)
-        val n    = (if (k == AllyKind.Gnome) LostSquadQuest.bramblBrews(quests, hero.lvl) else AllyKind.brewsFor(hero.lvl)).toInt
+        val n    = brewCount(k, hero, quests).toInt
         inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
           val bottles = brews(inv.items.data, brew)
           if (bottles.size < n)
@@ -172,6 +247,16 @@ case class MercenariesState(
 }
 
 object MercenariesState {
+
+  /** Шаг цены «поднять раньше срока»: первый раз — столько серебра, каждый
+    * следующий без отдыха — ещё столько же сверху. */
+  val RushSilverStep: Long = 5000L
+
+  /** Больше стольких подъёмов за серебро — «Переработки наше всё». */
+  val OvertimeGoal: Int = 10
+
+  /** Сколько серебра стоит поднять его сейчас. */
+  def rushSilver(squad: Squad, kind: AllyKind): Long = RushSilverStep * (squad.overtimeOf(kind) + 1)
 
   /** Ключ в scenes.yaml: `mercenaries.<key>`. Нежити и крысы за столом не
    *  бывает — первую поднимают на алтаре, вторая сама выскакивает в бою; ключи

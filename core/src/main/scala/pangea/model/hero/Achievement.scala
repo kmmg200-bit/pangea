@@ -40,6 +40,9 @@ object Achievement extends Enum[Achievement] {
   /** Забрал груз дружины «Двенадцать фонарей» и оставил её у фонаря. */
   case object MineLooter extends Achievement("Расхититель штолен", "+10% серебра с серебряных жил")
 
+  /** Больше десяти раз поднимал наёмников из-за стола за серебро, не дав им отдохнуть. */
+  case object Overtime extends Achievement("Переработки наше всё", "+100 к HP")
+
   // ── Собранные наборы ────────────────────────────────────────────────────────
   // За каждый набор, надетый целиком — все двенадцать вещей разом, — своё
   // достижение: прибавка к главному стату набора, та же, что у его двойки, но
@@ -117,6 +120,13 @@ object Achievement extends Enum[Achievement] {
   /** Плоская прибавка к телосложению от достижений героя. */
   def vitBonus(hero: Hero): Long =
     if (hero.hasAchievement(SquadFriend)) SquadFriendVitBonus else 0L
+
+  /** Сколько HP прибавляет «Переработки наше всё». */
+  val OvertimeHpBonus: Long = 100L
+
+  /** Плоская прибавка к максимуму HP от достижений героя. */
+  def hpBonus(hero: Hero): Long =
+    if (hero.hasAchievement(Overtime)) OvertimeHpBonus else 0L
 
   /** Сколько процентов сверху к серебру с серебряной жилы даёт «Расхититель штолен». */
   val MineLooterVeinPct: Long = 10L

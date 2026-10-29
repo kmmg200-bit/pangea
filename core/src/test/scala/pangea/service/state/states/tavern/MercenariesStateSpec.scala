@@ -165,6 +165,69 @@ object MercenariesStateSpec extends ZIOSpecDefault {
               assertTrue(list.choices.count(_.id == "MercCard") == 0)
     },
 
+    test("отдыхающего Йоргена можно поднять: 5000 серебра и его 10 дублонов; следующий раз — 10 000") {
+      val hour  = 60L * 60L * 1000L
+      val tired = Squad.empty.copy(offDuty = Map("Human" -> 12L * hour))
+      for {
+        t <- makeState(baseHero.copy(squad = tired, silver = 20000L, doubloons = 20L))
+        (state, dao, _, renderer) = t
+        _     <- state.enter(testUser, renderer)
+        list  <- renderer.sentScreens.map(_.last)
+        _     <- state.action(testUser, pick("MercRush", AllyKind.Human), renderer)
+        offer <- renderer.sentScreens.map(_.last)
+        _     <- state.action(testUser, pick("MercRushHire", AllyKind.Human), renderer)
+        hero  <- dao.getHeroByUserId(userId).map(_.get)
+        // отработал и снова отдыхает — второй подъём уже дороже
+        _     <- dao.updateSquad(userId, hero.squad.copy(allies = Nil, offDuty = Map("Human" -> 12L * hour)))
+        _     <- state.action(testUser, pick("MercRush", AllyKind.Human), renderer)
+        again <- renderer.sentScreens.map(_.last)
+      } yield assertTrue(list.choices.exists(c => c.id == "MercRush" && c.data.get("kind").contains("Human"))) &&
+              assertTrue(offer.text.contains("5000 серебра сверху") && offer.text.contains("10 дублонов")) &&
+              assertTrue(hero.squad.has(AllyKind.Human) && hero.silver == 15000L && hero.doubloons == 10L) &&
+              assertTrue(hero.squad.overtimeOf(AllyKind.Human) == 1) &&
+              assertTrue(again.choices.exists(_.label.contains("10000")))
+    },
+
+    test("не хватает своего серебра — добирается из ячейки в Торговом доме") {
+      val hour  = 60L * 60L * 1000L
+      val tired = Squad.empty.copy(offDuty = Map("Human" -> 12L * hour))
+      val bank  = pangea.test.TestBankRepository.of(1, silver = 4000L)
+      for {
+        heroDao  <- TestHeroDao.withHero(userId, baseHero.copy(squad = tired, silver = 2000L, doubloons = 10L))
+        renderer <- TestRenderer.make
+        content  <- ZIO.attempt(SceneContent.load())
+        state     = MercenariesState(heroDao, TestInventoryRepository.withItems(Nil), content, Some(bank))
+        _        <- state.action(testUser, pick("MercRushHire", AllyKind.Human), renderer)
+        hero     <- heroDao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(hero.squad.has(AllyKind.Human) && hero.silver == 0L) &&
+              assertTrue(bank.silverSnapshot == 1000L)
+    },
+
+    test("дали отдохнуть — обычный найм, и переработки забыты") {
+      val worked = Squad.empty.copy(overtime = Map("Human" -> 3))
+      for {
+        t <- makeState(baseHero.copy(squad = worked, doubloons = 10L))
+        (state, dao, _, renderer) = t
+        _    <- state.action(testUser, pick("MercHire", AllyKind.Human), renderer)
+        hero <- dao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(hero.squad.has(AllyKind.Human) && hero.squad.overtimeOf(AllyKind.Human) == 0)
+    },
+
+    test("одиннадцатый подъём за серебро — «Переработки наше всё», +100 к HP") {
+      val hour  = 60L * 60L * 1000L
+      val tired = Squad.empty.copy(offDuty = Map("Human" -> 12L * hour), overtimeTotal = 10)
+      for {
+        t <- makeState(baseHero.copy(squad = tired, silver = 100000L, doubloons = 10L))
+        (state, dao, _, renderer) = t
+        before = baseHero.effectiveMaxHp(0L)
+        _    <- state.action(testUser, pick("MercRushHire", AllyKind.Human), renderer)
+        hero <- dao.getHeroByUserId(userId).map(_.get)
+        said <- renderer.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(hero.hasAchievement(pangea.model.hero.Achievement.Overtime)) &&
+              assertTrue(said.contains("Переработки наше всё")) &&
+              assertTrue(hero.effectiveMaxHp(0L) == before + 100L)
+    },
+
     test("никто не в отлучке — строк о возвращении нет") {
       for {
         t <- makeState(baseHero)

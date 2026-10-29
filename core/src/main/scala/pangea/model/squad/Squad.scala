@@ -104,7 +104,13 @@ final case class Squad(
   /** Восставший, которому не нашлось места в строю («Некромант», порог 12): он
     * ждёт у шатра, пока герой не решит, кем за него пожертвовать. Экран выбора
     * — в «Отряде», как у алтаря в пещере. */
-  pendingRisen: Option[UndeadForm] = None
+  pendingRisen: Option[UndeadForm] = None,
+  /** Сколько раз наёмника подняли из-за стола за серебро, не дав отдохнуть
+    * (ключ — вид). Каждый следующий раз дороже; дали отдохнуть — счёт с нуля. */
+  overtime: Map[String, Int] = Map.empty,
+  /** Сколько всего раз герой поднимал наёмников за серебро — для «Переработки
+    * наше всё». */
+  overtimeTotal: Int = 0
 ) {
   def isEmpty: Boolean  = allies.isEmpty
   def nonEmpty: Boolean = allies.nonEmpty
@@ -125,6 +131,17 @@ final case class Squad(
   /** Кто вернулся из отлучки по свитку к этому моменту — им нужна реплика. */
   def returned(nowMs: Long): List[AllyKind] =
     away.collect { case (k, until) if until <= nowMs => AllyKind.withNameOption(k) }.flatten.toList
+
+  /** Сколько раз его уже поднимали без отдыха. */
+  def overtimeOf(kind: AllyKind): Int = overtime.getOrElse(kind.entryName, 0)
+
+  /** Поднят из-за стола за серебро, не отдохнув: в отряд — и счёт переработок растёт. */
+  def rushed(kind: AllyKind, lvl: Long, nowMs: Long): Squad =
+    welcomeBack(kind).hire(kind, lvl, nowMs)
+      .copy(overtime = overtime.updated(kind.entryName, overtimeOf(kind) + 1), overtimeTotal = overtimeTotal + 1)
+
+  /** Отдохнул как положено — переработки забыты. */
+  def rested(kind: AllyKind): Squad = copy(overtime = overtime - kind.entryName)
 
   /** Стереть записи об отлучке (реплика показана / срок вышел). */
   def welcomeBack(kind: AllyKind): Squad = copy(away = away - kind.entryName, offDuty = offDuty - kind.entryName)
@@ -298,7 +315,9 @@ object Squad {
       away    <- c.getOrElse[Map[String, Long]]("away")(Map.empty)
       offDuty <- c.getOrElse[Map[String, Long]]("offDuty")(Map.empty)
       pending <- c.getOrElse[Option[UndeadForm]]("pendingRisen")(None)
-    } yield Squad(heroPos, allies, away, offDuty, pending).repaired
+      overtime <- c.getOrElse[Map[String, Int]]("overtime")(Map.empty)
+      total    <- c.getOrElse[Int]("overtimeTotal")(0)
+    } yield Squad(heroPos, allies, away, offDuty, pending, overtime, total).repaired
 
   implicit val meta: Meta[Squad] = new Meta(pgDecoderGet, pgEncoderPut)
 }

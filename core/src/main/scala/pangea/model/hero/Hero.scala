@@ -257,7 +257,7 @@ case class Hero(
     // Рубины в снаряжении и наборы (порог 8): плоские прибавки + % к макс. HP.
     val g = gems
     val s = sets
-    (subtotal + g.flatHp + s.flatHp) * (100L + g.maxHpBonusPct + s.maxHpBonusPct) / 100L
+    (subtotal + g.flatHp + s.flatHp + Achievement.hpBonus(this)) * (100L + g.maxHpBonusPct + s.maxHpBonusPct) / 100L
   }
 
   def traumaRemainingText(nowMs: Long): Option[String] =

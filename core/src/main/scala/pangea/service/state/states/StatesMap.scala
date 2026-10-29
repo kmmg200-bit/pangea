@@ -293,7 +293,7 @@ object StatesMap {
           Thieves           -> ThievesState(heroDao, content),
           ThievesSpoils     -> ThievesSpoilsState(heroDao, content),
           Innkeeper         -> InnkeeperState(heroDao, inventoryRepo, content, bank),
-          Mercenaries       -> MercenariesState(heroDao, inventoryRepo, content),
+          Mercenaries       -> MercenariesState(heroDao, inventoryRepo, content, bank),
           SilverVein        -> SilverVeinState(heroDao, scheduler, content),
           TreasureMobs      -> TreasureMobsState(heroDao, content),
           TreasureMobsFight -> TreasureMobsFightState(heroDao, content),
