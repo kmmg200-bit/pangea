@@ -412,19 +412,6 @@ object TradeHouseSpec extends ZIOSpecDefault {
                 assertTrue(screens.last.text.contains("200") && screens.last.text.contains("200000"))
       },
 
-      test("«Назад» из хранилища — туда, откуда пришли: из дома домой, из Торгового дома — в него") {
-        for {
-          t <- vaultState(inventory = Nil)
-          (state, heroDao, _, _, renderer) = t
-          _        <- heroDao.writeReturnState(userId, Some(StateType.Home))
-          fromHome <- state.action(testUser, tap("LeaveVault"), renderer)
-          // метка стёрта: следующий заход без неё — обратно в Торговый дом
-          plain    <- state.action(testUser, tap("LeaveVault"), renderer)
-          city     <- state.action(testUser, tap("GoToCity"), renderer)
-        } yield assertTrue(fromHome == StateType.Home && plain == StateType.TradeHouse) &&
-                assertTrue(city != StateType.Home && city != StateType.TradeHouse)
-      },
-
       test("без ячеек хранилища нет") {
         for {
           t <- vaultState(inventory = Nil, cells = 0)

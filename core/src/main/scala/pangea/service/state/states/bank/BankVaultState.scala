@@ -45,13 +45,13 @@ case class BankVaultState(
       "VaultWithdrawAll"    -> Target.Run { (u, _, r) => withdrawAllSilver(u, r).as(StateType.BankVault) },
       "VaultStowAll"        -> Target.Run { (u, _, r) => stowAll(u, r).as(StateType.BankVault) },
       "VaultStowSettings"   -> Target.Run { (u, _, r) => showStowSettings(u, r).as(StateType.BankVault) },
-      "LeaveVault"          -> Target.Run { (u, _, _) => leave(u) },
+      "LeaveVault"          -> Target.Goto(StateType.TradeHouse),
       CityExit.route
     ),
     fallback = Target.Run { (u, ua, r) => handleFallback(u, ua, r) }
   )
 
-  override def targetStates: Set[StateType] = branch.gotoTargets + StateType.TradeHouse + StateType.Home
+  override def targetStates: Set[StateType] = branch.gotoTargets
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     resetScene(user) *> showMenu(user, renderer)
@@ -458,14 +458,6 @@ case class BankVaultState(
     } yield ()
 
   // --- Вспомогательное ---
-
-  /** «Назад»: туда, откуда пришли, — домой, если звали из дома, иначе в
-    * Торговый дом. Метку сразу стираем: следующий заход скажет свою. */
-  private def leave(user: User): Task[StateType] =
-    heroDao.readReturnState(user.userId).flatMap {
-      case Some(StateType.Home) => heroDao.writeReturnState(user.userId, None).as(StateType.Home)
-      case _                    => ZIO.succeed(StateType.TradeHouse)
-    }
 
   private def getHero(user: User): Task[Hero] =
     heroDao.getHeroByUserId(user.userId)

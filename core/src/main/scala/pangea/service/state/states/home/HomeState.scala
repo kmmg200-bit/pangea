@@ -98,15 +98,12 @@ case class HomeState(
       "HomeWall"    -> Target.Goto(StateType.TrophyWall),
       "HomeAzat"    -> Target.Run { (u, _, r) => azat(u, r) },
       "HomeAzatUp"  -> Target.Run { (u, _, r) => azatRefill(u, r) },
-      // Хранилище Торгового дома — и из дома: «Назад» оттуда вернёт сюда же.
-      "HomeVault"   -> Target.Run { (u, _, _) =>
-        heroDao.writeReturnState(u.userId, Some(StateType.Home)).as(StateType.BankVault) },
       "LeaveHome"   -> Target.Goto(StateType.GlobalMap)
     ),
     fallback = Target.Run { (u, _, r) => enter(u, r).as(StateType.Home) }
   )
 
-  override def targetStates: Set[StateType] = branch.gotoTargets + StateType.BankVault
+  override def targetStates: Set[StateType] = branch.gotoTargets
 
   /** Спит — экран сна; убирается — экран уборки; дом есть — дом; нет —
     * канцелярия Юноны. */
@@ -262,7 +259,6 @@ case class HomeState(
             Option.when(home.count(Furniture.ArtisanBench) > 0)(Choice("HomeBench", content.text("home.house.bench"), row = Some(1))),
             Some(Choice("HomeSlots", content.text("home.house.slots"), row = Some(2))),
             Some(Choice("HomeOffice", content.text("home.house.office"), row = Some(2))),
-            Some(Choice("HomeVault", content.text("bank.tradeHouse.myVault"), row = Some(2))),
             Some(Choice("LeaveHome", content.text("home.house.leave"), color = ChoiceColor.Negative, row = Some(3)))
           ).flatten
           renderer.show(user, Screen(content.text(s"home.houses.${h.key}.inside"), buttons)).as(StateType.Home)
