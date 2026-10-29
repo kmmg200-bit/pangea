@@ -107,6 +107,18 @@ object TrophyWallBattleSpec extends ZIOSpecDefault {
         assertTrue(BattleState.namedTrophies(slain.take(1), 4L, owned = Set(Karkan)) == List(None))
     },
 
+    test("отмеченный тьмой именной роняет свой трофей — метка тьмы к имени не относится") {
+      val marked = pangea.model.monster.Monster(0L, 4L, Race.Orc, Rarity.Legendary,
+        pangea.model.stats.FightStats(atk = 1, hp = 1, armor = 0, defence = 0, evasion = 0, accuracy = 1, energy = 0),
+        marked = true, customName = Some(Karkan))
+      val slain = SlainMonster(4L, Race.Orc.entryName, Rarity.Legendary.entryName, marked = true, name = marked.name)
+      assertTrue(slain.name.startsWith("Отмеченный тьмой")) &&
+        assertTrue(BattleState.namedTrophies(List(slain), 4L, owned = Set.empty).map(_.map(_.name)) ==
+          List(Some("Ухо Каркана Кровавого Топора"))) &&
+        // уже есть такой — второго не будет и у отмеченного
+        assertTrue(BattleState.namedTrophies(List(slain), 4L, owned = Set(Karkan)) == List(None))
+    },
+
     test("стена: +1% урона за каждого именного расы цели; в бою записано, сколько по какой расе") {
       // Удар: (сила 1×3 + атака 500) × разброс 100% = 503; два орка на стене — ×1.02 = 513.
       val sword = Item(2L, "Меч", 1L, ItemRarity.Gray, ItemType.Weapon,

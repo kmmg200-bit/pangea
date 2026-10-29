@@ -5918,7 +5918,7 @@ case class BattleState(
   /** Чьи уникальные трофеи у героя уже есть: в сумке, в хранилище, на Стене
     * трофеев. Читаем всё это, только если среди павших есть именной. */
   private def ownedNamedTrophies(user: User, hero: Hero, fallen: List[SlainMonster]): Task[Set[String]] =
-    if (!fallen.exists(m => NamedTrophy.raceOf(m.name).isDefined)) ZIO.succeed(Set.empty)
+    if (!fallen.exists(m => NamedTrophy.raceOf(BattleState.trophyName(m)).isDefined)) ZIO.succeed(Set.empty)
     else for {
       bag   <- inventoryRepo.get(hero.id).fold(_ => List.empty[Item], _.items.data)
       vault <- bank.fold(ZIO.succeed(List.empty[Item]))(_.get(hero.id).fold(_ => List.empty[Item], _.items.data))
@@ -6014,9 +6014,15 @@ object BattleState {
     * бою он ещё не выпал; поднятый некромантом второй раз его не роняет. */
   def namedTrophies(fallen: List[SlainMonster], killLevel: Long, owned: Set[String]): List[Option[Item]] =
     fallen.foldLeft((List.empty[Option[Item]], owned)) { case ((acc, seen), m) =>
-      val drop = if (m.undead || seen.contains(m.name)) None else NamedTrophy.item(m.name, m.race, killLevel)
-      (acc :+ drop, seen ++ drop.map(_ => m.name))
+      val name = trophyName(m)
+      val drop = if (m.undead || seen.contains(name)) None else NamedTrophy.item(name, m.race, killLevel)
+      (acc :+ drop, seen ++ drop.map(_ => name))
     }._1
+
+  /** Под каким именем павший значится среди именных: отмеченный тьмой — тот же
+    * именной, метка тьмы к его имени не относится. */
+  def trophyName(m: SlainMonster): String =
+    if (m.marked) m.name.stripPrefix(s"${pangea.model.monster.Monster.MarkedPrefix} ") else m.name
 
   /** Кем встанет павший, если «Некромант» (порог 12) его поднимет. None — в нём
     * нечего поднимать: элементаль, сооружение, уже нежить или Крысиный король
