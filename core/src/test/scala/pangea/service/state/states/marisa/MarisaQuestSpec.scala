@@ -225,7 +225,8 @@ object MarisaQuestSpec extends ZIOSpecDefault {
           sched <- TestScheduler.make
           r   <- TestRenderer.make
           c   <- content
-          state = MarisaHuntState(dao, TestInventoryRepository.accepting, sched, c)
+          inv   = TestInventoryRepository.withItems(List(letter(), map()))
+          state = MarisaHuntState(dao, inv, sched, c)
           _   <- state.enter(testUser, r)
           tasks <- sched.scheduled
           thanks <- texts(r)
@@ -240,6 +241,9 @@ object MarisaQuestSpec extends ZIOSpecDefault {
                 assertTrue(thanks.contains("не обманули")) &&
                 assertTrue(early == StateType.MarisaHunt) &&
                 assertTrue(done == StateType.Loot) &&
+                // сокровище найдено — карта Кельвина уходит сразу, письмо остаётся до развязки
+                assertTrue(!inv.snapshot.exists(_.questItem.contains(QuestItemKind.KelvinMap))) &&
+                assertTrue(inv.snapshot.exists(_.questItem.contains(QuestItemKind.MarisaLetter))) &&
                 assertTrue(loot.silvers == List(17000L) && loot.doubloons == 120L) &&
                 assertTrue(gems.map(_.name).toSet == Set("Поврежденный рубин", "Поврежденный изумруд", "Поврежденный топаз", "Поврежденный сапфир", "Поврежденный череп")) &&
                 assertTrue(gearItem.rarity == Rarity.Purple && gearItem.lvl == 4L) &&

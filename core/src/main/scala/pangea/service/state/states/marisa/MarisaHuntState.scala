@@ -9,7 +9,7 @@ import pangea.generator.item.ItemGenerator
 import pangea.generator.monster.MonsterGenerator
 import pangea.model.battle.SoloPveBattle
 import pangea.model.hero.{Achievement, Hero}
-import pangea.model.item.Rarity
+import pangea.model.item.{QuestItemKind, Rarity}
 import pangea.model.schedule.TaskKind
 import pangea.model.skill.MonsterEnergy
 import pangea.model.state.StateType
@@ -20,7 +20,7 @@ import pangea.repository.bank.BankRepository
 import pangea.service.purse.Purse
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState._
-import pangea.service.state.{MarisaQuest, State, UserAction}
+import pangea.service.state.{MarisaQuest, QuestSupport, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -100,11 +100,15 @@ case class MarisaHuntState(
       }
     } yield res
 
-  /** Тайник: добыча через общий экран, возврат сюда — на коллектора. */
+  /** Тайник: добыча через общий экран, возврат сюда — на коллектора. Карта
+    * Кельвина своё отслужила — сокровище найдено, и она уходит из сумки сразу:
+    * иначе по ней можно было бы снова отправиться к тому же тайнику. */
   private def huntDone(user: User, renderer: Renderer): Task[StateType] =
     for {
       p    <- requireProgress(user)
       _    <- scheduler.cancel(user.userId, TaskKind.MarisaHunt)
+      hero <- getHero(user)
+      _    <- QuestSupport.removeItems(inventoryRepo, hero, Set(QuestItemKind.KelvinMap))
       seed <- Random.nextLong
       (gear, _) = ItemGenerator.createItemAtLevel(MarisaQuest.CacheGearLevel, Rarity.Purple, Rng(seed))
       loot  = LootData(
