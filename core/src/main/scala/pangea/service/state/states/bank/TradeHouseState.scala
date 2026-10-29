@@ -57,7 +57,9 @@ case class TradeHouseState(
       "DonPay"          -> Target.Run { (u, ua, r) => payDoubloons(u, ua, r).as(StateType.TradeHouse) },
       "DonCheck"        -> Target.Run { (u, ua, r) => checkPayment(u, ua, r).as(StateType.TradeHouse) },
       "DepositInterest" -> Target.Run { (u, _, r) => showPage(u, r, "bank.tradeHouse.interest").as(StateType.TradeHouse) },
-      "MyVault"         -> Target.Goto(StateType.BankVault),
+      // Из Торгового дома — и «Назад» в него же (из дома хранилище зовут иначе).
+      "MyVault"         -> Target.Run { (u, _, _) =>
+        heroDao.writeReturnState(u.userId, None).as(StateType.BankVault) },
       "Auction"         -> Target.Goto(StateType.Auction),
       "FetShop"         -> Target.Goto(StateType.FetShop),
       "Mail"            -> Target.Goto(StateType.Mail),
@@ -75,7 +77,7 @@ case class TradeHouseState(
     fallback = Target.Run { (u, ua, r) => handleText(u, ua, r) }
   )
 
-  override def targetStates: Set[StateType] = branch.gotoTargets
+  override def targetStates: Set[StateType] = branch.gotoTargets + StateType.BankVault
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     renderer.show(user, Screen(content.text("bank.tradeHouse.greeting"), Nil)) *> showMenu(user, renderer)
