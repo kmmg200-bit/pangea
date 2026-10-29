@@ -69,24 +69,27 @@ case class RestState(heroDao: HeroDao, scheduler: Scheduler, content: SceneConte
     for {
       now       <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
       sceneData <- heroDao.readSceneData(user.userId)
-      startedAt  = sceneData.flatMap(_.hcursor.get[Long]("restStartedAt").toOption).getOrElse(now)
+      startedAt  = sceneData.flatMap(_.hcursor.get[Long]("restStartedAt").toOption)
       duration   = sceneData.flatMap(_.hcursor.get[Long]("restDurationMs").toOption).getOrElse(DefaultRestMs)
       postDeath  = sceneData.flatMap(_.hcursor.get[Boolean]("postDeath").toOption).getOrElse(false)
       wakeTo     = sceneData.flatMap(_.hcursor.get[Option[StateType]](WakeToKey).toOption).flatten
       wakeLines  = sceneData.flatMap(_.hcursor.get[List[String]](WakeLinesKey).toOption).getOrElse(Nil)
-      elapsed    = now - startedAt
       isInstant  = parseAction(ua.payload).contains("InstantRest")
-      result    <- if (isInstant && !postDeath) instantRest(user, now, renderer)
-                   else if (elapsed >= duration)
-                     heroDao.getHeroByUserId(user.userId)
-                       .flatMap(ZIO.fromOption(_))
-                       .orElseFail(new Throwable(s"No hero for user ${user.userId}"))
-                       .flatMap(hero => wakeUp(user, now, hero, postDeath, wakeTo, wakeLines, renderer))
-                   else {
-                     val remainSec = ((duration - elapsed) / 1000L).max(1L)
-                     renderer.show(user, Screen(
-                       content.format("rest.waiting", "remaining" -> formatDuration(remainSec)), Nil))
-                       .as(StateType.Rest)
+      result    <- startedAt match {
+                     case _ if isInstant && !postDeath => instantRest(user, now, renderer)
+                     case Some(started) if now - started < duration =>
+                       val remainSec = ((duration - (now - started)) / 1000L).max(1L)
+                       renderer.show(user, Screen(
+                         content.format("rest.waiting", "remaining" -> formatDuration(remainSec)), Nil))
+                         .as(StateType.Rest)
+                     // Время вышло — или отдыха в scene_data нет вовсе (сцену стёрли,
+                     // пробуждение оборвалось). Без начала отдыха будим сразу: иначе
+                     // он «начинался» бы заново с каждым сообщением и не кончался.
+                     case _ =>
+                       heroDao.getHeroByUserId(user.userId)
+                         .flatMap(ZIO.fromOption(_))
+                         .orElseFail(new Throwable(s"No hero for user ${user.userId}"))
+                         .flatMap(hero => wakeUp(user, now, hero, postDeath, wakeTo, wakeLines, renderer))
                    }
     } yield result
 
@@ -107,7 +110,13 @@ case class RestState(heroDao: HeroDao, scheduler: Scheduler, content: SceneConte
     payload.flatMap(p => jawn.decode[Map[String, String]](p).toOption.flatMap(_.get("action")))
 
   /** `wakeTo`/`wakeLines` — от сюжетной смерти: проснуться не в лабиринте, а где
-    * сказано, и сказать игроку, чем всё кончилось. */
+    * сказано, и сказать игроку, чем всё кончилось.
+    *
+    * HP и отряд пишутся до показа, а сцена отдыха и задача Revive убираются
+    * после. Оборвётся показ (ВК не принял) — отдых в scene_data и Revive
+    * останутся, поллер повторит пробуждение целиком, с тем же `wakeTo`. HP и
+    * отряд при этом запишутся ещё раз — без вреда. Раньше сцена стиралась до
+    * показа, Revive снимал сам себя, и герой застревал в отдыхе навсегда. */
   private def wakeUp(
     user: User, nowMs: Long, hero: pangea.model.hero.Hero, postDeath: Boolean,
     wakeTo: Option[StateType], wakeLines: List[String], renderer: Renderer
@@ -120,10 +129,10 @@ case class RestState(heroDao: HeroDao, scheduler: Scheduler, content: SceneConte
       _ <- heroDao.updateFightStats(user.userId, hero.fightStats.copy(hp = maxHp, armor = maxArmor, energy = maxEn))
       // Отряд отдыхал вместе с героем.
       _ <- heroDao.updateSquad(user.userId, hero.squad.restored(hero.lvl))
-      _ <- heroDao.writeSceneData(user.userId, Json.Null)
-      _ <- scheduler.cancel(user.userId, TaskKind.Revive)
       _ <- renderer.show(user, Screen(content.text(textKey), Nil))
       _ <- ZIO.foreachDiscard(wakeLines)(key => renderer.show(user, Screen(content.text(key), Nil)))
+      _ <- heroDao.writeSceneData(user.userId, Json.Null)
+      _ <- scheduler.cancel(user.userId, TaskKind.Revive)
     } yield wakeTo.getOrElse(StateType.Dungeon)
   }
 

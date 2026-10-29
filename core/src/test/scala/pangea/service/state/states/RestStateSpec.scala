@@ -2,13 +2,13 @@ package pangea.service.state.states
 
 import io.circe.Json
 import io.circe.syntax.EncoderOps
-import pangea.engine.SceneContent
+import pangea.engine.{Renderer, SceneContent, Screen}
 import pangea.model.schedule.TaskKind
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.state.UserAction
 import pangea.test.{TestFixtures, TestHeroDao, TestRenderer, TestScheduler}
-import zio.ZIO
+import zio.{Ref, Task, ZIO}
 import zio.test._
 import zio.test.TestClock
 
@@ -25,6 +25,14 @@ object RestStateSpec extends ZIOSpecDefault {
       scheduler <- TestScheduler.make
       content   <- ZIO.attempt(SceneContent.load())
     } yield (RestState(heroDao, scheduler, content), heroDao, renderer)
+
+  /** ВК, который не принимает первые `fails` сообщений — как обрыв в 20:30. */
+  private final class FlakyRenderer(fails: Ref[Int], inner: TestRenderer) extends Renderer {
+    def show(user: User, screen: Screen): Task[Unit] =
+      fails.getAndUpdate(n => (n - 1).max(0)).flatMap(n =>
+        if (n > 0) ZIO.fail(new RuntimeException("VK API error 10: Internal server error"))
+        else inner.show(user, screen))
+  }
 
   override def spec = suite("RestState")(
 
@@ -133,6 +141,51 @@ object RestStateSpec extends ZIOSpecDefault {
         cancelled <- scheduler.cancelled
       } yield assertTrue(result == StateType.Dungeon) &&
               assertTrue(cancelled.contains(userId -> TaskKind.Revive))
+    },
+    test("отдыха в scene_data нет (сцену стёрли) — первое же сообщение будит, а не «Ещё 30с»") {
+      for {
+        triple              <- makeState(TestFixtures.hero(userId))
+        (state, heroDao, renderer) = triple
+        _                   <- state.enter(testUser, renderer)
+        _                   <- heroDao.writeSceneData(userId, Json.Null)
+        result              <- state.action(testUser, anyAction, renderer)
+        screens             <- renderer.sentScreens
+      } yield assertTrue(result == StateType.Dungeon) &&
+              assertTrue(screens.last.text.contains("отдохнули")) &&
+              assertTrue(!screens.exists(_.text.contains("до восстановления")))
+    },
+
+    test("ВК не принял «вы пришли в себя»: отдых и Revive на месте, повтор будит туда же, куда сказано") {
+      for {
+        heroDao   <- TestHeroDao.withHero(userId, TestFixtures.hero(userId))
+        renderer  <- TestRenderer.make
+        scheduler <- TestScheduler.make
+        content   <- ZIO.attempt(SceneContent.load())
+        // сюжетная смерть: проснуться в городе и услышать, чем кончилось
+        _         <- heroDao.writeSceneData(userId, Json.obj(
+                       "restDurationMs" -> 60000L.asJson,
+                       "postDeath"      -> true.asJson,
+                       "wakeTo"         -> (StateType.GlobalMap: StateType).asJson,
+                       "wakeLines"      -> List("murlocVillage.raid.death").asJson))
+        state      = RestState(heroDao, scheduler, content)
+        _         <- state.enter(testUser, renderer)
+        _         <- TestClock.adjust(java.time.Duration.ofSeconds(61))
+        fails     <- Ref.make(1)
+        broken    <- state.action(testUser, anyAction, new FlakyRenderer(fails, renderer)).exit
+        scene     <- heroDao.readSceneData(userId)
+        kept       = scene.flatMap(_.hcursor.get[Long]("restStartedAt").toOption).isDefined &&
+                       scene.flatMap(_.hcursor.get[StateType]("wakeTo").toOption).contains(StateType.GlobalMap)
+        cancelled <- scheduler.cancelled
+        retry     <- state.action(testUser, anyAction, renderer)
+        after     <- heroDao.readSceneData(userId)
+        cancelled2 <- scheduler.cancelled
+        screens   <- renderer.sentScreens
+      } yield assertTrue(broken.isFailure && kept) &&
+              // задача пробуждения не сняла сама себя — поллер её повторит
+              assertTrue(!cancelled.contains(userId -> TaskKind.Revive)) &&
+              assertTrue(retry == StateType.GlobalMap && after.contains(Json.Null)) &&
+              assertTrue(cancelled2.contains(userId -> TaskKind.Revive)) &&
+              assertTrue(screens.exists(_.text == content.text("murlocVillage.raid.death")))
     }
   )
 }
