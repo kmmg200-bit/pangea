@@ -43,6 +43,21 @@ object ChatCommand {
   def eventKey(id: Long, conversationMessageId: Option[Long]): Long =
     -conversationMessageId.filter(_ > 0L).getOrElse(id)
 
+  /** С этого числа начинаются `peer_id` бесед: 2000000000 + chat_id. */
+  val ChatPeerBase: Long = 2000000000L
+
+  /** Из беседы ли сообщение. В личке с сообществом `peer_id` — сам игрок, то
+    * есть совпадает с `from_id`; в беседе `peer_id` — беседа, а `from_id` — тот,
+    * кто написал.
+    *
+    * Раньше беседу узнавали по `peer_id >= 2000000000`, но у новых аккаунтов ВК
+    * id 12-значные (200003146683): их личка принималась за беседу, где на
+    * обычный текст бот молчит, — и такой игрок не мог даже начать игру.
+    * `from_id` ВК присылает всегда; нет его — решаем по диапазону: беседу
+    * лучше пропустить, чем завести на неё героя. */
+  def fromChat(peerId: Long, fromId: Option[Long]): Boolean =
+    fromId.fold(peerId >= ChatPeerBase)(_ != peerId)
+
   /** «Туториал» — ссылка на статью-туториал (см. [[Links.Tutorial]]). Сравниваем
     * так же, как команды о себе: регистр, пробелы и знаки не важны. */
   def tutorialCommand(text: String): Boolean = bare(text) == "туториал"

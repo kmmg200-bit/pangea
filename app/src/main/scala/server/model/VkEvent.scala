@@ -31,8 +31,9 @@ object VkEvent {
     // боту `id = 0` и настоящий номер кладёт сюда.
     conversationMessageId: Option[Long] = None
   ) {
-    /** Беседа, а не личка: у бесед `peer_id` начинается с 2000000000. */
-    def fromChat: Boolean = peerId >= VkEvent.ChatPeerBase
+    /** Беседа, а не личка (см. `ChatCommand.fromChat`). */
+    def fromChat: Boolean =
+      pangea.service.chat.ChatCommand.fromChat(peerId, fromId)
 
     /** Ключ сообщения беседы для защиты от повторов (см. `ChatCommand.eventKey`). */
     def chatEventKey: Long =
@@ -45,9 +46,6 @@ object VkEvent {
 
   /** Вложенное сообщение (ответ или пересылка): нас интересует только автор. */
   case class Nested(fromId: Option[Long])
-
-  /** С этого числа начинаются `peer_id` бесед. */
-  val ChatPeerBase: Long = 2000000000L
 
   implicit val decoder: Decoder[VkEvent] = deriveDecoder[VkEvent]
 
