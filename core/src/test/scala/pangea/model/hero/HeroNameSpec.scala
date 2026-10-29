@@ -17,6 +17,19 @@ object HeroNameSpec extends ZIOSpecDefault {
       assertTrue(HeroName.validate("Ёжик Smith") == Right("Ёжик Smith"))
     },
 
+    test("апостроф — как дефис: между буквами; типографский «’» с телефона — обычный «'»") {
+      assertTrue(HeroName.validate("Д'Артаньян") == Right("Д'Артаньян")) &&
+      assertTrue(HeroName.validate("O'Brien") == Right("O'Brien")) &&
+      assertTrue(HeroName.validate("Д’Артаньян") == Right("Д'Артаньян")) &&
+      assertTrue(HeroName.validate("Ли Д'Ор-Вэй") == Right("Ли Д'Ор-Вэй")) &&
+      assertTrue(HeroName.validate("'Тарен") == Left(Problem.Letters)) &&
+      assertTrue(HeroName.validate("Тарен'") == Left(Problem.Letters)) &&
+      assertTrue(HeroName.validate("Д''Арт") == Left(Problem.Letters)) &&
+      assertTrue(HeroName.validate("Д'-Арт") == Left(Problem.Letters)) &&
+      // житель Пангеи за апострофом не спрячется
+      assertTrue(HeroName.validate("Д'Фет") == Left(Problem.Reserved))
+    },
+
     test("от 3 до 16 символов") {
       assertTrue(HeroName.validate("Ли") == Left(Problem.Length)) &&
       assertTrue(HeroName.validate("Абв") == Right("Абв")) &&
