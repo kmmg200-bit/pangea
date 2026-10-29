@@ -32,7 +32,14 @@ object PromoCode {
       blessingMs = 24L * HourMs,
       doubloons  = 50L))
 
-  val all: List[PromoCode] = List(Zhivyom)
+  /** «Ренейм»: купон на смену имени — и всё; неделя, до 00:00 5 ноября 2026 года по Москве. */
+  val Rename: PromoCode = PromoCode(
+    key     = "rename",
+    word    = "Ренейм",
+    untilMs = moscowMidnight(LocalDate.of(2026, 11, 5)),
+    reward  = PromoReward(items = List(QuestItemKind.item(QuestItemKind.NameCoupon)), blessingMs = 0L, doubloons = 0L))
+
+  val all: List[PromoCode] = List(Zhivyom, Rename)
 
   /** Код, который набран этим текстом. Регистр, «ё» и «е», пробелы, кавычки и
     * знаки препинания не важны: «живем!» — тот же «Живём». */

@@ -63,6 +63,14 @@ object PromoCodeSpec extends ZIOSpecDefault {
 
   override def spec = suite("Промокод")(
 
+    test("«Ренейм»: только купон на смену имени, до 00:00 5 ноября по Москве") {
+      val r = PromoCode.Rename
+      assertTrue(PromoCode.find("ренейм").contains(r) && PromoCode.find("Ренейм!").contains(r)) &&
+      assertTrue(r.reward.items.flatMap(_.questItem) == List(pangea.model.item.QuestItemKind.NameCoupon)) &&
+      assertTrue(r.reward.blessingMs == 0L && r.reward.doubloons == 0L) &&
+      assertTrue(r.untilMs == PromoCode.moscowMidnight(java.time.LocalDate.of(2026, 11, 5)))
+    },
+
     test("слово: регистр, «ё» и «е», кавычки и знаки не важны; похожее — не код, кнопка — не код") {
       assertTrue(PromoCode.find("Живём").contains(code)) &&
       assertTrue(PromoCode.find("живем").contains(code)) &&
