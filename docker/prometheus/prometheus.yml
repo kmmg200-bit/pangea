@@ -1,0 +1,11 @@
+# Prometheus собирает метрики бота (см. GameMetrics и MetricsServer).
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: pangea
+    # Время замера — по Prometheus: экспортёр ставит свои метки времени, а
+    # при опросе реже его обновления это давало бы повторы.
+    honor_timestamps: false
+    static_configs:
+      - targets: ["app:9464"]

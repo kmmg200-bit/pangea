@@ -1,5 +1,6 @@
 package pangea.service
 
+import pangea.metrics.GameMetrics
 import zio.stm.TRef
 import zio.{Duration, Exit, Promise, Scope, Task, UIO, ZIO, ZLayer, durationInt}
 
@@ -22,9 +23,12 @@ final class Background private (
   /** Запустить в фоне. При остановке дело дожидаются. */
   def fork(work: Task[Unit]): UIO[Unit] =
     ZIO.uninterruptibleMask { restore =>
-      running.update(_ + 1).commit *>
-        restore(work).ensuring(running.update(_ - 1).commit).forkIn(scope).unit
+      count(+1) *> restore(work).ensuring(count(-1)).forkIn(scope).unit
     }
+
+  /** Сколько дел в работе — и в метрику. */
+  private def count(delta: Int): UIO[Unit] =
+    running.updateAndGet(_ + delta).commit.flatMap(n => GameMetrics.backgroundRunning.set(n.toDouble))
 
   /** Запустить в фоне долгий обход, который безопасно оборвать на любом шаге,
     * а повтор доделает оставшееся: при остановке его не ждут, а прерывают сразу. */

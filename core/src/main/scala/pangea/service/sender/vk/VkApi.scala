@@ -6,6 +6,7 @@ import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 import org.http4s.client.Client
 import org.http4s.implicits.http4sLiteralsSyntax
 import org.http4s.{Method, Request, Status, UrlForm}
+import pangea.metrics.GameMetrics
 import pangea.dao.sendfailure.SendFailureDao
 import pangea.model.user.{User, VkId}
 import pangea.model.vk.Attachment
@@ -62,7 +63,7 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
     // Счётчик попыток для записи в журнал инцидентов.
     for {
       attempts <- Ref.make(0)
-      send      = client.run(request).use { res =>
+      send      = GameMetrics.vkCall(VkApi.SendMethod)(client.run(request).use { res =>
         for {
           _    <- attempts.update(_ + 1)
           body <- res.bodyText.compile.toList.map(_.mkString(""))
@@ -70,7 +71,7 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
           // в сообщение исключения через [[VkApiError]].
           _    <- VkApi.failOnBadResponse(res.status, body).tapError(_ => ZIO.logError(s"vk response: $body"))
         } yield ()
-      }
+      })
       _ <- send.retry(sendRetry).tapError(err =>
         recordFailure(user, message, keyboard.map(_.getJson), err, attempts).orElse(ZIO.unit)
       )
@@ -95,9 +96,9 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
           uri = uri / "messages.send"
         ).withEntity(UrlForm(formParams.map { case (k, vs) => k -> Chain.fromSeq(vs) }))
 
-        client
+        GameMetrics.vkCall(VkApi.SendMethod)(client
           .run(request)
-          .use(res => res.bodyText.compile.toList.map(_.mkString("")).flatMap(VkApi.failOnBadResponse(res.status, _)))
+          .use(res => res.bodyText.compile.toList.map(_.mkString("")).flatMap(VkApi.failOnBadResponse(res.status, _))))
           .retry(sendRetry)
           .tapErrorCause(ErrorLog.logged("vk chat announce failed"))
           .orElse(ZIO.unit)
@@ -125,9 +126,9 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
       uri = uri / "messages.send"
     ).withEntity(UrlForm(formParams.map { case (k, vs) => k -> Chain.fromSeq(vs) }))
 
-    client
+    GameMetrics.vkCall(VkApi.SendMethod)(client
       .run(request)
-      .use(res => res.bodyText.compile.toList.map(_.mkString("")).flatMap(VkApi.failOnBadResponse(res.status, _)))
+      .use(res => res.bodyText.compile.toList.map(_.mkString("")).flatMap(VkApi.failOnBadResponse(res.status, _))))
       .retry(sendRetry)
   }
 
@@ -145,6 +146,7 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
         case VkApi.VkApiError(c, m) => (Some(c), m)
         case other                  => (None, Option(other.getMessage).getOrElse(other.toString))
       }
+      _ <- GameMetrics.vkSendFailures.increment
       _ <- failures.record(
              userId       = Option(user.userId).filter(_.value > 0L),
              vkId         = user.vkId.value,
@@ -167,13 +169,16 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
       uri = uri / "users.get" =? queryParams
     )
 
-    client.expect[UserResponse](request)
+    GameMetrics.vkCall("users.get")(client.expect[UserResponse](request))
   }
 
   private def randomId = Random.between(Int.MinValue, Int.MaxValue)
 }
 
 object VkApi {
+
+  /** Метод отправки — метка в метриках вызовов ВК. */
+  private val SendMethod = "messages.send"
 
   /** Ошибка API VK: тело ответа содержит объект `error`. */
   final case class VkApiError(code: Int, message: String) extends RuntimeException(s"VK API error $code: $message")

@@ -1,6 +1,7 @@
 package pangea.service.state
 
 import io.circe.Json
+import pangea.metrics.GameMetrics
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Choice, ChoiceColor, Renderer, Screen}
 import pangea.model.state.StateType
@@ -61,19 +62,23 @@ class StateHandler(
       action: UserAction
   ): Task[Unit] = {
     val renderer = VkRenderer(api)
-    for {
-      userOp <- userRepo.getUserByVkId(vkId)
-      user <- userOp match {
-        case Some(u) => ZIO.succeed(u)
-        case None    => userRepo.insertUserByVk(vkId)
-      }
-      _ <- lock.withLock(user.userId) {
-        for {
-          isNew <- userRepo.checkAndRecordEvent(user.userId, eventId)
-          _     <- ZIO.when(isNew)(makeActionSafe(user, action, renderer, Some(eventId)))
-        } yield ()
-      }
-    } yield ()
+    GameMetrics.timed(GameMetrics.turnSeconds) {
+      for {
+        userOp <- userRepo.getUserByVkId(vkId)
+        user <- userOp match {
+          case Some(u) => ZIO.succeed(u)
+          case None    => userRepo.insertUserByVk(vkId)
+        }
+        asked <- GameMetrics.now
+        _ <- lock.withLock(user.userId) {
+          for {
+            _     <- GameMetrics.since(GameMetrics.lockWaitSeconds, asked)
+            isNew <- userRepo.checkAndRecordEvent(user.userId, eventId)
+            _     <- ZIO.when(isNew)(makeActionSafe(user, action, renderer, Some(eventId)))
+          } yield ()
+        }
+      } yield ()
+    }
   }
 
   def makeActionTelegram(
@@ -369,8 +374,10 @@ class StateHandler(
                 )
               )
 
-            potentiallyNewState <- state.action(user, action, renderer)
-            _ <- transitionTo(user, hero.state, potentiallyNewState, renderer)
+            _ <- GameMetrics.timed(GameMetrics.stateActionSeconds.tagged("state", hero.state.entryName)) {
+                   state.action(user, action, renderer)
+                     .flatMap(transitionTo(user, hero.state, _, renderer))
+                 }
           } yield ()
     } yield ()
 

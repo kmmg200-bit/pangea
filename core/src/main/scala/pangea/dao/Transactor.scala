@@ -4,7 +4,8 @@ import cats.implicits.catsSyntaxOptionId
 import doobie.hikari.{Config, HikariTransactor}
 import doobie.util.transactor.{Transactor => DTransactor}
 import pangea.dao.config.PostgresConfig
-import zio.{Task, ZIO, ZLayer}
+import pangea.metrics.DbPoolMetrics
+import zio.{Schedule, Task, ZIO, ZLayer, durationInt}
 import zio.interop.catz._
 
 object Transactor {
@@ -19,7 +20,10 @@ object Transactor {
           password = config.password.some
         )
 
-        xa <- HikariTransactor.fromConfig[Task](daoconfig).toScopedZIO
+        // Пул — в метрики: ожидание и занятость соединений (см. DbPoolMetrics).
+        pool = new DbPoolMetrics
+        xa <- HikariTransactor.fromConfig[Task](daoconfig, metricsTrackerFactory = Some(pool)).toScopedZIO
+        _  <- pool.sample.repeat(Schedule.spaced(5.seconds)).forkScoped
       } yield xa
     }
 }

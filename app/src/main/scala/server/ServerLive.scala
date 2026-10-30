@@ -8,6 +8,7 @@ import org.http4s.dsl.Http4sDsl
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.implicits._
 import org.http4s.{HttpApp, HttpRoutes}
+import pangea.metrics.GameMetrics
 import pangea.model.user.VkId
 import pangea.service.{Background, ErrorLog}
 import pangea.service.admin.{AdminConfig, AdminPanel}
@@ -77,6 +78,7 @@ final class ServerLive(
         // Пароль админ-панели приходит обычным сообщением, а лог отдаётся
         // наружу — в логе от него остаётся только метка.
         val logged = AdminPanel.maskSecrets(msg.text, adminConfig.password)
+        GameMetrics.vkMessage(if (msg.fromChat) "chat" else "message", msg.date) *>
         ZIO.logInfo(s"peer=${msg.peerId} from=${msg.fromId.getOrElse(0L)} id=${msg.id} cmid=${msg.conversationMessageId.getOrElse(0L)} text=$logged payload=${msg.payload.getOrElse("")}") *>
           // Беседа — не игрок: её peer_id за героя принимать нельзя, оттуда
           // мы слушаем только команды вроде «Передать».
@@ -89,7 +91,9 @@ final class ServerLive(
                  UserAction(msg.text, msg.payload)
                ))
             .catchAllCause(ErrorLog.logged(s"VK: сообщение не обработано: peer=${msg.peerId} id=${msg.id}"))
-      case None => groupEvent(json).catchAllCause(ErrorLog.logged("VK: событие группы не обработано"))
+      case None =>
+        GameMetrics.vkEvents.tagged("kind", "group").increment *>
+          groupEvent(json).catchAllCause(ErrorLog.logged("VK: событие группы не обработано"))
     }
 
   /** Что умеет общая беседа: «Передать» в ответ (или пересылкой) на

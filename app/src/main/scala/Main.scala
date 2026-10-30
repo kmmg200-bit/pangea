@@ -45,10 +45,13 @@ import pangea.service.sender.vk.config.VkConfig
 import pangea.service.sender.vk.VkPlayers
 import pangea.service.state.{PlayerLock, StateHandler}
 import pangea.service.state.states.StatesMap
-import server.Server
+import server.{MetricsServer, Server}
 import server.model.ServerConfig
 import zio._
 import zio.logging.backend.SLF4J
+import zio.metrics.connectors.prometheus.PrometheusPublisher
+import zio.metrics.connectors.{MetricsConfig, prometheus}
+import zio.metrics.jvm.DefaultJvmMetrics
 
 import java.util.concurrent.TimeUnit
 
@@ -60,10 +63,23 @@ object Main extends ZIOAppDefault {
   override val bootstrap: ZLayer[ZIOAppArgs, Nothing, Unit] =
     (Runtime.removeDefaultLoggers >>> SLF4J.slf4j) ++ Runtime.setUnhandledErrorLogLevel(LogLevel.Error)
 
-  private type Env = Server with SchedulerPoller with Donations with ActivityContest with Transfers with Background
+  private type Env =
+    Server with SchedulerPoller with Donations with ActivityContest with Transfers with Background with PrometheusPublisher
+
+  /** Метрики: реестр ZIO раз в 5 секунд переписывается в текст для Prometheus
+    * (его отдаёт MetricsServer); плюс метрики JVM — память, GC, потоки, CPU.
+    * Что именно пишет игра — см. GameMetrics. */
+  private val metrics: ZLayer[Any, Throwable, PrometheusPublisher] =
+    ZLayer.scoped {
+      for {
+        env <- ((ZLayer.succeed(MetricsConfig(5.seconds)) ++ prometheus.publisherLayer) >+> prometheus.prometheusLayer).build
+        _   <- DefaultJvmMetrics.live.build
+      } yield env.get[PrometheusPublisher]
+    }
 
   private val env =
     ZLayer.make[Env](
+      metrics,
       Background.live,
       VkConfig.live,
       PostgresConfig.live,
@@ -162,7 +178,8 @@ object Main extends ZIOAppDefault {
         reconcileLoop(background) *>
         contestLoop(background) *>
         mailLoop(background) *>
-        ZIO.serviceWithZIO[Server](_.run())).ensuring(background.shutdown)
+        (ZIO.serviceWithZIO[Server](_.run()) <&> ZIO.serviceWithZIO[PrometheusPublisher](MetricsServer.run)))
+        .ensuring(background.shutdown)
     }
 
   // Сервер упал целиком (не поднялся слой, не открылся порт) — причина в лог,

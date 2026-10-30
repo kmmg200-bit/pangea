@@ -61,12 +61,16 @@ object Dependencies {
     "dev.zio"       %% "zio-logging-slf4j" % "2.5.0"
   )
 
+  // Метрики для Prometheus. 2.3.1 — последняя на ZIO 2.0.x: более новые тянут
+  // ZIO выше того, что уже приходит с zio-logging (2.1.15).
+  private val metrics = List("dev.zio" %% "zio-metrics-connectors-prometheus" % "2.3.1")
+
   val testDependencies: List[ModuleID] = List(
     "dev.zio" %% "zio-test"     % "2.0.22" % Test,
     "dev.zio" %% "zio-test-sbt" % "2.0.22" % Test
   )
 
-  val apiDependencies: List[ModuleID] = pureconfig ++ ip4s ++ logging
+  val apiDependencies: List[ModuleID] = pureconfig ++ ip4s ++ logging ++ metrics
   val coreDependencies: List[ModuleID] =
     zio ++ http4s ++ doobie ++ circe ++ pureconfig ++ enumeratum ++ telegram ++ sttp ++ logging
 }

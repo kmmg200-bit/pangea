@@ -29,7 +29,10 @@ object VkEvent {
     fwdMessages:  Option[List[Nested]] = None,
     // Номер сообщения ВНУТРИ беседы. В личке его нет, а вот в беседе ВК шлёт
     // боту `id = 0` и настоящий номер кладёт сюда.
-    conversationMessageId: Option[Long] = None
+    conversationMessageId: Option[Long] = None,
+    // Когда игрок отправил сообщение, unix-секунды: по нему метрики считают,
+    // сколько событие шло от ВК до нас.
+    date: Option[Long] = None
   ) {
     /** Беседа, а не личка (см. `ChatCommand.fromChat`). */
     def fromChat: Boolean =

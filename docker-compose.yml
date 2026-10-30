@@ -44,5 +44,42 @@ services:
     # умолчанию Docker даёт лишь 10.
     stop_grace_period: 30s
 
+  # Метрики бота (GameMetrics): Prometheus раз в 15 секунд читает их с app:9464
+  # — порт внутренний, наружу не открыт — и хранит 30 дней.
+  prometheus:
+    image: prom/prometheus:v2.53.2
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --storage.tsdb.retention.size=2GB
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+
+  # Графики. Открыт только на localhost сервера — заходить через SSH-туннель:
+  #   ssh -L 3000:localhost:3000 root@сервер  →  http://localhost:3000
+  # Вход admin / GRAFANA_PASSWORD из .env (пусто — admin, Grafana попросит
+  # сменить при первом входе). Дашборд «Пангея» — из docker/grafana/dashboards.
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/pangea.json
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/etc/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  prometheus_data:
+  grafana_data:

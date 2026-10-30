@@ -1,0 +1,67 @@
+package pangea.metrics
+
+import com.zaxxer.hikari.metrics.PoolStats
+import zio.metrics.{Metric, MetricKeyType}
+import zio.test._
+import zio.{Chunk, ZIO, durationInt}
+
+/** Метрики пишутся и при поломке: медленный ход, который упал, важен не меньше
+  * удачного. Вызовы ВК делятся по исходу, пул базы — по состоянию. */
+object GameMetricsSpec extends ZIOSpecDefault {
+
+  private val bounds = MetricKeyType.Histogram.Boundaries.fromChunk(Chunk(0.1, 1.0))
+
+  /** Пул с заданной занятостью: в Hikari его считает сам пул. */
+  private final class FixedStats(active: Int, idle: Int, pending: Int) extends PoolStats(0L) {
+    override protected def update(): Unit = {
+      activeConnections = active
+      idleConnections = idle
+      pendingThreads = pending
+      totalConnections = active + idle
+    }
+  }
+
+  override def spec = suite("Метрики игры")(
+
+    test("время пишется и при успехе, и при поломке, и при прерывании") {
+      val h = Metric.histogram("test_timed_seconds", bounds)
+      for {
+        _     <- GameMetrics.timed(h)(ZIO.unit)
+        _     <- GameMetrics.timed(h)(ZIO.fail("поломка")).ignore
+        fiber <- GameMetrics.timed(h)(ZIO.never).fork
+        _     <- ZIO.yieldNow.repeatN(10) *> fiber.interrupt
+        state <- h.value
+      } yield assertTrue(state.count == 3L)
+    },
+
+    test("вызов ВК — по методу и исходу") {
+      val ok    = GameMetrics.vkApiSeconds.tagged("method", "test.call").tagged("outcome", "ok")
+      val error = GameMetrics.vkApiSeconds.tagged("method", "test.call").tagged("outcome", "error")
+      for {
+        _ <- GameMetrics.vkCall("test.call")(ZIO.unit)
+        _ <- GameMetrics.vkCall("test.call")(ZIO.unit)
+        _ <- GameMetrics.vkCall("test.call")(ZIO.fail("ВК не ответил")).ignore
+        o <- ok.value
+        e <- error.value
+      } yield assertTrue(o.count == 2L && e.count == 1L)
+    },
+
+    test("пул базы: ожидание, занятость и таймауты — от Hikari") {
+      val pool    = new DbPoolMetrics
+      val tracker = pool.create("test", new FixedStats(active = 3, idle = 7, pending = 2))
+      for {
+        acquire0 <- GameMetrics.dbAcquireSeconds.value
+        timeout0 <- GameMetrics.dbTimeouts.value
+        _        <- ZIO.succeed(tracker.recordConnectionAcquiredNanos(5.millis.toNanos))
+        _        <- ZIO.succeed(tracker.recordConnectionTimeout())
+        _        <- pool.sample
+        acquire  <- GameMetrics.dbAcquireSeconds.value
+        timeout  <- GameMetrics.dbTimeouts.value
+        active   <- GameMetrics.dbPool.tagged("state", "active").value
+        pending  <- GameMetrics.dbPool.tagged("state", "pending").value
+        total    <- GameMetrics.dbPool.tagged("state", "total").value
+      } yield assertTrue(acquire.count == acquire0.count + 1 && timeout.count == timeout0.count + 1) &&
+              assertTrue(active.value == 3.0 && pending.value == 2.0 && total.value == 10.0)
+    }
+  )
+}
