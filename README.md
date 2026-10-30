@@ -211,12 +211,13 @@ curl "https://<домен>/logs?tail=500&key=$ADMIN_PASSWORD"
 задним числом посмотреть, что было с ботом в любую минуту.
 
 Всё поднимается тем же `docker compose up -d --build`. Метрики приложение
-отдаёт на внутреннем порту 9464 — наружу он не открыт. Grafana слушает только
-localhost сервера, заходить через SSH-туннель:
+отдаёт на внутреннем порту 9464 — наружу он не открыт. Grafana — на
+`http://<IP сервера>:3000`, вход `admin` / `GRAFANA_PASSWORD` из `.env`; без
+пароля она не запускается (порт открыт наружу). Пароль Grafana берёт из `.env`
+только при самом первом запуске — сменить его потом:
 
 ```bash
-ssh -L 3000:localhost:3000 root@<сервер>
-# и открыть http://localhost:3000 — вход admin / GRAFANA_PASSWORD из .env
+docker compose exec grafana grafana cli admin reset-admin-password '<новый пароль>'
 ```
 
 Дашборд лежит в `docker/grafana/dashboards/pangea.json`: правки в интерфейсе

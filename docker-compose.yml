@@ -62,19 +62,24 @@ services:
       - prometheus_data:/prometheus
     restart: unless-stopped
 
-  # Графики. Открыт только на localhost сервера — заходить через SSH-туннель:
-  #   ssh -L 3000:localhost:3000 root@сервер  →  http://localhost:3000
-  # Вход admin / GRAFANA_PASSWORD из .env (пусто — admin, Grafana попросит
-  # сменить при первом входе). Дашборд «Пангея» — из docker/grafana/dashboards.
+  # Графики: http://<IP сервера>:3000, вход admin / GRAFANA_PASSWORD из .env.
+  # Порт открыт наружу, поэтому без пароля Grafana не запускается: вход
+  # admin/admin на открытом порту первым сменил бы кто угодно. Это HTTP —
+  # пароль идёт по сети открытым текстом, берите отдельный. Дашборд
+  # «Пангея» — из docker/grafana/dashboards.
   grafana:
     image: grafana/grafana:11.2.0
+    entrypoint:
+      - /bin/sh
+      - -c
+      - '[ -n "$$GF_SECURITY_ADMIN_PASSWORD" ] || { echo "GRAFANA_PASSWORD не задан в .env — без пароля на открытом порту не запускаюсь"; exit 1; }; exec /run.sh'
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/pangea.json
     ports:
-      - "127.0.0.1:3000:3000"
+      - "3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
