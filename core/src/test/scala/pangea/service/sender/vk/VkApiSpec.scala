@@ -2,6 +2,7 @@ package pangea.service.sender.vk
 
 import org.http4s.Status
 import zio.test._
+import zio.{Ref, ZIO}
 
 object VkApiSpec extends ZIOSpecDefault {
 
@@ -37,6 +38,18 @@ object VkApiSpec extends ZIOSpecDefault {
         .failOnBadResponse(Status.UriTooLong, long)
         .flip
         .map(err => assertTrue(err.getMessage.length < 500, err.getMessage.endsWith("…")))
-    }
+    },
+    test("закрытые игроком сообщения (900–902) не повторяются, прочие сбои — до трёх попыток") {
+      def attempts(err: Throwable) = for {
+        n <- Ref.make(0)
+        _ <- (n.update(_ + 1) *> ZIO.fail(err)).retry(VkApi.SendRetry).ignore
+        r <- n.get
+      } yield r
+      for {
+        closed <- ZIO.foreach(VkApi.UnreachableCodes.toList)(c => attempts(VkApi.VkApiError(c, "closed")))
+        broken <- attempts(VkApi.VkApiError(10, "Internal server error"))
+        lost   <- attempts(new RuntimeException("connection reset"))
+      } yield assertTrue(closed.forall(_ == 1) && broken == 3 && lost == 3)
+    } @@ TestAspect.withLiveClock
   )
 }

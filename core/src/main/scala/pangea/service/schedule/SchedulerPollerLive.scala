@@ -3,6 +3,7 @@ package pangea.service.schedule
 import pangea.dao.schedule.ScheduledTaskDao
 import pangea.metrics.GameMetrics
 import pangea.model.schedule.ScheduledTask
+import pangea.service.sender.Api
 import pangea.service.state.{StateHandler, UserAction}
 import zio.{Duration, Task, UIO, ZIO}
 
@@ -27,7 +28,9 @@ class SchedulerPollerLive(dao: ScheduledTaskDao, handler: StateHandler) extends 
   /** Исполнить одну задачу и проставить итоговый статус. Поломка — и ошибка,
     * и падение кода (defect) — это попытка: причина целиком в лог, после
     * [[MaxAttempts]] задача мертва. Раньше падение кода проходило мимо: задача
-    * оставалась в очереди навсегда, а те, что за ней в партии, не исполнялись. */
+    * оставалась в очереди навсегда, а те, что за ней в партии, не исполнялись.
+    * Игрок, закрывший сообщения от сообщества, их от повторов не откроет —
+    * такая задача мертва сразу. */
   private def process(task: ScheduledTask): Task[Unit] = {
     val ua   = UserAction(text = "", payload = Some(task.action))
     val kind = task.kind.entryName
@@ -41,6 +44,10 @@ class SchedulerPollerLive(dao: ScheduledTaskDao, handler: StateHandler) extends 
              }.foldCauseZIO(
                cause =>
                  if (cause.isInterruptedOnly) ZIO.refailCause(cause)
+                 else if (cause.failures.exists(Api.unreachable))
+                   ZIO.logWarning(s"Scheduled task ${task.id} (${task.kind}) dropped: user ${task.userId.value} does not accept messages") *>
+                     dao.markDead(task.id) *>
+                     outcome(kind, "unreachable")
                  else dao.bumpAttempts(task.id).flatMap { attempts =>
                    val dead = attempts >= MaxAttempts
                    ZIO.logErrorCause(s"Scheduled task ${task.id} (${task.kind}) failed, attempt $attempts", cause) *>

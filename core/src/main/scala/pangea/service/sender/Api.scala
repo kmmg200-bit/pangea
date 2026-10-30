@@ -30,6 +30,13 @@ trait Api {
 }
 
 object Api {
+  /** Игрок не принимает сообщения от сообщества — повтор не поможет, пока он
+    * сам их не откроет (см. [[VkApi.UnreachableCodes]]). */
+  def unreachable(err: Throwable): Boolean = err match {
+    case VkApi.VkApiError(code, _) => VkApi.UnreachableCodes(code)
+    case _                         => false
+  }
+
   // Клиент живёт, пока жив слой: пул соединений с ВК не закрывается сразу
   // после создания (см. Client.scoped).
   val vk: ZLayer[VkConfig with SendFailureDao, Throwable, VkApi] = ZLayer.scoped(for {

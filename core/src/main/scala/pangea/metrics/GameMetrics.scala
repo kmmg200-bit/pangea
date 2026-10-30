@@ -62,7 +62,8 @@ object GameMetrics {
   val schedulerTaskSeconds: Metric.Histogram[Double] =
     Metric.histogram("pangea_scheduler_task_seconds", "Исполнение таймера по виду", Latency)
 
-  /** С метками `kind` и `outcome`: executed, skipped, failed, dead. */
+  /** С метками `kind` и `outcome`: executed, skipped, failed, dead, unreachable
+    * (игрок закрыл сообщения — задача снята без повторов). */
   val schedulerTasks: Metric.Counter[Long] =
     Metric.counter("pangea_scheduler_tasks_total", "Таймеры по виду и исходу")
 

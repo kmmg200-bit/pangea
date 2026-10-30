@@ -29,12 +29,6 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
     "v"            -> List("5.199")
   )
 
-  // Транзиентные сбои VK/сети — лечим повтором. До 3 попыток с задержкой
-  // 250 → 500 → 1000 мс. После — пишем инцидент в send_failures и
-  // пробрасываем ошибку, чтобы catchAll в StateHandler мог отработать.
-  private val sendRetry: Schedule[Any, Any, Any] =
-    Schedule.recurs(2) && Schedule.exponential(250.millis)
-
   // Параметры уходят телом POST (form-urlencoded), а не в query string: длинные
   // экраны (лавка Ришелье — 3 предмета со сравнением с надетым + клавиатура) в
   // percent-encoding раздувались до ~7-8 КБ и упирались в лимит строки запроса
@@ -72,7 +66,7 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
           _    <- VkApi.failOnBadResponse(res.status, body).tapError(_ => ZIO.logError(s"vk response: $body"))
         } yield ()
       })
-      _ <- send.retry(sendRetry).tapError(err =>
+      _ <- send.retry(VkApi.SendRetry).tapError(err =>
         recordFailure(user, message, keyboard.map(_.getJson), err, attempts).orElse(ZIO.unit)
       )
     } yield ()
@@ -99,7 +93,7 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
         GameMetrics.vkCall(VkApi.SendMethod)(client
           .run(request)
           .use(res => res.bodyText.compile.toList.map(_.mkString("")).flatMap(VkApi.failOnBadResponse(res.status, _))))
-          .retry(sendRetry)
+          .retry(VkApi.SendRetry)
           .tapErrorCause(ErrorLog.logged("vk chat announce failed"))
           .orElse(ZIO.unit)
     }
@@ -129,7 +123,7 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
     GameMetrics.vkCall(VkApi.SendMethod)(client
       .run(request)
       .use(res => res.bodyText.compile.toList.map(_.mkString("")).flatMap(VkApi.failOnBadResponse(res.status, _))))
-      .retry(sendRetry)
+      .retry(VkApi.SendRetry)
   }
 
   private def recordFailure(
@@ -182,6 +176,18 @@ object VkApi {
 
   /** Ошибка API VK: тело ответа содержит объект `error`. */
   final case class VkApiError(code: Int, message: String) extends RuntimeException(s"VK API error $code: $message")
+
+  /** Игрок не принимает сообщения от сообщества: 900 — сообщество у него в
+    * чёрном списке, 901 — сообщения не разрешены, 902 — закрыты настройками
+    * приватности. Пока игрок сам их не откроет, повтор не поможет. */
+  val UnreachableCodes: Set[Int] = Set(900, 901, 902)
+
+  // Транзиентные сбои VK/сети — лечим повтором. До 3 попыток с задержкой
+  // 250 → 500 → 1000 мс. После — пишем инцидент в send_failures и
+  // пробрасываем ошибку, чтобы catchAll в StateHandler мог отработать.
+  // Закрытые игроком сообщения повтор не откроет — их не повторяем.
+  private[vk] val SendRetry: Schedule[Any, Throwable, Any] =
+    (Schedule.recurs(2) && Schedule.exponential(250.millis)).whileInput[Throwable](!Api.unreachable(_))
 
   /** Сколько символов тела ответа кладём в текст ошибки (HTML-страницы прокси
     * бывают на десятки килобайт, а ошибка едет в лог и в `send_failures`). */
