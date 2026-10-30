@@ -1,3 +1,7 @@
+# Имя проекта — явно: от него зависят имена контейнеров (pangea-app-1), а по
+# имени контейнера бота опрашивает Prometheus (docker/prometheus).
+name: pangea
+
 services:
   postgres:
     image: postgres:17-alpine
