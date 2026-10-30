@@ -42,7 +42,21 @@ VK_TOKEN=your_vk_token_here
 ADMIN_PASSWORD=
 ```
 
-### 4. Запустить
+### 4. Зеркала Docker Hub
+
+С российских серверов Docker Hub периодически пропадает целиком — и тогда не
+собрать даже бота: базовый образ `eclipse-temurin` берётся оттуда. Поэтому один
+раз на сервере прописываем зеркала (Google и Timeweb); Docker перебирает их сам,
+Docker Hub — последним:
+
+```bash
+sudo sh docker/registry-mirrors.sh
+```
+
+Скрипт сохраняет остальные настройки `/etc/docker/daemon.json` и перечитывает
+конфиг без перезапуска контейнеров. Свои зеркала — аргументами.
+
+### 5. Запустить
 
 ```bash
 docker compose up -d --build
@@ -50,7 +64,7 @@ docker compose up -d --build
 
 При первом запуске Docker соберёт образ (~5 минут), поднимет PostgreSQL и прогонит все миграции автоматически.
 
-### 5. Проверить
+### 6. Проверить
 
 ```bash
 docker compose ps        # все сервисы должны быть Up
