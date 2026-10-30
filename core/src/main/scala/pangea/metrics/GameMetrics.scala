@@ -13,13 +13,16 @@ import java.util.concurrent.TimeUnit
   * отдаёт `MetricsServer` в app. Время — в секундах, как принято в Prometheus. */
 object GameMetrics {
 
-  /** Границы для времени: от 10 мс до минуты. */
+  /** Границы для времени: от миллисекунды до минуты. Мелкие — для лока и
+    * базы: с нижней границей в 10 мс они показывали лишь «меньше 10 мс». */
   private val Latency = MetricKeyType.Histogram.Boundaries.fromChunk(
-    Chunk(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 13.0, 20.0, 30.0, 60.0))
+    Chunk(0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 13.0, 20.0, 30.0, 60.0))
 
-  /** Границы для опозданий: от полсекунды до 10 минут. */
+  /** Границы для опозданий: от полсекунды до 10 минут; до 10 секунд — через
+    * секунду: доставка от ВК обычно там, а время у ВК и так с точностью до
+    * секунды. */
   private val Lag = MetricKeyType.Histogram.Boundaries.fromChunk(
-    Chunk(0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 13.0, 20.0, 30.0, 60.0, 120.0, 300.0, 600.0))
+    Chunk(0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 12.0, 15.0, 20.0, 30.0, 60.0, 120.0, 300.0, 600.0))
 
   // ── Ходы ─────────────────────────────────────────────────────────────────────
 
@@ -39,6 +42,7 @@ object GameMetrics {
   val vkEvents: Metric.Counter[Long] =
     Metric.counter("pangea_vk_events_total", "События ВК по виду")
 
+  /** С меткой `kind`: message (личка — ходы игроков), chat (общая беседа). */
   val vkDeliveryLagSeconds: Metric.Histogram[Double] =
     Metric.histogram("pangea_vk_delivery_lag_seconds", "От сообщения игрока до прихода события к нам", Lag)
 
@@ -119,7 +123,8 @@ object GameMetrics {
   def vkMessage(kind: String, sentAt: Option[Long]): UIO[Unit] =
     vkEvents.tagged("kind", kind).increment *>
       ZIO.foreachDiscard(sentAt) { at =>
-        Clock.currentTime(TimeUnit.MILLISECONDS).flatMap(ms => vkDeliveryLagSeconds.update(((ms - at * 1000L).max(0L)) / 1000.0))
+        Clock.currentTime(TimeUnit.MILLISECONDS).flatMap(ms =>
+          vkDeliveryLagSeconds.tagged("kind", kind).update(((ms - at * 1000L).max(0L)) / 1000.0))
       }
 
   /** Записать из кода вне ZIO — из колбэков Hikari, на его потоке. Запись в

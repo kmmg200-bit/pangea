@@ -3,7 +3,9 @@ package pangea.metrics
 import com.zaxxer.hikari.metrics.PoolStats
 import zio.metrics.{Metric, MetricKeyType}
 import zio.test._
-import zio.{Chunk, ZIO, durationInt}
+import zio.{Chunk, Clock, ZIO, durationInt}
+
+import java.util.concurrent.TimeUnit
 
 /** Метрики пишутся и при поломке: медленный ход, который упал, важен не меньше
   * удачного. Вызовы ВК делятся по исходу, пул базы — по состоянию. */
@@ -44,6 +46,17 @@ object GameMetricsSpec extends ZIOSpecDefault {
         o <- ok.value
         e <- error.value
       } yield assertTrue(o.count == 2L && e.count == 1L)
+    },
+
+    test("доставка от ВК — отдельно для лички и беседы; без времени отправки — только счётчик") {
+      val chat = GameMetrics.vkDeliveryLagSeconds.tagged("kind", "chat")
+      for {
+        before <- chat.value
+        now    <- Clock.currentTime(TimeUnit.SECONDS)
+        _      <- GameMetrics.vkMessage("chat", Some(now - 3L))
+        _      <- GameMetrics.vkMessage("chat", None)
+        after  <- chat.value
+      } yield assertTrue(after.count == before.count + 1)
     },
 
     test("пул базы: ожидание, занятость и таймауты — от Hikari") {
