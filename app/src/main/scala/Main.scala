@@ -36,6 +36,7 @@ import pangea.service.Background
 import pangea.service.activity.ActivityContest
 import pangea.service.admin.{AdminConfig, AdminPanel, NameBackfill}
 import pangea.service.donation.Donations
+import pangea.service.miniapp.{MiniApp, MiniAppConfig}
 import pangea.service.parcel.{Parcels, Transfers}
 import pangea.service.payout.Payouts
 import pangea.service.referral.Referrals
@@ -130,6 +131,8 @@ object Main extends ZIOAppDefault {
       TBankConfig.live,
       TBankClient.live,
       Donations.live,
+      MiniAppConfig.live,
+      MiniApp.live,
       Parcels.live,
       PlayerLock.live,
       Transfers.live,

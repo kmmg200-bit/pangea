@@ -5,6 +5,7 @@ import pangea.dao.vk.SeenMessageDao
 import pangea.service.Background
 import pangea.service.admin.AdminConfig
 import pangea.service.donation.Donations
+import pangea.service.miniapp.MiniApp
 import pangea.service.state.StateHandler
 import server.model.ServerConfig
 import zio._
@@ -18,7 +19,8 @@ trait Server {
 }
 
 object Server {
-  val live: ZLayer[ServerConfig with StateHandler with AdminConfig with Donations with Background with SeenMessageDao, Nothing, Server] =
+  val live: ZLayer[ServerConfig with StateHandler with AdminConfig with Donations with Background with SeenMessageDao
+                   with MiniApp, Nothing, Server] =
     ZLayer {
       for {
         config       <- ZIO.service[ServerConfig]
@@ -27,6 +29,7 @@ object Server {
         donations    <- ZIO.service[Donations]
         background   <- ZIO.service[Background]
         seen         <- ZIO.service[SeenMessageDao]
-      } yield new ServerLive(config, stateHandler, adminConfig, donations, background, seen)
+        miniApp      <- ZIO.service[MiniApp]
+      } yield new ServerLive(config, stateHandler, adminConfig, donations, background, seen, miniApp)
     }
 }

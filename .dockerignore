@@ -13,3 +13,7 @@ target
 project/target
 project/project
 logs
+
+# Mini App собирается отдельно (см. README): бот её не несёт.
+web/node_modules
+web/dist

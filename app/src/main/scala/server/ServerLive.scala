@@ -14,6 +14,7 @@ import pangea.model.user.VkId
 import pangea.service.{Background, ErrorLog}
 import pangea.service.admin.{AdminConfig, AdminPanel}
 import pangea.service.donation.Donations
+import pangea.service.miniapp.MiniApp
 import pangea.service.state.{StateHandler, UserAction}
 import pangea.service.activity.GroupEvent
 import pangea.service.chat.ChatCommand
@@ -30,12 +31,15 @@ final class ServerLive(
   adminConfig: AdminConfig,
   donations: Donations,
   background: Background,
-  seen: SeenMessageDao
+  seen: SeenMessageDao,
+  miniApp: MiniApp
 ) extends Server {
 
   private val payments = new PaymentRoutes(donations, background)
 
   private val logs = new LogsRoutes(adminConfig)
+
+  private val miniAppRoutes = new MiniAppRoutes(miniApp)
 
   private val dsl = Http4sDsl[Task]
 
@@ -149,11 +153,11 @@ final class ServerLive(
       case _ => ZIO.attempt(println(json.noSpaces))
     }
 
-  // Последний рубеж: что бы ни уронило любой роут — ВК, кассу, логи, — причина
-  // целиком уходит в лог, клиенту — 500. В лог — только путь: в запросе к логам
-  // в параметрах лежит пароль.
+  // Последний рубеж: что бы ни уронило любой роут — ВК, кассу, логи, Mini App, —
+  // причина целиком уходит в лог, клиенту — 500. В лог — только путь: в запросе к
+  // логам в параметрах лежит пароль.
   private val httpApp: HttpApp[Task] = {
-    val app = (routes <+> payments.routes <+> logs.routes).orNotFound
+    val app = (routes <+> payments.routes <+> logs.routes <+> miniAppRoutes.routes).orNotFound
     HttpApp[Task] { req =>
       app.run(req).catchAllCause { cause =>
         ErrorLog.logged(s"HTTP ${req.method} ${req.uri.path}: запрос не обработан")(cause) *> InternalServerError()

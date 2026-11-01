@@ -1,0 +1,32 @@
+# HTTPS перед ботом: VK Mini App (статика из web/) и маршруты бота, которым
+# нужен HTTPS, — по адресу DOMAIN из .env.
+#
+# Порт 80 сервера занят ботом: туда по HTTP приходит Callback ВК, и его этот
+# файл не трогает. Поэтому сертификат Caddy получает через TLS-ALPN на 443, а
+# проверку через HTTP выключаем — на 80 ответил бы не он.
+{$DOMAIN} {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+
+	encode zstd gzip
+
+	# Бот: API Mini App, вебхук кассы, выдача логов.
+	@bot path /api/* /pay/* /logs /logs/*
+	handle @bot {
+		reverse_proxy app:8080
+	}
+
+	# Mini App. Файлы сборки с хешем в имени не меняются — их кешируем надолго,
+	# а страницу — нет: иначе игрок не увидит новую версию.
+	handle {
+		root * /srv
+		header /assets/* Cache-Control "public, max-age=31536000, immutable"
+		header / Cache-Control "no-cache"
+		header /index.html Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+}

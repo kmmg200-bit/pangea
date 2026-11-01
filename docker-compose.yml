@@ -30,6 +30,7 @@ services:
       VK_TOKEN: ${VK_TOKEN}
       VK_SECRET: ${VK_SECRET:-}
       VK_LONG_POLL: ${VK_LONG_POLL:-false}
+      VK_APP_SECRET: ${VK_APP_SECRET:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       TBANK_TERMINAL_KEY: ${TBANK_TERMINAL_KEY:-}
       TBANK_PASSWORD: ${TBANK_PASSWORD:-}
@@ -48,6 +49,29 @@ services:
     # фоновые дела (ServerLive.ShutdownTimeout, Background.Grace); по
     # умолчанию Docker даёт лишь 10.
     stop_grace_period: 30s
+
+  # HTTPS спереди: VK Mini App (web/) и маршруты бота, которым нужен HTTPS
+  # (/api, /pay, /logs), — по адресу DOMAIN из .env (см. docker/caddy/Caddyfile).
+  # Сертификат Let's Encrypt Caddy получает и продлевает сам и хранит в
+  # caddy_data. Порт 80 остаётся за ботом: на него по HTTP приходит Callback ВК.
+  # Пока DOMAIN не задан, Caddy не запускается — контейнер просто ждёт.
+  caddy:
+    build: ./web
+    entrypoint:
+      - /bin/sh
+      - -c
+      - '[ -n "$$DOMAIN" ] || { echo "DOMAIN не задан в .env — HTTPS выключен"; exec sleep 2147483647; }; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile'
+    environment:
+      DOMAIN: ${DOMAIN:-}
+    ports:
+      - "443:443"
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
 
   # Метрики бота (GameMetrics): Prometheus раз в 15 секунд читает их с app:9464
   # — порт внутренний, наружу не открыт — и хранит 30 дней.
@@ -93,3 +117,5 @@ volumes:
   postgres_data:
   prometheus_data:
   grafana_data:
+  caddy_data:
+  caddy_config:
