@@ -38,11 +38,16 @@ object GameMetrics {
 
   // ── ВК ───────────────────────────────────────────────────────────────────────
 
-  /** С меткой `kind`: message, chat, group. */
+  /** С метками `kind` — message, chat, group — и `source` — callback, longpoll:
+    * каким путём пришло (у group его нет, она только по Callback). Сообщение
+    * считается один раз — пришедшее первым: копия другим путём не событие. */
   val vkEvents: Metric.Counter[Long] =
     Metric.counter("pangea_vk_events_total", "События ВК по виду")
 
-  /** С меткой `kind`: message (личка — ходы игроков), chat (общая беседа). */
+  /** С метками `kind` — message (личка — ходы игроков), chat (общая беседа), —
+    * `source` — callback, longpoll — и `first`: yes — пришло первым и пошло в
+    * ход, no — копия, опоздавшая другим путём. Игрок ждёт столько, сколько
+    * first="yes", а пути сравниваются по всем приходам. */
   val vkDeliveryLagSeconds: Metric.Histogram[Double] =
     Metric.histogram("pangea_vk_delivery_lag_seconds", "От сообщения игрока до прихода события к нам", Lag)
 
@@ -119,13 +124,14 @@ object GameMetrics {
           .update(secondsSince(start)))
     }
 
-  /** Сообщение из ВК: счётчик по виду и — если ВК прислал время отправки
-    * (`date`, секунды) — сколько событие шло до нас. */
-  def vkMessage(kind: String, sentAt: Option[Long]): UIO[Unit] =
-    vkEvents.tagged("kind", kind).increment *>
+  /** Сообщение из ВК, пришедшее путём `source`: счётчик — если пришло первым,
+    * и — если ВК прислал время отправки (`date`, секунды) — сколько шло до нас. */
+  def vkMessage(kind: String, source: String, first: Boolean, sentAt: Option[Long]): UIO[Unit] =
+    ZIO.when(first)(vkEvents.tagged("kind", kind).tagged("source", source).increment) *>
       ZIO.foreachDiscard(sentAt) { at =>
         Clock.currentTime(TimeUnit.MILLISECONDS).flatMap(ms =>
-          vkDeliveryLagSeconds.tagged("kind", kind).update(((ms - at * 1000L).max(0L)) / 1000.0))
+          vkDeliveryLagSeconds.tagged("kind", kind).tagged("source", source).tagged("first", if (first) "yes" else "no")
+            .update(((ms - at * 1000L).max(0L)) / 1000.0))
       }
 
   /** Записать из кода вне ZIO — из колбэков Hikari, на его потоке. Запись в

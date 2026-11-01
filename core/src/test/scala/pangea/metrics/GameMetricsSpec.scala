@@ -48,15 +48,23 @@ object GameMetricsSpec extends ZIOSpecDefault {
       } yield assertTrue(o.count == 2L && e.count == 1L)
     },
 
-    test("доставка от ВК — отдельно для лички и беседы; без времени отправки — только счётчик") {
-      val chat = GameMetrics.vkDeliveryLagSeconds.tagged("kind", "chat")
+    test("доставка от ВК — по виду, пути и первенству; копия не считается событием") {
+      def lag(first: String) =
+        GameMetrics.vkDeliveryLagSeconds.tagged("kind", "chat").tagged("source", "longpoll").tagged("first", first)
+      val events = GameMetrics.vkEvents.tagged("kind", "chat").tagged("source", "longpoll")
       for {
-        before <- chat.value
-        now    <- Clock.currentTime(TimeUnit.SECONDS)
-        _      <- GameMetrics.vkMessage("chat", Some(now - 3L))
-        _      <- GameMetrics.vkMessage("chat", None)
-        after  <- chat.value
-      } yield assertTrue(after.count == before.count + 1)
+        first0  <- lag("yes").value
+        copy0   <- lag("no").value
+        events0 <- events.value
+        now     <- Clock.currentTime(TimeUnit.SECONDS)
+        _       <- GameMetrics.vkMessage("chat", "longpoll", first = true, Some(now - 3L))
+        _       <- GameMetrics.vkMessage("chat", "longpoll", first = false, Some(now - 9L))
+        _       <- GameMetrics.vkMessage("chat", "longpoll", first = true, None)
+        first   <- lag("yes").value
+        copy    <- lag("no").value
+        events1 <- events.value
+      } yield assertTrue(first.count == first0.count + 1 && copy.count == copy0.count + 1) &&
+              assertTrue(events1.count == events0.count + 2)
     },
 
     test("пул базы: ожидание, занятость и таймауты — от Hikari") {

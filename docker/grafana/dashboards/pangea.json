@@ -32,7 +32,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "Ходы и события в минуту",
-      "description": "Сколько ходов игроков и событий ВК приходит в минуту.",
+      "description": "Сколько ходов игроков и событий ВК приходит в минуту, и каким путём сообщение в личку пришло первым: callback или longpoll.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -83,6 +83,15 @@
           },
           "expr": "sum by (kind) (rate(pangea_vk_events_total[2m])) * 60",
           "legendFormat": "события: {{kind}}"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (source) (rate(pangea_vk_events_total{kind=\"message\"}[2m])) * 60",
+          "legendFormat": "личка первой по: {{source}}"
         }
       ]
     },
@@ -157,7 +166,7 @@
       "id": 4,
       "type": "timeseries",
       "title": "Где ждёт ход (p95)",
-      "description": "Ход игрока по частям: доставка — от сообщения у ВК до нас (только личка), остальное — у нас. Если растёт доставка, а не остальное, тормозит ВК.",
+      "description": "Ход игрока по частям: доставка — от сообщения у ВК до нас (только личка, тем путём, что пришёл первым), остальное — у нас. Если растёт доставка, а не остальное, тормозит ВК.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -197,7 +206,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(pangea_vk_delivery_lag_seconds_bucket{kind=\"message\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(pangea_vk_delivery_lag_seconds_bucket{kind=\"message\", first!=\"no\"}[5m])))",
           "legendFormat": "доставка от ВК до нас (личка)"
         },
         {
@@ -232,8 +241,8 @@
     {
       "id": 18,
       "type": "timeseries",
-      "title": "Доставка от ВК: медиана и p95",
-      "description": "От сообщения игрока (время у ВК, точность — секунда) до прихода события к нам. Личка — ходы, беседа — общий чат. Медиана маленькая, а p95 большой — медленный только хвост; обе большие — тормозит всё.",
+      "title": "Доставка от ВК по путям: медиана и p95",
+      "description": "Личка: от сообщения игрока (время у ВК, точность — секунда) до прихода к нам — отдельно по Callback и по Long Poll, считая и опоздавшие копии. Линия одного пути ниже — он быстрее. Медиана маленькая, а p95 большой — медленный только хвост; обе большие — тормозит всё.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -273,8 +282,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.5, sum by (le, kind) (rate(pangea_vk_delivery_lag_seconds_bucket[5m])))",
-          "legendFormat": "медиана: {{kind}}"
+          "expr": "histogram_quantile(0.5, sum by (le, source) (rate(pangea_vk_delivery_lag_seconds_bucket{kind=\"message\"}[5m])))",
+          "legendFormat": "медиана: {{source}}"
         },
         {
           "refId": "B",
@@ -282,8 +291,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, kind) (rate(pangea_vk_delivery_lag_seconds_bucket[5m])))",
-          "legendFormat": "p95: {{kind}}"
+          "expr": "histogram_quantile(0.95, sum by (le, source) (rate(pangea_vk_delivery_lag_seconds_bucket{kind=\"message\"}[5m])))",
+          "legendFormat": "p95: {{source}}"
         }
       ]
     },

@@ -6,7 +6,7 @@ import org.http4s.ember.client.EmberClientBuilder
 import zio.{Scope, Task, ZIO}
 import zio.interop.catz._
 
-import scala.concurrent.duration.DurationInt
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 
 object Client {
   // Явный Network[Task] вместо устаревшего неявного implicitForAsync (http4s 3.7.0).
@@ -19,10 +19,13 @@ object Client {
     *
     * Тайм-аут — на один запрос: ВК отвечает за доли секунды, а зависший запрос
     * без него держал бы ход — и лок игрока — слишком долго. */
-  def scoped: ZIO[Scope, Throwable, HClient[Task]] =
+  def scoped: ZIO[Scope, Throwable, HClient[Task]] = scoped(10.seconds)
+
+  /** Клиент со своим тайм-аутом: Long Poll ВК держит запрос до 25 секунд. */
+  def scoped(timeout: FiniteDuration): ZIO[Scope, Throwable, HClient[Task]] =
     EmberClientBuilder
       .default[Task]
-      .withTimeout(10.seconds)
+      .withTimeout(timeout)
       .build
       .toScopedZIO
 }

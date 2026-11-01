@@ -21,6 +21,7 @@ import pangea.dao.journal.JournalLive
 import pangea.dao.schedule.ScheduledTaskDao
 import pangea.dao.sendfailure.SendFailureDao
 import pangea.dao.user.UserDao
+import pangea.dao.vk.SeenMessageDao
 import pangea.engine.{Players, SceneContent}
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.auction.AuctionRepository
@@ -42,7 +43,7 @@ import pangea.service.promo.PromoCodes
 import pangea.service.schedule.{Scheduler, SchedulerPoller, SchedulerPollerLive}
 import pangea.service.sender.Api
 import pangea.service.sender.vk.config.VkConfig
-import pangea.service.sender.vk.VkPlayers
+import pangea.service.sender.vk.{VkLongPoll, VkPlayers}
 import pangea.service.state.{PlayerLock, StateHandler}
 import pangea.service.state.states.StatesMap
 import server.{MetricsServer, Server}
@@ -65,6 +66,7 @@ object Main extends ZIOAppDefault {
 
   private type Env =
     Server with SchedulerPoller with Donations with ActivityContest with Transfers with Background with PrometheusPublisher
+      with VkConfig with VkLongPoll with SeenMessageDao
 
   /** Метрики: реестр ZIO раз в 5 секунд переписывается в текст для Prometheus
     * (его отдаёт MetricsServer); плюс метрики JVM — память, GC, потоки, CPU.
@@ -85,6 +87,8 @@ object Main extends ZIOAppDefault {
       PostgresConfig.live,
       Transactor.live,
       Api.vk,
+      VkLongPoll.live,
+      SeenMessageDao.live,
       // Имя героя — из игры, а нет его — из ВК (см. VkPlayers).
       ZLayer.fromFunction((api: Api, heroDao: HeroDao) => VkPlayers(api, heroDao): Players),
       HeroDao.live,
@@ -166,6 +170,23 @@ object Main extends ZIOAppDefault {
       background.repeat(SchedulerPollerLive.PollInterval, "Scheduler poll failed")(poller.poll)
     }
 
+  /** Long Poll — второй путь сообщений от ВК рядом с Callback (см. VkLongPoll):
+    * включается `VK_LONG_POLL=true` и тумблером в настройках сообщества. */
+  private def longPollLoop(background: Background) =
+    ZIO.serviceWithZIO[VkConfig] { config =>
+      ZIO.when(config.longPoll)(
+        ZIO.serviceWithZIO[VkLongPoll](longPoll =>
+          ZIO.serviceWithZIO[Server](server => background.forkUntilShutdown(longPoll.run(server.longPoll)))))
+    }
+
+  /** Отмеченные сообщения ВК (см. SeenMessageDao) старше суток — забыть:
+    * опоздание ВК — минуты, а без уборки таблица росла бы вечно. */
+  private def seenLoop(background: Background) =
+    ZIO.serviceWithZIO[SeenMessageDao] { seen =>
+      background.repeat(1.hour, "Уборка отмеченных сообщений ВК упала")(
+        now.flatMap(t => seen.forget(t - 1.day.toMillis).unit))
+    }
+
   private val now = ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
 
   /** Фон и сервер. Остановка (SIGTERM от `docker stop` → прерывание главного
@@ -178,6 +199,8 @@ object Main extends ZIOAppDefault {
         reconcileLoop(background) *>
         contestLoop(background) *>
         mailLoop(background) *>
+        seenLoop(background) *>
+        longPollLoop(background) *>
         (ZIO.serviceWithZIO[Server](_.run()) <&> ZIO.serviceWithZIO[PrometheusPublisher](MetricsServer.run)))
         .ensuring(background.shutdown)
     }

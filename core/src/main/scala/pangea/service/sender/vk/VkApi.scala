@@ -1,6 +1,7 @@
 package pangea.service.sender.vk
 
 import cats.data.Chain
+import io.circe.Json
 import io.circe.parser.parse
 import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 import org.http4s.client.Client
@@ -26,7 +27,7 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
   private val uri = uri"https://api.vk.com/method/"
   private val baseQueryParams: Map[String, List[String]] = Map(
     "access_token" -> List(config.token),
-    "v"            -> List("5.199")
+    "v"            -> List(VkApi.Version)
   )
 
   // Параметры уходят телом POST (form-urlencoded), а не в query string: длинные
@@ -174,6 +175,9 @@ object VkApi {
   /** Метод отправки — метка в метриках вызовов ВК. */
   private val SendMethod = "messages.send"
 
+  /** Версия API ВК: от неё зависит вид событий и ответов. */
+  val Version = "5.199"
+
   /** Ошибка API VK: тело ответа содержит объект `error`. */
   final case class VkApiError(code: Int, message: String) extends RuntimeException(s"VK API error $code: $message")
 
@@ -201,13 +205,17 @@ object VkApi {
    * ответ считался успехом, и игрок молча оставался без экрана.
    */
   def failOnBadResponse(status: Status, body: String): Task[Unit] =
+    responseOf(status, body).unit
+
+  /** То же, но с телом ответа — полем `response` (нет его — `null`). */
+  def responseOf(status: Status, body: String): Task[Json] =
     if (!status.isSuccess) ZIO.fail(VkApiError(status.code, snippet(body)))
     else
       parse(body) match {
         case Left(_) => ZIO.fail(new RuntimeException(s"VK non-JSON response: ${snippet(body)}"))
         case Right(json) =>
           json.hcursor.downField("error").focus match {
-            case None => ZIO.unit
+            case None => ZIO.succeed(json.hcursor.downField("response").focus.getOrElse(Json.Null))
             case Some(err) =>
               val code = err.hcursor.get[Int]("error_code").getOrElse(-1)
               val msg  = err.hcursor.get[String]("error_msg").getOrElse(err.noSpaces)
