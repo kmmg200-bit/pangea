@@ -2891,10 +2891,15 @@ case class BattleState(
       // «Упырь» (порог 10): кровь ЧУЖОЙ стороны идёт в лечение и делится ровно
       // между вампирами СВОЕЙ. Сегодня вампир один — сам герой, поэтому ему
       // достаётся всё (см. ItemSet.Ghoul.bleedHealShare).
+      // Жив ли герой ПОСЛЕ своих тиков: горение, яд и кровь в конце раунда
+      // могут добить его, и тогда ни реген, ни чужая кровь не поднимают его с
+      // нуля. Раньше тут смотрели жизнь до тиков — и герой на 0 HP получал
+      // свои (+N) обратно, бой шёл дальше, а пламя «снимало» тысячи впустую.
+      heroStands         = tickedHero.fightStats.hp > 0
       vampiresOnHeroSide = if (tickedHero.sets.healsFromBleed) 1 else 0
       bleedShare         = ItemSet.Ghoul.bleedHealShare(bleedDealt, vampiresOnHeroSide)
       heroFedByBleed =
-        if (bleedShare > 0L)
+        if (heroStands && bleedShare > 0L)
           tickedHero.copy(fightStats = tickedHero.fightStats.copy(
             hp = (tickedHero.fightStats.hp + bleedShare).min(tickedHero.effectiveMaxHp(nowMs))))
         else tickedHero
@@ -2906,7 +2911,7 @@ case class BattleState(
 
       // Реген энергии в конце хода: +(Интеллект + 0.5·Ловкость), не меньше 1 и не
       // выше максимума. «Сосредоточенность» множит реген на 1.1. Пока герой жив.
-      finalHeroWithEnergy = if (heroAlive) endOfRoundHero(heroFedByBleed, nowMs) else heroFedByBleed
+      finalHeroWithEnergy = if (heroStands) endOfRoundHero(heroFedByBleed, nowMs) else heroFedByBleed
 
       // Сегмент монстра: пустой разделитель, строка атаки, затем (в исходном
       // порядке) каст моба, тики DoT на мобе, тики и реген героя, и последним —

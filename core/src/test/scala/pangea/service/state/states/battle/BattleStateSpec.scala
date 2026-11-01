@@ -361,6 +361,24 @@ object BattleStateSpec extends ZIOSpecDefault {
               assertTrue(burned == clean) // тик регенерации горение не трогает
     },
 
+    test("горение, добившее героя в конце раунда, не отменяется его регеном") {
+      // «Целебный» лечит в конце раунда, но мёртвого с нуля не поднимает: раньше
+      // жизнь смотрели до тика пламени, и герой вечно стоял на своих (+N) HP.
+      val amulet = Item(303L, "Амулет", 1L, ItemRarity.Gray, ItemType.Amulet,
+        attack = 0, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0,
+        details = ItemDetails.Passive(pangea.model.item.PassiveKind.Healing))
+      val h = strongHero.copy(fightStats = strongHero.fightStats.copy(hp = 10L),
+                              equipment  = TestFixtures.emptyEquipment.copy(amulet = amulet))
+      val b = strongBattle.copy(effects = strongBattle.effects.copy(heroBurn = Some(Burn(100))))
+      for {
+        t <- makeState(h, b)
+        (state, heroDao, renderer) = t
+        _      <- TestRandom.feedInts(60, 1) *> TestRandom.feedLongs(100L, 100L)
+        result <- state.action(testUser, tap("Attack"), renderer)
+        hero   <- heroDao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(result == StateType.Death) && assertTrue(hero.fightStats.hp == 0L)
+    },
+
     // ── Пояс: сумка расходников ───────────────────────────────────────────────
 
     test("кнопка «Пояс» присылает отдельное сообщение со списком, не трогая бой") {
