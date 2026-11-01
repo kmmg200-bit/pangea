@@ -227,7 +227,7 @@ object HerbWorkbenchSpec extends ZIOSpecDefault {
       } yield assertTrue(home.cauldron.isEmpty && home.charges == 99) &&
               assertTrue(home.brews.flatMap(_.brew) == List(BrewKind.BoneSetter, BrewKind.BoneSetter)) &&
               assertTrue(home.brews.forall(_.id > 0L)) &&
-              assertTrue(said.contains("Варок: 1, бутылок: 2")) &&
+              assertTrue(said.contains("Сварено: Костоправный отвар ×2 — готовое встало на полку отваров. Варок: 1, энергии ушло: 1.")) &&
               assertTrue(lore.brewed.contains(BrewKind.BoneSetter.entryName))
     },
 

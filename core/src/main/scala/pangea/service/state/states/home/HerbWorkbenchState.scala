@@ -16,7 +16,7 @@ import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
-import pangea.service.state.{HerbLore, ItemMenu, MarisaQuest, State, UiScene, UserAction}
+import pangea.service.state.{HerbLore, ItemMenu, MarisaQuest, StackMove, State, UiScene, UserAction}
 import zio.{Random, Task, ZIO}
 
 /** Верстак травника — со второго дома. Полки под травы (всего
@@ -192,7 +192,7 @@ case class HerbWorkbenchState(
                       _     <- saveHome(user, home.copy(brews = home.brews ++ shelf, cauldron = kept ++ queued,
                                  charges = home.charges - result.chargesUsed))
                       _     <- say(user, content.format("home.workbench.cooked", "n" -> result.chargesUsed.toString,
-                                 "bottles" -> made.size.toString) +
+                                 "items" -> StackMove.names(made)) +
                                  (if (queued.nonEmpty) "\n" + content.format("home.workbench.cookedWait", "n" -> queued.size.toString) else ""),
                                  renderer)
                       _     <- brewedAchievement(user, hero, made, renderer)
