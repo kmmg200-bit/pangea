@@ -174,6 +174,8 @@ object MonsterCaveSpec extends ZIOSpecDefault {
         scene  <- sceneOf(dao)
       } yield assertTrue(gate.choices.map(_.id) == List("CaveEnter", "CaveSupply", "OpenCharacter", "CaveOut")) &&
               assertTrue(!gate.text.contains("15") && !gate.text.contains("30")) &&
+              // раса по следам — во множественном: «оставили их орки»
+              assertTrue(gate.text.contains("оставили их " + Race.mortals(3).plural.toLowerCase)) &&
               assertTrue(inside == StateType.MonsterCave && scene.exists(_.inside)) &&
               assertTrue(room.choices.map(_.id).startsWith(List("CaveForward", "CaveLeft", "CaveRight", "CaveBack")))
     },

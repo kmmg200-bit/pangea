@@ -64,7 +64,8 @@ case class RaceRevengeState(heroDao: HeroDao, content: SceneContent) extends Sta
       named = MonsterGenerator.generateOfRaceAndRarity(hero.lvl.toInt, race, Rarity.Legendary, scene.named)
       lines = content.list("revenge.scenes")
       text  = lines(scene.scene % lines.size)
-                .replace("{race}", race.toString)
+                .replace("{raceLower}", race.plural.toLowerCase)
+                .replace("{race}", race.plural)
                 .replace("{name}", named.name)
       _ <- renderer.show(user, Screen(text, List(
              content.choice("RevengeFight", "revenge.fight").copy(color = ChoiceColor.Negative, row = Some(0)),
@@ -80,7 +81,7 @@ case class RaceRevengeState(heroDao: HeroDao, content: SceneContent) extends Sta
         if (roll <= PersuadePct)
           heroDao.writeSceneData(user.userId, Json.Null) *>
             renderer.show(user, Screen(content.format("revenge.believed",
-              "race" -> Race.withName(scene.race).toString), Nil)).as(StateType.Dungeon)
+              "race" -> Race.withName(scene.race).plural), Nil)).as(StateType.Dungeon)
         else
           renderer.show(user, Screen(content.text("revenge.notBelieved"), Nil)) *> start(user, scene, renderer)
       }
@@ -105,7 +106,7 @@ case class RaceRevengeState(heroDao: HeroDao, content: SceneContent) extends Sta
       _ <- heroDao.writeActiveBattle(user.userId, battle.asJson)
       _ <- heroDao.writeSceneData(user.userId, Json.Null)
       _ <- renderer.show(user, Screen(content.format("revenge.battle",
-             "name" -> monsters.head.name, "race" -> race.toString), Nil))
+             "name" -> monsters.head.name, "raceOf" -> race.genitivePlural), Nil))
     } yield StateType.Battle
 
   private def withScene(user: User)(f: RevengeScene => Task[StateType]): Task[StateType] =

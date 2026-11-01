@@ -131,7 +131,7 @@ case class MonsterCaveState(
       if (scene.sewer) content.format("sewer.gate.text", "lvl" -> Difficulty.render(scene.questLvl.toInt))
       else if (scene.necro) content.format("necro.gate.text",
         "race" -> Race.withName(scene.race).genitivePlural, "lvl" -> Difficulty.render(scene.questLvl.toInt))
-      else content.format("cave.gate.text", "race" -> Race.withName(scene.race).toString),
+      else content.format("cave.gate.text", "race" -> Race.withName(scene.race).plural.toLowerCase),
       List(
         content.choice("CaveEnter", key(scene, "gate.enter")).copy(color = ChoiceColor.Positive, row = Some(0)),
         content.choice("CaveSupply", "cave.gate.supply").copy(row = Some(1)),

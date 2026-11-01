@@ -91,7 +91,7 @@ object RaceRevengeSpec extends ZIOSpecDefault {
               // в тексте — имя пришедшего, а числа убитых нет ни в одной сцене
               assertTrue(screen.text.contains("Каркан")) &&
               assertTrue(!screen.text.exists(_.isDigit) && !other.text.exists(_.isDigit)) &&
-              assertTrue(other.text != screen.text && other.text.contains("Орк"))
+              assertTrue(other.text != screen.text && other.text.contains("орки вышли"))
     },
 
     test("принять бой: именной и двое старших по уровню героя") {
@@ -108,7 +108,7 @@ object RaceRevengeSpec extends ZIOSpecDefault {
               // пришли за героем — и уровень у них геройский, а не по этажу
               assertTrue(battle.exists(_.monsterLvl == 30L)) &&
               assertTrue(battle.exists(_.monsterRace == Race.Orc.entryName)) &&
-              assertTrue(said.contains("идут на вас разом")) &&
+              assertTrue(said.contains("двое старших орков идут на вас разом")) &&
               // звать родню им никто не запрещал: в конце первого раунда позовут
               assertTrue(battle.exists(!_.noKin)) &&
               assertTrue(scene.contains(io.circe.Json.Null))
@@ -128,7 +128,7 @@ object RaceRevengeSpec extends ZIOSpecDefault {
         bad    <- s2.action(testUser, tap("RevengePersuade"), r2)
         saidNo <- texts(r2)
         battle <- battleOf(dao2)
-      } yield assertTrue(ok == StateType.Dungeon && noFight.isEmpty && saidOk.contains("Вас пропускают")) &&
+      } yield assertTrue(ok == StateType.Dungeon && noFight.isEmpty && saidOk.contains("Вас пропускают") && saidOk.contains("Орки переглядываются")) &&
               assertTrue(bad == StateType.Battle && battle.isDefined) &&
               assertTrue(saidNo.contains("в нашей крови"))
     },

@@ -85,7 +85,7 @@ object Monster {
     // ── Гном ───────────────────────────────────────────────────────────────
     (Race.Gnome, Rarity.Common)    -> "Гном-раб",
     (Race.Gnome, Rarity.Uncommon)  -> "Гном соратник",
-    (Race.Gnome, Rarity.Rare)      -> "Гном костелом",
+    (Race.Gnome, Rarity.Rare)      -> "Гном костолом",
     (Race.Gnome, Rarity.Mythical)  -> "Гном предводитель",
     (Race.Gnome, Rarity.Legendary) -> "Гарми Череполом",
 
