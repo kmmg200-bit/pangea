@@ -6,11 +6,12 @@ import pangea.model.auction.{AuctionCurrency, AuctionLot}
 import pangea.model.hero.Hero
 import pangea.model.inventory.Inventory
 import pangea.model.item.{Item, ItemStack, ItemType, Rarity}
-import pangea.service.state.states.{EquipmentState, InventoryState}
+import pangea.service.state.states.EquipmentState
 
 /** Что видит Mini App: те же вещи, что и бот, но данными, а не экраном.
-  * Описание вещи (`text`) — тот же текст, что в карточке бота: правила показа
-  * остаются в одном месте, а приложение раскладывает вещи сеткой, фильтрует и
+  * Описание вещи (`text`) — тот же текст, что в карточке бота
+  * ([[pangea.service.state.states.InventoryState.cardText]], его передаёт `describe`): правила показа
+  * остаются в одном месте, а приложение раскладывает вещи, фильтрует и
   * сортирует их. */
 object MiniAppView {
 
@@ -67,13 +68,13 @@ object MiniAppView {
   def hero(h: Hero): HeroView = HeroView(h.lvl, h.silver, h.doubloons)
 
   /** Сумка — стопками, как в боте, — и всё надетое. */
-  def inventory(h: Hero, inv: Inventory): InventoryView =
+  def inventory(h: Hero, inv: Inventory, describe: Item => String): InventoryView =
     InventoryView(
       hero      = hero(h),
       capacity  = inv.maxItems,
       occupied  = inv.occupied,
       items     = ItemStack.grouped(inv.items.data).map { case (item, count) =>
-                    view(item, count, InventoryState.itemText(item, h.equipment, Some(h)))
+                    view(item, count, describe(item))
                   },
       equipment = EquipmentState.slots.map { slot =>
                     val worn = slot.get(h.equipment)
@@ -87,11 +88,12 @@ object MiniAppView {
 
   /** Витрина и свои лоты. Описание вещи в лоте — со сравнением с надетым на
     * герое, как в карточке бота. */
-  def auction(h: Hero, onSale: List[AuctionLot], mine: List[AuctionLot], now: Long): AuctionView = {
+  def auction(h: Hero, onSale: List[AuctionLot], mine: List[AuctionLot], now: Long,
+              describe: Item => String): AuctionView = {
     def lot(l: AuctionLot): LotView =
       LotView(
         id        = l.id,
-        item      = view(l.item, 1, InventoryState.itemText(l.item, h.equipment, Some(h))),
+        item      = view(l.item, 1, describe(l.item)),
         price     = l.price,
         currency  = currency(l.currency),
         hoursLeft = l.hoursLeft(now),

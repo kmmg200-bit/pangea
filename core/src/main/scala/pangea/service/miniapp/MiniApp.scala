@@ -1,12 +1,18 @@
 package pangea.service.miniapp
 
+import pangea.dao.hero.HeroDao
+import pangea.engine.SceneContent
 import pangea.model.auction.AuctionLot
 import pangea.model.hero.Hero
+import pangea.model.item.Item
+import pangea.model.quest.NpcQuest
 import pangea.repository.auction.AuctionRepository
 import pangea.repository.hero.HeroRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.user.UserRepository
 import pangea.service.miniapp.MiniAppView.{AuctionView, InventoryView}
+import pangea.service.state.NpcQuestLog
+import pangea.service.state.states.InventoryState
 import zio.{Task, ZIO, ZLayer}
 
 import java.util.concurrent.TimeUnit
@@ -40,9 +46,9 @@ object MiniApp {
     * само, а больше игрок и не пролистает. */
   val MaxLots: Int = 500
 
-  val live: ZLayer[MiniAppConfig with UserRepository with HeroRepository with InventoryRepository with AuctionRepository,
-                   Nothing, MiniApp] =
-    ZLayer.fromFunction(new MiniAppLive(_, _, _, _, _))
+  val live: ZLayer[MiniAppConfig with UserRepository with HeroRepository with InventoryRepository with AuctionRepository
+                     with HeroDao with SceneContent, Nothing, MiniApp] =
+    ZLayer.fromFunction(new MiniAppLive(_, _, _, _, _, _, _))
 }
 
 final class MiniAppLive(
@@ -50,7 +56,9 @@ final class MiniAppLive(
   users:       UserRepository,
   heroes:      HeroRepository,
   inventories: InventoryRepository,
-  lots:        AuctionRepository
+  lots:        AuctionRepository,
+  heroDao:     HeroDao,
+  content:     SceneContent
 ) extends MiniApp {
   import MiniApp.Denied
 
@@ -69,8 +77,10 @@ final class MiniAppLive(
     }
 
   override def inventory(hero: Hero): Task[InventoryView] =
-    inventories.get(hero.id).mapError(e => new Throwable(e.toString))
-      .map(MiniAppView.inventory(hero, _))
+    for {
+      inv      <- inventories.get(hero.id).mapError(e => new Throwable(e.toString))
+      describe <- describer(hero)
+    } yield MiniAppView.inventory(hero, inv, describe)
 
   override def auction(hero: Hero): Task[AuctionView] =
     for {
@@ -78,7 +88,16 @@ final class MiniAppLive(
       page   <- lots.page(ms, 0, MiniApp.MaxLots).mapError(e => new Throwable(e.toString))
       (onSale, _, _) = page
       mine   <- lots.mine(hero.id, AuctionLot.MaxLots.toLong).mapError(e => new Throwable(e.toString))
-    } yield MiniAppView.auction(hero, onSale, mine, ms)
+      describe <- describer(hero)
+    } yield MiniAppView.auction(hero, onSale, mine, ms, describe)
+
+  /** Описание вещи — как в карточке бота. Вскрыто ли письмо Марисы, знает
+    * журнал заданий: к невскрытому карточка добавляет подсказку. */
+  private def describer(hero: Hero): Task[Item => String] =
+    NpcQuestLog.load(heroDao, hero.userId).map { quests =>
+      val opened = quests.of(NpcQuest.Marisa).bonus
+      (item: Item) => InventoryState.cardText(content, item, hero, opened)
+    }
 
   private val now = ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
 }

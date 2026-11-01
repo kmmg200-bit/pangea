@@ -241,8 +241,7 @@ case class InventoryState(
                        note: Option[String]): Task[StateType] =
     getHero(user).flatMap { hero =>
       val count   = ItemStack.countOf(all, item)
-      val beltOnly = if (kind.combat) "\n" + content.text("brew.beltOnly") else ""
-      val text    = StackMove.withNote(note, s"${item.displayTitle}\n${item.statsLines.mkString("\n")}" + beltOnly + stackLine(count))
+      val text    = StackMove.withNote(note, InventoryState.brewText(content, item, kind) + stackLine(count))
       val flaskFits = InventoryState.brewFlasks(hero).exists(f => kind.refills.contains(f.source))
       val coats = kind.effect match { case BrewEffect.Coat(_, _) => true; case _ => false }
       val choices = List(
@@ -462,37 +461,29 @@ case class InventoryState(
       quests <- NpcQuestLog.load(heroDao, user.userId)
       opened  = quests.of(NpcQuest.Marisa).bonus
       exit    = content.choice("InventoryList", "inventory.exit").copy(row = Some(1), color = ChoiceColor.Negative)
-      screen  = item.questItem match {
+      // Что с предметом сделать — своя кнопка у каждого вида; текст карточки —
+      // общий с Mini App (см. InventoryState.questText).
+      use     = item.questItem match {
         case Some(QuestItemKind.MarisaLetter) =>
-          val text = s"${item.displayTitle}\n${content.format("marisa.difficulty", "difficulty" -> Difficulty.render(MarisaQuest.LetterDifficulty))}\n\n${QuestItemKind.MarisaLetter.description}" +
-            (if (opened) "" else "\n\n" + content.text("marisa.letterHint"))
-          Screen(text, List(
-            content.choice("OpenLetter", if (opened) "marisa.readLetterLabel" else "marisa.openLetterLabel")
-              .copy(color = ChoiceColor.Positive, row = Some(0)), exit))
+          Some(content.choice("OpenLetter", if (opened) "marisa.readLetterLabel" else "marisa.openLetterLabel")
+            .copy(color = ChoiceColor.Positive, row = Some(0)))
         case Some(QuestItemKind.KelvinMap) =>
-          Screen(s"${item.displayTitle}\n\n${QuestItemKind.KelvinMap.description}", List(
-            content.choice("UseKelvinMap", "marisa.mapUseLabel").copy(color = ChoiceColor.Positive, row = Some(0)), exit))
+          Some(content.choice("UseKelvinMap", "marisa.mapUseLabel").copy(color = ChoiceColor.Positive, row = Some(0)))
         case Some(QuestItemKind.MurlocVillageMap) =>
-          val text = s"${item.displayTitle}\n${content.format("marisa.difficulty", "difficulty" -> Difficulty.render(MurlocQuest.MapDifficulty))}\n\n${QuestItemKind.MurlocVillageMap.description}"
-          Screen(text, List(
-            content.choice("UseMurlocMap", "murlocVillage.map.useLabel").copy(color = ChoiceColor.Positive, row = Some(0)), exit))
-        // Купон на смену расы: описание и «Сменить расу» — квест начнётся сразу.
+          Some(content.choice("UseMurlocMap", "murlocVillage.map.useLabel").copy(color = ChoiceColor.Positive, row = Some(0)))
+        // Купон на смену расы: «Сменить расу» — квест начнётся сразу.
         case Some(QuestItemKind.RaceCoupon) =>
-          Screen(s"${item.displayTitle}\n\n${QuestItemKind.RaceCoupon.description}", List(
-            content.choice("RaceChange", "raceQuest.useLabel").copy(row = Some(0)), exit))
+          Some(content.choice("RaceChange", "raceQuest.useLabel").copy(row = Some(0)))
         case Some(QuestItemKind.NameCoupon) =>
-          Screen(s"${item.displayTitle}\n\n${QuestItemKind.NameCoupon.description}", List(
-            content.choice("NameChange", "nameChange.useLabel").copy(row = Some(0)), exit))
+          Some(content.choice("NameChange", "nameChange.useLabel").copy(row = Some(0)))
         // Ключ магической стойки: повернул — надетое и стойка дома меняются местами.
         case Some(key) if QuestItemKind.rackOf(key).isDefined =>
-          Screen(s"${item.displayTitle}\n\n${key.description}", List(
-            Choice("RackKeyUse", content.text("home.rack.useKey"), color = ChoiceColor.Positive, row = Some(0)), exit))
+          Some(Choice("RackKeyUse", content.text("home.rack.useKey"), color = ChoiceColor.Positive, row = Some(0)))
         case Some(book) if HerbLore.isTreatise(book) =>
-          Screen(s"${item.displayTitle}\n\n${book.description}", List(
-            content.choice("ReadTreatise", "knowledge.readLabel").copy(color = ChoiceColor.Positive, row = Some(0)), exit))
-        case _ => Screen(item.displayTitle, List(exit))
+          Some(content.choice("ReadTreatise", "knowledge.readLabel").copy(color = ChoiceColor.Positive, row = Some(0)))
+        case _ => None
       }
-      _ <- renderer.show(user, screen)
+      _ <- renderer.show(user, Screen(InventoryState.questText(content, item, opened), use.toList :+ exit))
     } yield StateType.Inventory
 
   /** Повернуть ключ стойки: магия меняет надетое местами с тем, что висит на
@@ -1227,6 +1218,39 @@ object InventoryState {
   private object Brewed {
     def unapply(item: Item): Option[BrewKind] = item.brew
   }
+
+  /** Текст карточки вещи, как в сумке бота, — без кнопок и без строки с
+    * серебром: у сюжетного предмета — описание, у отвара — что он делает и где
+    * работает, у прочего — характеристики и сравнение с надетым. Им же
+    * описывает вещи Mini App. `letterOpened` — письмо Марисы уже вскрыто. */
+  def cardText(content: SceneContent, item: Item, hero: Hero, letterOpened: Boolean): String = item match {
+    case _ if item.isQuestItem => questText(content, item, letterOpened)
+    case Brewed(kind)          => brewText(content, item, kind)
+    case _                     => itemText(item, hero.equipment, Some(hero))
+  }
+
+  /** Сюжетный предмет: описание, у письма и карты — ещё и сложность; к
+    * невскрытому письму — подсказка, у кого спросить. */
+  def questText(content: SceneContent, item: Item, letterOpened: Boolean): String = {
+    def difficulty(n: Int) = content.format("marisa.difficulty", "difficulty" -> Difficulty.render(n))
+    item.questItem match {
+      case Some(QuestItemKind.MarisaLetter) =>
+        s"${item.displayTitle}\n${difficulty(MarisaQuest.LetterDifficulty)}\n\n${QuestItemKind.MarisaLetter.description}" +
+          (if (letterOpened) "" else "\n\n" + content.text("marisa.letterHint"))
+      case Some(QuestItemKind.MurlocVillageMap) =>
+        s"${item.displayTitle}\n${difficulty(MurlocQuest.MapDifficulty)}\n\n${QuestItemKind.MurlocVillageMap.description}"
+      case Some(kind @ (QuestItemKind.KelvinMap | QuestItemKind.RaceCoupon | QuestItemKind.NameCoupon)) =>
+        s"${item.displayTitle}\n\n${kind.description}"
+      case Some(kind) if QuestItemKind.rackOf(kind).isDefined || HerbLore.isTreatise(kind) =>
+        s"${item.displayTitle}\n\n${kind.description}"
+      case _ => item.displayTitle
+    }
+  }
+
+  /** Отвар: что делает; боевой — с пометкой, что работает из ячейки пояса. */
+  def brewText(content: SceneContent, item: Item, kind: BrewKind): String =
+    s"${item.displayTitle}\n${item.statsLines.mkString("\n")}" +
+      (if (kind.combat) "\n" + content.text("brew.beltOnly") else "")
 
   /** Краденый кошелёк, если его развязать: от горсти серебра до увесистой.
     * Один из двухсот оказывается набит редкой монетой — воры и сами этого не

@@ -29,7 +29,7 @@ object MiniAppViewSpec extends ZIOSpecDefault {
 
     test("одинаковые камни — одной стопкой со счётчиком, оружие — само по себе") {
       val hero = TestFixtures.hero(UserId(1L))
-      val view = MiniAppView.inventory(hero, Inventory(1L, hero.id, 20L, Inventory.Items(List(ruby(1L), sword, ruby(2L)))))
+      val view = MiniAppView.inventory(hero, Inventory(1L, hero.id, 20L, Inventory.Items(List(ruby(1L), sword, ruby(2L)))), _.name)
       assertTrue(
         view.items.map(i => i.kind -> i.count) == List("Gem" -> 2, "Weapon" -> 1),
         view.items.lastOption.exists(i => i.id == 10L && i.rarity == "Blue" && i.text.contains("Меч")),
@@ -41,7 +41,7 @@ object MiniAppViewSpec extends ZIOSpecDefault {
     test("снаряжение — все слоты; левая рука под двуручным занята им") {
       val hero = TestFixtures.hero(UserId(1L)).copy(id = HeroId(7L),
         equipment = TestFixtures.emptyEquipment.copy(weapon = greatsword))
-      val view  = MiniAppView.inventory(hero, Inventory(1L, hero.id, 20L, Inventory.Items(Nil)))
+      val view  = MiniAppView.inventory(hero, Inventory(1L, hero.id, 20L, Inventory.Items(Nil)), _.name)
       val right = view.equipment.find(_.name == EquipmentState.RightHandName)
       val left  = view.equipment.find(_.name == EquipmentState.LeftHandName)
       assertTrue(
