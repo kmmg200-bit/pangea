@@ -32,7 +32,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "Ходы и события в минуту",
-      "description": "Сколько ходов игроков и событий ВК приходит в минуту, и каким путём сообщение в личку пришло первым: callback или longpoll.",
+      "description": "Сколько ходов игроков и событий ВК приходит в минуту.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -83,15 +83,6 @@
           },
           "expr": "sum by (kind) (rate(pangea_vk_events_total[2m])) * 60",
           "legendFormat": "события: {{kind}}"
-        },
-        {
-          "refId": "C",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (source) (rate(pangea_vk_events_total{kind=\"message\"}[2m])) * 60",
-          "legendFormat": "личка первой по: {{source}}"
         }
       ]
     },
@@ -297,6 +288,59 @@
       ]
     },
     {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Откуда взято событие",
+      "description": "Сообщения, пошедшие в ход (личка и беседа), — каким путём пришли первыми: callback или longpoll. Копии, опоздавшие другим путём, не считаются. Высота столбика — все сообщения в минуту.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 6,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 40,
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (source) (rate(pangea_vk_events_total{source!=\"\"}[2m])) * 60",
+          "legendFormat": "{{source}}"
+        }
+      ]
+    },
+    {
       "id": 5,
       "type": "timeseries",
       "title": "Медленные сцены — p95, топ-10",
@@ -306,9 +350,9 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "x": 0,
+        "x": 6,
         "y": 9,
-        "w": 12,
+        "w": 6,
         "h": 8
       },
       "fieldConfig": {
