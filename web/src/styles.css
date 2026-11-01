@@ -322,23 +322,24 @@ button.row:active {
   inset: 0;
   z-index: 10;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
+  padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+  background: rgba(0, 0, 0, 0.5);
   animation: fade 0.15s ease-out;
 }
 
 .sheet {
   position: relative;
   width: 100%;
-  max-width: 640px;
-  max-height: 85vh;
+  max-width: 480px;
+  max-height: 100%;
   overflow-y: auto;
-  padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
-  border-radius: 18px 18px 0 0;
+  padding: 20px 16px;
+  border-radius: 18px;
   background: var(--surface);
   box-shadow: var(--shadow);
-  animation: rise 0.2s ease-out;
+  animation: pop 0.18s ease-out;
 }
 
 .sheet-close {
@@ -407,11 +408,19 @@ button.row:active {
   }
 }
 
-@keyframes rise {
+@keyframes pop {
   from {
-    transform: translateY(40px);
+    transform: scale(0.94);
     opacity: 0;
   }
+}
+
+/* ── Монета ───────────────────────────────────────────── */
+
+.coin {
+  width: 1.05em;
+  height: 1.05em;
+  vertical-align: -0.17em;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -26,7 +26,7 @@ const kinds: Record<string, Kind> = {
   Gloves: { label: 'Перчатки', icon: '🧤', group: 'gear' },
   Pants: { label: 'Штаны', icon: '👖', group: 'gear' },
   Leggings: { label: 'Поножи', icon: '👖', group: 'gear' },
-  Boots: { label: 'Сапоги', icon: '👢', group: 'gear' },
+  Boots: { label: 'Сапоги', icon: '🥾', group: 'gear' },
   Amulet: { label: 'Амулет', icon: '🧿', group: 'gear' },
   Ring: { label: 'Кольцо', icon: '💍', group: 'gear' },
   Belt: { label: 'Пояс', icon: '🎗️', group: 'gear' },

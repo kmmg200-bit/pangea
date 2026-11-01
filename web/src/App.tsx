@@ -1,5 +1,6 @@
 import { useState, type ReactElement } from 'react'
 import { api } from './api'
+import { Silver } from './icons'
 import { AuctionTab } from './AuctionTab'
 import { BagTab } from './BagTab'
 import { EquipmentTab } from './EquipmentTab'
@@ -22,7 +23,9 @@ function HeroBar(props: { hero: HeroView | undefined; loading: boolean; onReload
         {props.hero ? (
           <>
             <span>Ур. {props.hero.lvl}</span>
-            <span>🪙 {props.hero.silver.toLocaleString('ru-RU')}</span>
+            <span>
+              <Silver /> {props.hero.silver.toLocaleString('ru-RU')}
+            </span>
             <span>🟡 {props.hero.doubloons.toLocaleString('ru-RU')}</span>
           </>
         ) : (

@@ -3,7 +3,7 @@ import { kindOf } from './kinds'
 import type { ItemView } from './types'
 
 export function Chips<T extends string>(props: {
-  options: { id: T; label: string }[]
+  options: { id: T; label: ReactNode }[]
   value: T
   onChange: (id: T) => void
 }) {
@@ -72,7 +72,7 @@ export function ItemRow(props: { item: ItemView; aside?: ReactNode; note?: React
   )
 }
 
-/** Карточка снизу экрана. Закрывается крестиком, тапом мимо и клавишей Esc. */
+/** Карточка вещи — окном по центру экрана. Закрывается крестиком, тапом мимо и клавишей Esc. */
 export function Sheet(props: { onClose: () => void; children: ReactNode }) {
   const { onClose } = props
   useEffect(() => {

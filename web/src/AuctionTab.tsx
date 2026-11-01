@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { matches } from './BagTab'
+import { Silver } from './icons'
 import { groupLabels, presentGroups, type Group } from './kinds'
 import type { AuctionView, Currency, LotView } from './types'
 import { Chips, Empty, ItemRow, ItemText, Sheet, Toolbar } from './ui'
@@ -12,7 +13,7 @@ const sorts = [
   { id: 'rarity', label: 'По редкости' },
 ]
 
-const coin: Record<Currency, string> = { silver: '🪙', doubloons: '🟡' }
+const coin: Record<Currency, ReactNode> = { silver: <Silver />, doubloons: '🟡' }
 
 function sortLots(lots: LotView[], sort: string): LotView[] {
   const by = (f: (a: LotView, b: LotView) => number) => [...lots].sort(f)
@@ -76,7 +77,7 @@ export function AuctionTab(props: { data: AuctionView }) {
           <Chips
             options={[
               { id: 'any' as const, label: 'Любая монета' },
-              { id: 'silver' as const, label: '🪙 Серебро' },
+              { id: 'silver' as const, label: <><Silver /> Серебро</> },
               { id: 'doubloons' as const, label: '🟡 Дублоны' },
             ]}
             value={currency}
@@ -99,7 +100,9 @@ export function AuctionTab(props: { data: AuctionView }) {
                 aside={
                   <span className="price">
                     {lot.mine && view === 'all' && <span className="mine">ваш</span>}
-                    {coin[lot.currency]} {lot.price.toLocaleString('ru-RU')}
+                    <span>
+                      {coin[lot.currency]} {lot.price.toLocaleString('ru-RU')}
+                    </span>
                   </span>
                 }
               />
