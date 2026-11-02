@@ -37,8 +37,10 @@ sealed abstract class Skill(
   def baseEnergyCost(hero: Hero): Long
 
   /** Стоимость применения: своя ставка плюс общая надбавка всем активным
-    * умениям ([[Skill.EnergyCostBonus]]). Одна ручка на весь список. */
-  final def energyCost(hero: Hero): Long = baseEnergyCost(hero) + Skill.EnergyCostBonus
+    * умениям ([[Skill.EnergyCostBonus]]). Одна ручка на весь список.
+    * «Преисподняя» (порог 9) удешевляет её процентом, но не до нуля. */
+  final def energyCost(hero: Hero): Long =
+    ((baseEnergyCost(hero) + Skill.EnergyCostBonus) * (100L - hero.sets.skillEnergyCutPct) / 100L).max(1L)
 
   /** Описание навыка для инвентаря — с подставленной стоимостью энергии и
     * перезарядкой (КД). Оба хвоста собираются здесь, а не в тексте каждого

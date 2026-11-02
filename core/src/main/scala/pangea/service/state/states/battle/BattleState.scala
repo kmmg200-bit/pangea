@@ -186,8 +186,10 @@ case class BattleState(
       // «Упырь» (порог 12): пир — только за тех, кого уложил САМ герой, и тут
       // же, в бою. Считаем до хода союзников: их добычу упырь не ест.
       feasted = ghoulFeast(battle, struck, now)
+      // «Преисподняя» (порог 12): добитые героем возвращают ему энергию.
+      pushed  = underworldPush(battle, feasted, now)
       // «Некромант» (порог 12): добитый героем может встать и пойти за ним.
-      result <- necroRise(battle, feasted)
+      result <- necroRise(battle, pushed)
       // «Каменный страж» (порог 12) смотрит на ход целиком: важно не то, какой
       // именно источник добил героя до полоски, а что за этот ход он её перешёл.
       guarded = stoneGuardRescue(hero, result, now)
@@ -1217,10 +1219,11 @@ case class BattleState(
             // весь урон героя на четверть — ровно этот бой (см. WeaponDust).
             // «Мерзавец» бьёт на 5% сильнее — и получает на 5% больше (см. mobStrike).
             // Стена трофеев прибавляет по проценту за каждого именного той же расы.
+            // По горящему врагу «Преисподняя» (порог 6) бьёт сильнее.
             damage =
               (((hero.effectiveBaseStats(nowMs).str * 3L + buffedEff.atk) * spread / 100L) *
                 weaponMod * closeMod * hero.passives.finalDamageMult * hero.weaponDust.damageMult *
-                Achievement.damagePct(hero) / 100.0 * battle.trophyMult).toLong
+                Achievement.damagePct(hero) / 100.0 * battle.trophyMult * burningMult(hero, battle)).toLong
                 .max(1L)
             // Стихии оружия модифицируют раздельно урон по броне и по HP
             // (см. splitElementalDamage). Без стихий поведение прежнее.
@@ -1316,7 +1319,18 @@ case class BattleState(
             // Проки стихий оружия (30% каждый) — только если моб жив после удара.
             elemResult <- if (newHp > 0) resolveElementProcs(hero, hitBattle)
                           else ZIO.succeed((hitBattle, Vector.empty[String]))
-            (updated, elemLog) = elemResult
+            (procced, elemLog) = elemResult
+            // «Мародёр» (порог 6): грязный приём — удар по HP с шансом выжигает
+            // врагу энергию, как Молния. Бросок без набора не тратится.
+            tricked <- chanceRoll(hero.sets.energyBurnOnHitChancePct > 0 && hpDmg > 0 && newHp > 0,
+                         hero.sets.energyBurnOnHitChancePct)
+            (updated, trickLog) =
+              if (!tricked) (procced, Vector.empty[String])
+              else {
+                val (burnt, lost) = BattleState.burnEnergy(procced, hero.sets.energyBurnPct)
+                (burnt, Vector(content.format("battle.marauderTrick", "monster" -> battle.monsterName,
+                  "energy" -> lost.toString)))
+              }
             // Шипы огненного элементаля: пока цела броня, он возвращает часть
             // урона и поджигает бьющего. Скованный холодом молчит.
             thornsResult = bossThorns(healedHero, updated, battle.monsterCurrentArmor, resisted)
@@ -1329,7 +1343,7 @@ case class BattleState(
             // Сам вампиризм о себе не говорит: его число уезжает в конец раунда и
             // там складывается с чужой кровью в одну строку (см. vampLine). Если
             // раунд кончился раньше хода моба, строку дописываем здесь же.
-            log4 = (log2 ++ elemLog) ++ Vector(thornsLine).filter(_.nonEmpty)
+            log4 = (log2 ++ elemLog ++ trickLog) ++ Vector(thornsLine).filter(_.nonEmpty)
             fed  = log4 ++ vampLine(vampGained)
             r <-
               if (!retaliate) ZIO.succeed(TurnResult(thornedHero, thornedBattle, fed, Outcome.Continue))
@@ -1414,11 +1428,7 @@ case class BattleState(
     * Проценты считаются от эффективных потолков, восстановленное не может
     * опустить текущее значение (если оно почему-то выше потолка). */
   private def ghoulFeast(before: SoloPveBattle, res: TurnResult, nowMs: Long): TurnResult = {
-    // Павшие в строю попадают в `slain`; тот, кто остался в полях с нулём HP
-    // (последний в бою), в этот список не идёт — считаем его отдельно.
-    val inLine = res.battle.group.slain.size - before.group.slain.size
-    val active = if (res.battle.monsterCurrentHp <= 0L && before.monsterCurrentHp > 0L) 1 else 0
-    val kills  = (inLine + active).max(0)
+    val kills = heroKills(before, res)
     if (kills <= 0 || !res.hero.sets.feastsOnKill) res
     else {
       val hero     = res.hero
@@ -1435,6 +1445,38 @@ case class BattleState(
                  "hp" -> hpGained.toString, "armor" -> armorGained.toString))
     }
   }
+
+  /** Сколько врагов добил герой своим ходом: павшие в строю попадают в `slain`,
+    * а тот, кто остался в полях с нулём HP (последний в бою), в этот список не
+    * идёт — его считаем отдельно. */
+  private def heroKills(before: SoloPveBattle, res: TurnResult): Int = {
+    val inLine = res.battle.group.slain.size - before.group.slain.size
+    val active = if (res.battle.monsterCurrentHp <= 0L && before.monsterCurrentHp > 0L) 1 else 0
+    (inLine + active).max(0)
+  }
+
+  /** «Преисподняя» (порог 12, только демону): каждый добитый героем враг
+    * возвращает долю максимума энергии — тут же, в бою. Считаем так же, как
+    * пир упыря, до хода союзников. */
+  private def underworldPush(before: SoloPveBattle, res: TurnResult, nowMs: Long): TurnResult = {
+    val kills = heroKills(before, res)
+    val pct   = res.hero.sets.killEnergyPct
+    if (kills <= 0 || pct <= 0L) res
+    else {
+      val hero   = res.hero
+      val maxEn  = hero.maxEnergy(nowMs)
+      val newEn  = (hero.fightStats.energy + maxEn * pct * kills / 100L).min(maxEn).max(hero.fightStats.energy)
+      val gained = newEn - hero.fightStats.energy
+      if (gained <= 0L) res
+      else res.copy(
+        hero = hero.copy(fightStats = hero.fightStats.copy(energy = newEn)),
+        log  = res.log :+ content.format("battle.underworldPush", "energy" -> gained.toString))
+    }
+  }
+
+  /** «Преисподняя» (порог 6): по горящему врагу удар и умение сильнее. */
+  private def burningMult(hero: Hero, battle: SoloPveBattle): Double =
+    if (battle.effects.monsterBurn.isDefined) 1.0 + hero.sets.burningDamageBonusPct / 100.0 else 1.0
 
   /** «Некромант» (порог 12): кого герой добил сам, тот может встать и пойти за
     * ним. Считаем так же, как пир упыря, — по разнице павших до и после хода, и
@@ -2569,10 +2611,8 @@ case class BattleState(
       // того, сколько моб успел накопить, и одинаково чувствуется на любом
       // уровне. Умение, на которое он копил, откладывается. Строка одна: и
       // про сам разряд, и про сожжённую энергию.
-      val burned = (b.monsterStats.energy * Element.LightningEnergyBurnPct / 100L).max(1L)
-      val left   = (b.monsterCurrentEnergy - burned).max(0L)
-      val lost   = b.monsterCurrentEnergy - left
-      b = b.copy(monsterCurrentEnergy = left)
+      val (burnt, lost) = BattleState.burnEnergy(b, Element.LightningEnergyBurnPct)
+      b = burnt
       log = log :+ content.format("battle.lightningBurn", "energy" -> lost.toString)
     }
     (b, log)
@@ -3614,8 +3654,9 @@ case class BattleState(
       crit: Boolean
   ): Task[TurnResult] = {
     // Стена трофеев: прибавка к урону умения по расе цели. Здесь, а не в числе
-    // умения, — то же число лечит и чинит броню, а их стена не трогает.
-    val walled = (value.max(1L) * battle.trophyMult).toLong.max(1L)
+    // умения, — то же число лечит и чинит броню, а их стена не трогает. Так же и
+    // горящая цель («Преисподняя», порог 6).
+    val walled = (value.max(1L) * battle.trophyMult * burningMult(hero, battle)).toLong.max(1L)
     // На арене соперник мог поднять щит — умение по нему режется так же, как удар.
     val raw = BattleState.shieldCut(battle.foeBlockPct, if (crit) walled * 2L else walled)
     // Урон навыка тоже несёт стихию оружия — раздельный урон по броне/HP с тем же
@@ -4343,8 +4384,10 @@ case class BattleState(
       buffedEff <- ZIO.succeed(effWithAir(hero, battle, nowMs))
       monster   = battle.toMonster
       // Мобы вне пары могут не выпустить: по 5% за каждого. Окружили — бой
-      // продолжается, как будто бегства и не было.
-      surroundPct = GroupState.SurroundPctPerFreeMob * battle.group.others.size
+      // продолжается, как будто бегства и не было. Гоблина в «Мародёре»
+      // (порог 12) окружают реже.
+      surroundPct = GroupState.SurroundPctPerFreeMob * battle.group.others.size *
+                      (100L - hero.sets.surroundCutPct) / 100L
       surrounded <- chanceRoll(surroundPct > 0L, surroundPct)
       hitRoll <- Random.nextIntBetween(1, 101)
       // «Сверкающий» дают +25% к уклонению именно при бегстве.
@@ -5401,9 +5444,15 @@ case class BattleState(
       (raceGear, rngAfter4) =
         if (storyFight) (List.empty[Option[pangea.model.item.Item]], rngAfter3)
         else BattleState.raceSetDrops(fallen, killLevel, rngAfter3)
+      // «Мародёр» (порог 12): с каждого добитого САМИМ героем — шанс лишней
+      // вещи. Чьи именно павшие, по ним не видно, — но союзники ведут свой счёт.
+      (pocketed, rngAfter5) =
+        if (storyFight) (List.empty[pangea.model.item.Item], rngAfter4)
+        else BattleState.pocketGear(hero.sets.extraGearChancePct, BattleState.killedByHero(fallen.size, battle),
+               battle.rarity, killLevel, rngAfter4)
       // Налёт на деревню мурлоков: тот же клинок старого мурлока, что старейшина
       // дарит за помощь, — те же статы, уровень героя.
-      raidBlade = Option.when(battle.story.contains(MurlocQuest.RaidStory))(MurlocQuest.blade(hero, rngAfter4))
+      raidBlade = Option.when(battle.story.contains(MurlocQuest.RaidStory))(MurlocQuest.blade(hero, rngAfter5))
       // Именной оставляет свой уникальный трофей — если у героя такого ещё
       // нет. Сюжетный бой — нет: там добычу кладёт сюжет.
       owned <- if (storyFight) ZIO.succeed(Set.empty[String]) else ownedNamedTrophies(user, hero, fallen)
@@ -5412,7 +5461,8 @@ case class BattleState(
         LootState.MonsterLoot(
           monsterName = name,
           items       = drops.flatMap(_.itemOpt) ++ named.lift(i).flatten ++ raceGear.lift(i).flatten,
-          silvers     = drops.collect { case LootGenerator.LootDrop.Silver(a, _) => a * silverScalePct(blessed) / 100L },
+          silvers     = drops.collect { case LootGenerator.LootDrop.Silver(a, _) =>
+                          a * BattleState.silverScalePct(blessed, hero.sets.battleSilverBonusPct) / 100L },
           doubloons   = drops.collect { case LootGenerator.LootDrop.Doubloons(a) => a }.sum
         )
       }
@@ -5439,7 +5489,7 @@ case class BattleState(
       // Первый экран добычи — первый павший; остальные ждут своей очереди. Имя
       // моба над добычей показываем только в группе.
       lootData = LootState.LootData(
-        items = first.items ++ blessingGear.toList ++ raidBlade.toList,
+        items = first.items ++ blessingGear.toList ++ pocketed ++ raidBlade.toList,
         silvers = first.silvers,
         doubloons = first.doubloons,
         returnState = lootReturn,
@@ -5529,10 +5579,6 @@ case class BattleState(
           }
       }
     }
-
-  /** Серебро с благословением Азата — на его бонус больше. */
-  private def silverScalePct(blessed: Boolean): Long =
-    if (blessed) 100L + BattleState.BlessingBonusPct else 100L
 
   /** Показ итогов победы — вызывается ПОСЛЕ того, как [[applyVictory]] всё
     * записал. Падение любого сообщения уже не откатывает бой. */
@@ -6047,6 +6093,33 @@ object BattleState {
       val drop = if (m.undead || seen.contains(name)) None else NamedTrophy.item(name, m.race, killLevel)
       (acc :+ drop, seen ++ drop.map(_ => name))
     }._1
+
+  /** Выжечь врагу `pct`% энергии от её ПОТОЛКА: эффект не зависит от того,
+    * сколько моб успел накопить. Возвращает бой и сколько реально сгорело. */
+  def burnEnergy(b: SoloPveBattle, pct: Long): (SoloPveBattle, Long) = {
+    val burned = (b.monsterStats.energy * pct / 100L).max(1L)
+    val left   = (b.monsterCurrentEnergy - burned).max(0L)
+    (b.copy(monsterCurrentEnergy = left), b.monsterCurrentEnergy - left)
+  }
+
+  /** Серебро с боя, в %: благословение Азата и «Мародёр» (порог 9) — сверху. */
+  def silverScalePct(blessed: Boolean, setBonusPct: Long): Long =
+    100L + (if (blessed) BlessingBonusPct else 0L) + setBonusPct
+
+  /** Скольких павших добил сам герой: союзники считают своих (`BattleAlly.kills`,
+    * и у ушедших по свитку тоже), остальное — его. */
+  def killedByHero(fallen: Int, battle: SoloPveBattle): Int =
+    (fallen - (battle.group.allies ++ battle.group.alliesGone).map(_.kills).sum).max(0)
+
+  /** «Мародёр» (порог 12): с каждого из `kills` добитых героем — свой бросок на
+    * лишнюю вещь (как у благословения: экипировка по редкости моба). Без набора
+    * броска нет — RNG не тратится. */
+  def pocketGear(chancePct: Long, kills: Int, tier: Rarity, killLevel: Long, rng: Rng): (List[Item], Rng) =
+    if (chancePct <= 0L) (Nil, rng)
+    else (1 to kills).foldLeft((List.empty[Item], rng)) { case ((acc, r), _) =>
+      val (item, next) = LootGenerator.rollBlessingExtraGear(chancePct, tier, killLevel, r)
+      (acc ++ item.toList, next)
+    }
 
   /** Вещи малых расовых наборов с павших: каждый легендарный моб смертной расы
     * роняет ровно одну вещь набора своей расы (см. LootGenerator.raceSetGear),

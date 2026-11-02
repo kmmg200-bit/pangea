@@ -312,13 +312,26 @@ object ItemSet extends Enum[ItemSet] {
     override def race: Option[Race] = Some(Race.Goblin)
     val AttackPct: Long = SetRates.RaceStatPct
 
+    /** Грязный приём (порог 6): с каким шансом удар по HP выжигает энергию и
+      * сколько — в % от ПОТОЛКА энергии врага, как Молния. */
+    val EnergyBurnChancePct: Long = 20L
+    val EnergyBurnPct: Long       = 30L
+
+    /** Сколько серебра сверху с боёв (порог 9), в %. */
+    val SilverBonusPct: Long = 20L
+
+    /** Карманы победителей (порог 12): шанс лишней вещи с каждого добитого
+      * героем врага и на сколько % реже его окружают при бегстве. */
+    val ExtraGearChancePct: Long = 10L
+    val SurroundCutPct: Long     = 50L
+
     def bonuses: List[SetBonus] = List(
       SetBonus(3,  s"+$AttackPct% к атаке."),
-      SetBonus(6,  "20% шанс, что ваша атака, нанёсшая урон по HP, выжжет врагу 30% энергии — как " +
-                   "Молния, даже без неё в оружии.", active = false),
-      SetBonus(9,  "+20% серебра с боёв.", active = false),
-      SetBonus(12, "С каждого добитого вами врага 10% шанс на лишнюю вещь в добыче, а окружить вас " +
-                   "при бегстве вдвое труднее.", active = false, ownRaceOnly = true)
+      SetBonus(6,  s"$EnergyBurnChancePct% шанс, что ваша атака, нанёсшая урон по HP, выжжет врагу " +
+                   s"$EnergyBurnPct% энергии — как Молния, даже без неё в оружии."),
+      SetBonus(9,  s"+$SilverBonusPct% серебра с боёв."),
+      SetBonus(12, s"С каждого добитого вами врага $ExtraGearChancePct% шанс на лишнюю вещь в добыче, а " +
+                   "окружить вас при бегстве вдвое труднее.", ownRaceOnly = true)
     )
   }
 
@@ -327,12 +340,22 @@ object ItemSet extends Enum[ItemSet] {
     override def race: Option[Race] = Some(Race.Demon)
     val IntPct: Long = SetRates.RaceStatPct
 
+    /** Порог 6: прибавка к шансу прока Огня (п.п.) и к урону по горящему врагу (%). */
+    val IgniteChanceBonusPct: Long  = 10L
+    val BurningDamageBonusPct: Long = 10L
+
+    /** На сколько % дешевле активные умения (порог 9). */
+    val SkillEnergyCutPct: Long = 15L
+
+    /** Напор (порог 12): сколько % максимума энергии возвращает каждый добитый враг. */
+    val KillEnergyPct: Long = 20L
+
     def bonuses: List[SetBonus] = List(
       SetBonus(3,  s"+$IntPct% к интеллекту."),
-      SetBonus(6,  "Шанс поджечь врага увеличен на 10%, а по горящему врагу вы бьёте на 10% сильнее.",
-               active = false),
-      SetBonus(9,  "Активные умения стоят на 15% меньше энергии.", active = false),
-      SetBonus(12, "Каждый добитый вами враг возвращает вам 20% энергии.", active = false, ownRaceOnly = true)
+      SetBonus(6,  s"Шанс поджечь врага увеличен на $IgniteChanceBonusPct%, а по горящему врагу вы бьёте " +
+                   s"на $BurningDamageBonusPct% сильнее."),
+      SetBonus(9,  s"Активные умения стоят на $SkillEnergyCutPct% меньше энергии."),
+      SetBonus(12, s"Каждый добитый вами враг возвращает вам $KillEnergyPct% энергии.", ownRaceOnly = true)
     )
   }
 

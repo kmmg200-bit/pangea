@@ -110,6 +110,33 @@ final case class HeroSets(counts: Map[ItemSet, Int], race: Option[Race] = None) 
     pct(ItemSet.DeepMother, 9, ItemSet.DeepMother.RegenPct) +
       pct(ItemSet.MountainMaster, 6, ItemSet.MountainMaster.ArmorRegenPct)
 
+  // ── «Мародёр» ───────────────────────────────────────────────────────────────
+
+  /** Шанс (в %), что удар по HP выжжет врагу энергию (порог 6), и сколько — в %
+   *  от её потолка. */
+  def energyBurnOnHitChancePct: Long = pct(ItemSet.Marauder, 6, ItemSet.Marauder.EnergyBurnChancePct)
+  def energyBurnPct: Long            = ItemSet.Marauder.EnergyBurnPct
+
+  /** Сколько % серебра сверху с боёв (порог 9). */
+  def battleSilverBonusPct: Long = pct(ItemSet.Marauder, 9, ItemSet.Marauder.SilverBonusPct)
+
+  /** Шанс (в %) лишней вещи с каждого добитого героем врага (порог 12, только
+   *  гоблину) и на сколько % реже его окружают при бегстве. */
+  def extraGearChancePct: Long = pct(ItemSet.Marauder, 12, ItemSet.Marauder.ExtraGearChancePct)
+  def surroundCutPct: Long     = pct(ItemSet.Marauder, 12, ItemSet.Marauder.SurroundCutPct)
+
+  // ── «Преисподняя» ───────────────────────────────────────────────────────────
+
+  /** На сколько % сильнее удары и умения по горящему врагу (порог 6). */
+  def burningDamageBonusPct: Long = pct(ItemSet.Underworld, 6, ItemSet.Underworld.BurningDamageBonusPct)
+
+  /** На сколько % дешевле активные умения (порог 9). */
+  def skillEnergyCutPct: Long = pct(ItemSet.Underworld, 9, ItemSet.Underworld.SkillEnergyCutPct)
+
+  /** Сколько % максимума энергии возвращает каждый добитый героем враг
+   *  (порог 12, только демону). */
+  def killEnergyPct: Long = pct(ItemSet.Underworld, 12, ItemSet.Underworld.KillEnergyPct)
+
   /** Прибавка к шансу прока Холода, в п.п. («Подгорный мастер», порог 9). */
   def coldChanceBonusPct: Long = pct(ItemSet.MountainMaster, 9, ItemSet.MountainMaster.ColdChanceBonusPct)
 
@@ -179,9 +206,11 @@ final case class HeroSets(counts: Map[ItemSet, Int], race: Option[Race] = None) 
   def burnGrowthMult: Long =
     if (has(ItemSet.WildFlame, 6)) ItemSet.WildFlame.BurnGrowthMult else 1L
 
-  /** Прибавка к шансу прока Огня, в п.п. (порог 10). */
+  /** Прибавка к шансу прока Огня, в п.п.: «Дикое пламя» (порог 10) и
+   *  «Преисподняя» (порог 6). */
   def igniteChanceBonusPct: Long =
-    if (has(ItemSet.WildFlame, 10)) ItemSet.WildFlame.IgniteChanceBonusPct else 0L
+    pct(ItemSet.WildFlame, 10, ItemSet.WildFlame.IgniteChanceBonusPct) +
+      pct(ItemSet.Underworld, 6, ItemSet.Underworld.IgniteChanceBonusPct)
 
   /** Поджигают ли активные умения врага всегда, и режет ли горение его защиту
    *  на столько же процентов, сколько горит (порог 12). */
