@@ -51,6 +51,9 @@ case class DeathState(
       // Смерть у завала в штольне: штрафы обычные, дружина снова ждёт за
       // завалом, проснуться — в городе.
       escort        = battle.exists(_.story.contains(LostSquadQuest.EscortStory))
+      // Герой пал раньше, а отряд доигрывал за него и проиграл: травму за этот
+      // бой он уже получил, когда упал (см. BattleState) — второй смерть не даёт.
+      fellEarlier   = battle.exists(_.group.heroDown)
       withMarisa   <- heroDao.readSceneData(user.userId).map(_.flatMap(_.as[LootData].toOption)
                         .flatMap(_.eventData).flatMap(_.as[MarisaHuntState.Progress].toOption).exists(_.withMarisa))
       // Благословение Азата смягчает штраф: теряется на BlessingBonusPct% меньше.
@@ -82,7 +85,7 @@ case class DeathState(
                         content.format("death.penalty",
                           "expLost"    -> expLost.toString,
                           "silverLost" -> silverLost.toString), Nil, hideKeyboard = true))
-      _            <- applyTrauma(user, existingNames, pool, traumaUntil, renderer)
+      _            <- ZIO.unless(fellEarlier)(applyTrauma(user, existingNames, pool, traumaUntil, renderer))
 
       _            <- dropItems(user, hero.id, monsterName, renderer)
       // Время в мёртвом режиме растёт с уровнем героя и асимптотически

@@ -344,8 +344,9 @@ object AllyBattleSpec extends ZIOSpecDefault {
         sch      <- TestScheduler.make
         content  <- ZIO.attempt(SceneContent.load())
         state     = BattleState(dao, TestInventoryRepository.accepting, TestItemRepository.make, content, sch)
-        // герой попал; моб в паре попал и обнулил его (травмы нет — герой уже на нуле)
-        _        <- TestRandom.feedInts(60, 99) *> TestRandom.feedLongs(100L, 100L)
+        // герой попал; моб в паре попал и обнулил его (травмы от удара нет — её даёт
+        // само падение: последний бросок — какая из лёгких)
+        _        <- TestRandom.feedInts(60, 99, 0) *> TestRandom.feedLongs(100L, 100L)
         down     <- state.action(testUser, aimed("Attack", 1), r)
         b1       <- dao.readActiveBattle(userId).map(_.flatMap(_.as[SoloPveBattle].toOption).get)
         sched    <- sch.scheduled
@@ -370,6 +371,9 @@ object AllyBattleSpec extends ZIOSpecDefault {
         updated  <- dao.getHeroByUserId(userId).map(_.get)
         scr      <- r.sentScreens.map(_.map(_.text).mkString("\n"))
       } yield assertTrue(down == StateType.Battle && b1.group.heroDown) &&
+              // упавший получил травму, и о ней сказано рядом с падением
+              assertTrue(updated.traumaNames.size == 1 && updated.traumaUntil.isDefined) &&
+              assertTrue(scr1.contains("Падение не прошло даром — новая травма: «" + updated.traumaNames.head + "»")) &&
               // лежачему жать нечего: кнопок нет, и клавиатура убрана
               assertTrue(lying.choices.isEmpty && lying.hideKeyboard) &&
               assertTrue(sched.exists(s => s.kind == TaskKind.SquadFight && s.expectedState == StateType.Battle && s.fireAt == 30000L)) &&

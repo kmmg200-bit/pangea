@@ -155,6 +155,23 @@ object DeathStateSpec extends ZIOSpecDefault {
               assertTrue(screens.exists(_.text.contains("травм")))
     },
 
+    test("пал раньше, а отряд доиграл и проиграл — смерть новую травму не даёт: её дало падение") {
+      val fell      = richHero.copy(traumaUntil = Some(Long.MaxValue), traumaNames = List(pangea.model.trauma.Trauma.light.head.name))
+      val monster   = pangea.model.monster.Monster(0L, 1L, pangea.model.monster.Race.Orc, pangea.model.monster.Rarity.Common,
+                        pangea.model.stats.FightStats(1, 10, 0, 0, 0, 1, 0))
+      val b         = pangea.model.battle.SoloPveBattle.from(monster, fell)
+      for {
+        triple                    <- makeState(fell)
+        (state, heroDao, _, renderer) = triple
+        _                         <- heroDao.writeActiveBattle(userId, b.copy(group = b.group.copy(heroDown = true)).asJson)
+        _                         <- state.enter(testUser, renderer)
+        updated                   <- heroDao.getHeroByUserId(userId)
+        screens                   <- renderer.sentScreens
+      } yield assertTrue(updated.exists(_.traumaNames == fell.traumaNames)) &&
+              assertTrue(!screens.exists(_.text.contains("Новая травма"))) &&
+              assertTrue(screens.exists(_.text.contains("Потери")))
+    },
+
     test("enter при максимуме травм → новую не даёт, продлевает таймер, сообщает «не осталось живого места»") {
       val allNames = pangea.model.trauma.Trauma.all.map(_.name).toList
       val maxedHero = richHero.copy(

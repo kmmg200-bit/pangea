@@ -458,14 +458,19 @@ case class BattleState(
         // Отряд ещё на ногах: герой падает, но не умирает — бой идёт без него,
         // раунд за раундом по таймеру, а смерть отложена до исхода. Сколько
         // раундов показать, а с какого доиграть сразу — см. squadTick.
+        // Упавший получает травму сразу; проиграет отряд — смерть второй уже
+        // не даст (см. DeathState).
         val fell = res.battle.copy(group = res.battle.group.copy(heroDown = true, downRounds = 0))
         val (down, turned) = fell.leaveDownedHero
-        (persistHero *> heroDao.writeActiveBattle(user.userId, down.asJson)).uninterruptible *>
-          showLog *> showGroup *>
-          scheduler.schedule(user.userId, nowMs + BattleState.SquadTickMs, TaskKind.SquadFight, StateType.Battle, BattleState.SquadTickAction) *>
-          renderer.show(user, Screen(content.format("battle.squad.heroDown",
-            "rounds" -> BattleState.ShownDownRounds.toString) + turnsAwayLine(down, turned), Nil)) *>
-          showDown(user, down, renderer)
+        (persistHero *> heroDao.writeActiveBattle(user.userId, down.asJson) *>
+          giveTrauma(res.hero, nowMs, "battle.squad.fallTrauma", "battle.squad.fallTraumaMax")).uninterruptible
+          .flatMap { case (_, traumaLine) =>
+            showLog *> showGroup *>
+              scheduler.schedule(user.userId, nowMs + BattleState.SquadTickMs, TaskKind.SquadFight, StateType.Battle, BattleState.SquadTickAction) *>
+              renderer.show(user, Screen(content.format("battle.squad.heroDown",
+                "rounds" -> BattleState.ShownDownRounds.toString) + turnsAwayLine(down, turned) + "\n" + traumaLine, Nil)) *>
+              showDown(user, down, renderer)
+          }
       case Outcome.Death =>
         (persistHero *> persistSquad *> afterBattle(user, res.hero)).uninterruptible.flatMap { refilled =>
           showLog *> showGroup *> showRefilled(user, refilled, renderer) *>
@@ -2109,11 +2114,12 @@ case class BattleState(
   /** Травма от смерча — та же механика, что и при смерти: прогресс по тирам
     * (лёгкие → средние → тяжёлые), уже полученные исключаются. Пишется сразу,
     * потому что `commit` сохраняет только экипировку и боевые статы. */
-  private def giveTrauma(hero: Hero, nowMs: Long, key: String = "battle.elemental.orbTrauma"): Task[(Hero, String)] = {
+  private def giveTrauma(hero: Hero, nowMs: Long, key: String = "battle.elemental.orbTrauma",
+                         maxKey: String = "battle.elemental.orbTraumaMax"): Task[(Hero, String)] = {
     val existing = if (hero.traumaActive(nowMs)) hero.traumaNames else Nil
     val pool     = TraumaRoll.pool(existing)
     val until    = nowMs + TraumaRoll.DurationMs
-    if (pool.isEmpty) ZIO.succeed((hero, content.text("battle.elemental.orbTraumaMax")))
+    if (pool.isEmpty) ZIO.succeed((hero, content.text(maxKey)))
     else
       for {
         idx   <- Random.nextIntBetween(0, pool.length)
