@@ -639,10 +639,10 @@ case class MerchantState(
     (price, next)
   }
 
-  /** Цена товара для героя: «Караван» (порог 9) — со скидкой. */
+  /** Цена товара для героя: «Пустынь» (порог 9) — со скидкой. */
   private def buyPrice(hero: Hero, mi: MerchantItem): Long = withTrade(mi.price, -hero.sets.tradePct)
 
-  /** Сколько Ришелье платит герою за вещь серебром: «Караван» (порог 9) —
+  /** Сколько Ришелье платит герою за вещь серебром: «Пустынь» (порог 9) —
     * сверху. Дублоны за материалы набор не трогает. */
   private def sellPriceFor(hero: Hero, item: Item): Long = withTrade(sellPrice(item), hero.sets.tradePct)
 

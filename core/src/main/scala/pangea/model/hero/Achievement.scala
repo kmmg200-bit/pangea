@@ -86,7 +86,7 @@ object Achievement extends Enum[Achievement] {
   case object HordeSet extends Achievement("Вождь орды",
     s"+${AchievementRates.RaceSetStatBonus} к силе")
 
-  case object MarauderSet extends Achievement("Ловкие пальцы",
+  case object TricksterSet extends Achievement("Ловкие пальцы",
     s"+${AchievementRates.RaceSetStatBonus} к ловкости")
 
   case object UnderworldSet extends Achievement("Огонь преисподней",
@@ -95,7 +95,7 @@ object Achievement extends Enum[Achievement] {
   case object MountainMasterSet extends Achievement("Подгорный кузнец",
     s"+${AchievementRates.RaceSetStatBonus} к телосложению")
 
-  case object CaravanSet extends Achievement("Хозяин каравана",
+  case object DesertSet extends Achievement("Гость Пустынь",
     s"+${AchievementRates.RaceSetStatBonus} к ловкости")
 
   /** Достижение за набор, собранный целиком. */
@@ -110,10 +110,10 @@ object Achievement extends Enum[Achievement] {
     case ItemSet.QuietGrove     => Some(QuietGroveSet)
     case ItemSet.DeepMother     => Some(DeepMotherSet)
     case ItemSet.Horde          => Some(HordeSet)
-    case ItemSet.Marauder       => Some(MarauderSet)
+    case ItemSet.Trickster      => Some(TricksterSet)
     case ItemSet.Underworld     => Some(UnderworldSet)
     case ItemSet.MountainMaster => Some(MountainMasterSet)
-    case ItemSet.Caravan        => Some(CaravanSet)
+    case ItemSet.Desert         => Some(DesertSet)
   }
 
   /** Сколько вещей набора надо надеть разом, чтобы он считался собранным. */
@@ -152,7 +152,7 @@ object Achievement extends Enum[Achievement] {
 
   /** Плоская прибавка к ловкости от достижений героя. */
   def agiBonus(hero: Hero): Long =
-    (if (hero.hasAchievement(MurlocFavorite)) MurlocFavoriteAgiBonus else 0L) + raceSets(hero, MarauderSet, CaravanSet)
+    (if (hero.hasAchievement(MurlocFavorite)) MurlocFavoriteAgiBonus else 0L) + raceSets(hero, TricksterSet, DesertSet)
 
   /** Плоская прибавка к силе от достижений героя. */
   def strBonus(hero: Hero): Long =

@@ -100,6 +100,12 @@ case class Hero(
 
   def traumaActive(nowMs: Long): Boolean = traumaUntil.exists(_ > nowMs)
 
+  /** До какого момента продержатся травмы, если сейчас добавится ещё одна.
+   *  Срок новой — от наборов («Первопроходец» на пороге 9 режет его вдвое), но
+   *  уже идущий срок новая травма не укорачивает. */
+  def traumaUntilWithNew(nowMs: Long): Long =
+    (nowMs + sets.traumaDurationMs).max(traumaUntil.getOrElse(0L))
+
   def activeTraumas(nowMs: Long): List[Trauma] =
     if (!traumaActive(nowMs)) Nil
     else traumaNames.flatMap(Trauma.byName)
@@ -206,7 +212,7 @@ case class Hero(
     val b = HeroRaceBuff.of(race)
     val s = sets
     // Достижения дают плоскую прибавку к базе — до расы, травм и зелий. Наборы
-    // («Первопроходец», «Караван») — процентом к готовому числу, как интеллект.
+    // («Первопроходец», «Пустынь») — процентом к готовому числу, как интеллект.
     BaseStats(
       agi = (b.applyAgi(baseStats.agi + Achievement.agiBonus(this)) * statBoosts.agiFactor(nowMs) *
                (100L + s.agiBonusPct) / 100L).toLong.max(1L),

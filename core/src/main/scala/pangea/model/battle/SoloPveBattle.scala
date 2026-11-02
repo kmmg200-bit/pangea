@@ -123,7 +123,13 @@ case class SoloPveBattle(
   monsterLastAllyHit: Option[String] = None,
   // Герой уже бил в этом бою: удар из засады («Тихая роща», порог 6) — только
   // первый.
-  heroStruck:     Boolean = false
+  heroStruck:     Boolean = false,
+  // Сколько раундов боя прошло — по ним «Первопроходец» (порог 6) набирает
+  // атаку и защиту. Растёт в каждом tickBuffs: он идёт ровно раз за раунд, и в
+  // бою с минибоссом тоже, где счётчик группы стоит.
+  roundsFought:   Int     = 0,
+  // «Второе дыхание» («Первопроходец», порог 12) уже спасло героя — раз за бой.
+  secondWindUsed: Boolean = false
 ) {
 
   /** Множитель Стены трофеев к урону героя по тому, кто сейчас в полях. */
@@ -747,6 +753,7 @@ case class SoloPveBattle(
    *  использован — его cd должен начать отсчитываться со СЛЕДУЮЩЕГО хода). */
   def tickBuffs(skipSlots: Set[Long] = Set.empty): SoloPveBattle = copy(
     heroBattleState         = heroBattleState.tick,
+    roundsFought            = roundsFought + 1,
     consumableUsedThisRound = false,
     // Божественное оружие живёт своим счётчиком: «быстрые руки» его не ускоряют,
     // а расходник в руках её не блокирует.
@@ -908,6 +915,8 @@ object SoloPveBattle {
       trophyWall          <- c.getOrElse[Map[String, Int]]("trophyWall")(Map.empty)
       monsterLastAllyHit  <- c.getOrElse[Option[String]]("monsterLastAllyHit")(None)
       heroStruck          <- c.getOrElse[Boolean]("heroStruck")(false)
+      roundsFought        <- c.getOrElse[Int]("roundsFought")(0)
+      secondWindUsed      <- c.getOrElse[Boolean]("secondWindUsed")(false)
     } yield SoloPveBattle(monsterLvl, monsterRace, monsterRarity, monsterStats,
                          monsterCurrentHp, monsterCurrentArmor, heroBattleState, consumableUsed, monsterMarked,
                          monsterUndead,
@@ -915,7 +924,7 @@ object SoloPveBattle {
                          story, customName, divineUsed, escapesAfter, noKin, arena, minionLvl, bossTaken,
                          noFlee, lootLevel, holyWater, heroBlockPct, monsterBlockPct,
                          heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall,
-                         monsterLastAllyHit, heroStruck)
+                         monsterLastAllyHit, heroStruck, roundsFought, secondWindUsed)
 
   /** Номер самого соперника среди «мобов» зеркала арены; его союзники — от
     * единицы (см. `ArenaSide.allies`). */

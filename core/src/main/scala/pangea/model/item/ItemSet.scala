@@ -251,12 +251,21 @@ object ItemSet extends Enum[ItemSet] {
       * четырём характеристикам. */
     val BaseStatsPct: Long = 3L
 
+    /** Приноровился (порог 6): +% к атаке и защите за каждый прошедший раунд
+      * боя, до потолка. */
+    val RoundPct: Long    = 1L
+    val RoundCapPct: Long = 6L
+
+    /** Порог 9: на сколько % короче травмы и отдых после смерти. */
+    val TraumaCutPct: Long    = 50L
+    val DeathRestCutPct: Long = 50L
+
     def bonuses: List[SetBonus] = List(
       SetBonus(3,  s"+$BaseStatsPct% к силе, телосложению, ловкости и интеллекту."),
-      SetBonus(6,  "Каждый раунд боя +1% к атаке и защите, до +6%.", active = false),
-      SetBonus(9,  "Травмы проходят вдвое быстрее, а отдых после смерти на треть короче.", active = false),
+      SetBonus(6,  s"Каждый раунд боя +$RoundPct% к атаке и защите, до +$RoundCapPct%."),
+      SetBonus(9,  "Травмы проходят вдвое быстрее, а отдых после смерти вдвое короче."),
       SetBonus(12, "Раз за бой удар, который убил бы вас, оставляет вам 1 HP и снимает с вас яд, " +
-                   "кровотечение и пламя.", active = false, ownRaceOnly = true)
+                   "кровотечение и пламя.", ownRaceOnly = true)
     )
   }
 
@@ -311,17 +320,34 @@ object ItemSet extends Enum[ItemSet] {
     override def race: Option[Race] = Some(Race.Orc)
     val HpPct: Long = SetRates.RaceStatPct
 
+    /** Упрямство (порог 6): удар, снявший разом больше этой доли HP (в % от
+      * максимума), проходит на столько % слабее. */
+    val StubbornHitPct: Long = 20L
+    val StubbornCutPct: Long = 25L
+
+    /** Ярость (порог 9): пока HP ниже этой доли максимума — +% к атаке. Та же
+      * черта включает и вампиризм порога 12. */
+    val RageBelowPct: Long  = 50L
+    val RageAttackPct: Long = 15L
+
+    /** Орочья кровь (порог 12): +% к атаке за каждый полный шаг недостающего
+      * HP, до потолка, и вампиризм ниже `RageBelowPct`. */
+    val BloodStepPct: Long      = 10L
+    val BloodAttackPct: Long    = 3L
+    val BloodCapPct: Long       = 30L
+    val BloodLifestealPct: Long = 3L
+
     def bonuses: List[SetBonus] = List(
       SetBonus(3,  s"+$HpPct% к HP."),
-      SetBonus(6,  "Удар, снявший разом больше 20% вашего HP, проходит на 25% слабее.", active = false),
-      SetBonus(9,  "Пока у вас меньше половины HP, +15% к атаке.", active = false),
-      SetBonus(12, "+3% к атаке за каждые 10% недостающего HP, до +30%; пока у вас меньше половины HP — " +
-                   "ещё и 3% вампиризма.", active = false, ownRaceOnly = true)
+      SetBonus(6,  s"Удар, снявший разом больше $StubbornHitPct% вашего HP, проходит на $StubbornCutPct% слабее."),
+      SetBonus(9,  s"Пока у вас меньше половины HP, +$RageAttackPct% к атаке."),
+      SetBonus(12, s"+$BloodAttackPct% к атаке за каждые $BloodStepPct% недостающего HP, до +$BloodCapPct%; " +
+                   s"пока у вас меньше половины HP — ещё и $BloodLifestealPct% вампиризма.", ownRaceOnly = true)
     )
   }
 
-  // ── Мародёр (гоблины) ───────────────────────────────────────────────────────
-  case object Marauder extends ItemSet("Мародёр", "Мародёра") {
+  // ── Пройдоха (гоблины) ──────────────────────────────────────────────────────
+  case object Trickster extends ItemSet("Пройдоха", "Пройдохи") {
     override def race: Option[Race] = Some(Race.Goblin)
     val AttackPct: Long = SetRates.RaceStatPct
 
@@ -394,8 +420,8 @@ object ItemSet extends Enum[ItemSet] {
     )
   }
 
-  // ── Караван (каджиты) ───────────────────────────────────────────────────────
-  case object Caravan extends ItemSet("Караван", "Каравана") {
+  // ── Пустынь (каджиты) ───────────────────────────────────────────────────────
+  case object Desert extends ItemSet("Пустынь", "Пустынь") {
     override def race: Option[Race] = Some(Race.Khajiit)
     val AgiPct: Long = SetRates.RaceStatPct
 

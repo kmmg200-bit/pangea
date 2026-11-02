@@ -165,7 +165,7 @@ object TreasureHuntState {
   val HuntDurationMs: Long   = 7L * 60L * 60L * 1000L
   val HuntDoneAction: String = """{"action":"HuntDone"}"""
 
-  /** Сколько идёт поход этого героя: каджиту в «Караване» (порог 12) — короче. */
+  /** Сколько идёт поход этого героя: каджиту в «Пустыни» (порог 12) — короче. */
   def durationFor(hero: Hero): Long = HuntDurationMs * (100L - hero.sets.mapHuntCutPct) / 100L
 
   /** Сколько займёт поход целиком: «7 часов», «5 часов 15 минут». */

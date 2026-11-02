@@ -80,13 +80,13 @@ object RaceSetsSpec extends ZIOSpecDefault {
       assertTrue(at(ItemSet.QuietGrove, 3).accuracyBonusPct == pct) &&
       assertTrue(at(ItemSet.DeepMother, 3).evasionBonusPct == pct) &&
       assertTrue(at(ItemSet.Horde, 3).maxHpBonusPct == pct) &&
-      assertTrue(at(ItemSet.Marauder, 3).attackBonusPct == pct) &&
+      assertTrue(at(ItemSet.Trickster, 3).attackBonusPct == pct) &&
       assertTrue(at(ItemSet.Underworld, 3).intBonusPct == pct) &&
       assertTrue(at(ItemSet.MountainMaster, 3).armorBonusPct == pct) &&
-      assertTrue(at(ItemSet.Caravan, 3).agiBonusPct == pct) &&
+      assertTrue(at(ItemSet.Desert, 3).agiBonusPct == pct) &&
       assertTrue(List(at(ItemSet.Pioneer, 3).strBonusPct, at(ItemSet.Pioneer, 3).vitBonusPct,
                       at(ItemSet.Pioneer, 3).agiBonusPct, at(ItemSet.Pioneer, 3).intBonusPct) == List.fill(4)(3L)) &&
-      assertTrue(at(ItemSet.Marauder, 2).attackBonusPct == 0L && at(ItemSet.Horde, 2).maxHpBonusPct == 0L)
+      assertTrue(at(ItemSet.Trickster, 2).attackBonusPct == 0L && at(ItemSet.Horde, 2).maxHpBonusPct == 0L)
     },
 
     test("«Мать Глубин» 9 и «Подгорный мастер» 6/9: реген в конце раунда и шанс холода") {

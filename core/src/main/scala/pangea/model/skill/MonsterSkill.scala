@@ -85,7 +85,7 @@ object MonsterSkill extends Enum[MonsterSkill] {
                        attackerInt = battle.monsterStats.atk,
                        bonusPct    = battle.heroBattleState.reductionBonusPct)
       val damage   = blocked(battle, ((raw * (1.0 - reduct)).toLong).max(1L))
-      val (newHp, newArmor) = MonsterSkill.applyPhysicalDamage(battle, hero, damage)
+      val (newHp, newArmor) = MonsterSkill.applyPhysicalDamage(battle, hero, damage, nowMs)
       val line     = template.replace("{name}", battle.monsterName).replace("{}", damage.toString)
       Cast(battle, newHp, newArmor, line)
     }
@@ -101,9 +101,10 @@ object MonsterSkill extends Enum[MonsterSkill] {
     override def againstOther: Option[OtherHit] = Some(OtherHit(0.3, ignoresArmor = true))
 
     def cast(battle: SoloPveBattle, hero: Hero, nowMs: Long): Cast = {
-      // Игнорирует и damageReduction игрока, и его физическую броню — урон уходит сразу в HP.
+      // Игнорирует и damageReduction игрока, и его физическую броню — урон уходит
+      // сразу в HP. Упрямство «Орды» (порог 6) держит и его.
       val damage = blocked(battle, math.max(1L, (battle.monsterStats.atk * 0.3).toLong))
-      val newHp  = (hero.fightStats.hp - damage).max(0L)
+      val newHp  = (hero.fightStats.hp - hero.sets.stubbornLoss(damage, hero.effectiveMaxHp(nowMs))).max(0L)
       val line   = template.replace("{name}", battle.monsterName).replace("{}", damage.toString)
       Cast(battle, newHp, hero.fightStats.armor, line)
     }
@@ -182,7 +183,7 @@ object MonsterSkill extends Enum[MonsterSkill] {
       val defence = hero.effectiveFightStats(nowMs).defence.max(0L)
       // «−% защиты игрока»: защита режет удар процентно, но не в ноль.
       val damage  = blocked(battle, (raw * (100L - defence.min(90L)) / 100L).max(1L))
-      val (newHp, newArmor) = applyPhysicalDamage(battle, hero, damage)
+      val (newHp, newArmor) = applyPhysicalDamage(battle, hero, damage, nowMs)
       val poisoned = battle.effects.copy(heroPoison = Some(
         battle.effects.heroPoison.map(p => Poison(p.pct + PoisonPct)).getOrElse(Poison(PoisonPct))))
       Cast(battle.copy(effects = poisoned), newHp, newArmor,
@@ -205,12 +206,13 @@ object MonsterSkill extends Enum[MonsterSkill] {
   def blocked(battle: SoloPveBattle, damage: Long): Long =
     if (battle.heroShieldUp) (damage * (100L - battle.heroBlockPct) / 100L).max(1L) else damage
 
-  def applyPhysicalDamage(battle: SoloPveBattle, hero: Hero, damage: Long): (Long, Long) = {
+  def applyPhysicalDamage(battle: SoloPveBattle, hero: Hero, damage: Long, nowMs: Long): (Long, Long) = {
     val buffReduct  = math.min(battle.heroBattleState.armorBonus, damage)
     val afterBuff   = damage - buffReduct
     val curArmor    = hero.fightStats.armor.max(0L)
     val armorAbsorb = math.min(curArmor, afterBuff)
-    val hpDmg       = afterBuff - armorAbsorb
+    // «Орда» (порог 6): большой удар упрямство держит — режется то, что дошло до HP.
+    val hpDmg       = hero.sets.stubbornLoss(afterBuff - armorAbsorb, hero.effectiveMaxHp(nowMs))
     val newArmor    = curArmor - hero.sets.armorSpent(armorAbsorb)
     val newHp       = (hero.fightStats.hp - hpDmg).max(0L)
     (newHp, newArmor)

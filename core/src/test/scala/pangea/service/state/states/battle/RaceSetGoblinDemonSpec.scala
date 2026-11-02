@@ -18,7 +18,7 @@ import zio.test.TestRandom
 import zio.test._
 import zio.{Task, ZIO}
 
-/** Малые расовые наборы «Мародёр» (гоблины) и «Преисподняя» (демоны): шаги
+/** Малые расовые наборы «Пройдоха» (гоблины) и «Преисподняя» (демоны): шаги
   * 6/9 и скрытый 12 — только своей расе. */
 object RaceSetGoblinDemonSpec extends ZIOSpecDefault {
 
@@ -89,28 +89,28 @@ object RaceSetGoblinDemonSpec extends ZIOSpecDefault {
   private val Hit = "Вы наносите (\\d+) урона".r
   private def dealt(log: String): Long = Hit.findFirstMatchIn(log).map(_.group(1).toLong).getOrElse(-1L)
 
-  override def spec = suite("«Мародёр» и «Преисподняя»")(
+  override def spec = suite("«Пройдоха» и «Преисподняя»")(
 
-    test("«Мародёр» 6: удар по HP с шансом выжигает врагу 30% энергии; без порога — ни строки, ни броска") {
+    test("«Пройдоха» 6: удар по HP с шансом выжигает врагу 30% энергии; без порога — ни строки, ни броска") {
       for {
-        six  <- run(hero(Race.Human, ItemSet.Marauder, 6), tough)
-        five <- run(hero(Race.Human, ItemSet.Marauder, 5), tough)
+        six  <- run(hero(Race.Human, ItemSet.Trickster, 6), tough)
+        five <- run(hero(Race.Human, ItemSet.Trickster, 5), tough)
       } yield assertTrue(six._3.contains("Грязный приём") && six._3.contains("теряет 30 энергии")) &&
               assertTrue(!five._3.contains("Грязный приём")) &&
-              assertTrue(ItemSet.Marauder.EnergyBurnChancePct == 20L && ItemSet.Marauder.EnergyBurnPct == 30L)
+              assertTrue(ItemSet.Trickster.EnergyBurnChancePct == 20L && ItemSet.Trickster.EnergyBurnPct == 30L)
     },
 
-    test("«Мародёр» 9: +20% серебра с боёв — поверх благословения") {
-      assertTrue(HeroSets(Map(ItemSet.Marauder -> 9)).battleSilverBonusPct == 20L) &&
-      assertTrue(HeroSets(Map(ItemSet.Marauder -> 8)).battleSilverBonusPct == 0L) &&
+    test("«Пройдоха» 9: +20% серебра с боёв — поверх благословения") {
+      assertTrue(HeroSets(Map(ItemSet.Trickster -> 9)).battleSilverBonusPct == 20L) &&
+      assertTrue(HeroSets(Map(ItemSet.Trickster -> 8)).battleSilverBonusPct == 0L) &&
       assertTrue(BattleState.silverScalePct(blessed = false, 20L) == 120L) &&
       assertTrue(BattleState.silverScalePct(blessed = true, 20L) == 120L + BattleState.BlessingBonusPct) &&
       assertTrue(BattleState.silverScalePct(blessed = false, 0L) == 100L)
     },
 
-    test("«Мародёр» 12 — только гоблину: лишняя вещь с добитых героем, окружают вдвое реже") {
-      val goblin = HeroSets(Map(ItemSet.Marauder -> 12), Some(Race.Goblin))
-      val human  = HeroSets(Map(ItemSet.Marauder -> 12), Some(Race.Human))
+    test("«Пройдоха» 12 — только гоблину: лишняя вещь с добитых героем, окружают вдвое реже") {
+      val goblin = HeroSets(Map(ItemSet.Trickster -> 12), Some(Race.Goblin))
+      val human  = HeroSets(Map(ItemSet.Trickster -> 12), Some(Race.Human))
       val ally   = BattleAlly(AllyKind.Rat, 2, 10L, 0L, 0L, FightStats(1, 10, 0, 0, 0, 1, 0), 1L, kills = 2)
       val withAlly = tough.copy(group = tough.group.copy(allies = List(ally)))
       val (all, _)    = BattleState.pocketGear(100L, 3, Rarity.Common, 10L, Rng(1L))

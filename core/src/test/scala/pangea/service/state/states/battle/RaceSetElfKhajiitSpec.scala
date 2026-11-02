@@ -20,7 +20,7 @@ import zio.test.TestRandom
 import zio.test._
 import zio.{Task, ZIO}
 
-/** Малые расовые наборы «Тихая роща» (эльфы) и «Караван» (каджиты): шаги 6/9
+/** Малые расовые наборы «Тихая роща» (эльфы) и «Пустынь» (каджиты): шаги 6/9
   * и скрытый 12 — только своей расе. */
 object RaceSetElfKhajiitSpec extends ZIOSpecDefault {
 
@@ -87,7 +87,7 @@ object RaceSetElfKhajiitSpec extends ZIOSpecDefault {
       log <- r.sentScreens.map(_.map(_.text).mkString("\n"))
     } yield (after, log)
 
-  override def spec = suite("«Тихая роща» и «Караван»")(
+  override def spec = suite("«Тихая роща» и «Пустынь»")(
 
     test("«Тихая роща» 6: первый удар боя — из засады: без промаха и в полтора раза сильнее; второй — обычный") {
       // Моб почти неуловим, а бросок попадания — единица: обычный удар мажет.
@@ -129,29 +129,29 @@ object RaceSetElfKhajiitSpec extends ZIOSpecDefault {
       assertTrue(BattleState.displacement(elf) == BattleState.heroReach(elf) - 1)
     },
 
-    test("«Караван» 6: шанс Воздуха +10, а попутный ветер от фляги держится на раунд дольше") {
+    test("«Пустынь» 6: шанс Воздуха +10, а попутный ветер от фляги держится на раунд дольше") {
       def withAirFlask(h: Hero): Hero = h.copy(equipment = h.equipment.copy(belt =
         Item(9L, "Пояс", 1L, ItemRarity.Blue, ItemType.Belt, attack = 0, accuracy = 0, energy = 0, armor = 0,
           defence = 0, evasion = 0, details = ItemDetails.Belt(List(BeltSlot.Flask(FlaskKind.Air, ItemRarity.Gray, 1))))))
       val belt = TestRandom.feedInts(List.fill(10)(99): _*)
       for {
-        six  <- run(withAirFlask(hero(Race.Human, ItemSet.Caravan, 6)), tough, belt, action = "BeltUse\",\"slot\":\"0")
-        five <- run(withAirFlask(hero(Race.Human, ItemSet.Caravan, 5)), tough, belt, action = "BeltUse\",\"slot\":\"0")
-      } yield assertTrue(HeroSets(Map(ItemSet.Caravan -> 6)).airChanceBonusPct == 10L) &&
+        six  <- run(withAirFlask(hero(Race.Human, ItemSet.Desert, 6)), tough, belt, action = "BeltUse\",\"slot\":\"0")
+        five <- run(withAirFlask(hero(Race.Human, ItemSet.Desert, 5)), tough, belt, action = "BeltUse\",\"slot\":\"0")
+      } yield assertTrue(HeroSets(Map(ItemSet.Desert -> 6)).airChanceBonusPct == 10L) &&
               assertTrue(six._1.effects.airBoostTurns == Element.Air.ProcTurns + 1) &&
               assertTrue(five._1.effects.airBoostTurns == Element.Air.ProcTurns)
     },
 
-    test("«Караван» 9: Ришелье платит на 10% больше и продаёт на 10% дешевле") {
-      assertTrue(HeroSets(Map(ItemSet.Caravan -> 9)).tradePct == 10L) &&
-      assertTrue(HeroSets(Map(ItemSet.Caravan -> 8)).tradePct == 0L) &&
+    test("«Пустынь» 9: Ришелье платит на 10% больше и продаёт на 10% дешевле") {
+      assertTrue(HeroSets(Map(ItemSet.Desert -> 9)).tradePct == 10L) &&
+      assertTrue(HeroSets(Map(ItemSet.Desert -> 8)).tradePct == 0L) &&
       assertTrue(MerchantState.withTrade(1000L, 10L) == 1100L && MerchantState.withTrade(1000L, -10L) == 900L) &&
       assertTrue(MerchantState.withTrade(1L, -10L) == 1L)
     },
 
-    test("«Караван» 12 — только каджиту: поход по карте на четверть короче и +5% к уклонению") {
-      val khajiit = hero(Race.Khajiit, ItemSet.Caravan, 12)
-      val human   = hero(Race.Human, ItemSet.Caravan, 12)
+    test("«Пустынь» 12 — только каджиту: поход по карте на четверть короче и +5% к уклонению") {
+      val khajiit = hero(Race.Khajiit, ItemSet.Desert, 12)
+      val human   = hero(Race.Human, ItemSet.Desert, 12)
       val short   = 7L * 3600000L * 75L / 100L
       assertTrue(TreasureHuntState.durationFor(khajiit) == short && TreasureHuntState.durationFor(human) == 7L * 3600000L) &&
       assertTrue(TreasureHuntState.formatDuration(short) == "5 часов 15 минут") &&
@@ -160,8 +160,8 @@ object RaceSetElfKhajiitSpec extends ZIOSpecDefault {
       assertTrue(khajiit.sets.evasionBonusPct == 5L && human.sets.evasionBonusPct == 0L)
     },
 
-    test("каджит в «Караване» 12 уходит за кладом на 5 часов 15 минут — и дойдёт к их концу") {
-      val khajiit = hero(Race.Khajiit, ItemSet.Caravan, 12)
+    test("каджит в «Пустыни» 12 уходит за кладом на 5 часов 15 минут — и дойдёт к их концу") {
+      val khajiit = hero(Race.Khajiit, ItemSet.Desert, 12)
       val map     = TreasureMapGenerator.full(MapZone.values.head).copy(id = 5L)
       for {
         dao  <- TestHeroDao.withHero(userId, khajiit)

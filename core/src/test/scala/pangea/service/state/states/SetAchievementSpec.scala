@@ -112,7 +112,7 @@ object SetAchievementSpec extends ZIOSpecDefault {
       assertTrue(race.map(_.bonusLine).sorted == List("+1 к интеллекту", "+1 к интеллекту", "+1 к ловкости",
         "+1 к ловкости", "+1 к силе", "+1 к силе", "+1 к телосложению", "+1 к телосложению")) &&
       assertTrue(race.map(_.title) == List("Новый берег", "Голос рощи", "Дитя глубин", "Вождь орды",
-        "Ловкие пальцы", "Огонь преисподней", "Подгорный кузнец", "Хозяин каравана")) &&
+        "Ловкие пальцы", "Огонь преисподней", "Подгорный кузнец", "Гость Пустынь")) &&
       assertTrue(bare.effectiveBaseStats(0L) == BaseStats(agi = 10, vit = 10, str = 10, int = 10)) &&
       assertTrue(eight.effectiveBaseStats(0L) == BaseStats(agi = 12, vit = 12, str = 12, int = 12))
     },

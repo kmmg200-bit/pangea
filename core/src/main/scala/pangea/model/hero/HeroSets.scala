@@ -2,6 +2,7 @@ package pangea.model.hero
 
 import pangea.model.item.{ItemSet, SetBonus}
 import pangea.model.monster.Race
+import pangea.model.trauma.TraumaRoll
 
 /** Типизированный фасад над наборами надетого снаряжения. Как [[HeroPassives]] и
  *  [[HeroGems]], каждая точка применения спрашивает готовый модификатор, а числа
@@ -55,15 +56,15 @@ final case class HeroSets(counts: Map[ItemSet, Int], race: Option[Race] = None) 
   /** +% к защите от «Каменного стража» (порог 2). */
   def defenceBonusPct: Long = pct(ItemSet.StoneGuard, 2, ItemSet.StoneGuard.DefencePct)
 
-  /** +% к атаке: «Дикое пламя» (порог 2) и «Мародёр» (порог 3). */
+  /** +% к атаке: «Дикое пламя» (порог 2) и «Пройдоха» (порог 3). */
   def attackBonusPct: Long =
-    pct(ItemSet.WildFlame, 2, ItemSet.WildFlame.AttackPct) + pct(ItemSet.Marauder, 3, ItemSet.Marauder.AttackPct)
+    pct(ItemSet.WildFlame, 2, ItemSet.WildFlame.AttackPct) + pct(ItemSet.Trickster, 3, ItemSet.Trickster.AttackPct)
 
-  /** +% к уклонению: «Упырь» (порог 2), «Мать Глубин» (порог 3) и «Караван»
+  /** +% к уклонению: «Упырь» (порог 2), «Мать Глубин» (порог 3) и «Пустынь»
    *  (порог 12, только каджиту). */
   def evasionBonusPct: Long =
     pct(ItemSet.Ghoul, 2, ItemSet.Ghoul.EvasionPct) + pct(ItemSet.DeepMother, 3, ItemSet.DeepMother.EvasionPct) +
-      pct(ItemSet.Caravan, 12, ItemSet.Caravan.RoadEvasionPct)
+      pct(ItemSet.Desert, 12, ItemSet.Desert.RoadEvasionPct)
 
   /** +% к точности: «Охотник» (порог 2) и «Тихая роща» (порог 3). */
   def accuracyBonusPct: Long =
@@ -101,9 +102,9 @@ final case class HeroSets(counts: Map[ItemSet, Int], race: Option[Race] = None) 
   def strBonusPct: Long = pct(ItemSet.Pioneer, 3, ItemSet.Pioneer.BaseStatsPct)
   def vitBonusPct: Long = pct(ItemSet.Pioneer, 3, ItemSet.Pioneer.BaseStatsPct)
 
-  /** +% к ловкости: «Первопроходец» и «Караван» (порог 3). */
+  /** +% к ловкости: «Первопроходец» и «Пустынь» (порог 3). */
   def agiBonusPct: Long =
-    pct(ItemSet.Pioneer, 3, ItemSet.Pioneer.BaseStatsPct) + pct(ItemSet.Caravan, 3, ItemSet.Caravan.AgiPct)
+    pct(ItemSet.Pioneer, 3, ItemSet.Pioneer.BaseStatsPct) + pct(ItemSet.Desert, 3, ItemSet.Desert.AgiPct)
 
   /** Реген в конце раунда, в % от максимума: HP — «Мать Глубин» (порог 9);
    *  броня — она же и «Подгорный мастер» (порог 6). Складывается с пассивками. */
@@ -111,6 +112,49 @@ final case class HeroSets(counts: Map[ItemSet, Int], race: Option[Race] = None) 
   def armorRegenPct: Long =
     pct(ItemSet.DeepMother, 9, ItemSet.DeepMother.RegenPct) +
       pct(ItemSet.MountainMaster, 6, ItemSet.MountainMaster.ArmorRegenPct)
+
+  // ── «Первопроходец» ─────────────────────────────────────────────────────────
+
+  /** +% к атаке и защите за `rounds` прошедших раундов боя (порог 6): по
+   *  проценту за раунд, до потолка. */
+  def roundBonusPct(rounds: Int): Long =
+    pct(ItemSet.Pioneer, 6, (rounds.toLong * ItemSet.Pioneer.RoundPct).max(0L).min(ItemSet.Pioneer.RoundCapPct))
+
+  /** Сколько держится полученная травма (порог 9 — вдвое меньше). */
+  def traumaDurationMs: Long =
+    TraumaRoll.DurationMs * (100L - pct(ItemSet.Pioneer, 9, ItemSet.Pioneer.TraumaCutPct)) / 100L
+
+  /** Какая доля отдыха после смерти остаётся (порог 9 — вдвое короче). */
+  def deathRestMult: Double = (100L - pct(ItemSet.Pioneer, 9, ItemSet.Pioneer.DeathRestCutPct)) / 100.0
+
+  /** «Второе дыхание» (порог 12, только человеку): раз за бой смерть оставляет
+   *  1 HP и снимает яд, кровь и пламя. */
+  def secondWind: Boolean = has(ItemSet.Pioneer, 12)
+
+  // ── «Орда» ──────────────────────────────────────────────────────────────────
+
+  /** Сколько HP снимет удар, который снял бы `loss` (порог 6): большой удар —
+   *  больше доли от `maxHp` — упрямство держит. */
+  def stubbornLoss(loss: Long, maxHp: Long): Long =
+    if (has(ItemSet.Horde, 6) && loss * 100L > maxHp * ItemSet.Horde.StubbornHitPct)
+      loss * (100L - ItemSet.Horde.StubbornCutPct) / 100L
+    else loss
+
+  /** Ниже ли HP черты ярости — половины максимума. */
+  private def enraged(hp: Long, maxHp: Long): Boolean = hp * 100L < maxHp * ItemSet.Horde.RageBelowPct
+
+  /** +% к атаке от ран: «Ярость» (порог 9) ниже половины HP и «Орочья кровь»
+   *  (порог 12) — за каждый полный шаг недостающего HP. */
+  def woundAttackPct(hp: Long, maxHp: Long): Long = {
+    val missingPct = if (maxHp <= 0L) 0L else (maxHp - hp).max(0L) * 100L / maxHp
+    val blood      = (missingPct / ItemSet.Horde.BloodStepPct * ItemSet.Horde.BloodAttackPct).min(ItemSet.Horde.BloodCapPct)
+    (if (enraged(hp, maxHp)) pct(ItemSet.Horde, 9, ItemSet.Horde.RageAttackPct) else 0L) +
+      pct(ItemSet.Horde, 12, blood)
+  }
+
+  /** Вампиризм «Орочьей крови» (порог 12) — пока HP ниже половины. */
+  def woundLifestealPct(hp: Long, maxHp: Long): Long =
+    if (enraged(hp, maxHp)) pct(ItemSet.Horde, 12, ItemSet.Horde.BloodLifestealPct) else 0L
 
   // ── «Тихая роща» ────────────────────────────────────────────────────────────
 
@@ -126,33 +170,33 @@ final case class HeroSets(counts: Map[ItemSet, Int], race: Option[Race] = None) 
   def rangedReachBonus: Int     = if (has(ItemSet.QuietGrove, 12)) ItemSet.QuietGrove.RangedReachBonus else 0
   def closePenaltyCutPct: Long  = pct(ItemSet.QuietGrove, 12, ItemSet.QuietGrove.ClosePenaltyCutPct)
 
-  // ── «Караван» ───────────────────────────────────────────────────────────────
+  // ── «Пустынь» ───────────────────────────────────────────────────────────────
 
   /** Прибавка к шансу прока Воздуха (п.п.) и на сколько раундов дольше держится
    *  попутный ветер (порог 6). */
-  def airChanceBonusPct: Long = pct(ItemSet.Caravan, 6, ItemSet.Caravan.AirChanceBonusPct)
-  def airTurnsBonus: Int      = if (has(ItemSet.Caravan, 6)) ItemSet.Caravan.AirTurnsBonus else 0
+  def airChanceBonusPct: Long = pct(ItemSet.Desert, 6, ItemSet.Desert.AirChanceBonusPct)
+  def airTurnsBonus: Int      = if (has(ItemSet.Desert, 6)) ItemSet.Desert.AirTurnsBonus else 0
 
   /** На сколько % дороже Ришелье покупает и дешевле продаёт (порог 9). */
-  def tradePct: Long = pct(ItemSet.Caravan, 9, ItemSet.Caravan.TradePct)
+  def tradePct: Long = pct(ItemSet.Desert, 9, ItemSet.Desert.TradePct)
 
   /** На сколько % короче поход по карте клада (порог 12, только каджиту). */
-  def mapHuntCutPct: Long = pct(ItemSet.Caravan, 12, ItemSet.Caravan.MapHuntCutPct)
+  def mapHuntCutPct: Long = pct(ItemSet.Desert, 12, ItemSet.Desert.MapHuntCutPct)
 
-  // ── «Мародёр» ───────────────────────────────────────────────────────────────
+  // ── «Пройдоха» ──────────────────────────────────────────────────────────────
 
   /** Шанс (в %), что удар по HP выжжет врагу энергию (порог 6), и сколько — в %
    *  от её потолка. */
-  def energyBurnOnHitChancePct: Long = pct(ItemSet.Marauder, 6, ItemSet.Marauder.EnergyBurnChancePct)
-  def energyBurnPct: Long            = ItemSet.Marauder.EnergyBurnPct
+  def energyBurnOnHitChancePct: Long = pct(ItemSet.Trickster, 6, ItemSet.Trickster.EnergyBurnChancePct)
+  def energyBurnPct: Long            = ItemSet.Trickster.EnergyBurnPct
 
   /** Сколько % серебра сверху с боёв (порог 9). */
-  def battleSilverBonusPct: Long = pct(ItemSet.Marauder, 9, ItemSet.Marauder.SilverBonusPct)
+  def battleSilverBonusPct: Long = pct(ItemSet.Trickster, 9, ItemSet.Trickster.SilverBonusPct)
 
   /** Шанс (в %) лишней вещи с каждого добитого героем врага (порог 12, только
    *  гоблину) и на сколько % реже его окружают при бегстве. */
-  def extraGearChancePct: Long = pct(ItemSet.Marauder, 12, ItemSet.Marauder.ExtraGearChancePct)
-  def surroundCutPct: Long     = pct(ItemSet.Marauder, 12, ItemSet.Marauder.SurroundCutPct)
+  def extraGearChancePct: Long = pct(ItemSet.Trickster, 12, ItemSet.Trickster.ExtraGearChancePct)
+  def surroundCutPct: Long     = pct(ItemSet.Trickster, 12, ItemSet.Trickster.SurroundCutPct)
 
   // ── «Преисподняя» ───────────────────────────────────────────────────────────
 

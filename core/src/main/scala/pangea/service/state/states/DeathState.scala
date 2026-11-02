@@ -73,7 +73,8 @@ case class DeathState(
       // правилом пользуются и другие источники травм, напр. смерч элементаля.
       pool          = TraumaRoll.pool(existingNames)
 
-      traumaUntil   = now + TraumaRoll.DurationMs
+      // «Первопроходец» (порог 9): травмы вдвое короче.
+      traumaUntil   = hero.traumaUntilWithNew(now)
 
       _            <- heroDao.updateExpAndLevel(user.userId, newExp, hero.lvl, hero.upgradePoints)
       _            <- heroDao.updateSilver(user.userId, newSilver)
@@ -92,8 +93,9 @@ case class DeathState(
       // стремится к 90 минутам, не достигая их:
       //   deathTimeMinutes = 90 - 89 * exp(-k * (level - 1))
       // На 1 уровне == 1 минута; k — коэффициент роста.
+      // «Первопроходец» (порог 9) сокращает этот отдых вдвое.
       deathRestMinutes = 90.0 - 89.0 * math.exp(-DeathState.RestGrowthK * (hero.lvl - 1L))
-      deathRestMs      = (deathRestMinutes * 60000.0).toLong
+      deathRestMs      = (deathRestMinutes * 60000.0 * hero.sets.deathRestMult).toLong
       // Коллектор: задание закрыто здесь же, а что сказать и куда идти —
       // RestState прочитает при пробуждении.
       _            <- ZIO.when(collector)(MarisaQuest.finish(heroDao, inventoryRepo, content, user.userId, hero))
