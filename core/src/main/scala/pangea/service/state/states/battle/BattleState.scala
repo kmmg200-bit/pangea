@@ -107,24 +107,47 @@ case class BattleState(
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     getBattle(user).flatMap { battle =>
       if (battle.group.heroDown) showDown(user, battle, renderer).unit
-      else startingRat(user, battle, renderer) *> showScreen(user, renderer)
+      else startingAllies(user, battle, renderer) *> showScreen(user, renderer)
+    }
+
+  /** Кто выходит к герою в начале боя: крыса («Крыса», порог 12) и мурлоки-
+    * собратья («Мать Глубин», порог 12). «Начало боя» — пока не кончился первый
+    * раунд: уход за снаряжением и возврат на том же раунде вторых не приводят, а
+    * павших в бою они уже не заменяют. Раунды считает сам бой: счётчик группы в
+    * бою с минибоссом стоит. На арене они выходят вместе с героем (см.
+    * ArenaBattle.withStartingRat и withStartingKin). */
+  private def startingAllies(user: User, battle: SoloPveBattle, renderer: Renderer): Task[Unit] =
+    if (battle.roundsFought > 0 || battle.arena.isDefined) ZIO.unit
+    else getHero(user).flatMap { hero =>
+      val (ratted, ratLines) = startingRat(hero, battle)
+      val (joined, kinLines) = startingKin(hero, ratted)
+      val lines              = ratLines ++ kinLines
+      ZIO.when(lines.nonEmpty)(
+        heroDao.writeActiveBattle(user.userId, joined.asJson) *>
+          renderer.show(user, Screen(lines.mkString("\n"), Nil))).unit
     }
 
   /** «Крыса», порог 12: если в начале боя при герое нет ни одной крысы, одна
-    * приходит сразу, без броска. «Начало боя» — пока не кончился первый раунд:
-    * уход за снаряжением и возврат на том же раунде второй крысы не приводят, а
-    * павшую в бою она уже не заменяет. */
-  private def startingRat(user: User, battle: SoloPveBattle, renderer: Renderer): Task[Unit] =
-    getHero(user).flatMap { hero =>
-      // На арене крыса на старте выходит вместе с героем (см. ArenaBattle.withStartingRat).
-      if (!hero.sets.startsWithRat || battle.group.round > 0 || battle.group.hasRatAlly || battle.arena.isDefined) ZIO.unit
-      else callRat(hero, battle) match {
-        case None => ZIO.unit
-        case Some((joined, line)) =>
-          heroDao.writeActiveBattle(user.userId, joined.asJson) *>
-            renderer.show(user, Screen(line, Nil)).unit
-      }
+    * приходит сразу, без броска. */
+  private def startingRat(hero: Hero, battle: SoloPveBattle): (SoloPveBattle, Vector[String]) =
+    if (!hero.sets.startsWithRat || battle.group.hasRatAlly) (battle, Vector.empty)
+    else callRat(hero, battle).fold((battle, Vector.empty[String])) { case (joined, line) => (joined, Vector(line)) }
+
+  /** «Мать Глубин», порог 12: из воды выходят мурлоки-собратья — один, а против
+    * трёх и больше врагов (в строю и в очереди за ним) двое. Уже вышедшие второй
+    * раз не выходят. Встают на ближайшие к герою свободные места — сколько влезет. */
+  private def startingKin(hero: Hero, battle: SoloPveBattle): (SoloPveBattle, Vector[String]) = {
+    val foes = battle.group.aliveCount + battle.group.queue.size
+    val out  = battle.group.allies.exists(_.kind == pangea.model.squad.AllyKind.MurlocKin)
+    (1 to (if (out) 0 else hero.sets.kinCount(foes))).foldLeft((battle, Vector.empty[String])) {
+      case ((b, lines), _) =>
+        b.group.nearestFreeAllyPlace.fold((b, lines)) { pos =>
+          val kin = BattleState.kinAlly(hero, pos)
+          (b.copy(group = b.group.copy(allies = b.group.allies :+ kin)),
+           lines :+ content.format("battle.kinCall", "name" -> kin.name, "n" -> pos.toString))
+        }
     }
+  }
 
   override def action(
       user: User,
@@ -1954,19 +1977,23 @@ case class BattleState(
     val hpBefore = victimHp(victim, hero, battle)
     val (hit, struck, damage) = hurtVictim(victim, hero, battle, raw, nowMs)
     val toHp     = (hpBefore - victimHp(victim, hit, struck)).max(0L)
+    // «Подгорный мастер» (порог 12): пока после залпа на герое осталась броня, с
+    // ног его не сбить и травмы залп не оставляет.
+    val steady   = victim == Victim.Hero && hit.sets.steadfast(hit.fightStats.armor)
     // Каменная россыпь сбивает с ног: защита и уклонение героя срезаны на 3 хода.
     // Союзника сбивать нечем — у него таких счётчиков нет, ему достаётся только удар.
     val after =
-      if (!stone || victim != Victim.Hero) struck
+      if (!stone || victim != Victim.Hero || steady) struck
       else struck.copy(effects = struck.effects.copy(heroStunnedTurns = MiniBoss.StoneElemental.BurstDebuffTurns))
     val burstLine = content.format(textKey, "damage" -> damage.toString)
     val line =
       if (!stone || victim != Victim.Hero) burstLine
+      else if (steady) burstLine + "\n" + content.text("battle.steadfast")
       else burstLine + "\n" + content.format("battle.elemental.boulderStun",
              "pct" -> MiniBoss.StoneElemental.BurstDebuffPct.toString,
              "turns" -> MiniBoss.StoneElemental.BurstDebuffTurns.toString)
     // Травма — геройская беда: союзник её не получает.
-    if (toHp <= 0 || victim != Victim.Hero || hit.fightStats.hp <= 0) ZIO.succeed((after, hit, line))
+    if (toHp <= 0 || victim != Victim.Hero || hit.fightStats.hp <= 0 || steady) ZIO.succeed((after, hit, line))
     else
       for {
         roll   <- Random.nextIntBetween(1, 101)
@@ -2029,8 +2056,10 @@ case class BattleState(
           val hpBefore = victimHp(victim, hero, battle)
           val (hurt, spent, dealt) = hurtVictim(victim, hero, spend(cost, next), raw, nowMs)
           val line     = content.format("battle.joe.sweep", "damage" -> dealt.toString)
-          // Травму оставляет только удар по герою: союзник ран не копит.
-          if (victim != Victim.Hero || victimHp(victim, hurt, spent) >= hpBefore || hurt.fightStats.hp <= 0)
+          // Травму оставляет только удар по герою: союзник ран не копит. Гном в
+          // «Подгорном мастере» (порог 12), пока на нём броня, её тоже не получает.
+          if (victim != Victim.Hero || victimHp(victim, hurt, spent) >= hpBefore || hurt.fightStats.hp <= 0 ||
+              hurt.sets.steadfast(hurt.fightStats.armor))
             ZIO.succeed((spent, hurt, line))
           else
             for {
@@ -2246,8 +2275,11 @@ case class BattleState(
     // Потолок — эффективный максимум, но не ниже того, что было: HP выше потолка
     // (сошёл баф, сменилась вещь) не должно делать каждый удар сокрушительным.
     val ceiling = after.effectiveMaxHp(nowMs).max(before.fightStats.hp)
+    // «Подгорный мастер» (порог 12): пока на герое после удара есть броня, удар
+    // травмы не оставляет — бросок не тратится.
     if (lost * 100L <= ceiling * BattleState.HitTraumaMinPct || after.fightStats.hp <= 0L ||
-        after.traumaNames != before.traumaNames) ZIO.succeed((after, None))
+        after.traumaNames != before.traumaNames || after.sets.steadfast(after.fightStats.armor))
+      ZIO.succeed((after, None))
     else {
       val crushing = lost * 100L > ceiling * BattleState.HitTraumaCrushPct
       val chance   = if (crushing) BattleState.HitTraumaCrushChancePct else BattleState.HitTraumaChancePct
@@ -2776,8 +2808,11 @@ case class BattleState(
             impenDamage =
               if (impenTriggered) (baseReduced * (100L - hero.passives.impenetrableReductionPct) / 100L).max(1L)
               else baseReduced
+            // «Мать Глубин» (порог 6): с шансом удар соскальзывает по чешуе.
+            slipped <- chanceRoll(hero.sets.slipChancePct > 0L, hero.sets.slipChancePct)
+            slipDamage = if (slipped) (impenDamage * (100L - hero.sets.slipCutPct) / 100L).max(1L) else impenDamage
             // Удар элементаля — это стихия, а не сталь: «Каменный страж» его режет.
-            reducedDamage = bossDamageTaken(hero, battle, impenDamage)
+            reducedDamage = bossDamageTaken(hero, battle, slipDamage)
             (newHp, newArmor) = bossHit(battle, hero, reducedDamage, nowMs)
             // «Крепкость»: при обнулении брони 25% шанс одноразово восстановить 10% макс.брони.
             armorEmptied = hero.fightStats.armor > 0 && newArmor <= 0
@@ -2848,6 +2883,7 @@ case class BattleState(
             )
             lines = List(
               Option.when(impenTriggered)(content.text("battle.impenetrable")),
+              Option.when(slipped)(content.text("battle.deepSlip")),
               Option.when(toughTriggered)(content.format("battle.toughness", "armor" -> restoredArmor.toString)),
               Option.when(thorns > 0)(content.format("battle.thorns", "damage" -> thorns.toString, "monster" -> battle.monsterName)),
               // Из минибоссов поджигает только огненный элементаль; остальные —
@@ -4476,9 +4512,12 @@ case class BattleState(
             baseReduced = (rawDamage * (1.0 - reduction)).toLong.max(1L)
             // «Непробиваемый»: 20% шанс срезать урон обычной атаки вдвое.
             impenTriggered <- chanceRoll(hero.passives.hasImpenetrable, PassiveKind.Impenetrable.TriggerPct)
-            reducedDamage =
+            impenDamage =
               if (impenTriggered) (baseReduced * (100L - hero.passives.impenetrableReductionPct) / 100L).max(1L)
               else baseReduced
+            // «Мать Глубин» (порог 6): чешуя скользкая и для удара в спину.
+            slipped <- chanceRoll(hero.sets.slipChancePct > 0L, hero.sets.slipChancePct)
+            reducedDamage = if (slipped) (impenDamage * (100L - hero.sets.slipCutPct) / 100L).max(1L) else impenDamage
             // Удар в спину при бегстве разбирается тем же расчётом, что и обычная
             // атака в бою: та же баффовая броня, тот же порог 6 «Каменного стража».
             parting     = bossDamageTaken(hero, battle, reducedDamage)
@@ -4487,7 +4526,8 @@ case class BattleState(
             partTrauma <- hitTrauma(hero, hero1, nowMs)
             (hero2, traumaLine) = partTrauma
             mobLine     = content.format("battle.mobHit", "damage" -> parting.toString, "monster" -> battle.monsterName)
-            lines       = Vector(mobLine) ++ traumaLine.toVector
+            lines       = Vector(mobLine) ++ Option.when(slipped)(content.text("battle.deepSlip")).toVector ++
+                            traumaLine.toVector
           } yield
             if (newHp > 0) TurnResult(hero2, battle, lines, Outcome.Fled)
             // «Первопроходец» (порог 12): устоял после удара в спину — и всё-таки ушёл.
@@ -4935,6 +4975,8 @@ case class BattleState(
           // Дружинники «Пропавшей дружины» шли только на этот бой — после него
           // они уходят наверх со своими, в отряд не встают.
           case pangea.model.squad.AllyKind.SquadGnome => s
+          // Мурлок-собрат выходил из воды только на этот бой — туда и уходит.
+          case pangea.model.squad.AllyKind.MurlocKin  => s
           case pangea.model.squad.AllyKind.Rat        => s.summonRat(form, a.lvl, nowMs)
           case _                                      => s.admitRisen(form, a.lvl, nowMs)
         }
@@ -6151,9 +6193,11 @@ object BattleState {
   val AlliesPerRow: Int = 2
 
   /** Чем кончается выбывший союзник: наёмника уносит свиток, поднятый
-    * рассыпается, а дружинника «Пропавшей дружины» оттаскивают свои. */
+    * рассыпается, дружинника «Пропавшей дружины» оттаскивают свои, а
+    * мурлока-собрата забирает вода. */
   def goneKey(a: BattleAlly): String =
     if (a.kind == pangea.model.squad.AllyKind.SquadGnome) "battle.ally.squadGnomeDown"
+    else if (a.kind == pangea.model.squad.AllyKind.MurlocKin) "battle.ally.kinDown"
     else if (a.undead.isDefined) "battle.ally.crumbled"
     else "battle.ally.scroll"
 
@@ -6511,6 +6555,17 @@ object BattleState {
     BattleAlly(pangea.model.squad.AllyKind.Rat, pos,
       hp = rat.fightStats.hp, armor = rat.fightStats.armor, energy = rat.fightStats.energy,
       stats = rat.fightStats, lvl = hero.lvl, undead = Some(form), home = 0)
+  }
+
+  /** Мурлок-собрат «Матери Глубин» (порог 12): по статам — редкий мурлок
+    * уровня героя, на стороне героя и только на этот бой (см. AllyKind.MurlocKin). */
+  def kinAlly(hero: Hero, pos: Int): BattleAlly = {
+    val kind = pangea.model.squad.AllyKind.MurlocKin
+    val kin  = MonsterGenerator.generateOfRaceAndRarity(hero.lvl.toInt, Race.Murloc, Rarity.Rare)
+    BattleAlly(kind, pos,
+      hp = kin.fightStats.hp, armor = kin.fightStats.armor, energy = kin.fightStats.energy,
+      stats = kin.fightStats, lvl = hero.lvl,
+      undead = Some(pangea.model.squad.UndeadForm(kind.name, hero.lvl, kin.fightStats)), home = 0)
   }
 
   /** На сколько мест прыгает «Отскок» и отлетает цель «Отбрасывающего

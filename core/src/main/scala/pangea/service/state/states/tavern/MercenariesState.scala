@@ -268,6 +268,7 @@ object MercenariesState {
     case AllyKind.Undead => "undead"
     case AllyKind.Rat    => "rat"
     case AllyKind.SquadGnome => "squadGnome"
+    case AllyKind.MurlocKin  => "murlocKin"
   }
 
   /** Кто сейчас за столом. Пока идёт «Пропавшая дружина» (`bramblCalled`),

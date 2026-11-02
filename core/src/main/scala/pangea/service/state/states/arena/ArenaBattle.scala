@@ -92,8 +92,10 @@ object ArenaBattle {
         places   = foeUnits.map(_._1),
         // Сам лежит, а отряд бьётся — сторона падает только целиком.
         heroDown = meHero.fightStats.hp <= 0L),
-      // Пригвоздил соперник — правда о том на этой стороне боя.
-      effects             = gathered.effects.copy(heroRootedTurns = me.rooted),
+      // Пригвоздил соперник — правда о том на этой стороне боя. Гнома в
+      // «Подгорном мастере» (порог 12), пока на нём броня, не пригвоздить.
+      effects             = gathered.effects.copy(heroRootedTurns =
+                              if (meHero.sets.steadfast(meHero.fightStats.armor)) 0 else me.rooted),
       // Сородичи на песок не прибегают: здесь дерутся те, кто вышел.
       noKin               = true)
     // Соперник лежит, а его отряд ещё на ногах — в полях ближайший из отряда.
@@ -123,14 +125,23 @@ object ArenaBattle {
     * не нужна. */
   def withStartingRat(side: ArenaSide, hero: Hero): ArenaSide =
     if (!hero.sets.startsWithRat || side.allies.exists(_.ally.kind == AllyKind.Rat)) side
-    else {
-      val taken = side.pos :: side.allies.map(_.ally.position)
-      (1 to Formation.HeroPlaces).filterNot(taken.contains)
-        .sortBy(p => (math.abs(p - side.pos), -p)).headOption
-        .fold(side)(p => side.copy(
-          allies   = side.allies :+ ArenaAlly(side.nextAlly, BattleState.ratAlly(hero, p).copy(home = side.nextAlly)),
-          nextAlly = side.nextAlly + 1))
-    }
+    else joinNear(side)(BattleState.ratAlly(hero, _))
+
+  /** Мурлоки-собратья на старте (набор «Мать Глубин», порог 12): выходят на
+    * песок вместе с героем, как и в лабиринте, — один, а против трёх и больше
+    * бойцов стороны напротив (`foes`) двое. */
+  def withStartingKin(side: ArenaSide, hero: Hero, foes: ArenaSide): ArenaSide =
+    (1 to hero.sets.kinCount(1 + foes.allies.size)).foldLeft(side)((s, _) => joinNear(s)(BattleState.kinAlly(hero, _)))
+
+  /** Союзник встаёт на ближайшее к герою свободное место; мест нет — не встаёт. */
+  private def joinNear(side: ArenaSide)(ally: Int => BattleAlly): ArenaSide = {
+    val taken = side.pos :: side.allies.map(_.ally.position)
+    (1 to Formation.HeroPlaces).filterNot(taken.contains)
+      .sortBy(p => (math.abs(p - side.pos), -p)).headOption
+      .fold(side)(p => side.copy(
+        allies   = side.allies :+ ArenaAlly(side.nextAlly, ally(p).copy(home = side.nextAlly)),
+        nextAlly = side.nextAlly + 1))
+  }
 
   /** Сила удара стороны для контрудара в чужом зеркале — та же формула, что у
     * обычного удара героя (см. BattleState.playerStrike), только без разброса,

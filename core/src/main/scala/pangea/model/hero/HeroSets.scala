@@ -156,6 +156,26 @@ final case class HeroSets(counts: Map[ItemSet, Int], race: Option[Race] = None) 
   def woundLifestealPct(hp: Long, maxHp: Long): Long =
     if (enraged(hp, maxHp)) pct(ItemSet.Horde, 12, ItemSet.Horde.BloodLifestealPct) else 0L
 
+  // ── «Мать Глубин» ───────────────────────────────────────────────────────────
+
+  /** Шанс (в %), что попавший обычный удар соскользнёт по чешуе (порог 6), и
+   *  на сколько % слабее он тогда пройдёт. */
+  def slipChancePct: Long = pct(ItemSet.DeepMother, 6, ItemSet.DeepMother.SlipChancePct)
+  def slipCutPct: Long    = ItemSet.DeepMother.SlipCutPct
+
+  /** Сколько мурлоков-собратьев выйдет в начале боя против `foes` врагов
+   *  (порог 12, только мурлоку): один, а против многих — на одного больше. */
+  def kinCount(foes: Int): Int =
+    if (!has(ItemSet.DeepMother, 12)) 0
+    else ItemSet.DeepMother.KinCount + (if (foes >= ItemSet.DeepMother.KinManyFoes) 1 else 0)
+
+  // ── «Подгорный мастер» ──────────────────────────────────────────────────────
+
+  /** Держит ли герой на ногах (порог 12, только гному): пока у него есть броня
+   *  `armor`, его не оглушить, не сбить с ног, не пригвоздить, и удары не
+   *  оставляют травм. Оглушения героя в игре пока нет — правило ждёт его. */
+  def steadfast(armor: Long): Boolean = has(ItemSet.MountainMaster, 12) && armor > 0L
+
   // ── «Тихая роща» ────────────────────────────────────────────────────────────
 
   /** Бьёт ли первый удар боя из засады — без промаха и сильнее (порог 6). */

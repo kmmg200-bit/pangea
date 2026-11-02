@@ -302,16 +302,25 @@ object ItemSet extends Enum[ItemSet] {
     override def race: Option[Race] = Some(Race.Murloc)
     val EvasionPct: Long = SetRates.RaceStatPct
 
+    /** Скользкая чешуя (порог 6): с каким шансом попавший обычный удар
+      * соскальзывает и на сколько % слабее проходит. */
+    val SlipChancePct: Long = 15L
+    val SlipCutPct: Long    = 50L
+
     /** Сколько HP и брони возвращается в конце раунда (порог 9), в % от максимума. */
     val RegenPct: Long = 2L
 
+    /** Зов глубин (порог 12): сколько собратьев выходит в начале боя и против
+      * скольких врагов — на одного больше. */
+    val KinCount: Int     = 1
+    val KinManyFoes: Int  = 3
+
     def bonuses: List[SetBonus] = List(
       SetBonus(3,  s"+$EvasionPct% к уклонению."),
-      SetBonus(6,  "15% шанс, что попавший по вам обычный удар соскользнёт по чешуе и пройдёт вполовину.",
-               active = false),
+      SetBonus(6,  s"$SlipChancePct% шанс, что попавший по вам обычный удар соскользнёт по чешуе и пройдёт вполовину."),
       SetBonus(9,  s"В конце каждого раунда вы восстанавливаете $RegenPct% HP и $RegenPct% брони."),
       SetBonus(12, "В начале каждого боя из воды выходит мурлок-собрат и встаёт в строй; против трёх " +
-                   "и больше врагов — двое.", active = false, ownRaceOnly = true)
+                   "и больше врагов — двое.", ownRaceOnly = true)
     )
   }
 
@@ -416,7 +425,7 @@ object ItemSet extends Enum[ItemSet] {
       SetBonus(6,  s"В конце каждого раунда ваша броня восстанавливается на $ArmorRegenPct%."),
       SetBonus(9,  s"Шанс сковать врага холодом увеличен на $ColdChanceBonusPct%."),
       SetBonus(12, "Пока у вас есть броня, вас нельзя оглушить, сбить с ног или пригвоздить, и удары " +
-                   "не оставляют на вас травм.", active = false, ownRaceOnly = true)
+                   "не оставляют на вас травм.", ownRaceOnly = true)
     )
   }
 

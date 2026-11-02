@@ -131,6 +131,14 @@ object AllyKind extends Enum[AllyKind] {
     override def usesSkills: Boolean = false
   }
 
+  /** Мурлок-собрат, вышедший из воды на набор «Мать Глубин» (порог 12): статы
+    * у него свои — редкий мурлок уровня героя (см. [[UndeadForm]] и
+    * `BattleState.kinAlly`). Он идёт с героем только на этот бой, а после боя
+    * уходит обратно в воду и в отряд не встаёт. Стихии нет — бьёт как мурлок. */
+  case object MurlocKin extends AllyKind("Мурлок-собрат", Race.Murloc, None, maxLvl = 1L,
+    hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
+    accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
+
   val values: IndexedSeq[AllyKind] = findValues
 
   /** Кого можно нанять за столом таверны. Нежить и крысы туда не садятся. */

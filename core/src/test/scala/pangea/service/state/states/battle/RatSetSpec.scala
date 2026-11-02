@@ -193,7 +193,8 @@ object RatSetSpec extends ZIOSpecDefault {
 
     test("порог 12: вторую крысу на входе не дают — ни когда своя уже есть, ни во втором раунде") {
       val withRat  = tough.copy(group = tough.group.copy(round = 0))
-      val lateRound = tough.copy(group = tough.group.copy(round = 1))
+      // Раунды считает сам бой: счётчик группы в бою с минибоссом стоит на нуле.
+      val lateRound = tough.copy(roundsFought = 1)
       for {
         t1 <- makeState(hero(12), withRat)
         (s1, dao1, r1) = t1

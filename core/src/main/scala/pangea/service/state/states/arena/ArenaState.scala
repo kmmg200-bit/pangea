@@ -269,7 +269,12 @@ case class ArenaState(
       // (набор «Крыса», порог 12) — в любом режиме, вместе с героем.
       enter    = (side: ArenaSide, h: Hero) => ArenaBattle.withStartingRat(
                    if (fight.mode == ArenaMode.Group) ArenaBattle.withSquad(side, h) else side, h)
-      joined   = fight.copy(status = ArenaStatus.Fighting, a = enter(fight.a, foeHero), b = Some(enter(me, hero)))
+      sideA    = enter(fight.a, foeHero)
+      sideB    = enter(me, hero)
+      // Мурлоки-собратья («Мать Глубин», порог 12) считают бойцов напротив.
+      joined   = fight.copy(status = ArenaStatus.Fighting,
+                   a = ArenaBattle.withStartingKin(sideA, foeHero, sideB),
+                   b = Some(ArenaBattle.withStartingKin(sideB, hero, sideA)))
                    .passTurn(first, now).copy(round = 1)
       _       <- arenaDao.update(joined, now)
       // Соперника зовём к экрану: он ждал на арене, а теперь уже дерётся.
