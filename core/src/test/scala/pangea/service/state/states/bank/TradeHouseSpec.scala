@@ -189,7 +189,9 @@ object TradeHouseSpec extends ZIOSpecDefault {
           _      <- state.action(fresh, text("other@mail.ru"), renderer)
           after  <- userRepo.getUserById(userId).map(_.flatMap(_.receiptEmail))
         } yield assertTrue(stored.contains("kmmg200@yandex.ru")) &&
-                assertTrue(saved.last.text.contains("kmmg200@yandex.ru")) &&
+                assertTrue(saved.exists(_.text.contains("Рахадим вписывает адрес"))) &&
+                // следом — сама страница дублонов, уже с новым адресом
+                assertTrue(saved.last.text.contains("для чеков: kmmg200@yandex.ru")) &&
                 assertTrue(saved.last.choices.map(_.id) == List("TradeHouse")) &&
                 assertTrue(page.last.text.contains("для чеков: kmmg200@yandex.ru")) &&
                 assertTrue(after.contains("other@mail.ru"))
@@ -221,6 +223,19 @@ object TradeHouseSpec extends ZIOSpecDefault {
           screen <- renderer.sentScreens
         } yield assertTrue(screen.last.text.contains("Без адреса бумаги не оформить")) &&
                 assertTrue(screen.last.choices.map(_.id) == List("TradeHouse"))
+      },
+
+      test("адрес только что прислан — пакеты сразу, без выхода и повторного входа") {
+        for {
+          dons <- TestDonations.on()
+          t    <- house(heroSilver = 0L, donations = dons)
+          (state, _, _, renderer, _) = t
+          _      <- state.action(testUser, tap("BuyDoubloons"), renderer)
+          // тот же `testUser`, что и до записи: адреса в нём ещё нет
+          _      <- state.action(testUser, text("player@mail.ru"), renderer)
+          screen <- renderer.sentScreens
+        } yield assertTrue(screen.last.choices.map(_.id).count(_ == "DonPick") == 2) &&
+                assertTrue(screen.last.text.contains("для чеков: player@mail.ru"))
       },
 
       test("адрес записан: показываем пакеты с ценой в рублях") {

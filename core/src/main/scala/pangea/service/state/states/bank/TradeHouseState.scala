@@ -366,9 +366,12 @@ case class TradeHouseState(
     readScene(user).flatMap { scene =>
       if (!scene.emailPrompt) showMenu(user, renderer)
       else ReceiptEmail.parse(ua.text) match {
+        // Адрес записан — сразу та же страница дублонов, уже с пакетами: `user`
+        // здесь прочитан до записи, поэтому адрес подставляем сами.
         case Some(email) =>
           userRepo.updateReceiptEmail(user.userId, email) *>
-            renderer.show(user, Screen(content.format("bank.tradeHouse.doubloonsSaved", "email" -> email), backRow))
+            renderer.show(user, Screen(content.format("bank.tradeHouse.doubloonsSaved", "email" -> email), Nil)) *>
+            showDoubloons(user.copy(receiptEmail = Some(email)), renderer)
         case None =>
           renderer.show(user, Screen(content.text("bank.tradeHouse.doubloonsBadEmail"), backRow))
       }
