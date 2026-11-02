@@ -56,6 +56,7 @@ import pangea.model.state.StateType.{
   TrainingHall,
   TreasureDig,
   Girl,
+  GirlWaiting,
   FlowerMeadow,
   Arena,
   MonsterCave,
@@ -151,6 +152,7 @@ import pangea.service.state.states.hero.{FriendCodeState, HeroStatsState, Knowle
 import pangea.service.referral.Referrals
 import pangea.service.state.states.tavern.{
   CardSellerState,
+  GirlWaitingState,
   InnkeeperState,
   MercenariesState,
   TavernState
@@ -291,6 +293,7 @@ object StatesMap {
             itemRepo,
             content
           ),
+          GirlWaiting -> GirlWaitingState(heroDao, inventoryRepo, itemRepo, content, bank),
           QuestBoard        -> QuestBoardState(heroDao, inventoryRepo, artifactRepo, scheduler, content),
           QuestRoad         -> QuestRoadState(heroDao, scheduler, content),
           Thieves           -> ThievesState(heroDao, content),

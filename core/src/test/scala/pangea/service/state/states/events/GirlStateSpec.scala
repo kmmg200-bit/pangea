@@ -168,21 +168,27 @@ object GirlStateSpec extends ZIOSpecDefault {
               assertTrue(inv.snapshot.exists(_.itemType == ItemType.TreasureMap))
     },
 
-    test("карта отца: без серебра — остаёмся; отказ от покупки — уровень×3; пожелать удачи — уровень×10 ±20%") {
+    test("карта отца: без серебра — ждёт в таверне 4 часа по той же цене; отказ — уровень×3; удача — уровень×10 ±20%") {
       for {
         t <- make(hero.copy(silver = 100L), Some(orcScene(Step.MapOffer).copy(price = 7500L)))
         (state, dao, inv, _, _, r) = t
         stay   <- state.action(testUser, tap("BuyMap"), r)
         all    <- texts(r)
-        res    <- state.action(testUser, tap("CantAfford"), r)
-        h      <- heroOf(dao)
+        deal   <- pangea.service.state.states.tavern.GirlDeal.load(dao, userId)
+        scene  <- sceneOf(dao)
+        t1 <- make(hero.copy(silver = 100L), Some(orcScene(Step.MapOffer).copy(price = 7500L)))
+        (state1, dao1, _, _, _, r1) = t1
+        res    <- state1.action(testUser, tap("CantAfford"), r1)
+        h      <- heroOf(dao1)
         t2 <- make(hero, Some(orcScene(Step.CityMap)))
         (state2, dao2, _, _, _, r2) = t2
         _      <- TestRandom.feedLongs(120L)
         res2   <- state2.action(testUser, tap("WishLuck"), r2)
         h2     <- heroOf(dao2)
-      } yield assertTrue(stay == StateType.Girl && all.contains("Столько серебра у вас нет")) &&
-              assertTrue(inv.snapshot.isEmpty) &&
+      } yield assertTrue(stay == StateType.GlobalMap && all.contains("я подожду") && all.contains("7500 серебра")) &&
+              assertTrue(deal.contains(pangea.service.state.states.tavern.GirlDeal(7500L, 10L,
+                pangea.service.state.states.tavern.GirlDeal.WaitMs))) &&
+              assertTrue(scene.isEmpty && inv.snapshot.isEmpty) &&
               assertTrue(res == StateType.GlobalMap && h.guildReputation == 50L + 30L) &&
               assertTrue(res2 == StateType.GlobalMap && h2.guildReputation == 50L + 120L)   // 10 × 10 × 120%
     },

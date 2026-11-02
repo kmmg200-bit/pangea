@@ -22,6 +22,7 @@ import pangea.repository.bank.BankRepository
 import pangea.service.purse.Purse
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.events.GirlState._
+import pangea.service.state.states.tavern.GirlDeal
 import pangea.service.state.{State, UserAction}
 import zio.{Random, Task, ZIO}
 
@@ -182,9 +183,11 @@ case class GirlState(
       scene <- requireScene(user)
       price  = scene.price
       wallet <- purse.wallet(hero)
+      // Серебра мало — она подождёт в таверне по той же цене (см. GirlDeal).
       res <- if (!wallet.canAfford(price))
-               renderer.show(user, Screen(content.format("girl.mapNoSilver", "price" -> price.toString), Nil)) *>
-                 renderer.show(user, screenFor(scene)).as(StateType.Girl)
+               nowMs.flatMap(now => GirlDeal.save(heroDao, user.userId, GirlDeal(price, hero.lvl, now + GirlDeal.WaitMs))) *>
+                 renderer.show(user, Screen(content.format("girl.mapWait", "price" -> price.toString), Nil)) *>
+                 clear(user).as(StateType.GlobalMap)
              else
                for {
                  map   <- itemRepo.persist(hero.id, TreasureMapGenerator.create(hero.lvl, half = false))

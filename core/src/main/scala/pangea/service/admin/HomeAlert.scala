@@ -28,6 +28,7 @@ object HomeAlert {
       Tavern           -> "таверна",
       Innkeeper        -> "трактирщик",
       CardSeller       -> "подозрительный человек",
+      GirlWaiting      -> "девушка с картой в таверне",
       Mercenaries      -> "наёмники в таверне",
       Guild            -> "Гильдия искателей",
       QuestBoard       -> "доска заданий",

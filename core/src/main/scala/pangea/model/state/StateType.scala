@@ -116,6 +116,7 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   case object QuestBoard extends StateType
   case object Innkeeper  extends StateType
   case object CardSeller extends StateType // «Подозрительный человек» — продавец карт
+  case object GirlWaiting extends StateType // девушка с картой отца ждёт в таверне оплаты
   case object SilverVein     extends StateType
   case object Construction   extends StateType
   case object Guild          extends StateType
@@ -178,6 +179,6 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
     TradeHouse, BankVault, Auction, FetShop, Mail, Transfer,
     Arena, Outskirts,
     Merchant, Gustavo, GustavoHeal, GustavoBoost, GustavoSupplies, GustavoBelt, GustavoHerbs,
-    Tavern, Mercenaries, QuestBoard, Innkeeper, CardSeller, Construction, Guild, TrophyExchange, TrainingHall,
+    Tavern, Mercenaries, QuestBoard, Innkeeper, CardSeller, GirlWaiting, Construction, Guild, TrophyExchange, TrainingHall,
     MasterHorn, MentorKazimir, Home, RuneAltar, HerbWorkbench, GemVault, TrophyWall)
 }

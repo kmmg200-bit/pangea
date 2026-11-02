@@ -50,6 +50,7 @@ case class TavernState(
       "Mercenaries"     -> Target.Goto(StateType.Mercenaries),
       "OpenCharacter"   -> Target.Run { (user, _, _) => CharacterMenu.open(heroDao, user.userId, StateType.Tavern) },
       "SuspiciousMan"   -> Target.Goto(StateType.CardSeller),
+      "GirlWaiting"     -> Target.Goto(StateType.GirlWaiting),
       "LeaveTavern"     -> Target.Goto(StateType.GlobalMap)
     ),
     fallback = Target.Run { (user, _, renderer) => enter(user, renderer).as(StateType.Tavern) }
@@ -68,6 +69,7 @@ case class TavernState(
           hero  <- SquadDuty.settle(heroDao, content, user, hero0, now, renderer)
           // «Раз в час» ролл продавца карт (лениво, с почасовым гейтом внутри).
           seller <- CardSeller.rollAndLoad(heroDao, user.userId, now)
+          girl   <- GirlDeal.waiting(heroDao, user.userId, now)
           text = content.format("tavern.menu.text",
             "cost"   -> roomCost(hero).toString,
             "silver" -> hero.silver.toString)
@@ -76,9 +78,12 @@ case class TavernState(
           // «Подозрительный человек» — зелёная кнопка над «Персонаж» (только когда он тут).
           suspicious = Option.when(present)(
             content.choice("SuspiciousMan", "tavern.suspiciousMan").copy(row = Some(2)))
-          charRow  = if (present) 3 else 2
-          leaveRow = if (present) 4 else 3
-          choices = suspicious.toList ++ List(
+          // Девушка с картой ждёт оплаты — её кнопка следом, своим рядом.
+          waiting  = girl.map(_ => content.choice("GirlWaiting", "tavern.girlWaiting").copy(row = Some(2 + suspicious.size)))
+          extras   = suspicious.toList ++ waiting.toList
+          charRow  = 2 + extras.size
+          leaveRow = charRow + 1
+          choices = extras ++ List(
             byId("RentRoom").copy(row = Some(0)),
             byId("Innkeeper").copy(color = ChoiceColor.Positive, row = Some(1)),
             byId("Mercenaries").copy(row = Some(0)),

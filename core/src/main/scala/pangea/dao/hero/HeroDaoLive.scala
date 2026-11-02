@@ -189,6 +189,12 @@ class HeroDaoLive(xa: Transactor[Task]) extends HeroDao {
   override def readCardSellerData(userId: UserId): Task[Option[Json]] =
     Queries.readCardSellerData(userId).query[Option[Json]].unique.transact(xa)
 
+  override def writeGirlDeal(userId: UserId, data: Json): Task[Unit] =
+    Queries.writeGirlDeal(userId, data).update.run.transact(xa).unit
+
+  override def readGirlDeal(userId: UserId): Task[Option[Json]] =
+    Queries.readGirlDeal(userId).query[Option[Json]].unique.transact(xa)
+
   override def writeReturnState(userId: UserId, state: Option[StateType]): Task[Unit] =
     Queries.writeReturnState(userId, state).update.run.transact(xa).unit
 
