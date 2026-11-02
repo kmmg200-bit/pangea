@@ -120,7 +120,10 @@ case class SoloPveBattle(
   // Перечитывается из дома каждый ход (см. BattleState.resolveLoaded).
   trophyWall: Map[String, Int] = Map.empty,
   // Кто из отряда бил того, кто в полях, последним (см. MonsterSlot.lastAllyHit).
-  monsterLastAllyHit: Option[String] = None
+  monsterLastAllyHit: Option[String] = None,
+  // Герой уже бил в этом бою: удар из засады («Тихая роща», порог 6) — только
+  // первый.
+  heroStruck:     Boolean = false
 ) {
 
   /** Множитель Стены трофеев к урону героя по тому, кто сейчас в полях. */
@@ -904,6 +907,7 @@ object SoloPveBattle {
       bonusSlots          <- c.getOrElse[List[Long]]("bonusSlots")(Nil)
       trophyWall          <- c.getOrElse[Map[String, Int]]("trophyWall")(Map.empty)
       monsterLastAllyHit  <- c.getOrElse[Option[String]]("monsterLastAllyHit")(None)
+      heroStruck          <- c.getOrElse[Boolean]("heroStruck")(false)
     } yield SoloPveBattle(monsterLvl, monsterRace, monsterRarity, monsterStats,
                          monsterCurrentHp, monsterCurrentArmor, heroBattleState, consumableUsed, monsterMarked,
                          monsterUndead,
@@ -911,7 +915,7 @@ object SoloPveBattle {
                          story, customName, divineUsed, escapesAfter, noKin, arena, minionLvl, bossTaken,
                          noFlee, lootLevel, holyWater, heroBlockPct, monsterBlockPct,
                          heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall,
-                         monsterLastAllyHit)
+                         monsterLastAllyHit, heroStruck)
 
   /** Номер самого соперника среди «мобов» зеркала арены; его союзники — от
     * единицы (см. `ArenaSide.allies`). */

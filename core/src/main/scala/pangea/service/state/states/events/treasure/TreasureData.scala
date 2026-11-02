@@ -28,10 +28,15 @@ object TreasureDigProgress {
 }
 
 /** Прогресс похода за сокровищем по карте клада (таймер — 7 часов).
- *  @param startedAt момент отправки (epoch ms)
- *  @param zone      зона израсходованной карты — её диапазон уровней задаёт добычу
+ *  @param startedAt  момент отправки (epoch ms)
+ *  @param zone       зона израсходованной карты — её диапазон уровней задаёт добычу
+ *  @param durationMs сколько идёт этот поход: ставится при отправке (каджиту в
+ *                    «Караване» — короче). Option: у походов, начатых раньше, его
+ *                    нет, и они идут обычные 7 часов.
  */
-final case class TreasureHuntProgress(startedAt: Long, zone: MapZone)
+final case class TreasureHuntProgress(startedAt: Long, zone: MapZone, durationMs: Option[Long] = None) {
+  def duration: Long = durationMs.getOrElse(TreasureHuntState.HuntDurationMs)
+}
 
 object TreasureHuntProgress {
   implicit val encoder: Encoder[TreasureHuntProgress] = deriveEncoder[TreasureHuntProgress]

@@ -11,7 +11,7 @@ import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, B
 import pangea.model.cave.CaveGenerator
 import pangea.model.item.ItemSet
 import pangea.model.squad.AllySkill
-import pangea.model.hero.{Achievement, AzatState, CubeStatus, Hero, WeaponCoat, WeaponDust}
+import pangea.model.hero.{Achievement, AzatState, CubeStatus, Hero, HeroSets, WeaponCoat, WeaponDust}
 import pangea.model.item.QuestItemKind
 import pangea.model.quest.{BoardKind, NpcQuest}
 import pangea.model.item.{BeltSlot, BrewEffect, BrewKind, BrewRates, FlaskEffect, FlaskRates, GripRates, Item, ItemDetails, ItemType, PassiveKind, PotionKind, RefillSource, DivineKind, DivineRates}
@@ -1198,7 +1198,9 @@ case class BattleState(
   ): Task[TurnResult] =
     for {
       buffedEff <- ZIO.succeed(effWithAir(hero, battle, nowMs))
-      hitRoll <- if (sureHit) ZIO.succeed(101) else Random.nextIntBetween(1, 101)
+      // «Тихая роща» (порог 6): первый удар боя — из засады, без промаха и сильнее.
+      ambush     = hero.sets.ambushes && !battle.heroStruck
+      hitRoll <- if (sureHit || ambush) ZIO.succeed(101) else Random.nextIntBetween(1, 101)
       mobDodge   = mobDodgeChance(buffedEff.accuracy, battle)
       // Попадание считается как hitRoll(1..100) > dodge, т.е. фактический шанс =
       // 100 - floor(dodge). Округляем ТАК ЖЕ, как экран боя (см. buildBattleScreen),
@@ -1223,7 +1225,8 @@ case class BattleState(
             damage =
               (((hero.effectiveBaseStats(nowMs).str * 3L + buffedEff.atk) * spread / 100L) *
                 weaponMod * closeMod * hero.passives.finalDamageMult * hero.weaponDust.damageMult *
-                Achievement.damagePct(hero) / 100.0 * battle.trophyMult * burningMult(hero, battle)).toLong
+                Achievement.damagePct(hero) / 100.0 * battle.trophyMult * burningMult(hero, battle) *
+                (if (ambush) hero.sets.ambushDamagePct / 100.0 else 1.0)).toLong
                 .max(1L)
             // Стихии оружия модифицируют раздельно урон по броне и по HP
             // (см. splitElementalDamage). Без стихий поведение прежнее.
@@ -1302,6 +1305,15 @@ case class BattleState(
               else effectsBled.copy(monsterPoison = Some(
                 effectsBled.monsterPoison.map(p => Poison(p.pct + hero.sets.poisonPct))
                   .getOrElse(Poison(hero.sets.poisonPct))))
+            // «Тихая роща» (порог 9): удар по HP с шансом ослабляет врага на два
+            // раунда. Висящее ослабление посильнее не перебивается.
+            weakens <- chanceRoll(hero.sets.weakenOnHitChancePct > 0 && hpDmg > 0 && newHp > 0,
+                         hero.sets.weakenOnHitChancePct)
+            effectsWeak =
+              if (!weakens) effectsRat
+              else effectsRat.copy(
+                monsterWeakenedTurns = effectsRat.monsterWeakenedTurns.max(ItemSet.QuietGrove.WeakenTurns),
+                monsterWeakenedPct   = effectsRat.monsterWeakenedPct.max(ItemSet.QuietGrove.WeakenPct))
             // Череп в оружии и «Упырь» (порог 4): вампиризм с урона по HP. Кровь
             // пьётся только с раны — удар, целиком поглощённый бронёй, не лечит.
             maxHp      = hero.effectiveMaxHp(nowMs)
@@ -1312,9 +1324,9 @@ case class BattleState(
             flaskSteal = if (flaskBite) (hpDmg * FlaskRates.VampiricPct / 100L).max(0L) else 0L
             healedHero = if (vamp + setSteal + flaskSteal > 0) hero.copy(fightStats = hero.fightStats.copy(hp = (hero.fightStats.hp + vamp + setSteal + flaskSteal).min(maxHp))) else hero
             vampGained = healedHero.fightStats.hp - hero.fightStats.hp
-            effectsFed = if (!flaskBite) effectsRat else effectsRat.copy(heroVampiricHits = effectsRat.heroVampiricHits - 1)
+            effectsFed = if (!flaskBite) effectsWeak else effectsWeak.copy(heroVampiricHits = effectsWeak.heroVampiricHits - 1)
             hitBattle = noteBossDamage(battle, armorDmg + hpDmg)
-              .copy(monsterCurrentHp = newHp, monsterCurrentArmor = newArmor)
+              .copy(monsterCurrentHp = newHp, monsterCurrentArmor = newArmor, heroStruck = true)
               .withEffects(effectsFed)
             // Проки стихий оружия (30% каждый) — только если моб жив после удара.
             elemResult <- if (newHp > 0) resolveElementProcs(hero, hitBattle)
@@ -1335,11 +1347,12 @@ case class BattleState(
             // урона и поджигает бьющего. Скованный холодом молчит.
             thornsResult = bossThorns(healedHero, updated, battle.monsterCurrentArmor, resisted)
             (thornedHero, thornedBattle, thornsLine) = thornsResult
-            log1 = log :+ attackLine
+            log1 = (log ++ Option.when(ambush)(content.text("battle.groveAmbush")).toVector) :+ attackLine
             log2 =
-              if (poisonsNow || gemPoisons || coatPoisons || setPoisons)
+              (if (poisonsNow || gemPoisons || coatPoisons || setPoisons)
                 log1 :+ content.format("battle.poisonApplied", "monster" -> battle.monsterName)
-              else log1
+              else log1) ++ Option.when(weakens)(content.format("battle.groveWeaken", "monster" -> battle.monsterName,
+                "pct" -> ItemSet.QuietGrove.WeakenPct.toString, "turns" -> ItemSet.QuietGrove.WeakenTurns.toString)).toVector
             // Сам вампиризм о себе не говорит: его число уезжает в конец раунда и
             // там складывается с чужой кровью в одну строку (см. vampLine). Если
             // раунд кончился раньше хода моба, строку дописываем здесь же.
@@ -1473,6 +1486,13 @@ case class BattleState(
         log  = res.log :+ content.format("battle.underworldPush", "energy" -> gained.toString))
     }
   }
+
+  /** «Караван» (порог 6): попутный ветер, только что поднятый Воздухом, держится
+    * дольше. Только что — значит, его срок ровно тот, что ставит прок. */
+  private def longerWind(hero: Hero, fired: Set[Element], b: SoloPveBattle): SoloPveBattle =
+    if (fired(Element.Air) && hero.sets.airTurnsBonus > 0 && b.effects.airBoostTurns == Element.Air.ProcTurns)
+      b.copy(effects = b.effects.copy(airBoostTurns = Element.Air.ProcTurns + hero.sets.airTurnsBonus))
+    else b
 
   /** «Преисподняя» (порог 6): по горящему врагу удар и умение сильнее. */
   private def burningMult(hero: Hero, battle: SoloPveBattle): Double =
@@ -2499,13 +2519,18 @@ case class BattleState(
       // Роллим в фиксированном порядке Element.values для детерминизма тестов.
       ZIO.foreach(Element.values.filter(elems.contains).toList) { e =>
         // «Дикое пламя» (порог 10) поднимает шанс поджечь, «Подгорный мастер»
-        // (порог 9) — сковать холодом.
+        // (порог 9) — сковать холодом, «Караван» (порог 6) — шанс Воздуха.
         val chance =
           if (e == Element.Fire) Element.ProcChancePct + hero.sets.igniteChanceBonusPct
           else if (e == Element.Cold) Element.ProcChancePct + hero.sets.coldChanceBonusPct
+          else if (e == Element.Air) Element.ProcChancePct + hero.sets.airChanceBonusPct
           else Element.ProcChancePct
         Random.nextIntBetween(1, 101).map(roll => e -> (roll <= chance))
-      }.map(rolls => applyProcs(battle, rolls.collect { case (e, true) => e }.toSet))
+      }.map { rolls =>
+        val fired          = rolls.collect { case (e, true) => e }.toSet
+        val (procced, log) = applyProcs(battle, fired)
+        (longerWind(hero, fired, procced), log)
+      }
   }
 
   /** Применяет сработавшие проки стихий `fired` к мобу: сперва комбо, затем
@@ -2934,7 +2959,7 @@ case class BattleState(
         battleAfterHero.copy(monsterCurrentEnergy = (battleAfterHero.monsterCurrentEnergy + gain).min(maxEn))
       }
       (tickedBattle, monsterEffectLine, bleedDealt) =
-        if (heroAlive) tickMonsterEffects(battleWithEnergy, ticked.monsterName, tickedHero.sets.burnGrowthMult)
+        if (heroAlive) tickMonsterEffects(battleWithEnergy, ticked.monsterName, tickedHero.sets)
         else (battleWithEnergy, "", 0L)
       // «Упырь» (порог 10): кровь ЧУЖОЙ стороны идёт в лечение и делится ровно
       // между вампирами СВОЕЙ. Сегодня вампир один — сам герой, поэтому ему
@@ -3094,7 +3119,7 @@ case class BattleState(
   private def tickMonsterEffects(
       battle: SoloPveBattle,
       monsterName: String,
-      burnGrowthMult: Long
+      sets: HeroSets
   ): (SoloPveBattle, String, Long) = {
     val maxHp = battle.monsterStats.hp
     var eff   = battle.effects
@@ -3131,7 +3156,7 @@ case class BattleState(
       // «Дикое пламя» (порог 6) ускоряет рост: шаг применяется несколько раз,
       // сохраняя саму кривую роста (+2 п.п. до порога, дальше +1). На поднятом
       // пламя растёт вдвое охотнее — тем же порядком.
-      val steps = burnGrowthMult.max(1L) * (if (undead) ItemSet.Necromancer.UndeadBurnGrowthMult else 1L)
+      val steps = sets.burnGrowthMult.max(1L) * (if (undead) ItemSet.Necromancer.UndeadBurnGrowthMult else 1L)
       eff = eff.copy(monsterBurn = Some((1L to steps).foldLeft(bn)((b, _) => b.grown)))
       lines = lines :+ dotTick(Burn.Icon, Burn.Label, dmg, monsterName)
     }
@@ -3836,7 +3861,8 @@ case class BattleState(
         // цели в силе: огненного элементаля пламя не берёт, элементалю и
         // нежити прок ложится как обычный (см. withEffects).
         case FlaskEffect.Splash(element) =>
-          val (procced, procLog) = applyProcs(battle, Set(element))
+          val (splashed, procLog) = applyProcs(battle, Set(element))
+          val procced = longerWind(hero, Set(element), splashed)
           val guarded = procced.withEffects(procced.effects)
           val head = content.format("battle.flaskSplash", "flask" -> flaskName)
           val lines =
@@ -5075,7 +5101,7 @@ case class BattleState(
       // 3) конец хода этого моба: энергия и тик ран
       regen      = mobEnergyGain(h2, t2)
       withEnergy = t2.copy(monsterCurrentEnergy = (t2.monsterCurrentEnergy + regen).min(t2.monsterStats.energy))
-      (ticked, dotLine, _) = tickMonsterEffects(withEnergy, withEnergy.monsterName, h2.sets.burnGrowthMult)
+      (ticked, dotLine, _) = tickMonsterEffects(withEnergy, withEnergy.monsterName, h2.sets)
       log3 = log1 ++ log2 ++ (if (dotLine.isEmpty) Vector.empty else Vector(dotLine))
     } yield (h2, if (countered) b2.copy(heroCounterReady = false) else b2, ticked, log3)
   }
@@ -5087,15 +5113,15 @@ case class BattleState(
   private def arenaWounds(res: TurnResult): TurnResult =
     if (res.outcome != Outcome.Continue || !res.endsRound || res.battle.arena.isEmpty) res
     else {
-      val mult = res.hero.sets.burnGrowthMult
-      val (active, activeLine, _) = tickMonsterEffects(res.battle, res.battle.monsterName, mult)
+      val sets = res.hero.sets
+      val (active, activeLine, _) = tickMonsterEffects(res.battle, res.battle.monsterName, sets)
       val n = active.group.others.size
       val (b, lines, _) = (0 until n).foldLeft((active, Vector(activeLine).filter(_.nonEmpty), 0)) {
         case ((acc, log, fallen), i) =>
           val idx  = i - fallen
           val tmp0 = acc.withActive(acc.group.others(idx))
           val tmp1 = tmp0.copy(effects = tmp0.effects.withMonsterPart(tickSlotEffects(tmp0.effects.monsterPart)))
-          val (tmp, line, _) = tickMonsterEffects(tmp1, tmp1.monsterName, mult)
+          val (tmp, line, _) = tickMonsterEffects(tmp1, tmp1.monsterName, sets)
           val placed = acc.copy(group = acc.group.copy(others = acc.group.others.updated(idx, tmp.activeSlot)))
           val log2   = if (line.isEmpty) log else log :+ line
           if (tmp.monsterCurrentHp > 0L) (placed, log2, fallen)
@@ -6401,7 +6427,7 @@ object BattleState {
     * три, прочее — только соседей (см. [[GripRates.RangedReach]]). Стрелковое
     * всегда двуручное, поэтому лежит в правой руке. */
   def heroReach(hero: Hero): Int =
-    if (hero.equipment.weapon.ranged) GripRates.RangedReach else GroupState.Reach
+    if (hero.equipment.weapon.ranged) GripRates.RangedReach + hero.sets.rangedReachBonus else GroupState.Reach
 
   /** Досягаемость умения: умения оружия бьют как оружие героя, а умения
     * нагрудника, удары телом и щитом, — вблизи: «Отбросить» — соседей, Таран —
@@ -6446,11 +6472,12 @@ object BattleState {
   def displacement(hero: Hero): Int = (heroReach(hero) - 1).max(1)
 
   /** Стрелковое вблизи бьёт слабее: по цели напротив героя и по соседям — на
-    * пятую часть (см. [[GripRates.RangedClosePenaltyPct]]). Цель — тот, кто
-    * стоит в полях боя: удар по соседу или дальней цели идёт через подмену. */
+    * пятую часть (см. [[GripRates.RangedClosePenaltyPct]]); у эльфа в «Тихой
+    * роще» (порог 12) — вдвое меньше. Цель — тот, кто стоит в полях боя: удар
+    * по соседу или дальней цели идёт через подмену. */
   def rangedCloseMod(hero: Hero, battle: SoloPveBattle): Double =
     if (hero.equipment.weapon.ranged && math.abs(battle.group.activePos - battle.group.heroPos) <= GroupState.Reach)
-      (100L - GripRates.RangedClosePenaltyPct) / 100.0
+      (100.0 - GripRates.RangedClosePenaltyPct * (100L - hero.sets.closePenaltyCutPct) / 100.0) / 100.0
     else 1.0
 
   /** Умение берётся бонусным действием раунда (тем же, что пояс), а не ходом:

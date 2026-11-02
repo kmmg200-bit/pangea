@@ -22,7 +22,10 @@ object OutskirtsContentSpec extends ZIOSpecDefault {
       for {
         c <- ZIO.attempt(SceneContent.load())
         s = c.screen("outskirts.confirm")
-      } yield assertTrue(s.text.contains("7 часов") && !s.text.contains("10 минут")) &&
+      // срок подставляется — каджиту в «Караване» поход короче; обычный — 7 часов
+      } yield assertTrue(s.text.contains("займёт {duration}") && !s.text.contains("10 минут")) &&
+        assertTrue(pangea.service.state.states.events.treasure.TreasureHuntState.formatDuration(
+          pangea.service.state.states.events.treasure.TreasureHuntState.HuntDurationMs) == "7 часов") &&
         assertTrue(s.choices.map(_.id).toSet == Set("ConfirmDepart", "CancelDepart"))
     },
 

@@ -65,9 +65,9 @@ case class TreasureHuntState(
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     for {
       now       <- nowMs
-      started   <- startedAt(user)
-      remaining  = started.map(s => (HuntDurationMs - (now - s)).max(0L)).getOrElse(HuntDurationMs)
-      _         <- if (started.isDefined && remaining <= 0L)
+      times     <- timing(user)
+      remaining  = times.map { case (s, d) => (d - (now - s)).max(0L) }.getOrElse(HuntDurationMs)
+      _         <- if (times.isDefined && remaining <= 0L)
                      renderer.show(user, Screen(content.text("treasureHunt.arrived"), List(
                        Choice("HuntDone", content.text("treasureHunt.dig"), color = ChoiceColor.Positive, row = Some(0)))))
                    else renderer.show(user, Screen(
@@ -81,11 +81,11 @@ case class TreasureHuntState(
   private def onTick(user: User, renderer: Renderer): Task[StateType] =
     for {
       now     <- nowMs
-      started <- startedAt(user)
-      result <- started match {
-        case Some(s) if now - s >= HuntDurationMs => huntDone(user, renderer)
-        case Some(s) =>
-          val remaining = formatRemaining(HuntDurationMs - (now - s))
+      times   <- timing(user)
+      result <- times match {
+        case Some((s, d)) if now - s >= d => huntDone(user, renderer)
+        case Some((s, d)) =>
+          val remaining = formatRemaining(d - (now - s))
           renderer.show(user, Screen(content.format("treasureHunt.wait.text", "remaining" -> remaining), roadButtons))
             .as(StateType.TreasureHunt)
         case None => huntDone(user, renderer)
@@ -96,16 +96,16 @@ case class TreasureHuntState(
   private def arrivedOr(user: User, renderer: Renderer)(f: => Task[StateType]): Task[StateType] =
     for {
       now     <- nowMs
-      started <- startedAt(user)
-      res     <- if (started.forall(s => now - s >= HuntDurationMs)) huntDone(user, renderer) else f
+      times   <- timing(user)
+      res     <- if (times.forall { case (s, d) => now - s >= d }) huntDone(user, renderer) else f
     } yield res
 
   /** «Уйти»: сколько ещё идти и что будет, если повернуть. */
   private def askLeave(user: User, renderer: Renderer): Task[StateType] =
     for {
       now     <- nowMs
-      started <- startedAt(user)
-      left     = started.fold(0L)(s => (HuntDurationMs - (now - s)).max(0L))
+      times   <- timing(user)
+      left     = times.fold(0L) { case (s, d) => (d - (now - s)).max(0L) }
       _       <- renderer.show(user, Screen(content.format("treasureHunt.confirmLeave.text", "remaining" -> formatRemaining(left)),
                    content.screen("treasureHunt.confirmLeave").choices))
     } yield StateType.TreasureHunt
@@ -150,8 +150,9 @@ case class TreasureHuntState(
     Choice("HuntLeave", content.text("treasureHunt.leave"), color = ChoiceColor.Negative, row = Some(0))
   )
 
-  private def startedAt(user: User): Task[Option[Long]] =
-    heroDao.readSceneData(user.userId).map(_.flatMap(_.as[TreasureHuntProgress].toOption.map(_.startedAt)))
+  /** Когда отправились и сколько идёт поход. */
+  private def timing(user: User): Task[Option[(Long, Long)]] =
+    heroDao.readSceneData(user.userId).map(_.flatMap(_.as[TreasureHuntProgress].toOption.map(p => (p.startedAt, p.duration))))
 
   private def nowMs: Task[Long] = ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
 
@@ -163,6 +164,22 @@ case class TreasureHuntState(
 object TreasureHuntState {
   val HuntDurationMs: Long   = 7L * 60L * 60L * 1000L
   val HuntDoneAction: String = """{"action":"HuntDone"}"""
+
+  /** Сколько идёт поход этого героя: каджиту в «Караване» (порог 12) — короче. */
+  def durationFor(hero: Hero): Long = HuntDurationMs * (100L - hero.sets.mapHuntCutPct) / 100L
+
+  /** Сколько займёт поход целиком: «7 часов», «5 часов 15 минут». */
+  def formatDuration(ms: Long): String = {
+    val mins = (ms / 60000L).max(0L)
+    val h    = mins / 60L
+    val m    = mins % 60L
+    def word(n: Long, one: String, few: String, many: String): String =
+      if (n % 10 == 1 && n % 100 != 11) one
+      else if (n % 10 >= 2 && n % 10 <= 4 && !(n % 100 >= 12 && n % 100 <= 14)) few
+      else many
+    List(Option.when(h > 0)(s"$h ${word(h, "час", "часа", "часов")}"),
+         Option.when(m > 0)(s"$m ${word(m, "минуту", "минуты", "минут")}")).flatten.mkString(" ")
+  }
 
   /** Сколько ещё идти: «6 ч 59 мин», «12 мин 30 с», «45 с». */
   def formatRemaining(ms: Long): String = {

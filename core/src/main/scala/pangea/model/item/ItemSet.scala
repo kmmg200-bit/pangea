@@ -265,13 +265,26 @@ object ItemSet extends Enum[ItemSet] {
     override def race: Option[Race] = Some(Race.Elf)
     val AccuracyPct: Long = SetRates.RaceStatPct
 
+    /** Удар из засады (порог 6): сила первого удара боя, в % от обычного. */
+    val AmbushDamagePct: Long = 150L
+
+    /** Порог 9: шанс ослабить врага ударом по HP, на сколько % и на сколько раундов. */
+    val WeakenChancePct: Long = 25L
+    val WeakenPct: Long       = 15L
+    val WeakenTurns: Int      = 2
+
+    /** Глаз лучника (порог 12): на сколько мест дальше бьют лук и арбалет и на
+      * сколько % слабее их штраф вблизи. */
+    val RangedReachBonus: Int     = 1
+    val ClosePenaltyCutPct: Long  = 50L
+
     def bonuses: List[SetBonus] = List(
       SetBonus(3,  s"+$AccuracyPct% к точности."),
-      SetBonus(6,  "Первый ваш удар в каждом бою всегда попадает и бьёт в полтора раза сильнее.", active = false),
-      SetBonus(9,  "25% шанс, что ваша атака, нанёсшая урон по HP, ослабит врага: −15% к его атаке " +
-                   "на 2 раунда.", active = false),
-      SetBonus(12, "40% шанс, что ваша атака, нанёсшая урон по HP, отравит врага на 3%, и ваш яд " +
-                   "не слабеет со временем.", active = false, ownRaceOnly = true)
+      SetBonus(6,  "Первый ваш удар в каждом бою всегда попадает и бьёт в полтора раза сильнее."),
+      SetBonus(9,  s"$WeakenChancePct% шанс, что ваша атака, нанёсшая урон по HP, ослабит врага: " +
+                   s"−$WeakenPct% к его атаке на $WeakenTurns раунда."),
+      SetBonus(12, s"+$RangedReachBonus к досягаемости лука и арбалета, а штраф за выстрел вблизи вдвое меньше.",
+               ownRaceOnly = true)
     )
   }
 
@@ -386,13 +399,23 @@ object ItemSet extends Enum[ItemSet] {
     override def race: Option[Race] = Some(Race.Khajiit)
     val AgiPct: Long = SetRates.RaceStatPct
 
+    /** Порог 6: прибавка к шансу прока Воздуха (п.п.) и на сколько раундов
+      * дольше держится попутный ветер. */
+    val AirChanceBonusPct: Long = 10L
+    val AirTurnsBonus: Int      = 1
+
+    /** Порог 9: на сколько % дороже Ришелье покупает и дешевле продаёт. */
+    val TradePct: Long = 10L
+
+    /** Порог 12: на сколько % короче поход по карте клада и прибавка к уклонению. */
+    val MapHuntCutPct: Long  = 25L
+    val RoadEvasionPct: Long = 5L
+
     def bonuses: List[SetBonus] = List(
       SetBonus(3,  s"+$AgiPct% к ловкости."),
-      SetBonus(6,  "Шанс прока Воздуха увеличен на 10%, а попутный ветер держится на раунд дольше.",
-               active = false),
-      SetBonus(9,  "Торговцы платят вам на 10% больше, а продают на 10% дешевле.", active = false),
-      SetBonus(12, "Поход по карте клада на четверть короче. +5% к уклонению.", active = false,
-               ownRaceOnly = true)
+      SetBonus(6,  s"Шанс прока Воздуха увеличен на $AirChanceBonusPct%, а попутный ветер держится на раунд дольше."),
+      SetBonus(9,  s"Торговец Ришелье платит вам на $TradePct% больше, а продаёт на $TradePct% дешевле."),
+      SetBonus(12, s"Поход по карте клада на четверть короче. +$RoadEvasionPct% к уклонению.", ownRaceOnly = true)
     )
   }
 

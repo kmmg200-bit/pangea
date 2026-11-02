@@ -59,9 +59,11 @@ final case class HeroSets(counts: Map[ItemSet, Int], race: Option[Race] = None) 
   def attackBonusPct: Long =
     pct(ItemSet.WildFlame, 2, ItemSet.WildFlame.AttackPct) + pct(ItemSet.Marauder, 3, ItemSet.Marauder.AttackPct)
 
-  /** +% к уклонению: «Упырь» (порог 2) и «Мать Глубин» (порог 3). */
+  /** +% к уклонению: «Упырь» (порог 2), «Мать Глубин» (порог 3) и «Караван»
+   *  (порог 12, только каджиту). */
   def evasionBonusPct: Long =
-    pct(ItemSet.Ghoul, 2, ItemSet.Ghoul.EvasionPct) + pct(ItemSet.DeepMother, 3, ItemSet.DeepMother.EvasionPct)
+    pct(ItemSet.Ghoul, 2, ItemSet.Ghoul.EvasionPct) + pct(ItemSet.DeepMother, 3, ItemSet.DeepMother.EvasionPct) +
+      pct(ItemSet.Caravan, 12, ItemSet.Caravan.RoadEvasionPct)
 
   /** +% к точности: «Охотник» (порог 2) и «Тихая роща» (порог 3). */
   def accuracyBonusPct: Long =
@@ -109,6 +111,33 @@ final case class HeroSets(counts: Map[ItemSet, Int], race: Option[Race] = None) 
   def armorRegenPct: Long =
     pct(ItemSet.DeepMother, 9, ItemSet.DeepMother.RegenPct) +
       pct(ItemSet.MountainMaster, 6, ItemSet.MountainMaster.ArmorRegenPct)
+
+  // ── «Тихая роща» ────────────────────────────────────────────────────────────
+
+  /** Бьёт ли первый удар боя из засады — без промаха и сильнее (порог 6). */
+  def ambushes: Boolean    = has(ItemSet.QuietGrove, 6)
+  def ambushDamagePct: Long = ItemSet.QuietGrove.AmbushDamagePct
+
+  /** Шанс (в %), что удар по HP ослабит врага (порог 9). */
+  def weakenOnHitChancePct: Long = pct(ItemSet.QuietGrove, 9, ItemSet.QuietGrove.WeakenChancePct)
+
+  /** На сколько мест дальше бьют лук и арбалет и на сколько % слабее их штраф
+   *  вблизи (порог 12, только эльфу). */
+  def rangedReachBonus: Int     = if (has(ItemSet.QuietGrove, 12)) ItemSet.QuietGrove.RangedReachBonus else 0
+  def closePenaltyCutPct: Long  = pct(ItemSet.QuietGrove, 12, ItemSet.QuietGrove.ClosePenaltyCutPct)
+
+  // ── «Караван» ───────────────────────────────────────────────────────────────
+
+  /** Прибавка к шансу прока Воздуха (п.п.) и на сколько раундов дольше держится
+   *  попутный ветер (порог 6). */
+  def airChanceBonusPct: Long = pct(ItemSet.Caravan, 6, ItemSet.Caravan.AirChanceBonusPct)
+  def airTurnsBonus: Int      = if (has(ItemSet.Caravan, 6)) ItemSet.Caravan.AirTurnsBonus else 0
+
+  /** На сколько % дороже Ришелье покупает и дешевле продаёт (порог 9). */
+  def tradePct: Long = pct(ItemSet.Caravan, 9, ItemSet.Caravan.TradePct)
+
+  /** На сколько % короче поход по карте клада (порог 12, только каджиту). */
+  def mapHuntCutPct: Long = pct(ItemSet.Caravan, 12, ItemSet.Caravan.MapHuntCutPct)
 
   // ── «Мародёр» ───────────────────────────────────────────────────────────────
 

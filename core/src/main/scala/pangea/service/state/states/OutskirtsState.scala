@@ -120,7 +120,10 @@ case class OutskirtsState(
           // Страницу не теряем: «Уйти» с подтверждения вернёт на неё же.
           val kept = scene.getOrElse(OutskirtsScene()).copy(mapId = Some(itemId))
           heroDao.writeSceneData(user.userId, kept.asJson) *>
-            renderer.show(user, content.screen("outskirts.confirm")).as(StateType.Outskirts)
+            renderer.show(user, Screen(
+              content.format("outskirts.confirm.text",
+                "duration" -> TreasureHuntState.formatDuration(TreasureHuntState.durationFor(hero))),
+              content.screen("outskirts.confirm").choices)).as(StateType.Outskirts)
       }
     } yield res
 
@@ -140,8 +143,10 @@ case class OutskirtsState(
           for {
             now <- nowMs
             _   <- inventoryRepo.removeItem(map.id, hero.id).mapError(e => new Throwable(e.toString))
-            _   <- heroDao.writeSceneData(user.userId, TreasureHuntProgress(now, zone).asJson)
-            _   <- scheduler.schedule(user.userId, now + TreasureHuntState.HuntDurationMs,
+            // Срок похода ставится при отправке: снятый в пути набор его не тянет.
+            duration = TreasureHuntState.durationFor(hero)
+            _   <- heroDao.writeSceneData(user.userId, TreasureHuntProgress(now, zone, Some(duration)).asJson)
+            _   <- scheduler.schedule(user.userId, now + duration,
                      TaskKind.TreasureHunt, StateType.TreasureHunt, TreasureHuntState.HuntDoneAction)
           } yield StateType.TreasureHunt
         case _ => showMapList(user, renderer) // карты уже нет — назад к списку

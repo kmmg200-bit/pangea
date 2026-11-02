@@ -124,7 +124,7 @@ case class MerchantState(
                  Some(content.choice("CancelBuy", "merchant.confirmNo"))
                ).flatten
                renderer.show(user, Screen(
-                 content.format("merchant.confirmBuy", "name" -> mi.item.name, "price" -> mi.price.toString),
+                 content.format("merchant.confirmBuy", "name" -> mi.item.name, "price" -> buyPrice(hero, mi).toString),
                  choices, inline = true))
              case _ => showMenu(user, renderer)
            }
@@ -142,7 +142,7 @@ case class MerchantState(
       slot    = payloadStr(ua, "slot").flatMap(_.toIntOption).filter(s => s == 1 || s == 2)
       _ <- data.items.lift(idx) match {
              case Some(mi) if !mi.bought =>
-               if (!wallet.canAfford(mi.price))
+               if (!wallet.canAfford(buyPrice(hero, mi)))
                  renderer.show(user, Screen(content.text("merchant.notEnoughSilver"), Nil)) *> showMenu(user, renderer)
                else if (wear && TakeAndEquip.replaces(hero, mi.item)) swapBuy(user, renderer, hero, data, idx, mi, slot)
                else buy(user, renderer, hero, data, idx, mi, wear = wear && TakeAndEquip.fits(hero, mi.item), slot = None)
@@ -179,7 +179,7 @@ case class MerchantState(
                    else inventoryRepo.addItem(hero.id, persisted).as(true).catchAll(_ => ZIO.succeed(false))
       _ <- if (added) {
              val newData = data.copy(items = data.items.updated(idx, mi.copy(bought = true)))
-             purse.charge(user.userId, hero, mi.price) *>
+             purse.charge(user.userId, hero, buyPrice(hero, mi)) *>
                heroDao.writeMerchantData(user.userId, newData.asJson) *>
                // «У прилавка должен кто-то стоять» — покупка в счёт уговора.
                DailyQuestLog.add(heroDao, user.userId, DailyNpc.Richelieu, DailyKind.BuyFromMerchant, 1L) *>
@@ -251,12 +251,12 @@ case class MerchantState(
           val gold = doubloonPrice(item)
           val text =
             if (gold > 0) s"${itemDesc(item)}\n🟡 Цена продажи: $gold"
-            else s"${itemDesc(item)}\n🪙 Цена продажи: ${sellPrice(item)}"
+            else s"${itemDesc(item)}\n🪙 Цена продажи: ${sellPriceFor(hero, item)}"
           // Стопку одинаковых можно сдать разом — за общую цену. Сколько в ней,
           // едет в кнопке: продаём не больше, чем обещали.
           val stack   = StackMove.same(items, item)
           val sellAll = Option.when(stack.size > 1) {
-            val total = stack.map(i => if (gold > 0) doubloonPrice(i) else sellPrice(i)).sum
+            val total = stack.map(i => if (gold > 0) doubloonPrice(i) else sellPriceFor(hero, i)).sum
             Choice("ConfirmSellAll",
               content.format(if (gold > 0) "merchant.sellAllLabelDoubloons" else "merchant.sellAllLabel",
                 "n" -> stack.size.toString, "price" -> total.toString),
@@ -310,7 +310,7 @@ case class MerchantState(
   private def sell(user: User, hero: Hero, sold: List[Item]): Task[String] = {
     val first = sold.headOption
     val gold  = sold.map(doubloonPrice).sum
-    val price = if (gold > 0) gold else sold.map(sellPrice).sum
+    val price = if (gold > 0) gold else sold.map(sellPriceFor(hero, _)).sum
     val name  = first.fold("")(_.name)
     val line  =
       if (sold.size > 1) content.format(if (gold > 0) "merchant.soldAllDoubloons" else "merchant.soldAll",
@@ -335,7 +335,7 @@ case class MerchantState(
       hero  <- getHero(user)
       items <- inventoryItems(hero)
       junk   = items.filter(isJunk(_, data.junkSettings))
-      total  = junk.map(sellPrice).sum
+      total  = junk.map(sellPriceFor(hero, _)).sum
       _ <- if (junk.isEmpty)
              renderer.show(user, Screen(content.text("merchant.sellJunkEmpty"), Nil)) *> showMenu(user, renderer)
            else
@@ -591,7 +591,7 @@ case class MerchantState(
    *  формат и разделитель, что при находке/дропе ([[Item.ComparisonSeparator]]).
    *  Если слот пуст — сравнивать не с чем, показываем только предмет. */
   private def saleLine(mi: MerchantItem, i: Int, hero: Hero): String =
-    ItemMenu.saleLine(i + 1, mi.item, mi.price, hero)
+    ItemMenu.saleLine(i + 1, mi.item, buyPrice(hero, mi), hero)
 
   private def itemDesc(item: Item): String = {
     val lines = item.statsLines
@@ -639,6 +639,13 @@ case class MerchantState(
     (price, next)
   }
 
+  /** Цена товара для героя: «Караван» (порог 9) — со скидкой. */
+  private def buyPrice(hero: Hero, mi: MerchantItem): Long = withTrade(mi.price, -hero.sets.tradePct)
+
+  /** Сколько Ришелье платит герою за вещь серебром: «Караван» (порог 9) —
+    * сверху. Дублоны за материалы набор не трогает. */
+  private def sellPriceFor(hero: Hero, item: Item): Long = withTrade(sellPrice(item), hero.sets.tradePct)
+
   // (lvl(снаряжения) + 5) × 1.2 × R(редкость) — продажа дешевле покупки.
   // Фляга к уровню не привязана: у неё своя цена по редкости (см. FlaskKind.priceFor).
   private def sellPrice(item: Item): Long =
@@ -682,6 +689,9 @@ object MerchantState {
   val RefreshCooldownMs: Long = 60L * 60L * 1000L // раз в час
 
   final case class MerchantItem(item: Item, price: Long, bought: Boolean)
+
+  /** Цена с торговой поправкой `pct` (в %, со знаком), но не меньше единицы. */
+  def withTrade(price: Long, pct: Long): Long = (price * (100L + pct) / 100L).max(1L)
   object MerchantItem {
     implicit val encoder: Encoder[MerchantItem] = deriveEncoder
     implicit val decoder: Decoder[MerchantItem] = deriveDecoder
