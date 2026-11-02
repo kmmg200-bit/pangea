@@ -182,6 +182,19 @@ object CubeCraftSpec extends ZIOSpecDefault {
         assertTrue(result.items.head.armor == 30 && result.items.head.lvl == 12L && result.items.head.rarity == Rarity.Blue)
     },
 
+    test("фляга и доп. оружие в набор не переходят: шкура с ними лежит нетронутой") {
+      def thing(t: ItemType, id: Long) = Item(id, "Вещь", 12L, Rarity.Blue, t,
+        attack = 0, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0)
+      val hide   = MaterialGenerator.item(MaterialKind.WhiteWolfHide).copy(id = 3L)
+      val result = CubeCraft.craft(List(thing(ItemType.Flask, 1L), thing(ItemType.AdditionalWeapon, 2L), hide),
+                     charges = 50, rng)
+      val wearable  = ItemType.settable.forall(t => ItemType.equippable.contains(t))
+      val noFlask   = !ItemType.settable.exists(_ == ItemType.Flask)
+      val noDagger  = !ItemType.settable.exists(_ == ItemType.AdditionalWeapon)
+      assertTrue(result.chargesUsed == 0 && result.items.forall(_.set.isEmpty)) &&
+      assertTrue(wearable && noFlask && noDagger)
+    },
+
     test("двух вещей набора мало, а вещи разных наборов не смешиваются") {
       val two = CubeCraft.craft(
         (1 to 2).map(i => setItem(i.toLong, ItemType.Helmet, Rarity.Blue, ItemSet.Ghoul)).toList,

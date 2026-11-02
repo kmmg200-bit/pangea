@@ -208,9 +208,10 @@ object CubeCraft {
         // Вещь, которой этот набор ещё не присвоен: иначе рецепт крутился бы
         // впустую, тратя заряды на переименование в тот же самый набор.
         // Божественное оружие набор не берёт: перековывать его не во что, а
-        // переименование стёрло бы и вид, и заряды.
+        // переименование стёрло бы и вид, и заряды. Фляга и доп. оружие — тоже:
+        // в наборы они не входят (см. ItemType.settable).
         target     <- pool.find(i =>
-                        i != ingredient && ItemType.equippable.contains(i.itemType) && !i.set.contains(set) && i.divine.isEmpty)
+                        i != ingredient && ItemType.settable.contains(i.itemType) && !i.set.contains(set) && i.divine.isEmpty)
       } yield {
         val (name, r2) = ItemNameGenerator.setName(target.itemType, target.rarity, set, rng, target.grip)
         (List(target, ingredient), target.copy(name = name, set = Some(set)), r2)

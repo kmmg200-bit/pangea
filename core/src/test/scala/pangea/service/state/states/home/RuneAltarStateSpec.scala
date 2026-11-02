@@ -94,7 +94,8 @@ object RuneAltarStateSpec extends ZIOSpecDefault {
         h      <- dao.getHeroByUserId(userId).map(_.get)
         _      <- state.action(testUser, tap("AltarGiveYes"), r)
         home   <- homeOf(dao)
-      } yield assertTrue(screen.text.contains("та же настройка, что у Казимира") && screen.choices.size == 7) &&
+      } yield assertTrue(screen.text.contains("та же настройка, что у Казимира") && screen.choices.size == 8 &&
+              screen.choices.exists(_.id == "AltarBurnSets")) &&
               assertTrue(h.runes.burns(Rarity.Blue) && h.runes.burns(Rarity.Orange) && h.runes.burns(Rarity.Gray)) &&
               assertTrue(home.runeCount(cunning.key) == 2L && home.runeCount(healer.key) == 5L && inv.snapshot.isEmpty)
     },

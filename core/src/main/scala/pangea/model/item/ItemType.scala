@@ -39,6 +39,11 @@ object ItemType extends Enum[ItemType] {
    *  предмет предлагается к надеванию, опираются на этот список. */
   val equippable: List[ItemType] = itemTypes.filterNot(nonEquippable.contains)
 
+  /** Что может быть вещью набора: только то, что надевается в сетовые слоты
+    * (см. `Equipment.setSlots`). Фляга и доп. оружие в наборы не входят — набор
+    * на них был бы пустым именем. */
+  val settable: List[ItemType] = equippable.filterNot(t => t == Flask || t == AdditionalWeapon)
+
   case object Helmet           extends ItemType
   case object ShoulderPads     extends ItemType
   case object ChestPlate       extends ItemType

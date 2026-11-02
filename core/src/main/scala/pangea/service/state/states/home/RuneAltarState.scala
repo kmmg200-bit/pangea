@@ -6,8 +6,8 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.hero.Hero
 import pangea.model.home.HomeData
-import pangea.model.item.{Item, Rarity}
-import pangea.model.rune.{Rune, RuneStone, RuneStoneSize}
+import pangea.model.item.Item
+import pangea.model.rune.{Rune, RuneData, RuneStone, RuneStoneSize}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
@@ -45,6 +45,7 @@ case class RuneAltarState(
       "AltarGiveYes"    -> Target.Run { (u, _, r) => giveAll(u, r) },
       "AltarSettings"   -> Target.Run { (u, _, r) => settings(u, r) },
       "AltarBurnRarity" -> Target.Run { (u, ua, r) => toggleRarity(u, ua, r) },
+      "AltarBurnSets"   -> Target.Run { (u, _, r) => toggleSets(u, r) },
       "AltarRune"   -> Target.Run { (u, ua, r) => runeScreen(u, ua, r) },
       "AltarDeepen" -> Target.Run { (u, ua, r) => deepen(u, ua, r) },
       "AltarTake"   -> Target.Run { (u, ua, r) => take(u, ua, r) },
@@ -151,21 +152,34 @@ case class RuneAltarState(
 
   /** Что сдавать: редкости переключателями — та же настройка, что у Казимира. */
   private def settings(user: User, renderer: Renderer): Task[StateType] =
-    getHero(user).flatMap(hero => renderer.show(user, settingsScreen(hero.runes.burns))).as(StateType.RuneAltar)
+    getHero(user).flatMap(hero => renderer.show(user, settingsScreen(hero.runes))).as(StateType.RuneAltar)
 
-  private def settingsScreen(burns: Rarity => Boolean): Screen = {
+  private def settingsScreen(data: RuneData): Screen = {
     def state(on: Boolean) = content.text(if (on) "merchant.junk.on" else "merchant.junk.off")
+    def color(on: Boolean) = if (on) ChoiceColor.Positive else ChoiceColor.Negative
     val groups  = MerchantState.JunkRarityGroups
     val buttons = groups.zipWithIndex.map { case (g, i) =>
-      val on = g.rarities.forall(burns)
+      val on = g.rarities.forall(data.burns)
       Choice("AltarBurnRarity", content.format("merchant.junk.rarity", "emoji" -> g.emoji, "state" -> state(on)),
         color = if (on) ChoiceColor.Positive else ChoiceColor.Negative, data = Map("g" -> g.id),
         row = Some(i / MerchantState.JunkRaritiesPerRow))
     }
     val rows = (groups.size + MerchantState.JunkRaritiesPerRow - 1) / MerchantState.JunkRaritiesPerRow
+    // Вещи наборов — своим переключателем: выключенный их бережёт.
+    val sets = Choice("AltarBurnSets", content.format("merchant.junk.sets", "state" -> state(data.burnSets)),
+      color = color(data.burnSets), row = Some(rows))
     Screen(content.text("home.altar.settingsText"),
-      buttons :+ Choice("AltarMenu", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(rows)))
+      (buttons :+ sets) :+ Choice("AltarMenu", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(rows + 1)))
   }
+
+  /** Переключить защиту вещей наборов — настройка общая с Казимиром. */
+  private def toggleSets(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      hero   <- getHero(user)
+      updated = hero.runes.copy(burnSets = !hero.runes.burnSets)
+      _      <- heroDao.updateRunes(user.userId, updated)
+      _      <- renderer.show(user, settingsScreen(updated))
+    } yield StateType.RuneAltar
 
   private def toggleRarity(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     for {
@@ -175,7 +189,7 @@ case class RuneAltarState(
         case Some(g) =>
           val updated = hero.runes.toggleBurn(g.rarities)
           heroDao.updateRunes(user.userId, updated) *>
-            renderer.show(user, settingsScreen(updated.burns)).as(StateType.RuneAltar)
+            renderer.show(user, settingsScreen(updated)).as(StateType.RuneAltar)
       }
     } yield res
 
@@ -293,6 +307,6 @@ object RuneAltarState {
     * настройке (она общая с Казимиром), — каждая вместе со своей руной. Рунные
     * камни сюда не идут: для них «Положить все руны». */
   def givePlan(hero: Hero, items: List[Item]): List[(Item, Rune)] =
-    items.filter(i => i.runeStone.isEmpty && !i.isQuestItem && hero.runes.burns(i.rarity))
+    items.filter(i => i.runeStone.isEmpty && !i.isQuestItem && hero.runes.burnsGear(i))
       .flatMap(i => Rune.of(i).map(i -> _))
 }

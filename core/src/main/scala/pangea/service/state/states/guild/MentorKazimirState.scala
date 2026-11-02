@@ -51,6 +51,7 @@ case class MentorKazimirState(heroDao: HeroDao, inventoryRepo: InventoryReposito
       "BurnSettings"       -> Target.Run { (u, _, r) => burnSettings(u, r) },
       "BurnRarity"         -> Target.Run { (u, ua, r) => toggleBurnRarity(u, ua, r) },
       "BurnStones"         -> Target.Run { (u, ua, r) => toggleBurnStones(u, ua, r) },
+      "BurnSets"           -> Target.Run { (u, _, r) => toggleBurnSets(u, r) },
       "Runes"              -> Target.Run { (u, ua, r) => runesView(u, ua, r) },
       "LeaveMentorKazimir" -> Target.Goto(StateType.TrainingHall),
       CityExit.route
@@ -334,7 +335,7 @@ case class MentorKazimirState(heroDao: HeroDao, inventoryRepo: InventoryReposito
                  lines = gains.map { case (rune, gain) =>
                    content.format("kazimir.deepen.burnAllLine", "name" -> rune.label, "gain" -> gain.toString,
                      "n" -> data.understandingOf(rune).toString) }
-                 left  = items.count(i => Rune.of(i).isDefined && hero.runes.burns(i.rarity)) - burnt.size
+                 left  = items.count(i => Rune.of(i).isDefined && hero.runes.burnsItem(i)) - burnt.size
                  tail  = if (left > 0) "\n\n" + content.text("kazimir.deepen.burnAllLeft") else ""
                  _ <- renderer.show(user, Screen((content.text("kazimir.deepen.burnAllDone") +: lines).mkString("\n") + tail, Nil))
                  s <- deepenMenu(user, renderer)
@@ -364,10 +365,23 @@ case class MentorKazimirState(heroDao: HeroDao, inventoryRepo: InventoryReposito
         color = if (on) ChoiceColor.Positive else ChoiceColor.Negative,
         data = Map("s" -> size.entryName), row = Some(rarityRows + i))
     }
-    val all = buttons ++ stoneButtons
+    // Вещи наборов — своим переключателем: выключенный их бережёт.
+    val kindRow    = rarityRows + stoneButtons.size
+    val setsButton = Choice("BurnSets", content.format("merchant.junk.sets", "state" -> state(r.burnSets)),
+      color = if (r.burnSets) ChoiceColor.Positive else ChoiceColor.Negative, row = Some(kindRow))
+    val all = (buttons ++ stoneButtons) :+ setsButton
     Screen(content.text("kazimir.deepen.settings"),
-      all :+ content.choice("Deepen", "kazimir.back").copy(row = Some(rarityRows + stoneButtons.size)))
+      all :+ content.choice("Deepen", "kazimir.back").copy(row = Some(kindRow + 1)))
   }
+
+  /** Переключить защиту вещей наборов — настройка общая с алтарём. */
+  private def toggleBurnSets(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      hero   <- getHero(user)
+      updated = hero.runes.copy(burnSets = !hero.runes.burnSets)
+      _      <- heroDao.updateRunes(user.userId, updated)
+      _      <- renderer.show(user, burnSettingsScreen(updated))
+    } yield StateType.MentorKazimir
 
   private def toggleBurnStones(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     for {

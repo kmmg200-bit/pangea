@@ -69,6 +69,10 @@ case class MerchantState(
         updateJunkSettings(u, r, "merchant.junk.trophies", _.trophies)(s => s.copy(trophies = !s.trophies)) },
       "JunkRunes"       -> Target.Run { (u, _,  r) =>
         updateJunkSettings(u, r, "merchant.junk.runes", _.runes)(s => s.copy(runeSale = Some(!s.runes))) },
+      "JunkFlasks"      -> Target.Run { (u, _,  r) =>
+        updateJunkSettings(u, r, "merchant.junk.flasks", _.flasks)(s => s.copy(flaskSale = Some(!s.flasks))) },
+      "JunkSets"        -> Target.Run { (u, _,  r) =>
+        updateJunkSettings(u, r, "merchant.junk.sets", _.sets)(s => s.copy(setSale = Some(!s.sets))) },
       "BackFromJunk"    -> Target.Run { (u, _,  r) => showMenu(u, r).as(StateType.Merchant) },
       "SellListPrev"    -> Target.Run { (u, _,  r) => navigateSell(u, r, -1) },
       "SellListNext"    -> Target.Run { (u, _,  r) => navigateSell(u, r, +1) },
@@ -468,7 +472,9 @@ case class MerchantState(
       ("JunkPassives", "merchant.junk.passives", s.passives),
       ("JunkActives",  "merchant.junk.actives",  s.actives),
       ("JunkTrophies", "merchant.junk.trophies", s.trophies),
-      ("JunkRunes",    "merchant.junk.runes",    s.runes)
+      ("JunkRunes",    "merchant.junk.runes",    s.runes),
+      ("JunkFlasks",   "merchant.junk.flasks",   s.flasks),
+      ("JunkSets",     "merchant.junk.sets",     s.sets)
     )
     val flagButtons = flags.zipWithIndex.map { case ((id, key, on), i) =>
       Choice(id, content.format(key, "state" -> state(on)), color = color(on),
@@ -708,9 +714,15 @@ object MerchantState {
     trophies: Boolean     = false,
     // Руны по умолчанию не продаются: их носят Казимиру, а не Ришелье. Option,
     // а не голый Boolean: у сохранённых лавок поля в JSON нет.
-    runeSale: Option[Boolean] = None
+    runeSale: Option[Boolean] = None,
+    // Фляги и вещи наборов: по умолчанию идут как прежде — по своей редкости;
+    // выключенный переключатель их бережёт. Option по той же причине, что руны.
+    flaskSale: Option[Boolean] = None,
+    setSale:   Option[Boolean] = None
   ) {
-    def runes: Boolean = runeSale.getOrElse(false)
+    def runes: Boolean  = runeSale.getOrElse(false)
+    def flasks: Boolean = flaskSale.getOrElse(true)
+    def sets: Boolean   = setSale.getOrElse(true)
 
     /** Группа включена, если продаются все её редкости (переключатель ставит их
       * только целиком, так что промежуточного состояния не бывает). */
@@ -774,7 +786,9 @@ object MerchantState {
         !holdsSomething(item) &&
         s.rarities.contains(item.rarity) &&
         (s.passives || item.passive.isEmpty) &&
-        (s.actives || item.activeSkill.isEmpty)
+        (s.actives || item.activeSkill.isEmpty) &&
+        (s.flasks || item.itemType != ItemType.Flask) &&
+        (s.sets || item.set.isEmpty)
 
   /** Лежит ли что-нибудь в ячейках этого пояса: полная фляга, горсть, склянка
     * или цветок. Опустевшие ячейки только помнят содержимое — их не считаем. */
