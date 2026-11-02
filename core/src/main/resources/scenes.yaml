@@ -2632,7 +2632,14 @@ battle:
       CancelFlee: "Остаться"
   hit: "✅ Вы наносите {damage} урона по {monster}."
   miss: "❌ Вы промахиваетесь (шанс попадания был {chance}%)."
-  mobHit: "👹 {monster} наносит {damage} урона."
+  mobHit: "👹 {monster} наносит {damage} урона{elem}."
+  # Чем бьёт моб со стихией в оружии: приписка к строке удара (огонь по HP
+  # бьёт сильнее, и игрок должен это видеть).
+  strikeBy:
+    Fire: " огнём 🔥"
+    Cold: " холодом ❄️"
+    Lightning: " молнией ⚡"
+    Air: " ветром 💨"
   mobMiss: "🛡 {monster} промахивается (шанс попадания был {chance}%)."
   counter: "🗡 Контрудар! Вы уходите от удара и тут же бьёте в ответ."
   counterFoe: "🗡 {monster} уходит от вашего удара и тут же бьёт в ответ: {damage} урона."
@@ -2810,7 +2817,7 @@ battle:
     lineHero: "{n}. 🟢 Вы VS 🔴 {monster} ❤ {hp}% 🧥 {armor}%"
     lineFree: "{n}. 🔴 {monster} ❤ {hp}% 🧥 {armor}%"
     lineEmpty: "{n}. ⚪"
-    sideHit: "⚔ {monster} атаковал вас сбоку на {damage} урона."
+    sideHit: "⚔ {monster} атаковал вас сбоку на {damage} урона{elem}."
     sideMiss: "💨 {monster} ударил сбоку, но промахнулся."
     healedAlly: "💉 {monster} исцелил вашего врага на {hp} HP!"
     repairedAlly: "🔧 {monster} восстановил броню вашего врага на {armor}!"

@@ -1652,8 +1652,9 @@ case class BattleState(
     *
     * Моб, посыпавший оружие порошком, бьёт стихией: её грани двигают доли урона
     * по броне и HP так же, как стихии оружия двигают урон героя по мобу.
-    * Возвращает новые hp и armor героя. */
-  private def bossHit(battle: SoloPveBattle, hero: Hero, damage0: Long, nowMs: Long): (Long, Long) = {
+    * Возвращает новые hp и armor героя и сколько удар реально снял (броня плюс
+    * HP, после стихий и расколов) — это число и идёт в лог. */
+  private def bossHit(battle: SoloPveBattle, hero: Hero, damage0: Long, nowMs: Long): (Long, Long, Long) = {
     // «Некромант» (порог 10): мёртвая плоть занимается охотнее — огненный удар
     // по ней весомее. Прочие стихии мертвецу всё равно.
     val damage =
@@ -1668,10 +1669,10 @@ case class BattleState(
         val curArmor = hero.fightStats.armor.max(0L)
         val absorbed = (damage * armorPart).toLong.min(curArmor)
         val toHp     = toHpAfter((damage - absorbed).max((damage * hpPart).toLong))
-        ((hero.fightStats.hp - toHp).max(0L), curArmor - hero.sets.armorSpent(absorbed))
+        ((hero.fightStats.hp - toHp).max(0L), curArmor - hero.sets.armorSpent(absorbed), absorbed + toHp)
       case None =>
         powderSplit(battle) match {
-          case None => MonsterSkill.applyPhysicalDamage(battle, hero, damage, nowMs)
+          case None => MonsterSkill.physicalHit(battle, hero, damage, nowMs)
           // Стихия порошка: пара чисел — МНОЖИТЕЛИ, как у стихии в оружии героя.
           // Броня поглощает удар (со своим множителем), в HP идёт только то, что
           // за неё вылилось (со своим). Подставлять множители в раскол минибосса
@@ -1682,7 +1683,7 @@ case class BattleState(
             val rawHp     = damage - rawArmor
             val armorDmg  = (rawArmor * armorMult).toLong.min(curArmor).max(0L)
             val hpDmg     = toHpAfter((rawHp * hpMult).toLong.max(0L))
-            ((hero.fightStats.hp - hpDmg).max(0L), curArmor - hero.sets.armorSpent(armorDmg))
+            ((hero.fightStats.hp - hpDmg).max(0L), curArmor - hero.sets.armorSpent(armorDmg), armorDmg + hpDmg)
         }
     }
   }
@@ -2151,9 +2152,9 @@ case class BattleState(
         val (hurt, bitten, damage) = victim match {
           case Victim.Hero =>
             // По герою волк бьёт холодом: грани стихии считает `bossHit`.
-            val dealt             = bossDamageTaken(hero, battle, (raw * mult).max(1L))
-            val (newHp, newArmor) = bossHit(battle, hero, dealt, nowMs)
-            (hero.copy(fightStats = hero.fightStats.copy(hp = newHp, armor = newArmor)), b1, dealt)
+            val dealt                     = bossDamageTaken(hero, battle, (raw * mult).max(1L))
+            val (newHp, newArmor, landed) = bossHit(battle, hero, dealt, nowMs)
+            (hero.copy(fightStats = hero.fightStats.copy(hp = newHp, armor = newArmor)), b1, landed)
           case ally => hurtVictim(ally, hero, b1, (raw * mult).max(1L), nowMs)
         }
         val bleeds = bleedPct > 0 && victimHp(victim, hurt, bitten) < hpBefore
@@ -2424,6 +2425,12 @@ case class BattleState(
     battle.boss.flatMap(_.attackElement)
       .orElse(Race.withNameOption(battle.monsterRace).flatMap(_.weaponElement))
 
+  /** Чем бьёт моб — приписка к строке его удара («… огнём 🔥»): стихия
+    * меняет, сколько уходит в броню и в HP, и игрок должен это видеть. Без
+    * стихии — пусто. */
+  private def strikeBy(battle: SoloPveBattle): String =
+    powderElement(battle).fold("")(e => content.text(s"battle.strikeBy.${e.entryName}"))
+
   /** Доли урона по броне и HP от стихии удара моба. У каменного элементаля
     * свой раскол, он важнее — там это природа удара, а не стихия. */
   private def powderSplit(battle: SoloPveBattle): Option[(Double, Double)] =
@@ -2580,7 +2587,8 @@ case class BattleState(
 
   /** Урон герою от способности минибосса: сперва броня, остаток в HP. Сам по
     * себе НИЧЕГО не поджигает — пламя вешает тот, кто им владеет. Возвращает
-    * героя и сколько урона реально прошло (для строки лога). Расход брони режет
+    * героя и сколько урона реально прошло (для строки лога): броня плюс HP после
+    * «Упрямства», без обрезки нулём. Расход брони режет
     * порог 6 «Каменного стража» — прикрывает она при этом всё так же. */
   private def hurtHero(hero: Hero, damage: Long, nowMs: Long): (Hero, Long) = {
     val toArmor = damage.min(hero.fightStats.armor)
@@ -2589,7 +2597,7 @@ case class BattleState(
     (hero.copy(fightStats = hero.fightStats.copy(
        armor = hero.fightStats.armor - hero.sets.armorSpent(toArmor),
        hp    = (hero.fightStats.hp - toHp).max(0L))),
-     damage)
+     toArmor + toHp)
   }
 
   /** Разбивает `damage` на урон по броне и по HP с учётом стихийных модификаторов
@@ -2844,7 +2852,7 @@ case class BattleState(
             slipDamage = if (slipped) (impenDamage * (100L - hero.sets.slipCutPct) / 100L).max(1L) else impenDamage
             // Удар элементаля — это стихия, а не сталь: «Каменный страж» его режет.
             reducedDamage = bossDamageTaken(hero, battle, slipDamage)
-            (newHp, newArmor) = bossHit(battle, hero, reducedDamage, nowMs)
+            (newHp, newArmor, landed) = bossHit(battle, hero, reducedDamage, nowMs)
             // «Крепкость»: при обнулении брони 25% шанс одноразово восстановить 10% макс.брони.
             armorEmptied = hero.fightStats.armor > 0 && newArmor <= 0
             toughTriggered <- chanceRoll(
@@ -2927,7 +2935,7 @@ case class BattleState(
               Option.when(quenched)(content.text("battle.elements.quenchHero")),
               Option.when(mobProc && procElement.contains(Element.Air))(content.text("battle.mobAirBoost"))
             ).flatten
-          } yield MobStrike(newHp, newArmor + restoredArmor, reducedDamage, lines, battleAfterAtk)
+          } yield MobStrike(newHp, newArmor + restoredArmor, landed, lines, battleAfterAtk)
   }
 
   /** Умение моба поверх обычной атаки: самое дорогое по карману, оплачивается
@@ -3011,7 +3019,8 @@ case class BattleState(
       atkResult <-
         if (hitRoll > dodge)
           mobStrike(hero, ticked, buffedEff, nowMs).map { st =>
-            val line  = content.format("battle.mobHit", "damage" -> st.damage.toString, "monster" -> ticked.monsterName)
+            val line  = content.format("battle.mobHit", "damage" -> st.damage.toString, "monster" -> ticked.monsterName,
+                          "elem" -> strikeBy(ticked))
             val lines = if (st.mirrored) st.extraLines else line :: st.extraLines
             (st.newHp, st.newArmor, lines.mkString("\n"), st.battle)
           }
@@ -4552,11 +4561,12 @@ case class BattleState(
             // Удар в спину при бегстве разбирается тем же расчётом, что и обычная
             // атака в бою: та же баффовая броня, тот же порог 6 «Каменного стража».
             parting     = bossDamageTaken(hero, battle, reducedDamage)
-            (newHp, newArmor) = MonsterSkill.applyPhysicalDamage(battle, hero, parting, nowMs)
+            (newHp, newArmor, landed) = bossHit(battle, hero, parting, nowMs)
             hero1       = hero.copy(fightStats = hero.fightStats.copy(hp = newHp, armor = newArmor))
             partTrauma <- hitTrauma(hero, hero1, nowMs)
             (hero2, traumaLine) = partTrauma
-            mobLine     = content.format("battle.mobHit", "damage" -> parting.toString, "monster" -> battle.monsterName)
+            mobLine     = content.format("battle.mobHit", "damage" -> landed.toString, "monster" -> battle.monsterName,
+                            "elem" -> strikeBy(battle))
             lines       = Vector(mobLine) ++ Option.when(slipped)(content.text("battle.deepSlip")).toVector ++
                             traumaLine.toVector
           } yield
@@ -5161,7 +5171,8 @@ case class BattleState(
               out <-
                 if (hitRoll > dodge)
                   mobStrike(hero, tmp, effWithAir(hero, tmp, nowMs), nowMs).map { st =>
-                    val line = content.format("battle.group.sideHit", "monster" -> tmp.monsterName, "damage" -> st.damage.toString)
+                    val line = content.format("battle.group.sideHit", "monster" -> tmp.monsterName, "damage" -> st.damage.toString,
+                                 "elem" -> strikeBy(tmp))
                     val head = if (st.mirrored) Vector.empty[String] else Vector(line)
                     (hero.copy(fightStats = hero.fightStats.copy(hp = st.newHp, armor = st.newArmor)), st.battle,
                       head ++ st.extraLines)

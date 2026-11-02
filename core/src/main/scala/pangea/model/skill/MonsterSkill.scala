@@ -207,6 +207,15 @@ object MonsterSkill extends Enum[MonsterSkill] {
     if (battle.heroShieldUp) (damage * (100L - battle.heroBlockPct) / 100L).max(1L) else damage
 
   def applyPhysicalDamage(battle: SoloPveBattle, hero: Hero, damage: Long, nowMs: Long): (Long, Long) = {
+    val (newHp, newArmor, _) = physicalHit(battle, hero, damage, nowMs)
+    (newHp, newArmor)
+  }
+
+  /** То же, что [[applyPhysicalDamage]], и сколько удар реально снял — для
+    * строки лога: броня, что его поглотила, плюс урон по HP. Без обрезки нулём:
+    * смертельный удар показывается целиком. Что погасила баффовая броня, в
+    * счёт не идёт — до героя оно не дошло. */
+  def physicalHit(battle: SoloPveBattle, hero: Hero, damage: Long, nowMs: Long): (Long, Long, Long) = {
     val buffReduct  = math.min(battle.heroBattleState.armorBonus, damage)
     val afterBuff   = damage - buffReduct
     val curArmor    = hero.fightStats.armor.max(0L)
@@ -215,6 +224,6 @@ object MonsterSkill extends Enum[MonsterSkill] {
     val hpDmg       = hero.sets.stubbornLoss(afterBuff - armorAbsorb, hero.effectiveMaxHp(nowMs))
     val newArmor    = curArmor - hero.sets.armorSpent(armorAbsorb)
     val newHp       = (hero.fightStats.hp - hpDmg).max(0L)
-    (newHp, newArmor)
+    (newHp, newArmor, armorAbsorb + hpDmg)
   }
 }

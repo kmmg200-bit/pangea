@@ -140,8 +140,8 @@ object WhiteWolfBattleSpec extends ZIOSpecDefault {
         (_, coldAfter, coldLog, _) = cold
         dealt = mobHitDamage(calmLog)
       } yield assertTrue(dealt > 0L) &&
-              // броня приняла удар с гранью холода (+10%), HP не тронуто
-              assertTrue(10000L - calmHero.fightStats.armor == dealt * 110L / 100L) &&
+              // броня приняла удар с гранью холода (+10%) — в строке уже то, что снято; HP не тронуто
+              assertTrue(10000L - calmHero.fightStats.armor == dealt) &&
               assertTrue(calmHero.fightStats.hp == 500000L) &&
               assertTrue(calmAfter.get.effects.heroColdDefenceCut == 0 && !calmLog.contains("Морозный удар")) &&
               assertTrue(coldLog.contains("Морозный удар сковывает вас")) &&
