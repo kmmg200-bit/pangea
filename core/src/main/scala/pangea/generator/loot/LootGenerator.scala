@@ -3,7 +3,7 @@ package pangea.generator.loot
 import pangea.domain.Rng
 import pangea.generator.item.{FlaskGenerator, GemGenerator, ItemGenerator, ItemNameGenerator, MaterialGenerator, TreasureMapGenerator}
 import pangea.model.hero.Hero
-import pangea.model.item.{Item, ItemDetails, ItemType, MaterialKind, TrophyKind}
+import pangea.model.item.{Item, ItemDetails, ItemSet, ItemType, MaterialKind, TrophyKind}
 import pangea.model.monster.{MiniBoss, Race, Rarity => MobRarity}
 import pangea.model.rune.{RuneStone, RuneStoneSize}
 import pangea.model.item.{Gem => GemModel, Rarity => ItemRarity}
@@ -487,6 +487,31 @@ object LootGenerator {
         val (item, r3)  = ItemGenerator.createItemAtLevel(lvl, rarity, r2)
         val (name, r4)  = ItemNameGenerator.setName(item.itemType, item.rarity, set, r3, item.grip)
         (LootDrop.Gear(item.copy(name = name, set = Some(set))), r4)
+    }
+
+  /** Редкость вещи малого расового набора (в %, сумма = 100). */
+  val RaceSetRarityWeights: List[(ItemRarity, Int)] = List(
+    ItemRarity.Green  -> 30,
+    ItemRarity.Blue   -> 25,
+    ItemRarity.Purple -> 22, // фиолетовая
+    ItemRarity.Violet -> 22, // пурпурная
+    ItemRarity.Orange -> 1
+  )
+
+  /** Вещь малого набора расы `race` — её роняет каждый легендарный моб этой
+    * расы, ровно одну: ни благословение, ни что-либо ещё ни число, ни редкость не
+    * поднимают. Уровень — как у прочей добычи с моба. У рас без набора
+    * (элементали, нежить, звери, сооружения) — ничего. Имя перекатываем как
+    * сетовое: имя набора встаёт вместо титула. */
+  def raceSetGear(race: Race, killLevel: Long, rng: Rng): (Option[Item], Rng) =
+    ItemSet.ofRace(race) match {
+      case None => (None, rng)
+      case Some(set) =>
+        val (rarity, r1) = pickWeighted(RaceSetRarityWeights, rng)
+        val lvl          = killLevel.max(1L).min(Hero.MaxLevel)
+        val (item, r2)   = ItemGenerator.createItemAtLevel(lvl, rarity, r1)
+        val (name, r3)   = ItemNameGenerator.setName(item.itemType, item.rarity, set, r2, item.grip)
+        (Some(item.copy(name = name, set = Some(set))), r3)
     }
 
   /** Шанс (в %), что предмет с элементаля окажется ингредиентом, а не вещью набора. */

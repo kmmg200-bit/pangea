@@ -3,7 +3,7 @@ package pangea.service.state.states
 import pangea.engine.SceneContent
 import pangea.model.hero.{Achievement, AchievementRates, Equipment, Hero}
 import pangea.model.item.{Item, ItemSet, ItemType, Rarity}
-import pangea.model.stats.FightStats
+import pangea.model.stats.{BaseStats, FightStats}
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.state.UserAction
 import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestRenderer}
@@ -72,9 +72,9 @@ object SetAchievementSpec extends ZIOSpecDefault {
 
   override def spec = suite("Достижения за собранные наборы")(
 
-    test("у каждого набора своё достижение со своим именем и +3% к его стату") {
-      val all = ItemSet.values.toList.map(Achievement.forSet)
-      assertTrue(all.distinct.size == ItemSet.values.size) &&
+    test("у каждого набора своё достижение со своим именем; у больших — +3% к его стату") {
+      val all = ItemSet.values.toList.filter(_.race.isEmpty).flatMap(Achievement.forSet)
+      assertTrue(ItemSet.values.toList.flatMap(Achievement.forSet).distinct.size == ItemSet.values.size) &&
       assertTrue(all.map(_.title) == List("Живая крепость", "Укротитель пламени", "Кровопийца",
         "Зоркий глаз", "Свой среди крыс", "Повелитель мёртвых")) &&
       assertTrue(all.map(_.bonusLine) == List("+3% к защите", "+3% к атаке", "+3% к уклонению",
@@ -90,7 +90,7 @@ object SetAchievementSpec extends ZIOSpecDefault {
         equipment  = TestFixtures.emptyEquipment.copy(chestPlate =
                        Item(70L, "Кираса", 1L, Rarity.Blue, ItemType.ChestPlate,
                          attack = 0, accuracy = 0, energy = 0, armor = 1000, defence = 0, evasion = 0)))
-      val all  = bare.copy(achievements = ItemSet.values.toList.map(Achievement.forSet(_).entryName))
+      val all  = bare.copy(achievements = ItemSet.values.toList.filter(_.race.isEmpty).flatMap(Achievement.forSet).map(_.entryName))
       val was  = bare.effectiveFightStats(0L)
       val now  = all.effectiveFightStats(0L)
       assertTrue(was.atk == 1000L && now.atk == 1030L) &&
@@ -102,6 +102,26 @@ object SetAchievementSpec extends ZIOSpecDefault {
       // одно достижение — один стат: защиту «Живая крепость» не трогает атака
       assertTrue(bare.copy(achievements = List(Achievement.StoneGuardSet.entryName))
         .effectiveFightStats(0L).atk == 1000L)
+    },
+
+    test("малые расовые наборы: +1 к одной характеристике, по два на каждую — все восемь дают +2 ко всем четырём") {
+      val race  = ItemSet.values.toList.filter(_.race.isDefined).flatMap(Achievement.forSet)
+      val bare  = TestFixtures.hero(userId)
+      val eight = bare.copy(achievements = race.map(_.entryName))
+      assertTrue(race.size == 8) &&
+      assertTrue(race.map(_.bonusLine).sorted == List("+1 к интеллекту", "+1 к интеллекту", "+1 к ловкости",
+        "+1 к ловкости", "+1 к силе", "+1 к силе", "+1 к телосложению", "+1 к телосложению")) &&
+      assertTrue(race.map(_.title) == List("Новый берег", "Голос рощи", "Дитя глубин", "Вождь орды",
+        "Ловкие пальцы", "Огонь преисподней", "Подгорный кузнец", "Хозяин каравана")) &&
+      assertTrue(bare.effectiveBaseStats(0L) == BaseStats(agi = 10, vit = 10, str = 10, int = 10)) &&
+      assertTrue(eight.effectiveBaseStats(0L) == BaseStats(agi = 12, vit = 12, str = 12, int = 12))
+    },
+
+    test("расовый набор собран человеком — достижение всё равно его: от расы зависит лишь скрытый шаг") {
+      for {
+        full <- equipFromBag(wearing(ItemSet.Horde, 11), ItemSet.Horde)
+      } yield assertTrue(full._1.contains("Вы получили достижение «Вождь орды». +1 к силе.")) &&
+              assertTrue(full._2.race == pangea.model.monster.Race.Human && full._2.hasAchievement(Achievement.HordeSet))
     },
 
     test("двенадцатая вещь набора из сумки приносит достижение, одиннадцатая — нет") {

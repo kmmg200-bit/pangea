@@ -14,6 +14,10 @@ object AchievementRates {
 
   /** На сколько процентов достижение за собранный набор поднимает его главный стат. */
   val SetStatPct: Long = 3L
+
+  /** Сколько одной характеристики даёт достижение за малый расовый набор: по два
+    * набора на каждую из четырёх, так что все восемь — ровно +2 ко всем. */
+  val RaceSetStatBonus: Long = 1L
 }
 
 object Achievement extends Enum[Achievement] {
@@ -66,14 +70,50 @@ object Achievement extends Enum[Achievement] {
   case object NecromancerSet extends Achievement("Повелитель мёртвых",
     s"+${AchievementRates.SetStatPct}% к интеллекту")
 
+  // Малые расовые наборы: +1 к одной из четырёх характеристик, по два набора
+  // на каждую. Набор надет целиком — достижение, какой бы расы ни был герой:
+  // скрытый шаг набора от расы зависит, достижение — нет.
+
+  case object PioneerSet extends Achievement("Новый берег",
+    s"+${AchievementRates.RaceSetStatBonus} к телосложению")
+
+  case object QuietGroveSet extends Achievement("Голос рощи",
+    s"+${AchievementRates.RaceSetStatBonus} к интеллекту")
+
+  case object DeepMotherSet extends Achievement("Дитя глубин",
+    s"+${AchievementRates.RaceSetStatBonus} к интеллекту")
+
+  case object HordeSet extends Achievement("Вождь орды",
+    s"+${AchievementRates.RaceSetStatBonus} к силе")
+
+  case object MarauderSet extends Achievement("Ловкие пальцы",
+    s"+${AchievementRates.RaceSetStatBonus} к ловкости")
+
+  case object UnderworldSet extends Achievement("Огонь преисподней",
+    s"+${AchievementRates.RaceSetStatBonus} к силе")
+
+  case object MountainMasterSet extends Achievement("Подгорный кузнец",
+    s"+${AchievementRates.RaceSetStatBonus} к телосложению")
+
+  case object CaravanSet extends Achievement("Хозяин каравана",
+    s"+${AchievementRates.RaceSetStatBonus} к ловкости")
+
   /** Достижение за набор, собранный целиком. */
-  def forSet(set: ItemSet): Achievement = set match {
-    case ItemSet.StoneGuard  => StoneGuardSet
-    case ItemSet.WildFlame   => WildFlameSet
-    case ItemSet.Ghoul       => GhoulSet
-    case ItemSet.Hunter      => HunterSet
-    case ItemSet.Rat         => RatSet
-    case ItemSet.Necromancer => NecromancerSet
+  def forSet(set: ItemSet): Option[Achievement] = set match {
+    case ItemSet.StoneGuard     => Some(StoneGuardSet)
+    case ItemSet.WildFlame      => Some(WildFlameSet)
+    case ItemSet.Ghoul          => Some(GhoulSet)
+    case ItemSet.Hunter         => Some(HunterSet)
+    case ItemSet.Rat            => Some(RatSet)
+    case ItemSet.Necromancer    => Some(NecromancerSet)
+    case ItemSet.Pioneer        => Some(PioneerSet)
+    case ItemSet.QuietGrove     => Some(QuietGroveSet)
+    case ItemSet.DeepMother     => Some(DeepMotherSet)
+    case ItemSet.Horde          => Some(HordeSet)
+    case ItemSet.Marauder       => Some(MarauderSet)
+    case ItemSet.Underworld     => Some(UnderworldSet)
+    case ItemSet.MountainMaster => Some(MountainMasterSet)
+    case ItemSet.Caravan        => Some(CaravanSet)
   }
 
   /** Сколько вещей набора надо надеть разом, чтобы он считался собранным. */
@@ -102,24 +142,28 @@ object Achievement extends Enum[Achievement] {
   val MurlocFavoriteAgiBonus: Long = 1L
   val MurlocBaneStrBonus: Long     = 1L
 
+  /** По +1 за каждое из достижений за малые расовые наборы. */
+  private def raceSets(hero: Hero, sets: Achievement*): Long =
+    sets.count(hero.hasAchievement).toLong * AchievementRates.RaceSetStatBonus
+
   /** Плоская прибавка к интеллекту от достижений героя. */
   def intBonus(hero: Hero): Long =
-    if (hero.hasAchievement(Brewer1)) BrewerIntBonus else 0L
+    (if (hero.hasAchievement(Brewer1)) BrewerIntBonus else 0L) + raceSets(hero, QuietGroveSet, DeepMotherSet)
 
   /** Плоская прибавка к ловкости от достижений героя. */
   def agiBonus(hero: Hero): Long =
-    if (hero.hasAchievement(MurlocFavorite)) MurlocFavoriteAgiBonus else 0L
+    (if (hero.hasAchievement(MurlocFavorite)) MurlocFavoriteAgiBonus else 0L) + raceSets(hero, MarauderSet, CaravanSet)
 
   /** Плоская прибавка к силе от достижений героя. */
   def strBonus(hero: Hero): Long =
-    if (hero.hasAchievement(MurlocBane)) MurlocBaneStrBonus else 0L
+    (if (hero.hasAchievement(MurlocBane)) MurlocBaneStrBonus else 0L) + raceSets(hero, HordeSet, UnderworldSet)
 
   /** Сколько телосложения прибавляет «Друг подгорного народа». */
   val SquadFriendVitBonus: Long = 1L
 
   /** Плоская прибавка к телосложению от достижений героя. */
   def vitBonus(hero: Hero): Long =
-    if (hero.hasAchievement(SquadFriend)) SquadFriendVitBonus else 0L
+    (if (hero.hasAchievement(SquadFriend)) SquadFriendVitBonus else 0L) + raceSets(hero, PioneerSet, MountainMasterSet)
 
   /** Сколько HP прибавляет «Переработки наше всё». */
   val OvertimeHpBonus: Long = 100L

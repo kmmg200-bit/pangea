@@ -1,6 +1,7 @@
 package pangea.model.hero
 
 import pangea.model.item.{ItemSet, SetBonus}
+import pangea.model.monster.Race
 
 /** Типизированный фасад над наборами надетого снаряжения. Как [[HeroPassives]] и
  *  [[HeroGems]], каждая точка применения спрашивает готовый модификатор, а числа
@@ -11,15 +12,21 @@ import pangea.model.item.{ItemSet, SetBonus}
  *  бонусов. Снял предмет — счётчик упал, порог закрылся.
  *
  *  `counts` приходит из `Equipment.setCounts` и уже учитывает только 12 сетовых
- *  слотов (без фляги и доп. оружия). */
-final case class HeroSets(counts: Map[ItemSet, Int]) {
+ *  слотов (без фляги и доп. оружия). `race` — раса героя: от неё зависит
+ *  скрытый шаг малого расового набора (см. [[visible]]). */
+final case class HeroSets(counts: Map[ItemSet, Int], race: Option[Race] = None) {
 
   /** Сколько предметов набора надето. */
   def pieces(set: ItemSet): Int = counts.getOrElse(set, 0)
 
+  /** Есть ли у героя этот бонус набора вообще: скрытый шаг малого расового
+   *  набора есть только у героя его расы, и чужому не показывается. */
+  def visible(set: ItemSet, b: SetBonus): Boolean =
+    !b.ownRaceOnly || set.race.exists(r => race.contains(r))
+
   /** Открытые бонусы набора — все пороги, до которых добрал игрок. */
   def bonuses(set: ItemSet): List[SetBonus] =
-    set.bonuses.filter(_.pieces <= pieces(set))
+    set.bonuses.filter(b => b.pieces <= pieces(set) && visible(set, b))
 
   /** Все открытые бонусы по всем наборам, в порядке объявления наборов. */
   def activeBonuses: List[(ItemSet, List[SetBonus])] =
@@ -28,32 +35,51 @@ final case class HeroSets(counts: Map[ItemSet, Int]) {
   /** Открыт ли конкретный порог набора и действует ли он (у неактивных бонусов
    *  механики пока нет — см. [[SetBonus.active]]). */
   def has(set: ItemSet, pieces: Int): Boolean =
-    this.pieces(set) >= pieces && set.bonusAt(pieces).exists(_.active)
+    this.pieces(set) >= pieces && set.bonusAt(pieces).exists(b => b.active && visible(set, b))
+
+  /** Пороги набора, которые есть у героя: у малого расового чужой расе — 3/6/9. */
+  def thresholds(set: ItemSet): List[Int] =
+    set.bonuses.filter(visible(set, _)).map(_.pieces)
+
+  /** Сколько вещей набора показывать: выше последнего своего порога счёт не
+   *  идёт — иначе «12» выдало бы чужой расе скрытый шаг. */
+  def shownPieces(set: ItemSet): Int =
+    pieces(set).min(thresholds(set).maxOption.getOrElse(0))
+
+  /** Ставка порога, если он открыт и действует; иначе ноль. */
+  private def pct(set: ItemSet, pieces: Int, value: Long): Long =
+    if (has(set, pieces)) value else 0L
 
   // ── Готовые модификаторы ────────────────────────────────────────────────────
 
   /** +% к защите от «Каменного стража» (порог 2). */
-  def defenceBonusPct: Long = if (has(ItemSet.StoneGuard, 2)) ItemSet.StoneGuard.DefencePct else 0L
+  def defenceBonusPct: Long = pct(ItemSet.StoneGuard, 2, ItemSet.StoneGuard.DefencePct)
 
-  /** +% к атаке от «Дикого пламени» (порог 2). */
-  def attackBonusPct: Long = if (has(ItemSet.WildFlame, 2)) ItemSet.WildFlame.AttackPct else 0L
+  /** +% к атаке: «Дикое пламя» (порог 2) и «Мародёр» (порог 3). */
+  def attackBonusPct: Long =
+    pct(ItemSet.WildFlame, 2, ItemSet.WildFlame.AttackPct) + pct(ItemSet.Marauder, 3, ItemSet.Marauder.AttackPct)
 
-  /** +% к уклонению от «Упыря» (порог 2). */
-  def evasionBonusPct: Long = if (has(ItemSet.Ghoul, 2)) ItemSet.Ghoul.EvasionPct else 0L
+  /** +% к уклонению: «Упырь» (порог 2) и «Мать Глубин» (порог 3). */
+  def evasionBonusPct: Long =
+    pct(ItemSet.Ghoul, 2, ItemSet.Ghoul.EvasionPct) + pct(ItemSet.DeepMother, 3, ItemSet.DeepMother.EvasionPct)
 
-  /** +% к точности от «Охотника» (порог 2). */
-  def accuracyBonusPct: Long = if (has(ItemSet.Hunter, 2)) ItemSet.Hunter.AccuracyPct else 0L
+  /** +% к точности: «Охотник» (порог 2) и «Тихая роща» (порог 3). */
+  def accuracyBonusPct: Long =
+    pct(ItemSet.Hunter, 2, ItemSet.Hunter.AccuracyPct) + pct(ItemSet.QuietGrove, 3, ItemSet.QuietGrove.AccuracyPct)
 
-  /** +% к броне от «Крысы» (порог 2). В отличие от прочих двоек поднимает не
-   *  итоговый боевой стат, а ПОТОЛОК брони (`Hero.maxArmor`): иначе прибавка
-   *  срезалась бы при первой же починке. */
-  def armorBonusPct: Long = if (has(ItemSet.Rat, 2)) ItemSet.Rat.ArmorPct else 0L
+  /** +% к броне: «Крыса» (порог 2) и «Подгорный мастер» (порог 3). В отличие от
+   *  прочих прибавок поднимает не итоговый боевой стат, а ПОТОЛОК брони
+   *  (`Hero.maxArmor`): иначе прибавка срезалась бы при первой же починке. */
+  def armorBonusPct: Long =
+    pct(ItemSet.Rat, 2, ItemSet.Rat.ArmorPct) + pct(ItemSet.MountainMaster, 3, ItemSet.MountainMaster.ArmorPct)
 
   /** Плоская прибавка к макс. HP: +300 за каждый набор, добравший до порога 8. */
   def flatHp: Long = ItemSet.values.count(has(_, 8)) * ItemSet.HpFlatBonus
 
-  /** +% к макс. HP: +10% за каждый набор, добравший до порога 8. */
-  def maxHpBonusPct: Long = ItemSet.values.count(has(_, 8)) * ItemSet.HpPctBonus
+  /** +% к макс. HP: +10% за каждый набор, добравший до порога 8, и «Орда»
+   *  (порог 3). */
+  def maxHpBonusPct: Long =
+    ItemSet.values.count(has(_, 8)) * ItemSet.HpPctBonus + pct(ItemSet.Horde, 3, ItemSet.Horde.HpPct)
 
   /** Сдвиг макс. энергии в %: «Охотник» (порог 4) её прибавляет, «Некромант»
    *  (порог 4) отнимает — силы уходят на поддержание мёртвых. Складываются, как
@@ -62,9 +88,30 @@ final case class HeroSets(counts: Map[ItemSet, Int]) {
     (if (has(ItemSet.Hunter, 4)) ItemSet.Hunter.EnergyPct else 0L) -
       (if (has(ItemSet.Necromancer, 4)) ItemSet.Necromancer.EnergyCutPct else 0L)
 
-  /** +% к интеллекту от «Некроманта» (порог 2) — единственная двойка, которая
-   *  поднимает не боевой стат, а базовый. */
-  def intBonusPct: Long = if (has(ItemSet.Necromancer, 2)) ItemSet.Necromancer.IntPct else 0L
+  /** +% к интеллекту: «Некромант» (порог 2) — единственная двойка, которая
+   *  поднимает не боевой стат, а базовый, — «Преисподняя» и «Первопроходец»
+   *  (порог 3). */
+  def intBonusPct: Long =
+    pct(ItemSet.Necromancer, 2, ItemSet.Necromancer.IntPct) + pct(ItemSet.Underworld, 3, ItemSet.Underworld.IntPct) +
+      pct(ItemSet.Pioneer, 3, ItemSet.Pioneer.BaseStatsPct)
+
+  /** +% к силе и к телосложению: «Первопроходец» (порог 3). */
+  def strBonusPct: Long = pct(ItemSet.Pioneer, 3, ItemSet.Pioneer.BaseStatsPct)
+  def vitBonusPct: Long = pct(ItemSet.Pioneer, 3, ItemSet.Pioneer.BaseStatsPct)
+
+  /** +% к ловкости: «Первопроходец» и «Караван» (порог 3). */
+  def agiBonusPct: Long =
+    pct(ItemSet.Pioneer, 3, ItemSet.Pioneer.BaseStatsPct) + pct(ItemSet.Caravan, 3, ItemSet.Caravan.AgiPct)
+
+  /** Реген в конце раунда, в % от максимума: HP — «Мать Глубин» (порог 9);
+   *  броня — она же и «Подгорный мастер» (порог 6). Складывается с пассивками. */
+  def hpRegenPct: Long = pct(ItemSet.DeepMother, 9, ItemSet.DeepMother.RegenPct)
+  def armorRegenPct: Long =
+    pct(ItemSet.DeepMother, 9, ItemSet.DeepMother.RegenPct) +
+      pct(ItemSet.MountainMaster, 6, ItemSet.MountainMaster.ArmorRegenPct)
+
+  /** Прибавка к шансу прока Холода, в п.п. («Подгорный мастер», порог 9). */
+  def coldChanceBonusPct: Long = pct(ItemSet.MountainMaster, 9, ItemSet.MountainMaster.ColdChanceBonusPct)
 
   /** Множитель вклада ловкости в реген энергии за раунд («Охотник», порог 4). */
   def agiEnergyRegenMult: Long =

@@ -2456,9 +2456,11 @@ case class BattleState(
     else
       // Роллим в фиксированном порядке Element.values для детерминизма тестов.
       ZIO.foreach(Element.values.filter(elems.contains).toList) { e =>
-        // «Дикое пламя» (порог 10) поднимает шанс поджечь — только у Огня.
+        // «Дикое пламя» (порог 10) поднимает шанс поджечь, «Подгорный мастер»
+        // (порог 9) — сковать холодом.
         val chance =
           if (e == Element.Fire) Element.ProcChancePct + hero.sets.igniteChanceBonusPct
+          else if (e == Element.Cold) Element.ProcChancePct + hero.sets.coldChanceBonusPct
           else Element.ProcChancePct
         Random.nextIntBetween(1, 101).map(roll => e -> (roll <= chance))
       }.map(rolls => applyProcs(battle, rolls.collect { case (e, true) => e }.toSet))
@@ -5394,9 +5396,14 @@ case class BattleState(
         else fallenBoss.fold(
           LootGenerator.rollBlessingExtraGear(BattleState.BlessingExtraDropPct, battle.rarity, killLevel, rngAfter2))(b =>
           LootGenerator.rollBlessingBossGear(BattleState.BlessingExtraDropPct, b, hero.lvl, rngAfter2))
+      // Каждый легендарный моб смертной расы роняет ровно одну вещь малого
+      // набора своей расы. Сюжетный бой — нет: там добычу кладёт сюжет.
+      (raceGear, rngAfter4) =
+        if (storyFight) (List.empty[Option[pangea.model.item.Item]], rngAfter3)
+        else BattleState.raceSetDrops(fallen, killLevel, rngAfter3)
       // Налёт на деревню мурлоков: тот же клинок старого мурлока, что старейшина
       // дарит за помощь, — те же статы, уровень героя.
-      raidBlade = Option.when(battle.story.contains(MurlocQuest.RaidStory))(MurlocQuest.blade(hero, rngAfter3))
+      raidBlade = Option.when(battle.story.contains(MurlocQuest.RaidStory))(MurlocQuest.blade(hero, rngAfter4))
       // Именной оставляет свой уникальный трофей — если у героя такого ещё
       // нет. Сюжетный бой — нет: там добычу кладёт сюжет.
       owned <- if (storyFight) ZIO.succeed(Set.empty[String]) else ownedNamedTrophies(user, hero, fallen)
@@ -5404,7 +5411,7 @@ case class BattleState(
       lootByMonster = withExtras.zipWithIndex.map { case ((name, drops), i) =>
         LootState.MonsterLoot(
           monsterName = name,
-          items       = drops.flatMap(_.itemOpt) ++ named.lift(i).flatten,
+          items       = drops.flatMap(_.itemOpt) ++ named.lift(i).flatten ++ raceGear.lift(i).flatten,
           silvers     = drops.collect { case LootGenerator.LootDrop.Silver(a, _) => a * silverScalePct(blessed) / 100L },
           doubloons   = drops.collect { case LootGenerator.LootDrop.Doubloons(a) => a }.sum
         )
@@ -5793,10 +5800,11 @@ case class BattleState(
       if (parts.isEmpty) "" else " (" + parts.mkString(" ") + ")"
     }
     val beltHpRegen    = battle.effects.heroRegen.map(_.healOn(maxHp)).getOrElse(0L)
-    // Реген HP/ход = зелье + «Целебный» (% макс.HP) + черепа в снаряжении (промилле макс.HP).
-    val hpRegenTotal   = beltHpRegen + maxHp * hero.passives.hpRegenPct / 100L + maxHp * hero.gems.hpRegenPerMille / 1000L
+    // Реген HP/ход = зелье + «Целебный» и наборы (% макс.HP) + черепа в снаряжении (промилле макс.HP).
+    val hpRegenTotal   = beltHpRegen + maxHp * (hero.passives.hpRegenPct + hero.sets.hpRegenPct) / 100L +
+                           maxHp * hero.gems.hpRegenPerMille / 1000L
     val heroRegen      = if (hpRegenTotal > 0) s" (+$hpRegenTotal)" else ""
-    val armorRegen     = maxArmor * hero.passives.armorRegenPct / 100L
+    val armorRegen     = maxArmor * (hero.passives.armorRegenPct + hero.sets.armorRegenPct) / 100L
     val heroArmorRegen = if (armorRegen > 0) s" (+$armorRegen)" else ""
     val text = content.format(
       if (battle0.group.paired) "battle.enter.text" else "battle.enter.noPair",
@@ -6039,6 +6047,19 @@ object BattleState {
       val drop = if (m.undead || seen.contains(name)) None else NamedTrophy.item(name, m.race, killLevel)
       (acc :+ drop, seen ++ drop.map(_ => name))
     }._1
+
+  /** Вещи малых расовых наборов с павших: каждый легендарный моб смертной расы
+    * роняет ровно одну вещь набора своей расы (см. LootGenerator.raceSetGear),
+    * прочие — ничего. Список идёт по павшим, как у именных трофеев. */
+  def raceSetDrops(fallen: List[SlainMonster], killLevel: Long, rng: Rng): (List[Option[Item]], Rng) =
+    fallen.foldLeft((List.empty[Option[Item]], rng)) { case ((acc, r), m) =>
+      Option.when(m.rarity == Rarity.Legendary.entryName)(m.race).flatMap(Race.withNameOption) match {
+        case None => (acc :+ None, r)
+        case Some(race) =>
+          val (item, next) = LootGenerator.raceSetGear(race, killLevel, r)
+          (acc :+ item, next)
+      }
+    }
 
   /** Под каким именем павший значится среди именных: отмеченный тьмой — тот же
     * именной, метка тьмы к его имени не относится. */

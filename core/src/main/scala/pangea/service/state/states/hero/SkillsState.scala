@@ -150,19 +150,22 @@ object SkillsState {
     }
 
     /** Набор снаряжения: в списке — сколько предметов надето («Дикое пламя 6»),
-     *  в описании — только те пороги, до которых игрок добрал. */
+     *  в описании — только те пороги, до которых игрок добрал. Скрытый шаг
+     *  малого расового набора чужой расе не виден: и счёт, и пороги у неё
+     *  кончаются на девяти (см. `HeroSets.shownPieces`). */
     final case class Set(set: ItemSet, pieces: Int) extends SkillEntry {
       def buttonId: String = s"$SetPrefix${set.entryName}"
       def label: String    = s"🛡 ${set.label} $pieces"
       def describe(hero: Hero): String = {
         val sets   = hero.sets
-        val worn   = sets.pieces(set)
-        val header = s"Надето предметов: $worn из ${ItemSet.Thresholds.max}"
+        val worn   = sets.shownPieces(set)
+        val steps  = sets.thresholds(set)
+        val header = s"Надето предметов: $worn из ${steps.maxOption.getOrElse(worn)}"
         val lines  = sets.bonuses(set).map { b =>
           val tail = if (b.active) "" else " (пока не действует)"
           s"• ${b.pieces}: ${b.text}$tail"
         }
-        val next = ItemSet.Thresholds.find(_ > worn)
+        val next = steps.find(_ > worn)
           .map(n => s"\n\nСледующий бонус — при $n предметах.")
           .getOrElse("")
         (header +: lines).mkString("\n") + next
@@ -194,7 +197,7 @@ object SkillsState {
     hero.activeSkillSlots.map(s => SkillEntry.Active(s.itemId, s.skill, wornWith(eq, s.skill))) ++
       hero.passives.kinds.toList.sortBy(_.label).map(k =>
         SkillEntry.Passive(k, onBody = !worn.contains(k), eq.allItems.count(_.passive.contains(k)))) ++
-      hero.sets.activeBonuses.map { case (set, _) => SkillEntry.Set(set, hero.sets.pieces(set)) }
+      hero.sets.activeBonuses.map { case (set, _) => SkillEntry.Set(set, hero.sets.shownPieces(set)) }
   }
 
   /** Сколько надетых вещей несут активное умение — те же, с которых оно и

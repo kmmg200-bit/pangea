@@ -26,7 +26,8 @@ object HeroSetsSpec extends ZIOSpecDefault {
       val forced = ItemSet.StoneGuard
       assertTrue(forced.bonuses.nonEmpty) &&
       assertTrue(!ItemSet.values.contains(null)) &&
-      assertTrue(ItemSet.values.forall(_.bonuses.map(_.pieces) == ItemSet.Thresholds)) &&
+      assertTrue(ItemSet.values.filter(_.race.isEmpty).forall(_.bonuses.map(_.pieces) == ItemSet.Thresholds)) &&
+      assertTrue(ItemSet.values.filter(_.race.isDefined).forall(_.bonuses.map(_.pieces) == List(3, 6, 9, 12))) &&
       assertTrue(ItemSet.values.forall(_.bonuses.forall(_.text.nonEmpty)))
     },
 
@@ -46,10 +47,11 @@ object HeroSetsSpec extends ZIOSpecDefault {
     },
 
     test("наборы независимы: 12 предметов из шести наборов дают шесть двойных бонусов") {
-      // Шесть наборов игра пока не знает — берём все четыре по два предмета.
-      val counts = ItemSet.values.map(_ -> 2).toMap
+      // Большие наборы по два предмета: у малых расовых первый порог — три.
+      val big    = ItemSet.values.filter(_.race.isEmpty)
+      val counts = big.map(_ -> 2).toMap
       val sets   = HeroSets(counts)
-      assertTrue(sets.activeBonuses.size == ItemSet.values.size) &&
+      assertTrue(sets.activeBonuses.size == big.size && big.size == 6) &&
       assertTrue(sets.activeBonuses.forall { case (_, bs) => bs.map(_.pieces) == List(2) }) &&
       // каждый набор отдал свою прибавку к своему стату
       assertTrue(sets.defenceBonusPct == 5L) &&
@@ -68,8 +70,8 @@ object HeroSetsSpec extends ZIOSpecDefault {
       assertTrue(three.accuracyBonusPct == 5L) // порог 2 ещё держится
     },
 
-    test("все четыре набора реализованы целиком — «показываем, но не работает» не осталось") {
-      assertTrue(ItemSet.values.forall(_.bonuses.forall(_.active)))
+    test("все большие наборы реализованы целиком — «показываем, но не работает» не осталось") {
+      assertTrue(ItemSet.values.filter(_.race.isEmpty).forall(_.bonuses.forall(_.active)))
     },
 
     test("«Каменный страж» реализован целиком: все шесть порогов действуют") {

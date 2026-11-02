@@ -72,7 +72,7 @@ case class Hero(
   def gems: HeroGems = HeroGems(equipment.weaponGems, equipment.armorGems, weaponDust.gems)
 
   /** Наборы надетого снаряжения и открытые их бонусы. */
-  def sets: HeroSets = HeroSets(equipment.setCounts)
+  def sets: HeroSets = HeroSets(equipment.setCounts, Some(race))
 
   /** Можно ли двигаться к свету (выше): на первом этаже выше уже некуда. */
   def canGoLighter: Boolean = dungeonLevel > 1
@@ -187,10 +187,11 @@ case class Hero(
     val p        = passives
     val maxHp    = effectiveMaxHp(nowMs)
     val maxArmor = effectiveMaxArmor(nowMs)
-    // Реген HP = пассивка «Целебный» (% макс.HP) + черепа в снаряжении (промилле макс.HP).
-    val hpRegen  = maxHp * p.hpRegenPct / 100L + maxHp * gems.hpRegenPerMille / 1000L
+    val s        = sets
+    // Реген HP = пассивка «Целебный» и наборы (% макс.HP) + черепа в снаряжении (промилле макс.HP).
+    val hpRegen  = maxHp * (p.hpRegenPct + s.hpRegenPct) / 100L + maxHp * gems.hpRegenPerMille / 1000L
     val newHp    = (fightStats.hp + hpRegen).min(maxHp).max(fightStats.hp)
-    val newArmor = (fightStats.armor + maxArmor * p.armorRegenPct / 100L).min(maxArmor).max(fightStats.armor)
+    val newArmor = (fightStats.armor + maxArmor * (p.armorRegenPct + s.armorRegenPct) / 100L).min(maxArmor).max(fightStats.armor)
     copy(fightStats = fightStats.copy(hp = newHp, armor = newArmor))
   }
 
@@ -203,16 +204,21 @@ case class Hero(
   def effectiveBaseStats(nowMs: Long): BaseStats = {
     val p = combinedPenalties(nowMs)
     val b = HeroRaceBuff.of(race)
-    // Достижения дают плоскую прибавку к базе — до расы, травм и зелий.
+    val s = sets
+    // Достижения дают плоскую прибавку к базе — до расы, травм и зелий. Наборы
+    // («Первопроходец», «Караван») — процентом к готовому числу, как интеллект.
     BaseStats(
-      agi = (b.applyAgi(baseStats.agi + Achievement.agiBonus(this)) * statBoosts.agiFactor(nowMs)).toLong.max(1L),
-      vit = (b.applyVit(baseStats.vit + Achievement.vitBonus(this)) * (1.0 - p.vitPct) * statBoosts.vitFactor(nowMs)).toLong.max(1L),
-      str = (b.applyStr(baseStats.str + Achievement.strBonus(this)) * (1.0 - p.strPct) * statBoosts.strFactor(nowMs)).toLong.max(1L),
+      agi = (b.applyAgi(baseStats.agi + Achievement.agiBonus(this)) * statBoosts.agiFactor(nowMs) *
+               (100L + s.agiBonusPct) / 100L).toLong.max(1L),
+      vit = (b.applyVit(baseStats.vit + Achievement.vitBonus(this)) * (1.0 - p.vitPct) * statBoosts.vitFactor(nowMs) *
+               (100L + s.vitBonusPct) / 100L).toLong.max(1L),
+      str = (b.applyStr(baseStats.str + Achievement.strBonus(this)) * (1.0 - p.strPct) * statBoosts.strFactor(nowMs) *
+               (100L + s.strBonusPct) / 100L).toLong.max(1L),
       // «Некромант» (порог 2) поднимает сам интеллект — последним, поверх расы,
       // травм и зелий: это прибавка к готовому числу. Процент от достижений
       // (см. Achievement.intPct) ложится следом, своим множителем.
       int = (b.applyInt(baseStats.int + Achievement.intBonus(this)) * (1.0 - p.intPct) *
-               statBoosts.intFactor(nowMs) * (100L + sets.intBonusPct) / 100L *
+               statBoosts.intFactor(nowMs) * (100L + s.intBonusPct) / 100L *
                (100L + Achievement.intPct(this)) / 100L).toLong.max(1L)
     )
   }
@@ -250,7 +256,8 @@ case class Hero(
 
   def effectiveMaxHp(nowMs: Long): Long = {
     val p           = combinedPenalties(nowMs)
-    val effectiveVit = HeroRaceBuff.of(race).applyVit(baseStats.vit)
+    // Телосложение от «Первопроходца» (порог 3) поднимает и HP — тем же процентом.
+    val effectiveVit = HeroRaceBuff.of(race).applyVit(baseStats.vit) * (100L + sets.vitBonusPct) / 100L
     val base        = effectiveVit * 24L
     val subtotal    = (base * (1.0 - p.vitPct) * (1.0 - p.hpPct) * statBoosts.vitFactor(nowMs)).toLong.max(1L) +
       equipment.allHp

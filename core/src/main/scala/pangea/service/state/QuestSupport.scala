@@ -39,8 +39,9 @@ object QuestSupport {
     * набор своё достижение, один раз и навсегда (см. [[Achievement.forSet]]).
     * Зовётся после всякого надевания: только надевание и может собрать набор. */
   def grantFullSets(heroDao: HeroDao, content: SceneContent, user: User, hero: Hero, renderer: Renderer): Task[Hero] =
-    ZIO.foldLeft(ItemSet.values.toList.filter(s => hero.sets.pieces(s) >= Achievement.FullSetPieces))(hero) {
-      (h, set) => grant(heroDao, content, user, h, Achievement.forSet(set), renderer)
+    ZIO.foldLeft(ItemSet.values.toList.filter(s => hero.sets.pieces(s) >= Achievement.FullSetPieces)
+                   .flatMap(Achievement.forSet))(hero) {
+      (h, a) => grant(heroDao, content, user, h, a, renderer)
     }
 
   /** Достижение — один раз; строка о нём показывается сразу. */

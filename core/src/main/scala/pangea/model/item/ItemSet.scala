@@ -3,15 +3,17 @@ package pangea.model.item
 import enumeratum._
 import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder, HCursor}
+import pangea.model.monster.Race
 
 /** Набор («сет») снаряжения. Предмет из набора носит его имя вместо титула —
  *  третьим словом названия: «🔵 Прочный Шлем Каменного стража» (поэтому
  *  [[ItemSet.title]] стоит в родительном падеже, как обычные титулы).
  *
- *  Бонусы выдаются по порогам числа надетых предметов набора: 2/4/6/8/10/12.
- *  Пороги независимы между наборами — можно носить 12 предметов из шести разных
- *  наборов и получить шесть двойных бонусов. Считаются только 12 «сетовых»
- *  слотов (см. `Equipment.setItems`): фляга и доп. оружие в наборы не входят.
+ *  Бонусы выдаются по порогам числа надетых предметов набора: у больших наборов
+ *  2/4/6/8/10/12, у малых расовых — 3/6/9 и 12 (см. [[race]]). Пороги независимы
+ *  между наборами — можно носить 12 предметов из шести разных наборов и
+ *  получить шесть двойных бонусов. Считаются только 12 «сетовых» слотов (см.
+ *  `Equipment.setItems`): фляга и доп. оружие в наборы не входят.
  *
  *  Числовые ставки живут ЗДЕСЬ, на варианте — как у [[PassiveKind]] и
  *  [[GemKind]]; точки применения читают готовый модификатор через
@@ -23,14 +25,21 @@ sealed abstract class ItemSet(val label: String, val title: String) extends Enum
 
   /** Бонус конкретного порога, если он у набора описан. */
   def bonusAt(pieces: Int): Option[SetBonus] = bonuses.find(_.pieces == pieces)
+
+  /** Чей это набор: у малого расового — его раса (её легендарные мобы роняют
+   *  вещи набора, ей одной открыт шаг 12). У больших наборов расы нет. */
+  def race: Option[Race] = None
 }
 
 /** Один бонус набора: порог, текст для игрока и признак «механики ещё нет».
  *
  *  `active = false` — порог описан, показывается игроку, но в бою пока ничего не
  *  делает (как броневая грань Сапфира). Так помечены бонусы, под которые в игре
- *  нет системы: стихийный урон мобов и негативные эффекты на герое. */
-final case class SetBonus(pieces: Int, text: String, active: Boolean = true)
+ *  нет системы: стихийный урон мобов и негативные эффекты на герое.
+ *
+ *  `ownRaceOnly` — скрытый шаг малого расового набора: он есть только у героя
+ *  расы набора, а чужой расе его не видно вовсе (см. `HeroSets.visible`). */
+final case class SetBonus(pieces: Int, text: String, active: Boolean = true, ownRaceOnly: Boolean = false)
 
 /** Общие для всех наборов числа. Живут ОТДЕЛЬНО от компаньона [[ItemSet]]
  *  намеренно: если бы `case object`-ы читали их из своего же компаньона, его
@@ -50,6 +59,10 @@ object SetRates {
   val HpFlatBonus: Long   = 300L
   val HpPctBonus: Long    = 10L
   val HpBonusText: String = s"+$HpFlatBonus к HP и +$HpPctBonus% к HP."
+
+  /** Прибавка третьего порога малого расового набора — в % к своему стату:
+   *  шагов у малого набора вдвое меньше, и каждый чуть сильнее, чем у большого. */
+  val RaceStatPct: Long = 8L
 }
 
 object ItemSet extends Enum[ItemSet] {
@@ -224,8 +237,148 @@ object ItemSet extends Enum[ItemSet] {
     )
   }
 
+  // ── Малые расовые наборы ────────────────────────────────────────────────────
+  // По одному на каждую смертную расу. Слабее больших: пороги 3/6/9 открыты
+  // всем, а скрытый 12 — только герою расы набора, и чужой расе его не видно
+  // вовсе. Вещи роняет каждый легендарный моб этой расы — ровно одну (см.
+  // LootGenerator.raceSetGear). Бонусы с `active = false` ждут своей механики.
+
+  // ── Первопроходец (люди) ────────────────────────────────────────────────────
+  case object Pioneer extends ItemSet("Первопроходец", "Первопроходца") {
+    override def race: Option[Race] = Some(Race.Human)
+
+    /** Люди ни в чём не выделяются — и ни в чём не уступают: понемногу ко всем
+      * четырём характеристикам. */
+    val BaseStatsPct: Long = 3L
+
+    def bonuses: List[SetBonus] = List(
+      SetBonus(3,  s"+$BaseStatsPct% к силе, телосложению, ловкости и интеллекту."),
+      SetBonus(6,  "Каждый раунд боя +1% к атаке и защите, до +6%.", active = false),
+      SetBonus(9,  "Травмы проходят вдвое быстрее, а отдых после смерти на треть короче.", active = false),
+      SetBonus(12, "Раз за бой удар, который убил бы вас, оставляет вам 1 HP и снимает с вас яд, " +
+                   "кровотечение и пламя.", active = false, ownRaceOnly = true)
+    )
+  }
+
+  // ── Тихая роща (эльфы) ──────────────────────────────────────────────────────
+  case object QuietGrove extends ItemSet("Тихая роща", "Тихой рощи") {
+    override def race: Option[Race] = Some(Race.Elf)
+    val AccuracyPct: Long = SetRates.RaceStatPct
+
+    def bonuses: List[SetBonus] = List(
+      SetBonus(3,  s"+$AccuracyPct% к точности."),
+      SetBonus(6,  "Первый ваш удар в каждом бою всегда попадает и бьёт в полтора раза сильнее.", active = false),
+      SetBonus(9,  "25% шанс, что ваша атака, нанёсшая урон по HP, ослабит врага: −15% к его атаке " +
+                   "на 2 раунда.", active = false),
+      SetBonus(12, "40% шанс, что ваша атака, нанёсшая урон по HP, отравит врага на 3%, и ваш яд " +
+                   "не слабеет со временем.", active = false, ownRaceOnly = true)
+    )
+  }
+
+  // ── Мать Глубин (мурлоки) ───────────────────────────────────────────────────
+  case object DeepMother extends ItemSet("Мать Глубин", "Матери Глубин") {
+    override def race: Option[Race] = Some(Race.Murloc)
+    val EvasionPct: Long = SetRates.RaceStatPct
+
+    /** Сколько HP и брони возвращается в конце раунда (порог 9), в % от максимума. */
+    val RegenPct: Long = 2L
+
+    def bonuses: List[SetBonus] = List(
+      SetBonus(3,  s"+$EvasionPct% к уклонению."),
+      SetBonus(6,  "15% шанс, что попавший по вам обычный удар соскользнёт по чешуе и пройдёт вполовину.",
+               active = false),
+      SetBonus(9,  s"В конце каждого раунда вы восстанавливаете $RegenPct% HP и $RegenPct% брони."),
+      SetBonus(12, "В начале каждого боя из воды выходит мурлок-собрат и встаёт в строй; против трёх " +
+                   "и больше врагов — двое.", active = false, ownRaceOnly = true)
+    )
+  }
+
+  // ── Орда (орки) ─────────────────────────────────────────────────────────────
+  case object Horde extends ItemSet("Орда", "Орды") {
+    override def race: Option[Race] = Some(Race.Orc)
+    val HpPct: Long = SetRates.RaceStatPct
+
+    def bonuses: List[SetBonus] = List(
+      SetBonus(3,  s"+$HpPct% к HP."),
+      SetBonus(6,  "Удар, снявший разом больше 20% вашего HP, проходит на 25% слабее.", active = false),
+      SetBonus(9,  "Пока у вас меньше половины HP, +15% к атаке.", active = false),
+      SetBonus(12, "+3% к атаке за каждые 10% недостающего HP, до +30%; пока у вас меньше половины HP — " +
+                   "ещё и 3% вампиризма.", active = false, ownRaceOnly = true)
+    )
+  }
+
+  // ── Мародёр (гоблины) ───────────────────────────────────────────────────────
+  case object Marauder extends ItemSet("Мародёр", "Мародёра") {
+    override def race: Option[Race] = Some(Race.Goblin)
+    val AttackPct: Long = SetRates.RaceStatPct
+
+    def bonuses: List[SetBonus] = List(
+      SetBonus(3,  s"+$AttackPct% к атаке."),
+      SetBonus(6,  "20% шанс, что ваша атака, нанёсшая урон по HP, выжжет врагу 30% энергии — как " +
+                   "Молния, даже без неё в оружии.", active = false),
+      SetBonus(9,  "+20% серебра с боёв.", active = false),
+      SetBonus(12, "С каждого добитого вами врага 10% шанс на лишнюю вещь в добыче, а окружить вас " +
+                   "при бегстве вдвое труднее.", active = false, ownRaceOnly = true)
+    )
+  }
+
+  // ── Преисподняя (демоны) ────────────────────────────────────────────────────
+  case object Underworld extends ItemSet("Преисподняя", "Преисподней") {
+    override def race: Option[Race] = Some(Race.Demon)
+    val IntPct: Long = SetRates.RaceStatPct
+
+    def bonuses: List[SetBonus] = List(
+      SetBonus(3,  s"+$IntPct% к интеллекту."),
+      SetBonus(6,  "Шанс поджечь врага увеличен на 10%, а по горящему врагу вы бьёте на 10% сильнее.",
+               active = false),
+      SetBonus(9,  "Активные умения стоят на 15% меньше энергии.", active = false),
+      SetBonus(12, "Каждый добитый вами враг возвращает вам 20% энергии.", active = false, ownRaceOnly = true)
+    )
+  }
+
+  // ── Подгорный мастер (гномы) ────────────────────────────────────────────────
+  case object MountainMaster extends ItemSet("Подгорный мастер", "Подгорного мастера") {
+    override def race: Option[Race] = Some(Race.Gnome)
+
+    /** Прибавка к ПОТОЛКУ брони (порог 3) — как у двойки «Крысы». */
+    val ArmorPct: Long = SetRates.RaceStatPct
+
+    /** Сколько брони возвращается в конце раунда (порог 6), в % от максимума. */
+    val ArmorRegenPct: Long = 4L
+
+    /** Прибавка к шансу прока Холода, в п.п. (порог 9). */
+    val ColdChanceBonusPct: Long = 15L
+
+    def bonuses: List[SetBonus] = List(
+      SetBonus(3,  s"+$ArmorPct% к броне."),
+      SetBonus(6,  s"В конце каждого раунда ваша броня восстанавливается на $ArmorRegenPct%."),
+      SetBonus(9,  s"Шанс сковать врага холодом увеличен на $ColdChanceBonusPct%."),
+      SetBonus(12, "Пока у вас есть броня, вас нельзя оглушить, сбить с ног или пригвоздить, и удары " +
+                   "не оставляют на вас травм.", active = false, ownRaceOnly = true)
+    )
+  }
+
+  // ── Караван (каджиты) ───────────────────────────────────────────────────────
+  case object Caravan extends ItemSet("Караван", "Каравана") {
+    override def race: Option[Race] = Some(Race.Khajiit)
+    val AgiPct: Long = SetRates.RaceStatPct
+
+    def bonuses: List[SetBonus] = List(
+      SetBonus(3,  s"+$AgiPct% к ловкости."),
+      SetBonus(6,  "Шанс прока Воздуха увеличен на 10%, а попутный ветер держится на раунд дольше.",
+               active = false),
+      SetBonus(9,  "Торговцы платят вам на 10% больше, а продают на 10% дешевле.", active = false),
+      SetBonus(12, "Поход по карте клада на четверть короче. +5% к уклонению.", active = false,
+               ownRaceOnly = true)
+    )
+  }
+
   /** Набор по имени-титулу из названия предмета (третье слово). */
   def byTitle(title: String): Option[ItemSet] = values.find(_.title == title)
+
+  /** Малый набор расы: у каждой смертной — свой, у прочих (элементали, нежить,
+   *  звери, сооружения) — нет. */
+  def ofRace(race: Race): Option[ItemSet] = values.find(_.race.contains(race))
 
   implicit val encoder: Encoder[ItemSet] = (s: ItemSet) => s.entryName.asJson
   implicit val decoder: Decoder[ItemSet] = (c: HCursor) => c.as[String].map(ItemSet.withName)

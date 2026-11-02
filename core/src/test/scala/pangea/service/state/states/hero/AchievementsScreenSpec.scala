@@ -56,7 +56,10 @@ object AchievementsScreenSpec extends ZIOSpecDefault {
                 s"✅ ${Achievement.MurlocFavorite.title} — ${Achievement.MurlocFavorite.bonusLine}")) &&
               // неполученные — только числом: ни названия, ни бонуса
               assertTrue(shown.text.contains(s"🔒 Ещё не получено: ${total - 2}.")) &&
-              assertTrue(locked.forall(a => !shown.text.contains(a.title) && !shown.text.contains(a.bonusLine))) &&
+              assertTrue(locked.forall(a => !shown.text.contains(a.title))) &&
+              // бонус — тоже, кроме совпавших с полученными («+1 к ловкости» даёт не одно)
+              assertTrue(locked.filterNot(a => List(Achievement.Brewer1, Achievement.MurlocFavorite).exists(_.bonusLine == a.bonusLine))
+                .forall(a => !shown.text.contains(a.bonusLine))) &&
               assertTrue(shown.choices.map(_.id) == main.choices.map(_.id))
     },
 
