@@ -250,7 +250,7 @@ case class BattleState(
       // Охрана вся полегла — стрелкам некого прикрывать: они бросают башни и
       // уходят, бой на этом кончается победой.
       abandoned = towersAlone(promoted4)
-      ended   <- endRound(battle, abandoned)
+      ended   <- endRound(battle, abandoned).map(preyFlees)
       // «Крыса» (порог 6): раз в раунд у героя из-под ног может выскочить своя.
       ratted  <- ratCall(hero, ended)
       // Напротив героя пусто, а свободный моб появился — он шагает к герою.
@@ -345,6 +345,37 @@ case class BattleState(
           log     = (res.log :+ content.text(key)) :+ content.format("battle.joe.riseWeakness",
                       "pct" -> MiniBoss.RottenJoe.ReviveAtkCutPct.toString,
                       "turns" -> MiniBoss.RottenJoe.ReviveAtkCutTurns.toString))
+      }
+    }
+  }
+
+  /** Приговорённый дотерпел свои раунды: уходит он один — живым и без добычи.
+    * Призванные им сородичи остаются, и бой идёт дальше. Ушёл из пары — к
+    * герою встаёт следующий; ушёл последним, а сородичей уже перебили, — это
+    * победа над ними, с приговорённого ничего нет. Ушёл, не призвав никого, —
+    * бой кончается, как раньше (см. dungeonCommit): срок остаётся, по нему и
+    * видно. Пал раньше срока — уходить некому, срок снимается. */
+  private def preyFlees(res: TurnResult): TurnResult = {
+    val b = res.battle
+    if (res.outcome != Outcome.Continue || b.escapesAfter <= 0 || b.group.round < b.escapesAfter || b.preyName.isEmpty) res
+    else {
+      val calm  = b.copy(escapesAfter = 0)
+      val left  = (name: String) => res.log :+ content.format("battle.preyEscapedKin", "monster" -> name)
+      if (b.monsterCurrentHp > 0L && b.customName == b.preyName)
+        calm.promoteAfterEscape match {
+          case Some(next)                     => res.copy(battle = next, log = left(b.monsterName))
+          case None if b.group.slain.nonEmpty =>
+            res.copy(battle = calm.copy(preyGone = true), outcome = Outcome.Victory,
+                     log = res.log :+ content.format("battle.preyEscaped", "monster" -> b.monsterName))
+          case None                           => res
+        }
+      else b.group.others.indexWhere(s => s.alive && s.customName == b.preyName) match {
+        case -1  => res.copy(battle = calm)
+        case idx =>
+          val prey = b.group.others(idx)
+          res.copy(battle = calm.copy(group = calm.group.copy(
+                     others = calm.group.others.patch(idx, Nil, 1), places = calm.group.places.patch(idx, Nil, 1))),
+                   log = left(prey.name))
       }
     }
   }
@@ -1029,7 +1060,7 @@ case class BattleState(
       // Охрану доломали союзники, пока герой лежал, — башням некого
       // прикрывать, и бой кончается так же, как если бы её добил он сам.
       abandoned = towersAlone(fogged)
-      ended    <- endRound(battle, abandoned)
+      ended    <- endRound(battle, abandoned).map(preyFlees)
       // Конец раунда: кому некого бить, идёт к врагу — мобы к отряду, отряд
       // к мобам. Каждый раунд, даже если в этом никто никого не задел: иначе
       // такой раунд ничем бы не кончался, и следующий тоже — бой стоял бы.
@@ -5464,7 +5495,10 @@ case class BattleState(
       blessed = azat.blessingActive(now)
       // Все павшие этого боя в порядке гибели; в бою 1 на 1 — один моб.
       // Башни в счёт не идут: с них нечего взять и не за что дать опыт.
-      fallen0 = battle.group.slain :+ battle.slainActive
+      // Приговорённый ушёл последним (`preyGone`) — в полях ещё он, но он не пал.
+      fallen0 = if (battle.preyGone) battle.group.slain else battle.group.slain :+ battle.slainActive
+      // Редкость последнего павшего — в обычном бою это и есть моб в полях.
+      lastRarity = fallen0.lastOption.map(m => Rarity.withName(m.rarity)).getOrElse(battle.rarity)
       fallen  = {
         val spoils = fallen0.filterNot(m => Race.withNameOption(m.race).exists(Race.immovable))
         // Бой из одних башен всё же должен чем-то кончиться — тогда берём как есть.
@@ -5552,7 +5586,7 @@ case class BattleState(
         if (!blessed) (Option.empty[pangea.model.item.Item], rngAfter2)
         // С минибосса лишняя вещь — из его набора: она с того, кого убили.
         else fallenBoss.fold(
-          LootGenerator.rollBlessingExtraGear(BattleState.BlessingExtraDropPct, battle.rarity, killLevel, rngAfter2))(b =>
+          LootGenerator.rollBlessingExtraGear(BattleState.BlessingExtraDropPct, lastRarity, killLevel, rngAfter2))(b =>
           LootGenerator.rollBlessingBossGear(BattleState.BlessingExtraDropPct, b, hero.lvl, rngAfter2))
       // Каждый легендарный моб смертной расы роняет ровно одну вещь малого
       // набора своей расы. Сюжетный бой — нет: там добычу кладёт сюжет.
@@ -5564,7 +5598,7 @@ case class BattleState(
       (pocketed, rngAfter5) =
         if (storyFight) (List.empty[pangea.model.item.Item], rngAfter4)
         else BattleState.pocketGear(hero.sets.extraGearChancePct, BattleState.killedByHero(fallen.size, battle),
-               battle.rarity, killLevel, rngAfter4)
+               lastRarity, killLevel, rngAfter4)
       // Налёт на деревню мурлоков: тот же клинок старого мурлока, что старейшина
       // дарит за помощь, — те же статы, уровень героя.
       raidBlade = Option.when(battle.story.contains(MurlocQuest.RaidStory))(MurlocQuest.blade(hero, rngAfter5))

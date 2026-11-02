@@ -129,7 +129,13 @@ case class SoloPveBattle(
   // бою с минибоссом тоже, где счётчик группы стоит.
   roundsFought:   Int     = 0,
   // «Второе дыхание» («Первопроходец», порог 12) уже спасло героя — раз за бой.
-  secondWindUsed: Boolean = false
+  secondWindUsed: Boolean = false,
+  // Приговорённый (см. `escapesAfter`): его имя — по нему он узнаётся в строю,
+  // где бы ни стоял. Уходит только он, призванные им сородичи остаются.
+  preyName:       Option[String] = None,
+  // Приговорённый ушёл, пока стоял в паре, а бой на этом кончился победой над
+  // его сородичами: в полях всё ещё он, но в павшие он не идёт.
+  preyGone:       Boolean = false
 ) {
 
   /** Множитель Стены трофеев к урону героя по тому, кто сейчас в полях. */
@@ -331,15 +337,21 @@ case class SoloPveBattle(
     *
     * Герой с места не сходит: у отряда позиции свои. Мобов больше нет — None,
     * это победа. Отложенный Таран сгорает. */
-  def promoteNext: Option[SoloPveBattle] =
+  def promoteNext: Option[SoloPveBattle] = nextInPair(fell = true)
+
+  /** Активный ушёл с поля живым — приговорённый удрал: замена та же, что после
+    * гибели, только в павшие ушедший не пишется — добычи с него нет. */
+  def promoteAfterEscape: Option[SoloPveBattle] = nextInPair(fell = false)
+
+  private def nextInPair(fell: Boolean): Option[SoloPveBattle] =
     if (group.others.isEmpty && group.queue.isEmpty) None
-    else if (group.others.isEmpty) admitQueued._1.promoteNext   // строй пуст, но за ним ждут — входят сами
+    else if (group.others.isEmpty) admitQueued._1.nextInPair(fell)   // строй пуст, но за ним ждут — входят сами
     else {
       val idx = nearestOf(group.places.indices.toList)
       Some(withActive(group.others(idx)).copy(group = group.copy(
         others      = group.others.patch(idx, Nil, 1),
         places      = group.places.patch(idx, Nil, 1),
-        slain       = group.slain :+ slainActive,
+        slain       = if (fell) group.slain :+ slainActive else group.slain,
         activePos   = group.places(idx),
         pendingMove = None)))
     }
@@ -917,6 +929,8 @@ object SoloPveBattle {
       heroStruck          <- c.getOrElse[Boolean]("heroStruck")(false)
       roundsFought        <- c.getOrElse[Int]("roundsFought")(0)
       secondWindUsed      <- c.getOrElse[Boolean]("secondWindUsed")(false)
+      preyName            <- c.getOrElse[Option[String]]("preyName")(None)
+      preyGone            <- c.getOrElse[Boolean]("preyGone")(false)
     } yield SoloPveBattle(monsterLvl, monsterRace, monsterRarity, monsterStats,
                          monsterCurrentHp, monsterCurrentArmor, heroBattleState, consumableUsed, monsterMarked,
                          monsterUndead,
@@ -924,7 +938,7 @@ object SoloPveBattle {
                          story, customName, divineUsed, escapesAfter, noKin, arena, minionLvl, bossTaken,
                          noFlee, lootLevel, holyWater, heroBlockPct, monsterBlockPct,
                          heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall,
-                         monsterLastAllyHit, heroStruck, roundsFought, secondWindUsed)
+                         monsterLastAllyHit, heroStruck, roundsFought, secondWindUsed, preyName, preyGone)
 
   /** Номер самого соперника среди «мобов» зеркала арены; его союзники — от
     * единицы (см. `ArenaSide.allies`). */

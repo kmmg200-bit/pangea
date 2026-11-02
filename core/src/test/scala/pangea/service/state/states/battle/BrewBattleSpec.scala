@@ -2,7 +2,7 @@ package pangea.service.state.states.battle
 
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.model.battle.SoloPveBattle
+import pangea.model.battle.{BattleEffects, MonsterSlot, SoloPveBattle}
 import pangea.model.hero.{Hero, WeaponDust}
 import pangea.model.item.{BrewKind, BrewRates, Item}
 import pangea.model.monster.{Monster, Race, Rarity}
@@ -37,6 +37,15 @@ object BrewBattleSpec extends ZIOSpecDefault {
       FightStats(atk = atk, hp = hp, armor = 0, defence = 0, evasion = 0, accuracy = 10000, energy = 0))
 
   private def mix(id: Long): Item = BrewKind.item(BrewKind.MushroomMix).copy(id = id)
+
+  /** Приговорённый — именной, со своим именем — и сородич, которого он позвал. */
+  private val PreyName = "Грызь Кривозуб"
+  private def named(hp: Long): Monster = monster(hp, atk = 1L).copy(rarity = Rarity.Legendary, customName = Some(PreyName))
+  private val kinStats = FightStats(atk = 1, hp = 1000, armor = 0, defence = 0, evasion = 0, accuracy = 10000, energy = 0)
+  private val kinSlot  = MonsterSlot(lvl, Race.Goblin.entryName, Rarity.Common.entryName, kinStats, 1000L, 0L,
+    marked = false, currentEnergy = 0L, effects = BattleEffects.empty)
+  private val preySlot = MonsterSlot(lvl, Race.Goblin.entryName, Rarity.Legendary.entryName, kinStats.copy(hp = 100000),
+    100000L, 0L, marked = false, currentEnergy = 0L, effects = BattleEffects.empty, customName = Some(PreyName))
 
   private def makeState(h: Hero, battle: SoloPveBattle, bag: List[Item] = Nil) =
     for {
@@ -92,6 +101,53 @@ object BrewBattleSpec extends ZIOSpecDefault {
       } yield assertTrue(first == StateType.Battle && alive.exists(_.group.round == 1)) &&
               assertTrue(gone == StateType.Dungeon && after.forall(_.isNull)) &&
               assertTrue(said.contains("уходит в темноту"))
+    },
+
+    test("приговорённый в паре уходит один: призванный им сородич встаёт к герою, бой идёт дальше") {
+      val prey = SoloPveBattle.from(named(100000L), hero())
+        .withReinforcement(kinSlot).copy(escapesAfter = 1, preyName = Some(PreyName), noKin = true)
+      for {
+        t <- makeState(hero(), prey)
+        (state, dao, _, r) = t
+        _     <- TestRandom.feedInts(60, 99) *> TestRandom.feedLongs(100L, 100L)
+        out   <- state.action(testUser, tap("Attack\",\"target\":\"1"), r)
+        after <- battleOf(dao)
+        said  <- texts(r)
+      } yield assertTrue(out == StateType.Battle && said.contains("остаются драться")) &&
+              assertTrue(after.customName.isEmpty && after.monsterCurrentHp == 1000L) &&
+              assertTrue(!after.monstersInOrder.exists(_.customName.contains(PreyName))) &&
+              // ушёл живым — в павших его нет, а срок снят
+              assertTrue(after.group.slain.isEmpty && after.escapesAfter == 0)
+    },
+
+    test("приговорённый в строю сбоку уходит один — моб в паре остаётся") {
+      val b = SoloPveBattle.from(monster(1000L, atk = 1L), hero())
+        .withReinforcement(preySlot).copy(escapesAfter = 1, preyName = Some(PreyName), noKin = true)
+      for {
+        t <- makeState(hero(), b)
+        (state, dao, _, r) = t
+        _     <- TestRandom.feedInts(60, 99) *> TestRandom.feedLongs(100L, 100L)
+        out   <- state.action(testUser, tap("Attack\",\"target\":\"1"), r)
+        after <- battleOf(dao)
+        said  <- texts(r)
+      } yield assertTrue(out == StateType.Battle && said.contains(PreyName) && said.contains("остаются драться")) &&
+              assertTrue(after.group.others.isEmpty && after.monsterCurrentHp > 0L && after.group.slain.isEmpty)
+    },
+
+    test("приговорённый ушёл последним, а сородичей уже перебили — победа над ними, с него добычи нет") {
+      val prey = SoloPveBattle.from(named(100000L), hero()).copy(escapesAfter = 1, preyName = Some(PreyName),
+        noKin = true)
+      val b = prey.copy(group = prey.group.copy(slain = List(kinSlot.slain)))
+      for {
+        t <- makeState(hero(), b)
+        (state, dao, _, r) = t
+        _     <- TestRandom.feedInts(60, 99) *> TestRandom.feedLongs(100L, 100L)
+        out   <- state.action(testUser, tap("Attack"), r)
+        loot  <- dao.readSceneData(userId)
+        said  <- texts(r)
+      } yield assertTrue(out == StateType.Loot && said.contains("больше не ждёт")) &&
+              // добыча — с одного павшего сородича, а не с приговорённого
+              assertTrue(loot.exists(j => !j.noSpaces.contains(PreyName)))
     },
 
     test("грибная смесь: кнопка есть только со склянкой в сумке") {

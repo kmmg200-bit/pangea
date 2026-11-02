@@ -219,7 +219,8 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
     val battle  = SoloPveBattle.from(monster, hero).copy(
       monsterCurrentHp    = hp,
       monsterCurrentArmor = armor,
-      escapesAfter        = BrewRates.SentenceRounds)
+      escapesAfter        = BrewRates.SentenceRounds,
+      preyName            = monster.customName)
     for {
       _ <- heroDao.updateStatBoosts(user.userId,
              hero.statBoosts.without(BrewRates.SentenceBoost + race.entryName))
