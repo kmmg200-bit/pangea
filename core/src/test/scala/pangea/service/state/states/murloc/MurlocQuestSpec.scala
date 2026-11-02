@@ -251,16 +251,23 @@ object MurlocQuestSpec extends ZIOSpecDefault {
                 // в добыче — тот же клинок, что за помощь: легендарный, уровня героя
                 assertTrue(blade.size == 1 && blade.forall(b => b.rarity == Rarity.Orange && b.itemType == ItemType.Weapon && b.lvl == h.lvl))
       },
-      test("бегство из сюжетного боя ведёт в город, а не в лабиринт") {
+      test("из сюжетного боя не сбежать: кнопки нет, а старая кнопка бегства бой не кончает") {
         val h = strong()
         for {
           dao <- TestHeroDao.withHero(userId, h)
           _   <- dao.writeActiveBattle(userId, SoloPveBattle.from(weakMob(), h, squad = false).copy(story = Some(MurlocQuest.RaidStory)).asJson)
           r   <- TestRenderer.make
           c   <- content
-          _   <- TestRandom.feedInts(100) *> TestRandom.feedLongs(100L)
-          res <- BattleState(dao, TestInventoryRepository.accepting, TestItemRepository.make, c).action(testUser, tap("ConfirmFlee"), r)
-        } yield assertTrue(res == StateType.GlobalMap)
+          st   = BattleState(dao, TestInventoryRepository.accepting, TestItemRepository.make, c)
+          _   <- st.enter(testUser, r)
+          shown <- r.sentScreens.map(_.last.choices.map(_.id))
+          ask <- st.action(testUser, tap("Flee"), r)
+          res <- st.action(testUser, tap("ConfirmFlee"), r)
+          all <- texts(r)
+          still <- dao.readActiveBattle(userId)
+        } yield assertTrue(!shown.contains("Flee") && shown.contains("Attack")) &&
+                assertTrue(ask == StateType.Battle && res == StateType.Battle && still.isDefined) &&
+                assertTrue(all.contains("Отступать некуда"))
       },
       test("смерть в налёте: проснуться в городе у трёх камней, карта остаётся") {
         for {

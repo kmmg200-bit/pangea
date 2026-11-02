@@ -102,13 +102,14 @@ case class MarisaHuntState(
 
   /** Тайник: добыча через общий экран, возврат сюда — на коллектора. Карта
     * Кельвина своё отслужила — сокровище найдено, и она уходит из сумки сразу:
-    * иначе по ней можно было бы снова отправиться к тому же тайнику. */
+    * иначе по ней можно было бы снова отправиться к тому же тайнику. С ней —
+    * и письмо Марисе, молча: адресат его уже прочёл. */
   private def huntDone(user: User, renderer: Renderer): Task[StateType] =
     for {
       p    <- requireProgress(user)
       _    <- scheduler.cancel(user.userId, TaskKind.MarisaHunt)
       hero <- getHero(user)
-      _    <- QuestSupport.removeItems(inventoryRepo, hero, Set(QuestItemKind.KelvinMap))
+      _    <- QuestSupport.removeItems(inventoryRepo, hero, Set(QuestItemKind.KelvinMap, QuestItemKind.MarisaLetter))
       seed <- Random.nextLong
       (gear, _) = ItemGenerator.createItemAtLevel(MarisaQuest.CacheGearLevel, Rarity.Purple, Rng(seed))
       loot  = LootData(

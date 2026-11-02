@@ -732,6 +732,9 @@ case class SoloPveBattle(
    *  («Огненный Элементаль»); у обычных мобов — из таблицы раса × редкость.
    *  Держим его ЗДЕСЬ, а не в [[Monster]]: тот читается из таблицы `monsters`
    *  целиком (`select *`), и лишнее поле сломало бы чтение. */
+  /** Сбежать нельзя: западня (`noFlee`) или сюжетный бой — из него не уходят. */
+  def cantFlee: Boolean = noFlee || story.isDefined
+
   def monsterName: String = customName.orElse(boss.map(_.monsterName)).getOrElse(toMonster.name)
 
   def rarity: Rarity = Rarity.withName(monsterRarity)

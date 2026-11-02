@@ -4322,17 +4322,22 @@ case class BattleState(
 
   private def flee(user: User, renderer: Renderer): Task[StateType] =
     getBattle(user).flatMap { battle =>
-      // Западня: место и время выбирал не герой, и уйти отсюда некуда.
-      if (battle.noFlee)
-        renderer.show(user, Screen(content.format("battle.noFlee", "monster" -> battle.monsterName), Nil))
-          .as(StateType.Battle)
+      // Западня или сюжетный бой: уйти отсюда некуда.
+      if (battle.cantFlee) renderer.show(user, Screen(noFleeText(battle), Nil)).as(StateType.Battle)
       else renderer.show(user, content.screen("battle.fleeConfirm")).as(StateType.Battle)
     }
+
+  /** Почему не сбежать: из сюжетного боя не уходят, из западни — некуда. */
+  private def noFleeText(battle: SoloPveBattle): String =
+    if (battle.story.isDefined) content.text("battle.noFleeStory")
+    else content.format("battle.noFlee", "monster" -> battle.monsterName)
 
   /** Подтверждённое бегство: моб делает один удар (без каста/тиков/регена, как и
     * прежде). Умер герой — Death; иначе — Fled (бой очистит commit). */
   private def fleeTurn(hero: Hero, battle: SoloPveBattle, nowMs: Long): Task[TurnResult] =
-    for {
+    // Старая кнопка подтверждения из сюжетного боя или западни — не бегство.
+    if (battle.cantFlee) cont(hero, battle, noFleeText(battle))
+    else for {
       buffedEff <- ZIO.succeed(effWithAir(hero, battle, nowMs))
       monster   = battle.toMonster
       // Мобы вне пары могут не выпустить: по 5% за каждого. Окружили — бой
@@ -5897,14 +5902,16 @@ case class BattleState(
         mixButton.toList ++
         divineButton.toList ++
         miasmaButton.toList ++
-        List(
+        // Из сюжетного боя не сбежать — и кнопки нет. У западни она есть: что
+        // уйти некуда, герой узнаёт, попробовав.
+        Option.unless(battle.story.isDefined)(
           pangea.engine.Choice(
             "Flee",
             "Сбежать",
             color = pangea.engine.ChoiceColor.Negative,
             row = Some(4)
           )
-        )
+        ).toList
     Screen(text, topButtons ++ mainButtons)
   }
 
