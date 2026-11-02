@@ -27,8 +27,9 @@ import java.util.concurrent.TimeUnit
   * InventoryState). Сначала развилка: напасть или помочь.
   *
   * Налёт — сюжетный бой (`story = murlocRaid`) с десятью мурлоками в строю и
-  * тринадцатью в очереди за ним, уровня героя; в отличие от коллектора,
-  * награждается как обычный бой. Отряд идёт с героем, но Плюх в налёте
+  * тринадцатью в очереди за ним, уровня сложности задания; в отличие от
+  * коллектора, награждается как обычный бой, и в добыче — тот же «Клинок
+  * старого мурлока», что за помощь. Отряд идёт с героем, но Плюх в налёте
   * участвовать отказывается и уходит по свитку до боя. Победа возвращает сюда
   * (`Progress(AfterRaid)` через добычу): карта уходит, «Гроза Мурлоков».
   *
@@ -99,11 +100,12 @@ case class MurlocVillageState(
       hero    = if (plukh) hero0.copy(squad = hero0.squad.sentAway(AllyKind.Murloc, now)) else hero0
       _      <- ZIO.when(plukh)(heroDao.updateSquad(user.userId, hero.squad))
       seed   <- Random.nextLong
-      (front, queue, _) = MurlocQuest.raidMonsters(hero.lvl.toInt, Rng(seed))
+      // Сила деревни — по сложности задания (⚰️), а не по уровню героя.
+      (front, queue, _) = MurlocQuest.raidMonsters(MurlocQuest.MapDifficulty, Rng(seed))
       frontEnergies <- ZIO.foreach(front)(startEnergy)
       queueSlots    <- ZIO.foreach(queue)(m => startEnergy(m).map(e => slot(m, e)))
       battle  = queueSlots.foldLeft(SoloPveBattle.fromGroup(front, hero, frontEnergies))(_ admit _)
-                  .copy(story = Some(MurlocQuest.RaidStory))
+                  .copy(story = Some(MurlocQuest.RaidStory), lootLevel = Some(MurlocQuest.MapDifficulty.toLong))
       routing = LootData(Nil, Nil, returnState = Some(StateType.MurlocVillage), eventData = Some(Progress(Step.AfterRaid).asJson))
       _      <- heroDao.writeActiveBattle(user.userId, battle.asJson)
       _      <- heroDao.writeSceneData(user.userId, routing.asJson)

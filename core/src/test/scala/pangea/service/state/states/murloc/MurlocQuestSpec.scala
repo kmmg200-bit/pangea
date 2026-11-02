@@ -209,13 +209,15 @@ object MurlocQuestSpec extends ZIOSpecDefault {
                 // больше (единая схема), и за передними сразу встают первые из
                 // тех, кто ждал: поле заполняется до отказа.
                 assertTrue(front.size == Formation.MonsterPlaces &&
-                           front.forall(m => m.race == Race.Murloc.entryName && m.lvl == 7L)) &&
+                           front.forall(m => m.race == Race.Murloc.entryName && m.lvl == MurlocQuest.MapDifficulty.toLong)) &&
                 assertTrue(front.take(MurlocQuest.RaidFront)
                              .forall(m => Set(MobRarity.Uncommon, MobRarity.Rare).map(_.entryName).contains(m.rarity))) &&
                 assertTrue(front.drop(MurlocQuest.RaidFront)
                              .forall(m => Set(MobRarity.Rare, MobRarity.Mythical).map(_.entryName).contains(m.rarity))) &&
                 assertTrue(queue.size == MurlocQuest.RaidQueue + 1 - (Formation.MonsterPlaces - MurlocQuest.RaidFront) &&
-                           queue.forall(m => m.race == Race.Murloc.entryName && m.lvl == 7L)) &&
+                           queue.forall(m => m.race == Race.Murloc.entryName && m.lvl == MurlocQuest.MapDifficulty.toLong)) &&
+                // уровень мурлоков — сложность задания (⚰️ = 10), не уровень героя; награда — по ней же
+                assertTrue(MurlocQuest.MapDifficulty == 10 && battle.lootLevel.contains(10L)) &&
                 assertTrue(queue.init.forall(m => Set(MobRarity.Rare, MobRarity.Mythical).map(_.entryName).contains(m.rarity))) &&
                 assertTrue(queue.last.rarity == MobRarity.Legendary.entryName && queue.last.name == "Старый Мрачноглаз") &&
                 assertTrue(loot.returnState.contains(StateType.MurlocVillage) && loot.eventData.flatMap(_.as[Progress].toOption).exists(_.step == Step.AfterRaid)) &&
@@ -243,7 +245,11 @@ object MurlocQuestSpec extends ZIOSpecDefault {
           _   <- TestRandom.feedInts(60) *> TestRandom.feedLongs(100L)
           res <- BattleState(dao, TestInventoryRepository.accepting, TestItemRepository.make, c).action(testUser, tap("Attack"), r)
           after <- heroOf(dao)
-        } yield assertTrue(res == StateType.Loot && after.exp > 0L && after.kills == 6L)
+          loot  <- dao.readSceneData(userId).map(_.flatMap(_.as[LootData].toOption))
+          blade  = loot.toList.flatMap(_.items).filter(i => bladeNames.contains(i.name))
+        } yield assertTrue(res == StateType.Loot && after.exp > 0L && after.kills == 6L) &&
+                // в добыче — тот же клинок, что за помощь: легендарный, уровня героя
+                assertTrue(blade.size == 1 && blade.forall(b => b.rarity == Rarity.Orange && b.itemType == ItemType.Weapon && b.lvl == h.lvl))
       },
       test("бегство из сюжетного боя ведёт в город, а не в лабиринт") {
         val h = strong()

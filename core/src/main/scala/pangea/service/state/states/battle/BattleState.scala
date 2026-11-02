@@ -5307,7 +5307,7 @@ case class BattleState(
       }
       // Сюжетный бой: ни опыта, ни добычи по таблицам — только то, что положил
       // сюжет. Налёт на деревню мурлоков — исключение: награда как за обычный
-      // бой, только этаж для неё — уровень героя (мурлоки его уровня). Задание
+      // бой по сложности задания (её он называет сам, lootLevel). Задание
       // с доски называет свой уровень само (см. SoloPveBattle.lootLevel):
       // разбойники третьего уровня и падают как третьего.
       // Подъём «Пропавшей дружины» сквозь гоблинов — такой же: награда как за
@@ -5383,12 +5383,15 @@ case class BattleState(
           (acc :+ (name -> (d ++ extra)), r)
       }
       // Благословение: 5% шанс дополнительной экипировки после боя.
-      (blessingGear, _) =
+      (blessingGear, rngAfter3) =
         if (!blessed) (Option.empty[pangea.model.item.Item], rngAfter2)
         // С минибосса лишняя вещь — из его набора: она с того, кого убили.
         else fallenBoss.fold(
           LootGenerator.rollBlessingExtraGear(BattleState.BlessingExtraDropPct, battle.rarity, killLevel, rngAfter2))(b =>
           LootGenerator.rollBlessingBossGear(BattleState.BlessingExtraDropPct, b, hero.lvl, rngAfter2))
+      // Налёт на деревню мурлоков: тот же клинок старого мурлока, что старейшина
+      // дарит за помощь, — те же статы, уровень героя.
+      raidBlade = Option.when(battle.story.contains(MurlocQuest.RaidStory))(MurlocQuest.blade(hero, rngAfter3))
       // Именной оставляет свой уникальный трофей — если у героя такого ещё
       // нет. Сюжетный бой — нет: там добычу кладёт сюжет.
       owned <- if (storyFight) ZIO.succeed(Set.empty[String]) else ownedNamedTrophies(user, hero, fallen)
@@ -5424,7 +5427,7 @@ case class BattleState(
       // Первый экран добычи — первый павший; остальные ждут своей очереди. Имя
       // моба над добычей показываем только в группе.
       lootData = LootState.LootData(
-        items = first.items ++ blessingGear.toList,
+        items = first.items ++ blessingGear.toList ++ raidBlade.toList,
         silvers = first.silvers,
         doubloons = first.doubloons,
         returnState = lootReturn,
