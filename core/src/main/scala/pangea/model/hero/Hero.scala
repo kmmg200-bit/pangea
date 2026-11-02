@@ -256,8 +256,11 @@ case class Hero(
 
   def effectiveMaxHp(nowMs: Long): Long = {
     val p           = combinedPenalties(nowMs)
-    // Телосложение от «Первопроходца» (порог 3) поднимает и HP — тем же процентом.
-    val effectiveVit = HeroRaceBuff.of(race).applyVit(baseStats.vit) * (100L + sets.vitBonusPct) / 100L
+    // Телосложение — то же, что в характеристиках: прибавка достижений до расы
+    // (раньше её здесь не было, и +1 к телосложению HP не поднимал), процент
+    // «Первопроходца» (порог 3) — поверх.
+    val effectiveVit =
+      HeroRaceBuff.of(race).applyVit(baseStats.vit + Achievement.vitBonus(this)) * (100L + sets.vitBonusPct) / 100L
     val base        = effectiveVit * 24L
     val subtotal    = (base * (1.0 - p.vitPct) * (1.0 - p.hpPct) * statBoosts.vitFactor(nowMs)).toLong.max(1L) +
       equipment.allHp

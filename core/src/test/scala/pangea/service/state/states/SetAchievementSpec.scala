@@ -117,6 +117,16 @@ object SetAchievementSpec extends ZIOSpecDefault {
       assertTrue(eight.effectiveBaseStats(0L) == BaseStats(agi = 12, vit = 12, str = 12, int = 12))
     },
 
+    test("телосложение от достижений поднимает и HP: +1 — это +24 HP, как у вложенного очка") {
+      val bare   = TestFixtures.hero(userId)
+      val friend = bare.withAchievement(Achievement.SquadFriend)
+      val two    = bare.withAchievement(Achievement.PioneerSet).withAchievement(Achievement.MountainMasterSet)
+      val point  = bare.copy(baseStats = bare.baseStats.copy(vit = bare.baseStats.vit + 1))
+      assertTrue(friend.effectiveMaxHp(0L) == bare.effectiveMaxHp(0L) + 24L) &&
+      assertTrue(friend.effectiveMaxHp(0L) == point.effectiveMaxHp(0L)) &&
+      assertTrue(two.effectiveMaxHp(0L) == bare.effectiveMaxHp(0L) + 48L)
+    },
+
     test("расовый набор собран человеком — достижение всё равно его: от расы зависит лишь скрытый шаг") {
       for {
         full <- equipFromBag(wearing(ItemSet.Horde, 11), ItemSet.Horde)
