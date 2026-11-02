@@ -14,8 +14,8 @@ import scala.annotation.tailrec
   *
   *   - снаряжение: 2 экземпляра гарантированно, 3-й — с шансом 50%, и только
   *     если он выпал, ролится 4-й (тоже 50%) → итог 2–4 предмета; редкость
-  *     каждого: Blue 20 · Purple 35 · Violet 31 · Orange 14 (сумма = 100);
-  *   - серебро выпадает гарантированно (`lvl×12×100 ±20%`);
+  *     каждого: Blue 31 · Purple 35 · Violet 31 · Orange 3 (сумма = 100);
+  *   - серебро выпадает гарантированно (`lvl×1020 ±20%`);
   *   - дублоны — с шансом 80% (30–70), сверх серебра;
   *   - ингредиенты минибоссов — с шансом 35%: ступень зоны плюс 0..1 штук, каждый —
   *     любой из ингредиентов всех минибоссов поровну (новые боссы попадают сами);
@@ -43,11 +43,11 @@ object TreasureHuntGenerator {
   // Редкость снаряжения (в %, сумма = 100). Ниже синей не бывает.
   private val gearRarityWeights: List[(ItemRarity, Int)] =
     List(
-      ItemRarity.Blue   -> 27,
+      ItemRarity.Blue   -> 31,
       ItemRarity.Purple -> 35, // фиолетовая
       ItemRarity.Violet -> 31, // пурпурная
-      // Оранжевых стало вдвое меньше, их половина ушла синим.
-      ItemRarity.Orange -> 7
+      // Оранжевых — 3%: было 7%, разница ушла синим.
+      ItemRarity.Orange -> 3
     )
 
   /** `knowsRareHerbs` — знает ли герой цветы 2 ранга: без знания редкие травы
@@ -107,10 +107,13 @@ object TreasureHuntGenerator {
       rollGear(n - 1, zone, item :: acc, r3)
     }
 
-  // Серебро: базис lvl×12×100 (уровень — из диапазона зоны) с разбросом ±20%, минимум 1.
+  /** Серебро за уровень: было 1200, срезано на 15%. */
+  val SilverPerLevel: Long = 1020L
+
+  // Серебро: базис lvl×SilverPerLevel (уровень — из диапазона зоны) с разбросом ±20%, минимум 1.
   private def rollSilver(zone: MapZone, rng: Rng): (Long, Rng) = {
     val (lvl, r1)   = levelIn(zone, rng)
-    val base        = lvl.max(1L) * 12L * 100L
+    val base        = lvl.max(1L) * SilverPerLevel
     val (pct, next) = r1.between(80L, 121L) // 80..120 %
     ((base * pct / 100L).max(1L), next)
   }

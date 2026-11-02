@@ -90,12 +90,16 @@ object SchronGeneratorSpec extends ZIOSpecDefault {
       assertTrue(gears.forall(i => i.lvl >= 1L && i.lvl <= 51L))
     },
 
-    test("половинка карты сокровищ (3%) встречается в схроне") {
+    test("половинка карты сокровищ (1,5% на слот) встречается в схроне") {
       val half = rewards(Race.Demon, 50L, 2, 3)
         .flatMap(_.items)
         .find(_.itemType == ItemType.TreasureMapHalf)
+      // на схрон: 1,5% + 98,5% × 60% × 1,5% ≈ 2,39%
+      val many  = (1L to 20000L).map(s => SchronGenerator.roll(Race.Demon, 50L, 2, 3, Rng(s))._1)
+      val share = many.count(_.items.exists(_.itemType == ItemType.TreasureMapHalf)).toDouble * 100.0 / many.size
       assertTrue(half.nonEmpty) &&
-      assertTrue(half.forall(hasZone))
+      assertTrue(half.forall(hasZone)) &&
+      assertTrue(share > 1.9 && share < 2.9)
     },
 
     test("рунные камни (5% за счёт экипировки) встречаются в схроне: и большие, и малые, без уровня") {

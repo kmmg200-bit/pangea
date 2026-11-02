@@ -29,12 +29,12 @@ object TreasureHuntGeneratorSpec extends ZIOSpecDefault {
       assertTrue(rewards.forall(_.items.forall(i => allowedRarities.contains(i.rarity))))
     },
 
-    test("оранжевых вещей в кладе 7%, синих 27% — половина оранжевых ушла синим") {
+    test("оранжевых вещей в кладе 3%, синих 31% — разница с прежними 7% ушла синим") {
       val items = (1 to 4000).toList.flatMap(s => TreasureHuntGenerator.roll(zone, Rng(s.toLong))._1.items)
       def pct(r: Rarity): Double = items.count(_.rarity == r).toDouble * 100.0 / items.size
       assertTrue(items.size > 10000) &&
-      assertTrue(pct(Rarity.Orange) > 6.0 && pct(Rarity.Orange) < 8.0) &&
-      assertTrue(pct(Rarity.Blue) > 25.5 && pct(Rarity.Blue) < 28.5) &&
+      assertTrue(pct(Rarity.Orange) > 2.3 && pct(Rarity.Orange) < 3.7) &&
+      assertTrue(pct(Rarity.Blue) > 29.5 && pct(Rarity.Blue) < 32.5) &&
       // фиолетовая и пурпурная остались как были
       assertTrue(pct(Rarity.Purple) > 33.5 && pct(Rarity.Purple) < 36.5) &&
       assertTrue(pct(Rarity.Violet) > 29.5 && pct(Rarity.Violet) < 32.5)
@@ -48,6 +48,11 @@ object TreasureHuntGeneratorSpec extends ZIOSpecDefault {
 
     test("серебро выпадает всегда (гарантированно положительное)") {
       assertTrue(rewards.forall(_.silver > 0L))
+    },
+
+    test("серебро — уровень зоны × 1020 ±20% (51..75 → 41 616..91 800)") {
+      assertTrue(TreasureHuntGenerator.SilverPerLevel == 1020L) &&
+      assertTrue(rewards.forall(r => r.silver >= 51L * 1020L * 80L / 100L && r.silver <= 75L * 1020L * 120L / 100L))
     },
 
     test("дублоны выпадают часто, но не всегда (~80%)") {
