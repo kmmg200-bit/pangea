@@ -33,6 +33,9 @@ trait ActivityDao {
   /** Билеты недели по игрокам. */
   def tickets(week: Long): Task[List[WeekTickets]]
 
+  /** Билеты недели одного игрока — для письма о новом билете. */
+  def ticketsOf(userId: UserId, week: Long): Task[WeekTickets]
+
   /** Подведена ли уже неделя. */
   def awarded(week: Long): Task[Boolean]
 
@@ -69,6 +72,14 @@ class ActivityDaoLive(xa: Transactor[Task]) extends ActivityDao {
           order by user_id"""
       .query[(Long, Long, Long)].to[List].transact(xa)
       .map(_.map { case (user, gold, silver) => WeekTickets(UserId(user), gold, silver) })
+
+  override def ticketsOf(userId: UserId, week: Long): Task[WeekTickets] =
+    sql"""select count(*) filter (where kind = 'gold'),
+                 count(*) filter (where kind = 'silver')
+          from activity_tickets
+          where user_id = ${userId.value} and week = $week"""
+      .query[(Long, Long)].unique.transact(xa)
+      .map { case (gold, silver) => WeekTickets(userId, gold, silver) }
 
   override def awarded(week: Long): Task[Boolean] =
     sql"select count(*) from activity_prizes where week = $week"

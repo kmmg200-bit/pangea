@@ -138,10 +138,12 @@ object ActivityContestSpec extends ZIOSpecDefault {
         nextWeek = week + ActivityContest.WeekMs + hour
         _ <- c.settle(nextWeek)
         _ <- c.settle(nextWeek + 60000L)               // через минуту — уже подведено
-        letters = players.sentLetters.toMap
+        // письма о каждом билете тут не в счёт — только итоги
+        weekly  = players.sentLetters.filter(_._2.contains("Итоги недели"))
+        letters = weekly.toMap
       } yield assertTrue(payouts.snapshot == Map(
                 HeroId(1L) -> (100L, 2L), HeroId(2L) -> (0L, 1L), HeroId(3L) -> (100L, 0L))) &&
-              assertTrue(players.sentLetters.size == 3) &&
+              assertTrue(weekly.size == 3) &&
               assertTrue(letters(UserId(1L)).contains("Золотые билеты принесли вам 🟡 2") &&
                          letters(UserId(1L)).contains("Серебряные билеты принесли вам 🪙 100")) &&
               // у кого серебряных нет, про них и не пишем
@@ -158,6 +160,36 @@ object ActivityContestSpec extends ZIOSpecDefault {
         _ <- c.settle(now)
       } yield assertTrue(payouts.snapshot.isEmpty && players.announced.isEmpty && players.sentLetters.isEmpty) &&
               assertTrue(dao.awardedSnapshot.contains(week - ActivityContest.WeekMs))
+    },
+
+    test("о каждом новом билете — письмо: находка, за что он и счёт недели; о повторе и отказе — молчок") {
+      for {
+        t <- contest()
+        (c, _, _, players) = t
+        _       <- c.handle(post(1L, now - hour), now)
+        _       <- c.handle(post(2L, now - 2 * day), now)
+        _       <- c.handle(like(1, 1L), now)
+        _       <- c.handle(like(1, 1L), now + 1000L)       // повтор — билета нет
+        _       <- c.handle(comment(1, 1L), now + 2000L)
+        _       <- c.handle(comment(1, 1L), now + 3000L)    // серебряный за сутки уже есть
+        _       <- c.handle(like(1, 2L), now)               // пост старше суток
+        letters  = players.sentLetters.map(_._2)
+      } yield assertTrue(letters.size == 2) &&
+              assertTrue(letters.head.startsWith("🎫 ") && letters.head.contains("золотой билетик") &&
+                         letters.head.contains("Это вам за лайк.") &&
+                         letters.head.contains("золотых билетов — 1, серебряных — 0")) &&
+              assertTrue(letters(1).startsWith("🎟 ") && letters(1).contains("серебряный билетик") &&
+                         letters(1).contains("Это вам за комментарий.") &&
+                         letters(1).contains("золотых билетов — 1, серебряных — 1")) &&
+              assertTrue(letters.forall(l => l.contains("🟡 1") && l.contains("🪙 100") && !l.contains("{")))
+    },
+
+    test("находок десять, и в каждой есть место для билетика") {
+      for {
+        content <- ZIO.attempt(SceneContent.load())
+        lines    = content.list("activity.noticeLines")
+      } yield assertTrue(lines.size == 10 && lines.distinct.size == 10) &&
+              assertTrue(lines.forall(_.contains("{ticket}")))
     },
 
     test("«Рейтинга» в беседе больше нет") {

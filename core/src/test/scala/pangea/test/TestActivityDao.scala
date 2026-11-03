@@ -35,6 +35,9 @@ class TestActivityDao(payouts: TestPayoutDao) extends ActivityDao {
         .sortBy(_.userId.value)
     }
 
+  def ticketsOf(userId: UserId, week: Long): Task[WeekTickets] =
+    tickets(week).map(_.find(_.userId == userId).getOrElse(WeekTickets(userId, 0L, 0L)))
+
   def awarded(week: Long): Task[Boolean] = ZIO.succeed(awardedWeeks.contains(week))
 
   def award(week: Long, prizes: List[TicketPrize], now: Long): Task[Boolean] =

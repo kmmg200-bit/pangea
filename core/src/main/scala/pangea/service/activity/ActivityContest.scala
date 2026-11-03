@@ -6,12 +6,13 @@ import pangea.engine.{Players, SceneContent}
 import pangea.model.hero.{AzatState, Hero}
 import pangea.model.user.{User, VkId}
 import pangea.repository.user.UserRepository
-import zio.{Task, ZIO, ZLayer}
+import zio.{Random, Task, ZIO, ZLayer}
 
 /** Билеты за активность в группе ВК. Лайк свежего поста — золотой билет, по
   * одному на пост; комментарий под свежим постом — серебряный, по одному в
-  * сутки. В конце недели каждый золотой оборачивается дублоном, каждый
-  * серебряный — сотней серебра, и игрок получает об этом одно письмо.
+  * сутки. О каждом новом билете игроку сразу приходит письмо — шуточная
+  * находка и счёт за неделю. В конце недели каждый золотой оборачивается
+  * дублоном, каждый серебряный — сотней серебра, и об этом ещё одно письмо.
   *
   * Свежий пост — вышедший не раньше суток назад. Сутки и неделя — московские
   * (неделя с понедельника 00:00). Билеты идут только игрокам с героем. */
@@ -35,13 +36,35 @@ final case class ActivityContest(
     dao.postedAt(post).flatMap {
       case Some(at) if now - at <= PostWindowMs =>
         player(VkId(vk.toString)).flatMap {
-          case Some((user, _)) => dao.recordTicket(user.userId, kind.key, slot, weekStart(now), now).unit
+          case Some((user, _)) =>
+            val week = weekStart(now)
+            // Письмо — только о новом билете: повтор события или второй лайк
+            // того же поста ничего не дают, и писать не о чем.
+            dao.recordTicket(user.userId, kind.key, slot, week, now)
+              .flatMap(fresh => ZIO.when(fresh)(notice(user, kind, week))).unit
           case None            => ZIO.unit
         }
       // Пост старый или мы его не видели (вышел до того, как бот стал их
       // запоминать) — билета за него нет.
       case _ => ZIO.unit
     }
+
+  /** Письмо о новом билете: случайная находка и сколько билетов за неделю.
+    * Закрытые сообщения игрока билету не мешают — письмо просто не дойдёт. */
+  private def notice(user: User, kind: Kind, week: Long): Task[Unit] = {
+    val lines = content.list("activity.noticeLines")
+    for {
+      t   <- dao.ticketsOf(user.userId, week)
+      idx <- Random.nextIntBounded(lines.size.max(1))
+      ticket = content.text(s"activity.ticket.${kind.key}")
+      line   = lines.lift(idx).getOrElse("").replace("{ticket}", ticket)
+      _   <- players.notify(user, content.format("activity.notice",
+               "emoji" -> content.text(s"activity.emoji.${kind.key}"), "line" -> line,
+               "reason" -> content.text(s"activity.reason.${kind.key}"),
+               "gold" -> t.gold.toString, "silver" -> t.silver.toString,
+               "perGold" -> DoubloonsPerTicket.toString, "perSilver" -> SilverPerTicket.toString)).ignore
+    } yield ()
+  }
 
   /** Игрок с героем по его странице ВК. */
   private def player(vk: VkId): Task[Option[(User, Hero)]] =
