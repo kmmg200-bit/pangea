@@ -259,14 +259,17 @@ case class Item(
     numeric ++ setLine ++ rangedLine ++ extra ++ socketLines
   }
 
-  /** Строки о гнёздах: сводка «занято/всего» и по одному камню на строку.
-   *  Пусто у предметов без гнёзд. */
+  /** Строки о гнёздах: сводка «занято/всего» и по одному камню на строку — с
+   *  тем, что он даёт именно в этой вещи: в оружии — оружейную грань, в прочем
+   *  снаряжении и в щите — броневую (как их и считает `Equipment`). Пусто у
+   *  предметов без гнёзд. */
   def socketLines: List[String] =
     if (sockets.isEmpty) Nil
     else {
       val filled = sockets.count(_.isDefined)
       val header = s"🔲 Гнёзда: $filled/${sockets.length}"
-      header :: socketedGems.map(g => s"💎 ${g.displayName}")
+      val inWeapon = itemType == ItemType.Weapon || itemType == ItemType.AdditionalWeapon
+      header :: socketedGems.map(g => s"💎 ${g.displayName}: ${if (inWeapon) g.weaponEffect else g.armorEffect}")
     }
 
   /** Строка «надетого/сравниваемого» предмета — единый формат для всех экранов,

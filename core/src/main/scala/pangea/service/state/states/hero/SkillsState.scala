@@ -171,6 +171,22 @@ object SkillsState {
         (header +: lines).mkString("\n") + next
       }
     }
+
+    /** Эффекты оружия: камни в гнёздах оружия и пыль на нём — и итог: как
+     *  оружие бьёт по броне и по HP и что ещё даёт удару (см. [[weaponFx]]). */
+    case object WeaponFx extends SkillEntry {
+      def buttonId: String = "Fx_Weapon"
+      def label: String    = "⚔ Эффекты оружия"
+      def describe(hero: Hero): String = weaponFx(hero)
+    }
+
+    /** Эффекты доспехов: камни во всём снаряжении, кроме оружия (щит — здесь),
+     *  и их сумма (см. [[armorFx]]). */
+    case object ArmorFx extends SkillEntry {
+      def buttonId: String = "Fx_Armor"
+      def label: String    = "🛡 Эффекты доспехов"
+      def describe(hero: Hero): String = armorFx(hero)
+    }
   }
 
   private val ActivePrefix  = "ActiveSkill_"
@@ -197,7 +213,52 @@ object SkillsState {
     hero.activeSkillSlots.map(s => SkillEntry.Active(s.itemId, s.skill, wornWith(eq, s.skill))) ++
       hero.passives.kinds.toList.sortBy(_.label).map(k =>
         SkillEntry.Passive(k, onBody = !worn.contains(k), eq.allItems.count(_.passive.contains(k)))) ++
+      Option.when(eq.weaponGems.nonEmpty || hero.weaponDust.gems.nonEmpty)(SkillEntry.WeaponFx).toList ++
+      Option.when(eq.armorGems.nonEmpty)(SkillEntry.ArmorFx).toList ++
       hero.sets.activeBonuses.map { case (set, _) => SkillEntry.Set(set, hero.sets.shownPieces(set)) }
+  }
+
+  private def pct(mult: Double): Long = math.round(mult * 100.0)
+
+  /** Что на оружии и как оно бьёт: каждый камень с его оружейной гранью, пыль,
+   *  и итог — доля урона по броне и по HP (стихии, их усиление грейдами и
+   *  «Дикое пламя» на пороге 4 — тем же счётом, что в бою), и прочие грани. */
+  def weaponFx(hero: Hero): String = {
+    val g         = hero.gems
+    val gems      = hero.equipment.weaponGems.map(gm => s"💎 ${gm.displayName}: ${gm.weaponEffect}")
+    val dust      = hero.weaponDust.layers.flatMap(m => m.gem.map(k =>
+                      s"✨ ${m.displayName}: ${pangea.model.item.Gem(k, pangea.model.item.Gem.MinGrade).weaponEffect}"))
+    val fireBonus = if (g.hasElement(pangea.model.battle.Element.Fire)) hero.sets.fireDamageBonus else 0.0
+    val elements  = pangea.model.battle.Element.values.filter(g.hasElement).map(_.emoji)
+    val totals = List(
+      Option.when(elements.nonEmpty)(s"• Стихии: ${elements.mkString(" ")}"),
+      Some(s"• Урон по броне: ${pct(g.armorDamageMult + fireBonus)}%"),
+      Some(s"• Урон по HP: ${pct(g.hpDamageMult + fireBonus)}%"),
+      Option.when(g.lightningArmorToHpFrac > 0)(s"• Ещё ${pct(g.lightningArmorToHpFrac)}% урона по броне проходит в HP"),
+      Option.when(g.vampirismPct > 0)(s"• Вампиризм: ${g.vampirismPct}%"),
+      Option.when(g.energyRegenBonusPct > 0)(s"• Восстановление энергии: +${g.energyRegenBonusPct}%"),
+      Option.when(g.accuracyBonusPct > 0)(s"• Точность: +${g.accuracyBonusPct}%"),
+      Option.when(g.airEvasionAccuracyBonusPct > 0)(s"• Уклонение и точность: +${g.airEvasionAccuracyBonusPct}%"),
+      Option.when(g.weaponPoisonPct > 0)(s"• Яд при уроне по HP: ${g.weaponPoisonPct}%"),
+      Option.when(hero.weaponDust.damageMult < 1.0)(s"• Перебор пыли: урон ${pct(hero.weaponDust.damageMult)}%")
+    ).flatten
+    ((gems ++ dust) ++ ("" :: "Итог:" :: totals)).mkString("\n")
+  }
+
+  /** Камни во всём снаряжении, кроме оружия: каждый с его броневой гранью и
+   *  сумма по всем. */
+  def armorFx(hero: Hero): String = {
+    val g    = hero.gems
+    val gems = hero.equipment.armorGems.map(gm => s"💎 ${gm.displayName}: ${gm.armorEffect}")
+    val totals = List(
+      Option.when(g.defenceBonusPct > 0)(s"• Защита: +${g.defenceBonusPct}%"),
+      Option.when(g.evasionBonusPct > 0)(s"• Уклонение: +${g.evasionBonusPct}%"),
+      Option.when(g.maxHpBonusPct > 0)(s"• Макс. HP: +${g.maxHpBonusPct}% и +${g.flatHp}"),
+      Option.when(g.energyBonusPct > 0)(s"• Энергия: +${g.energyBonusPct}%"),
+      Option.when(g.hpRegenPerMille > 0)(s"• Восстановление HP: ${g.hpRegenPerMille / 10.0}% за раунд"),
+      Option.when(g.gearDropBonusPct > 0)(s"• Шанс экипировки: +${g.gearDropBonusPct}%")
+    ).flatten
+    (if (totals.isEmpty) gems else gems ++ ("" :: "Итог:" :: totals)).mkString("\n")
   }
 
   /** Сколько надетых вещей несут активное умение — те же, с которых оно и

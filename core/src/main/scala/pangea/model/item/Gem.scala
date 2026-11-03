@@ -16,11 +16,18 @@ import io.circe.{Decoder, Encoder, HCursor}
  *  (см. [[GemKind.inertWeapon]]/[[inertArmor]]). */
 sealed abstract class GemKind(val baseName: String) extends EnumEntry {
 
+  /** Что даёт камень этого грейда в гнезде оружия — без приставки: так он
+    * подписан в карточке вещи, где гнездо и так видно. */
+  def weaponEffect(grade: Int): String
+
+  /** Что даёт камень в гнезде прочего снаряжения (и щита) — без приставки. */
+  def armorEffect(grade: Int): String
+
   /** Описание оружейной грани для данного грейда (инвентарь/дроп). */
-  def weaponEffectText(grade: Int): String
+  def weaponEffectText(grade: Int): String = s"В гнезде оружия: ${weaponEffect(grade)}"
 
   /** Описание броневой грани для данного грейда. */
-  def armorEffectText(grade: Int): String
+  def armorEffectText(grade: Int): String = s"В гнезде снаряжения: ${armorEffect(grade)}"
 }
 
 object GemKind extends Enum[GemKind] {
@@ -32,33 +39,33 @@ object GemKind extends Enum[GemKind] {
     val WeaponVampPctPerGrade: Long          = 1L  // вампиризм: % нанесённого по HP урона в лечение
     val WeaponEnergyRegenPctPerGrade: Long   = 1L  // +% к восстановлению энергии в бою
     val ArmorHpRegenPerMillePerGrade: Long   = 5L  // 0.5% макс.HP реген/раунд (в промилле)
-    def weaponEffectText(g: Int): String =
-      s"В гнезде оружия: вампиризм ${WeaponVampPctPerGrade * g}% нанесённого урона в HP и +${WeaponEnergyRegenPctPerGrade * g}% к восстановлению энергии."
-    def armorEffectText(g: Int): String =
-      s"В гнезде снаряжения: +${ArmorHpRegenPerMillePerGrade * g / 10.0}% макс. HP регенерация каждый раунд."
+    def weaponEffect(g: Int): String =
+      s"вампиризм ${WeaponVampPctPerGrade * g}% нанесённого урона в HP и +${WeaponEnergyRegenPctPerGrade * g}% к восстановлению энергии."
+    def armorEffect(g: Int): String =
+      s"+${ArmorHpRegenPerMillePerGrade * g / 10.0}% макс. HP регенерация каждый раунд."
   }
 
   // ── Аметист ───────────────────────────────────────────────────────────────
   case object Amethyst extends GemKind("Аметист") {
     val WeaponAccuracyPctPerGrade: Long = 5L
     val ArmorDefencePctPerGrade: Long   = 1L
-    def weaponEffectText(g: Int): String = s"В гнезде оружия: +${WeaponAccuracyPctPerGrade * g}% к итоговой точности."
-    def armorEffectText(g: Int): String  = s"В гнезде снаряжения: +${ArmorDefencePctPerGrade * g}% к итоговой защите."
+    def weaponEffect(g: Int): String = s"+${WeaponAccuracyPctPerGrade * g}% к итоговой точности."
+    def armorEffect(g: Int): String  = s"+${ArmorDefencePctPerGrade * g}% к итоговой защите."
   }
 
   // ── Сапфир (стихия холода; броневая грань «магия» — отложена) ────────────────
   case object Sapphire extends GemKind("Сапфир") {
-    def weaponEffectText(g: Int): String = s"В гнезде оружия: стихия Холода, +${2 * g}% к стихийному урону. +10% урона по броне."
-    def armorEffectText(g: Int): String  = s"В гнезде снаряжения: +${1 * g}% к эффективности магии. (пока не действует)"
+    def weaponEffect(g: Int): String = s"стихия Холода, +${2 * g}% к стихийному урону. +10% урона по броне."
+    def armorEffect(g: Int): String  = s"+${1 * g}% к эффективности магии. (пока не действует)"
   }
 
   // ── Изумруд ──────────────────────────────────────────────────────────────
   case object Emerald extends GemKind("Изумруд") {
     val WeaponPoisonTenthPctPerGrade: Long = 15L // 1.5% яда за грейд (в десятых долях %)
     val ArmorEvasionPctPerGrade: Long      = 1L
-    def weaponEffectText(g: Int): String =
-      s"В гнезде оружия: при уроне по HP накладывает ${WeaponPoisonTenthPctPerGrade * g / 10.0}% яда."
-    def armorEffectText(g: Int): String = s"В гнезде снаряжения: +${ArmorEvasionPctPerGrade * g}% к итоговому уклонению."
+    def weaponEffect(g: Int): String =
+      s"при уроне по HP накладывает ${WeaponPoisonTenthPctPerGrade * g / 10.0}% яда."
+    def armorEffect(g: Int): String = s"+${ArmorEvasionPctPerGrade * g}% к итоговому уклонению."
   }
 
   // ── Рубин (стихия огня; броневая грань — макс. HP) ───────────────────────────
@@ -67,22 +74,22 @@ object GemKind extends Enum[GemKind] {
     val ArmorFlatHpBase: Long         = 10L
     val ArmorFlatHpPerExtraGrade: Long = 30L
     def flatHp(g: Int): Long = ArmorFlatHpBase + ArmorFlatHpPerExtraGrade * (g - 1)
-    def weaponEffectText(g: Int): String = s"В гнезде оружия: стихия Огня, +${2 * g}% к стихийному урону. -20% по броне, +10% по HP; 30% шанс поджечь."
-    def armorEffectText(g: Int): String  = s"В гнезде снаряжения: +${ArmorMaxHpPctPerGrade * g}% к макс. HP и +${flatHp(g)} к макс. HP."
+    def weaponEffect(g: Int): String = s"стихия Огня, +${2 * g}% к стихийному урону. -20% по броне, +10% по HP; 30% шанс поджечь."
+    def armorEffect(g: Int): String  = s"+${ArmorMaxHpPctPerGrade * g}% к макс. HP и +${flatHp(g)} к макс. HP."
   }
 
   // ── Бриллиант (стихия воздуха; броневая грань — энергия) ─────────────────────
   case object Diamond extends GemKind("Бриллиант") {
     val ArmorEnergyPctPerGrade: Long = 1L
-    def weaponEffectText(g: Int): String = s"В гнезде оружия: стихия Воздуха, +${2 * g}% к стихийному урону. -10% урона, +5% уклонения/точности; 30% шанс усилить их."
-    def armorEffectText(g: Int): String  = s"В гнезде снаряжения: +${ArmorEnergyPctPerGrade * g}% к Энергии."
+    def weaponEffect(g: Int): String = s"стихия Воздуха, +${2 * g}% к стихийному урону. -10% урона, +5% уклонения/точности; 30% шанс усилить их."
+    def armorEffect(g: Int): String  = s"+${ArmorEnergyPctPerGrade * g}% к Энергии."
   }
 
   // ── Топаз (стихия молнии; броневая грань — шанс экипировки) ───────────────────
   case object Topaz extends GemKind("Топаз") {
     val ArmorGearChancePctPerGrade: Long = 1L
-    def weaponEffectText(g: Int): String = s"В гнезде оружия: стихия Молнии, +${2 * g}% к стихийному урону. -20% по броне, -10% по HP; 20% урона игнорирует броню противника."
-    def armorEffectText(g: Int): String  = s"В гнезде снаряжения: +${ArmorGearChancePctPerGrade * g}% к шансу получения экипировки."
+    def weaponEffect(g: Int): String = s"стихия Молнии, +${2 * g}% к стихийному урону. -20% по броне, -10% по HP; 20% урона игнорирует броню противника."
+    def armorEffect(g: Int): String  = s"+${ArmorGearChancePctPerGrade * g}% к шансу получения экипировки."
   }
 
   implicit val encoder: Encoder[GemKind] = (k: GemKind) => k.entryName.asJson
@@ -106,6 +113,10 @@ case class Gem(kind: GemKind, grade: Int) {
   /** Строка эффекта для гнезда в оружии/снаряжении. */
   def weaponEffectText: String = kind.weaponEffectText(grade)
   def armorEffectText: String  = kind.armorEffectText(grade)
+
+  /** Что даёт камень в гнезде оружия / прочего снаряжения — без приставки. */
+  def weaponEffect: String = kind.weaponEffect(grade)
+  def armorEffect: String  = kind.armorEffect(grade)
 }
 
 object Gem {
