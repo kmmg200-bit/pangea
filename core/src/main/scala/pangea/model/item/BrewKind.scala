@@ -41,6 +41,9 @@ object BrewEffect {
     * (см. [[PotionKind]]). С карточки его не пьют — он работает из ячейки
     * пояса, и больше нигде. */
   final case class Potion(kind: PotionKind) extends BrewEffect
+  /** Мерцание: герой выбирает свободное место своего строя и в конце раунда
+    * встаёт туда; место заняли — на ближайшее свободное. Только из пояса. */
+  case object Shift extends BrewEffect
 }
 
 /** Отвары: три травы в кубе Азата → порции ([[portions]]). Из трав первого
@@ -75,11 +78,12 @@ sealed abstract class BrewKind(
     case _                                         => true
   }
 
-  /** Боевой отвар — тот, что заменяет склянку: только из ячейки пояса и только
-    * в бою (см. [[BrewEffect.Potion]]). */
+  /** Боевой отвар — только из ячейки пояса и только в бою: тот, что заменяет
+    * склянку (см. [[BrewEffect.Potion]]), и мерцающий настой — переходить с
+    * места на место можно только в строю. */
   def combat: Boolean = effect match {
-    case BrewEffect.Potion(_) => true
-    case _                    => false
+    case BrewEffect.Potion(_) | BrewEffect.Shift => true
+    case _                                       => false
   }
 
   /** Отвар, который идёт в рецепт вместе с травами: перегонка берёт готовую
@@ -354,6 +358,12 @@ object BrewKind extends Enum[BrewKind] {
     List(MirageFlower, Valerian, Eyebright),
     s"Мутная вода, в которой отражаешься трижды. Выпить перед боем — и первые ${BrewRates.MirrorCopies} удара уйдут в призрачные копии; копии тают одна за другой, а вы остаётесь.",
     BrewEffect.Mirror(BrewRates.MirrorCopies))
+
+  case object ShimmerBrew extends BrewKind(
+    "Мерцающий настой",
+    List(ShimmerFlower, Valerian, Sage),
+    "Свет в склянке то вспыхивает, то гаснет, и вместе с ним будто пропадает сама склянка. Выпивший начинает мерцать так же: выбирает любое свободное место в своём строю и к концу раунда проявляется там. Займут его раньше — проявится на ближайшем свободном.",
+    BrewEffect.Shift)
 
   val values: IndexedSeq[BrewKind] = findValues
 

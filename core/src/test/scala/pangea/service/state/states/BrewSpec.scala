@@ -81,7 +81,8 @@ object BrewSpec extends ZIOSpecDefault {
       val rng = Rng(7L)
       def brewFrom(kind: BrewKind) =
         CubeCraft.craft(kind.recipe.zipWithIndex.map { case (h, i) => herb(h, i.toLong + 1L) }, charges = 5, rng)
-      val combat = BrewKind.combatBrews
+      // мерцающий настой тоже боевой, но он на редкой траве — здесь только зверобой
+      val combat = BrewKind.combatBrews.filter(_.recipe.contains(MaterialKind.StJohnsWort))
       val brewed = combat.map(brewFrom)
       assertTrue(combat.size == 8) &&
       // каждый рецепт сходится и даёт по две склянки — травы-то простые

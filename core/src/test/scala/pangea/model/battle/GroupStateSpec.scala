@@ -447,6 +447,21 @@ object GroupStateSpec extends ZIOSpecDefault {
       assertTrue(old.as[SoloPveBattle].toOption.exists(!_.isGroup)) &&
       // без activePos (старая запись) активный стоит на месте героя
       assertTrue(noPos.as[SoloPveBattle].toOption.exists(_.group.paired))
+    },
+
+    test("мерцающий настой: свободное место — оно само; заняли — ближайшее; ближе свободного нет — где стоял") {
+      val g = GroupState(heroPos = 1, allies = List(fighter(AllyKind.Rat, 5), fighter(AllyKind.Rat, 6)))
+      val b = SoloPveBattle.fromGroup(trio, hero, Nil)
+      assertTrue(g.shiftSpot(3) == 3) &&
+      // пятое и шестое заняты — ближайшее к пятому свободное четвёртое
+      assertTrue(g.shiftSpot(5) == 4) &&
+      // при равном расстоянии — правее
+      assertTrue(g.copy(allies = List(fighter(AllyKind.Rat, 5))).shiftSpot(5) == 6) &&
+      // место героя тоже в счёт: ближе свободного нет — он остаётся
+      assertTrue(g.copy(heroPos = 3, allies = List(fighter(AllyKind.Rat, 2), fighter(AllyKind.Rat, 4))).shiftSpot(2) == 3) &&
+      // отложенный шаг переживает сериализацию
+      assertTrue(b.copy(group = b.group.copy(pendingShift = Some(7))).asJson.as[SoloPveBattle].toOption
+        .exists(_.group.pendingShift.contains(7)))
     }
   )
 }

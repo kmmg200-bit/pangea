@@ -230,6 +230,9 @@ object SlainMonster {
   *  - `slain`   — павшие, в порядке гибели, для выдачи добычи после победы;
   *  - `round`   — сколько раундов прошло (каждый четвёртый — перемешивание);
   *  - `pendingMove` — Таран: место, на которое герой шагнёт в конце раунда;
+  *  - `pendingShift` — мерцающий настой: свободное место своей стороны, куда
+  *    герой встанет в конце раунда (перемешивание его не сбрасывает — оно про
+  *    чужой строй);
   *  - `originRace` — раса первого моба: подкрепление приходит той же расы;
   *  - `allies`  — союзники героя по своим позициям (см. [[BattleAlly]]);
   *  - `alliesGone` — кого за этот бой унесло из строя: наёмник после боя
@@ -250,7 +253,8 @@ final case class GroupState(
   lastTarget:  Option[MonsterSlot] = None,
   heroDown:    Boolean            = false,
   queue:       List[MonsterSlot]  = Nil,
-  downRounds:  Int                = 0
+  downRounds:  Int                = 0,
+  pendingShift: Option[Int]       = None
 ) {
   def isGroup: Boolean = others.nonEmpty
 
@@ -295,6 +299,13 @@ final case class GroupState(
     * правее): туда встаёт тот, кто выскочил у него из-под ног. */
   def nearestFreeAllyPlace: Option[Int] =
     freeAllyPlaces.sortBy(p => (math.abs(p - heroPos), -p)).headOption
+
+  /** Куда встанет мерцающий герой, просивший место `want`: оно само, если ещё
+    * свободно; заняли — ближайшее к нему свободное (при равном расстоянии —
+    * правее). Место, где герой стоит сейчас, тоже считается: ближе свободного
+    * нет — он остаётся где был. */
+  def shiftSpot(want: Int): Int =
+    (heroPos :: freeAllyPlaces).minBy(p => (math.abs(p - want), -p))
 
   /** Куда отпрыгнет герой («Отскок»): по своему ряду не дальше чем на `dist`
     * мест — на место, где нет союзника и напротив пусто, и так, чтобы цель на
@@ -435,6 +446,7 @@ object GroupState {
       heroDown    <- c.getOrElse[Boolean]("heroDown")(false)
       queue       <- c.getOrElse[List[MonsterSlot]]("queue")(Nil)
       downRounds  <- c.getOrElse[Int]("downRounds")(0)
+      shift       <- c.getOrElse[Option[Int]]("pendingShift")(None)
     } yield GroupState(others, slain, round, pendingMove, originRace, heroPos, places, allies, gone, activePos, lastTarget,
-                       heroDown, queue, downRounds)
+                       heroDown, queue, downRounds, shift)
 }

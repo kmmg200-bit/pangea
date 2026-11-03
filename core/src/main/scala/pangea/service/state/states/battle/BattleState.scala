@@ -4207,9 +4207,14 @@ case class BattleState(
         (getHero(user) <*> ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))).flatMap { case (hero, now) =>
           BattleState.beltAt(hero, idx) match {
             case Some(br: BeltSlot.Brew) if BattleState.needsPick(br.kind) =>
-              brewRefusal(hero, br.kind, now) match {
-                case Some(why) => renderer.show(user, Screen(why, Nil, inline = true)).as(StateType.Battle)
-                case None      => offerBeltPick(user, hero, idx, br.kind, now, renderer)
+              heroDao.readActiveBattle(user.userId).map(_.flatMap(_.as[SoloPveBattle].toOption)).flatMap {
+                // Боя уже нет — кнопка из старого сообщения.
+                case None         => showBelt(user, renderer)
+                case Some(battle) =>
+                  brewRefusal(hero, battle, br.kind, now) match {
+                    case Some(why) => renderer.show(user, Screen(why, Nil, inline = true)).as(StateType.Battle)
+                    case None      => offerBeltPick(user, hero, battle, idx, br.kind, now, renderer)
+                  }
               }
             case _ =>
               resolve(user, renderer, content.text("arena.turn.belt"))(beltTurn(idx)) <* showBelt(user, renderer)
@@ -4227,10 +4232,11 @@ case class BattleState(
     }
 
   /** Вопрос к отвару: костоправный спрашивает, какую травму снять, заправка
-    * (живая вода) — какую флягу заправить. Кнопки живут внутри отдельного
-    * сообщения, как и сам пояс, — боевая сцена не меняется. */
-  private def offerBeltPick(user: User, hero: Hero, idx: Int, kind: BrewKind, nowMs: Long,
-                            renderer: Renderer): Task[StateType] = {
+    * (живая вода) — какую флягу заправить, мерцающий настой — на какое место
+    * встать. Кнопки живут внутри отдельного сообщения, как и сам пояс, —
+    * боевая сцена не меняется. */
+  private def offerBeltPick(user: User, hero: Hero, battle: SoloPveBattle, idx: Int, kind: BrewKind,
+                            nowMs: Long, renderer: Renderer): Task[StateType] = {
     val (head, options, perRow) = kind.effect match {
       case BrewEffect.CureTrauma =>
         (content.text("battle.belt.whichTrauma"),
@@ -4245,6 +4251,11 @@ case class BattleState(
               "charges" -> f.charges.toString, "max" -> f.maxCharges.toString), i.toString)
           },
           1)
+      // Места — все свободные своей стороны, по номеру.
+      case BrewEffect.Shift =>
+        (content.text("battle.belt.wherePlace"),
+          battle.group.freeAllyPlaces.map(p => (content.format("battle.belt.placePick", "n" -> p.toString), p.toString)),
+          BattleState.PlacesPerRow)
       case _ => (content.text("battle.belt.gone"), Nil, 1)
     }
     val buttons = options.zipWithIndex.map { case ((label, pick), i) =>
@@ -4297,7 +4308,7 @@ case class BattleState(
           case Some(br: BeltSlot.Brew) if !pickValid(hero, br.kind, pick, nowMs) =>
             cont(hero, battle, content.text("battle.belt.askAgain"))
           case Some(br: BeltSlot.Brew) =>
-            brewRefusal(hero, br.kind, nowMs) match {
+            brewRefusal(hero, battle, br.kind, nowMs) match {
               // Лечить нечего, мазать нечем — склянка цела, и раунд тоже.
               case Some(why) => cont(hero, battle, why)
               case None =>
@@ -4356,13 +4367,17 @@ case class BattleState(
           .exists(t => t.severity != Trauma.Heavy && hero.activeTraumas(nowMs).contains(t))
       case BrewEffect.RefillFlask(sources) =>
         pick.flatMap(_.toIntOption).exists(i => refillableFlasks(hero, sources).exists(_._1 == i))
+      // Место могли занять, пока игрок думал, — тогда герой встанет рядом;
+      // годится любое место своей стороны.
+      case BrewEffect.Shift =>
+        pick.flatMap(_.toIntOption).exists(p => p >= 1 && p <= Formation.HeroPlaces)
       case _ => true
     }
 
   /** Почему этим отваром сейчас не воспользоваться: лечить нечего, мазать
     * нечем, заправлять некуда. Ячейка при этом остаётся полной, а раунд —
     * нетронутым. */
-  private def brewRefusal(hero: Hero, kind: BrewKind, nowMs: Long): Option[String] =
+  private def brewRefusal(hero: Hero, battle: SoloPveBattle, kind: BrewKind, nowMs: Long): Option[String] =
     kind.effect match {
       case BrewEffect.CureTrauma =>
         val active = hero.activeTraumas(nowMs)
@@ -4373,6 +4388,14 @@ case class BattleState(
         Some(content.text("battle.belt.noWeapon"))
       case BrewEffect.RefillFlask(sources) if refillableFlasks(hero, sources).isEmpty =>
         Some(content.text("battle.belt.noFlask"))
+      // Мерцать некуда: бой без строя (такой босс ходит один на один),
+      // герой пригвождён или все места отряда заняты.
+      case BrewEffect.Shift if battle.boss.exists(!_.fightsInGroup) =>
+        Some(content.text("battle.belt.noFormation"))
+      case BrewEffect.Shift if battle.effects.heroRooted =>
+        Some(content.text("battle.belt.shimmerPinned"))
+      case BrewEffect.Shift if battle.group.freeAllyPlaces.isEmpty =>
+        Some(content.text("battle.belt.noPlace"))
       case _ => None
     }
 
@@ -4464,6 +4487,15 @@ case class BattleState(
         boosted(name, buff, nowMs + BrewRates.BoostDurationMs,
           content.format("battle.belt.boosted", "brew" -> kind.label,
             "pct" -> BrewRates.BoostPct.toString, "stat" -> label))
+
+      // Мерцающий настой: место запоминается, шаг — в конце раунда (endRound).
+      case BrewEffect.Shift =>
+        pick.flatMap(_.toIntOption) match {
+          case None    => done(hero, battle, Vector(content.text("battle.belt.askAgain")))
+          case Some(p) =>
+            done(hero, battle.copy(group = battle.group.copy(pendingShift = Some(p))),
+              Vector(content.format("battle.belt.shimmer", "n" -> p.toString)))
+        }
 
       // Зеркальный настой: копии встают тут же, в этом бою.
       case BrewEffect.Mirror(copies) =>
@@ -5475,7 +5507,8 @@ case class BattleState(
 
   /** Конец раунда группы. Ход, который ходом не был (`turn` вернул бой без
     * изменений), сюда не доходит. Порядок: подкрепление → перемешивание каждый
-    * четвёртый раунд → отложенный Таран, чтобы перемешивание его не съело. */
+    * четвёртый раунд → отложенный Таран, чтобы перемешивание его не съело →
+    * мерцающий настой. */
   private def endRound(before: SoloPveBattle, res: TurnResult): Task[TurnResult] =
     if (res.outcome != Outcome.Continue || !res.endsRound || res.battle == before ||
         res.battle.boss.exists(!_.fightsInGroup)) ZIO.succeed(res)
@@ -5548,7 +5581,26 @@ case class BattleState(
           case _ => (b2.copy(group = b2.group.copy(pendingMove = None)), Vector.empty[String])
         }
         (b3, log3) = rammed
-      } yield res.copy(battle = b3, sideLog = res.sideLog ++ log1 ++ log2 ++ log3)
+        // Мерцающий настой: герой встаёт на выбранное место своей стороны — уже
+        // после Тарана, раз оба случились в одном раунде. Напротив стоит моб —
+        // герой с ним в паре, как после «Переместиться».
+        shifted = b3.group.pendingShift match {
+          case None => (b3, Vector.empty[String])
+          case Some(want) =>
+            val b  = b3.copy(group = b3.group.copy(pendingShift = None))
+            val to = b.group.shiftSpot(want)
+            if (b.group.heroDown) (b, Vector.empty[String])
+            else if (b.effects.heroRooted) (b, Vector(content.text("battle.group.shimmerPinned")))
+            else if (to == b.group.heroPos)
+              (b, if (to == want) Vector.empty[String]
+                  else Vector(content.format("battle.group.shimmerStay", "want" -> want.toString)))
+            else
+              (if (b.group.hasMonster(to)) b.moveHeroTo(to) else b.copy(group = b.group.copy(heroPos = to)), Vector(
+                if (to == want) content.format("battle.group.shimmer", "n" -> to.toString)
+                else content.format("battle.group.shimmerAside", "want" -> want.toString, "n" -> to.toString)))
+        }
+        (b4, log4) = shifted
+      } yield res.copy(battle = b4, sideLog = res.sideLog ++ log1 ++ log2 ++ log3 ++ log4)
     }
 
   /** Призыв сородичей: легендарный зовёт 2–3 третьего–четвёртого ранга,
@@ -6641,11 +6693,12 @@ object BattleState {
   }
 
   /** Спрашивает ли отвар, на что его тратят: костоправный — какую травму
-    * снять, заправка (живая вода) — какую флягу заправить. Приговор спрашивал
+    * снять, заправка (живая вода) — какую флягу заправить, мерцающий настой —
+    * на какое место встать. Приговор спрашивал
     * бы род, но в ячейку он не ложится. */
   def needsPick(kind: BrewKind): Boolean = kind.effect match {
-    case BrewEffect.CureTrauma | BrewEffect.RefillFlask(_) => true
-    case _                                                 => false
+    case BrewEffect.CureTrauma | BrewEffect.RefillFlask(_) | BrewEffect.Shift => true
+    case _                                                                    => false
   }
 
   /** Ячейка, которой после боя найдётся замена в сумке. */
@@ -6666,6 +6719,9 @@ object BattleState {
 
   /** Сколько кнопок выбора ставим в ряд, когда отвар спрашивает. */
   val PicksPerRow: Int = 3
+
+  /** Сколько мест в ряд, когда мерцающий настой спрашивает, куда встать. */
+  val PlacesPerRow: Int = 4
 
   /** Бонус благословения Азата (в %): к опыту, серебру и редкости добычи. */
   val BlessingBonusPct: Long = AzatState.BlessingBonusPct

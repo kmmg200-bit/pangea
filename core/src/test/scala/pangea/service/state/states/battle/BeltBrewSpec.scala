@@ -2,8 +2,9 @@ package pangea.service.state.states.battle
 
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.model.battle.SoloPveBattle
+import pangea.model.battle.{BattleAlly, Formation, SoloPveBattle}
 import pangea.model.hero.Hero
+import pangea.model.squad.AllyKind
 import pangea.model.item.{BeltSlot, BrewKind, BrewRates, FlaskKind, Item, ItemDetails, ItemType, MaterialKind, Rarity => ItemRarity}
 import pangea.model.monster.{Monster, Race, Rarity}
 import pangea.model.stats.FightStats
@@ -309,6 +310,65 @@ object BeltBrewSpec extends ZIOSpecDefault {
       } yield assertTrue(after.statBoosts.hasActive(BrewRates.RotCallBoost, 0L)) &&
               assertTrue(slots(after) == List(BeltSlot.Brew(BrewKind.RotCall, spent = true))) &&
               assertTrue(screens.contains("Узелок развязан") && !screens.contains("Джо"))
+    },
+
+    test("мерцающий настой показывает все свободные места, а в конце раунда ставит героя на выбранное") {
+      val h = hero(BeltSlot.Brew(BrewKind.ShimmerBrew))
+      for {
+        t <- makeState(h, battle(h, 100000L))
+        (state, dao, r) = t
+        _     <- state.action(testUser, useSlot(0), r)
+        ask   <- r.sentScreens.map(_.last)
+        start <- battleOf(dao)
+        _     <- state.action(testUser, pick(0, "5"), r)
+        mid   <- battleOf(dao)
+        midH  <- dao.getHeroByUserId(userId).map(_.get)
+        // раунд закрывает удар — шаг случается в его конце
+        _     <- state.action(testUser, tap("Attack"), r)
+        after <- battleOf(dao)
+        log   <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+        free   = (1 to Formation.HeroPlaces).filterNot(_ == start.group.heroPos).map(p => s"Место $p").toList
+      } yield // вопрос — все свободные места своей стороны; ход на него не ушёл
+              assertTrue(ask.inline && ask.choices.map(_.label) == free) &&
+              assertTrue(!start.consumableUsedThisRound) &&
+              // выпит: место запомнено, но герой пока стоит где стоял
+              assertTrue(mid.group.pendingShift.contains(5) && mid.group.heroPos == start.group.heroPos) &&
+              assertTrue(slots(midH) == List(BeltSlot.Brew(BrewKind.ShimmerBrew, spent = true))) &&
+              assertTrue(after.group.heroPos == 5 && after.group.pendingShift.isEmpty) &&
+              assertTrue(log.contains("проявляетесь на месте 5"))
+    },
+
+    test("мерцающий настой: место заняли — герой встаёт на ближайшее свободное") {
+      val h   = hero()
+      // мобы на местах 1–6: крысе на пятом есть кого бить, и она стоит
+      val b0  = battle(h, List.fill(6)(100000L): _*)
+      val rat = BattleAlly(AllyKind.Rat, 5, 10L, 0L, 0L, FightStats(1, 10, 0, 0, 0, 1, 0), 1L)
+      val b   = b0.copy(group = b0.group.copy(allies = List(rat), pendingShift = Some(5)))
+      for {
+        t <- makeState(h, b)
+        (state, dao, r) = t
+        // в досягаемости двое — бьём того, кто в паре, раунд закрывается
+        _     <- state.action(testUser, UserAction("", Some(s"""{"action":"Attack","target":"${b.group.heroPos}"}""")), r)
+        after <- battleOf(dao)
+        log   <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield // четвёртое и шестое одинаково близко — встаёт правее
+              assertTrue(after.group.heroPos == 6) &&
+              assertTrue(log.contains("Место 5 заняли"))
+    },
+
+    test("мерцающий настой: пригвождённому с места не сойти — склянка цела, и раунд тоже") {
+      val h  = hero(BeltSlot.Brew(BrewKind.ShimmerBrew))
+      val b0 = battle(h, 100000L)
+      val b  = b0.copy(effects = b0.effects.copy(heroRootedTurns = 2))
+      for {
+        t <- makeState(h, b)
+        (state, dao, r) = t
+        _       <- state.action(testUser, useSlot(0), r)
+        after   <- dao.getHeroByUserId(userId).map(_.get)
+        fight   <- battleOf(dao)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(slots(after) == slots(h) && !fight.consumableUsedThisRound) &&
+              assertTrue(screens.contains("пригвождены"))
     },
 
     test("шнапс, самогон, сонный дурман и приговор в ячейку не ложатся") {
