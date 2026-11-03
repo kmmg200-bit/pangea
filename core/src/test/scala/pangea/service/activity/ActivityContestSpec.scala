@@ -122,7 +122,7 @@ object ActivityContestSpec extends ZIOSpecDefault {
       } yield assertTrue(tickets.isEmpty)
     },
 
-    test("конец недели: золотой — дублон, серебряный — сотня серебра, каждому одно письмо, в беседу — сводка, и всё один раз") {
+    test("конец недели: золотой — два дублона, серебряный — 100–300 серебра каждый, каждому одно письмо, в беседу — сводка, и всё один раз") {
       for {
         t <- contest()
         (c, _, payouts, players) = t
@@ -134,23 +134,26 @@ object ActivityContestSpec extends ZIOSpecDefault {
         _ <- c.handle(like(2, 1L), now)
         _ <- c.handle(post(3L, now + day - hour), now + day)
         _ <- c.handle(comment(3, 3L), now + day)
-        // наступила следующая неделя
+        _ <- c.handle(comment(1, 3L), now + day)       // у первого — второй серебряный
+        // наступила следующая неделя; серебро бросается на каждый билет:
+        // первому 120 и 300, третьему 100
         nextWeek = week + ActivityContest.WeekMs + hour
+        _ <- TestRandom.feedLongs(120L, 300L, 100L)
         _ <- c.settle(nextWeek)
         _ <- c.settle(nextWeek + 60000L)               // через минуту — уже подведено
         // письма о каждом билете тут не в счёт — только итоги
         weekly  = players.sentLetters.filter(_._2.contains("Итоги недели"))
         letters = weekly.toMap
       } yield assertTrue(payouts.snapshot == Map(
-                HeroId(1L) -> (100L, 2L), HeroId(2L) -> (0L, 1L), HeroId(3L) -> (100L, 0L))) &&
+                HeroId(1L) -> (420L, 4L), HeroId(2L) -> (0L, 2L), HeroId(3L) -> (100L, 0L))) &&
               assertTrue(weekly.size == 3) &&
-              assertTrue(letters(UserId(1L)).contains("Золотые билеты принесли вам 🟡 2") &&
-                         letters(UserId(1L)).contains("Серебряные билеты принесли вам 🪙 100")) &&
+              assertTrue(letters(UserId(1L)).contains("Золотые билеты принесли вам 🟡 4") &&
+                         letters(UserId(1L)).contains("Серебряные билеты принесли вам 🪙 420")) &&
               // у кого серебряных нет, про них и не пишем
               assertTrue(!letters(UserId(2L)).contains("Серебряные")) &&
               assertTrue(!letters(UserId(3L)).contains("Золотые")) &&
               assertTrue(players.announced == List(
-                "🎫 Участники лотереи разделили между собой 🟡 3 и 🪙 200, спасибо всем за участие!"))
+                "🎫 Участники лотереи разделили между собой 🟡 6 и 🪙 520, спасибо всем за участие!"))
     },
 
     test("неделя без билетов подводится молча: ни выплат, ни писем, ни сводки") {
@@ -176,12 +179,16 @@ object ActivityContestSpec extends ZIOSpecDefault {
         letters  = players.sentLetters.map(_._2)
       } yield assertTrue(letters.size == 2) &&
               assertTrue(letters.head.startsWith("🎫 ") && letters.head.contains("золотой билетик") &&
-                         letters.head.contains("Это вам за лайк.") &&
                          letters.head.contains("золотых билетов — 1, серебряных — 0")) &&
               assertTrue(letters(1).startsWith("🎟 ") && letters(1).contains("серебряный билетик") &&
-                         letters(1).contains("Это вам за комментарий.") &&
                          letters(1).contains("золотых билетов — 1, серебряных — 1")) &&
-              assertTrue(letters.forall(l => l.contains("🟡 1") && l.contains("🪙 100") && !l.contains("{")))
+              assertTrue(letters.forall(l => l.contains("Рахадим подведёт итоги лотереи и обязательно вас найдёт для приза. Где бы вы ни спрятались.") &&
+                                             !l.contains("{")))
+    },
+
+    test("золотой билет — два дублона, серебряный — от 100 до 300 серебра") {
+      assertTrue(ActivityContest.DoubloonsPerTicket == 2L) &&
+      assertTrue(ActivityContest.SilverMin == 100L && ActivityContest.SilverMax == 300L)
     },
 
     test("находок десять, и в каждой есть место для билетика") {

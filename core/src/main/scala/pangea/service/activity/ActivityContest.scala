@@ -12,7 +12,8 @@ import zio.{Random, Task, ZIO, ZLayer}
   * одному на пост; комментарий под свежим постом — серебряный, по одному в
   * сутки. О каждом новом билете игроку сразу приходит письмо — шуточная
   * находка и счёт за неделю. В конце недели каждый золотой оборачивается
-  * дублоном, каждый серебряный — сотней серебра, и об этом ещё одно письмо.
+  * двумя дублонами, каждый серебряный — серебром от 100 до 300, и об этом ещё
+  * одно письмо.
   *
   * Свежий пост — вышедший не раньше суток назад. Сутки и неделя — московские
   * (неделя с понедельника 00:00). Билеты идут только игрокам с героем. */
@@ -60,9 +61,7 @@ final case class ActivityContest(
       line   = lines.lift(idx).getOrElse("").replace("{ticket}", ticket)
       _   <- players.notify(user, content.format("activity.notice",
                "emoji" -> content.text(s"activity.emoji.${kind.key}"), "line" -> line,
-               "reason" -> content.text(s"activity.reason.${kind.key}"),
-               "gold" -> t.gold.toString, "silver" -> t.silver.toString,
-               "perGold" -> DoubloonsPerTicket.toString, "perSilver" -> SilverPerTicket.toString)).ignore
+               "gold" -> t.gold.toString, "silver" -> t.silver.toString)).ignore
     } yield ()
   }
 
@@ -85,13 +84,18 @@ final case class ActivityContest(
         for {
           tickets <- dao.tickets(week)
           found   <- ZIO.foreach(tickets)(t => byUserId(t).map(_.map { case (u, h) => (t, u, h) }))
-          winners  = found.flatten
-          prizes   = winners.map { case (t, _, hero) => TicketPrize(hero.id, t.silver * SilverPerTicket, t.gold * DoubloonsPerTicket) }
-          paid    <- dao.award(week, prizes, now)
-          _       <- ZIO.when(paid && winners.nonEmpty)(congratulate(winners.map { case (t, u, _) => t -> u }))
+          winners <- ZIO.foreach(found.flatten) { case (t, user, hero) =>
+                       silverFor(t.silver).map(silver => TicketPrize(hero.id, silver, t.gold * DoubloonsPerTicket) -> user)
+                     }
+          paid    <- dao.award(week, winners.map(_._1), now)
+          _       <- ZIO.when(paid && winners.nonEmpty)(congratulate(winners))
         } yield ()
     }
   }
+
+  /** Серебро за `count` серебряных билетов: каждый бросается отдельно. */
+  private def silverFor(count: Long): Task[Long] =
+    ZIO.foldLeft(1L to count)(0L)((sum, _) => Random.nextLongBetween(SilverMin, SilverMax + 1L).map(sum + _))
 
   private def byUserId(t: WeekTickets): Task[Option[(User, Hero)]] =
     for {
@@ -99,22 +103,22 @@ final case class ActivityContest(
       hero <- heroDao.getHeroByUserId(t.userId)
     } yield for { u <- user; h <- hero } yield (u, h)
 
-  private def congratulate(winners: List[(WeekTickets, User)]): Task[Unit] = {
-    val doubloons = winners.map(_._1.gold * DoubloonsPerTicket).sum
-    val silver    = winners.map(_._1.silver * SilverPerTicket).sum
+  private def congratulate(winners: List[(TicketPrize, User)]): Task[Unit] = {
+    val doubloons = winners.map(_._1.doubloons).sum
+    val silver    = winners.map(_._1.silver).sum
     for {
-      _ <- ZIO.foreachDiscard(winners) { case (t, user) => players.notify(user, letter(t)).ignore }
+      _ <- ZIO.foreachDiscard(winners) { case (prize, user) => players.notify(user, letter(prize)).ignore }
       _ <- players.announce(content.format("activity.results",
              "doubloons" -> doubloons.toString, "silver" -> silver.toString)).ignore
     } yield ()
   }
 
   /** Письмо игроку: что принесли билеты каждого вида — сами билеты не считаем. */
-  private def letter(t: WeekTickets): String = {
-    val gold   = Option.when(t.gold > 0L)(content.format("activity.goldLine",
-                   "doubloons" -> (t.gold * DoubloonsPerTicket).toString))
-    val silver = Option.when(t.silver > 0L)(content.format("activity.silverLine",
-                   "silver" -> (t.silver * SilverPerTicket).toString))
+  private def letter(prize: TicketPrize): String = {
+    val gold   = Option.when(prize.doubloons > 0L)(content.format("activity.goldLine",
+                   "doubloons" -> prize.doubloons.toString))
+    val silver = Option.when(prize.silver > 0L)(content.format("activity.silverLine",
+                   "silver" -> prize.silver.toString))
     content.format("activity.yourTickets", "lines" -> (gold.toList ++ silver).mkString("\n"))
   }
 }
@@ -128,9 +132,11 @@ object ActivityContest {
     case object Silver extends Kind("silver")
   }
 
-  /** Что даёт билет в конце недели. */
-  val DoubloonsPerTicket: Long = 1L
-  val SilverPerTicket: Long    = 100L
+  /** Что даёт билет в конце недели: золотой — ровно столько дублонов,
+    * серебряный — серебро в этих пределах, у каждого билета своё. */
+  val DoubloonsPerTicket: Long = 2L
+  val SilverMin: Long          = 100L
+  val SilverMax: Long          = 300L
 
   private val DayMs: Long = 24L * 60L * 60L * 1000L
   val WeekMs: Long        = 7L * DayMs
