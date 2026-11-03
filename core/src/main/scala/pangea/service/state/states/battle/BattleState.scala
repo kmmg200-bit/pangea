@@ -3945,9 +3945,10 @@ case class BattleState(
       else battle.effects.copy(monsterBleed = Some(
         battle.effects.monsterBleed.map(_.stackedWith(hero.sets.bleedPct)).getOrElse(Bleed(hero.sets.bleedPct))))
     // «Дикое пламя» (порог 12): умение, нанёсшее урон, всегда поджигает — уже
-    // горящая цель разгорается сильнее, как от обычного прока Огня.
+    // горящая цель разгорается сильнее, как от обычного прока Огня. Но только
+    // если в оружии есть Огонь: без рубина поджигать нечем.
     val bledEffects =
-      if (!hero.sets.skillsAlwaysIgnite || newHp <= 0) bledEffects0
+      if (!hero.sets.skillsAlwaysIgnite || !hero.gems.hasElement(Element.Fire) || newHp <= 0) bledEffects0
       else bledEffects0.copy(monsterBurn = Some(
         bledEffects0.monsterBurn.map(_.reignited).getOrElse(Burn.onIgnite)))
     val effects  = bledEffects

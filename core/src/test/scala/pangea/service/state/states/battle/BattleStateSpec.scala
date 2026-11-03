@@ -797,6 +797,26 @@ object BattleStateSpec extends ZIOSpecDefault {
       } yield assertTrue(after.effects.monsterBurn.isDefined)
     },
 
+    test("«Дикое пламя» 12: без рубина в оружии умение не поджигает") {
+      val wf     = pangea.model.item.ItemSet.WildFlame
+      val weapon = flameWeapon().copy(sockets = Nil,
+        details = ItemDetails.Weapon(pangea.model.skill.Skill.SweepingStrike))
+      val hero   = strongHero.copy(
+        fightStats = strongHero.fightStats.copy(atk = 100, energy = 1000),
+        equipment  = setEquipment(wf, 12, Some(weapon)))
+      val withSlot = strongBattle.copy(
+        skillSlots = List(pangea.model.battle.SkillSlotState(weapon.id, pangea.model.skill.Skill.SweepingStrike)))
+      for {
+        t             <- makeState(hero, withSlot)
+        (state, dao, r) = t
+        _             <- TestRandom.feedInts(90, 60, 90, 3, 90)
+        _             <- TestRandom.feedLongs(100L, 100L)
+        _             <- state.action(testUser, tap(s"Skill_${weapon.id}"), r)
+        after         <- dao.readActiveBattle(userId).map(_.flatMap(_.as[SoloPveBattle].toOption).get)
+      } yield assertTrue(after.monsterCurrentHp < withSlot.monsterCurrentHp) &&
+              assertTrue(after.effects.monsterBurn.isEmpty)
+    },
+
     test("«Дикое пламя» 12: горение режет защиту врага — умение бьёт сильнее") {
       val wf     = pangea.model.item.ItemSet.WildFlame
       val weapon = flameWeapon().copy(details = ItemDetails.Weapon(pangea.model.skill.Skill.SweepingStrike))

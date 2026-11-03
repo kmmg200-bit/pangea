@@ -306,7 +306,9 @@ final case class HeroSets(counts: Map[ItemSet, Int], race: Option[Race] = None) 
       pct(ItemSet.Underworld, 6, ItemSet.Underworld.IgniteChanceBonusPct)
 
   /** Поджигают ли активные умения врага всегда, и режет ли горение его защиту
-   *  на столько же процентов, сколько горит (порог 12). */
+   *  на столько же процентов, сколько горит (порог 12). Поджигают — только если
+   *  в оружии есть Огонь: набор усиливает стихию, а не выдаёт её (см.
+   *  `BattleState.skillHit`). */
   def skillsAlwaysIgnite: Boolean = has(ItemSet.WildFlame, 12)
 
   // ── «Охотник» ───────────────────────────────────────────────────────────────
