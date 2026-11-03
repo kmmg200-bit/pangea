@@ -83,7 +83,7 @@ object BowSkillsSpec extends ZIOSpecDefault {
 
   override def spec = suite("Умения лука и арбалета")(
 
-    test("на лук и арбалет выпадают только умения стрелка — все четыре; на прочее оружие — никогда") {
+    test("на лук и арбалет выпадают только умения стрелка — все до одного; на прочее оружие — никогда") {
       val ranged = (1L to 400L).flatMap(s => List(generated(s, Grip.Bow), generated(s, Grip.Crossbow))).flatMap(_.activeSkill)
       val melee  = (1L to 400L).flatMap(s => List(generated(s, Grip.TwoHanded), generated(s, Grip.OneHanded))).flatMap(_.activeSkill)
       val meleeOk = melee.nonEmpty && melee.forall(s => Skill.weaponSkills.contains(s))

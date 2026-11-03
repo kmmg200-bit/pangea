@@ -3575,12 +3575,14 @@ case class BattleState(
 
         case Skill.Effect.Sweep(pct) =>
           // По цели — как удар, срезанный защитой; её соседям по строю — доля
-          // от того, что по ней прошло.
+          // от того, что по ней прошло. У выстрела вместо дуги — осколки стрелы.
+          val splashKey =
+            if (Skill.rangedSkills.contains(slot.skill)) "battle.group.splitSplash" else "battle.group.sweepSplash"
           dealSkillDamage(hero, bumped, reduced, dealt => tmpl.replace("{}", dealt.toString), next,
             splash = (b, dealt) => strikeOthers(b, around(b.group.activePos)) { tmp =>
               val amount = (dealt * pct / 100L).max(1L)
               (plainHit(tmp, amount),
-               content.format("battle.group.sweepSplash", "monster" -> tmp.monsterName, "damage" -> amount.toString))
+               content.format(splashKey, "monster" -> tmp.monsterName, "damage" -> amount.toString))
             })
 
         case Skill.Effect.Whirl =>

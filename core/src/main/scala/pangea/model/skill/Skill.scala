@@ -573,6 +573,87 @@ object Skill extends Enum[Skill] {
     def baseEnergyCost(hero: Hero): Long = 12L + hero.lvl
   }
 
+  // ── Выстрелы по образцу ударов ──────────────────────────────────────────────
+  // Тот же приём, что у умения ближнего боя, только из лука или арбалета:
+  // действие, перезарядка, цена и урон — как у оригинала (урон и цену считает
+  // сам оригинал). От удара их отличают лишь общие правила стрелка: бьют на
+  // всю дальность оружия, а вблизи — на пятую часть слабее.
+
+  case object QuickShot
+      extends Skill(
+        label = "Быстрый выстрел",
+        cooldown = 1,
+        initialCooldown = 0,
+        effect = Effect.Damage(reducedByDefence = true),
+        hitTemplate = "Выстрел навскидку застал врасплох, нанеся {} урона!",
+        description =
+          "Быстрый выстрел навскидку, в довесок к основному. Сильное влияние на урон от Интеллекта и Ловкости. Среднее влияние на урон от Точности. Слабое влияние от Атаки. Использование расходует {} энергии."
+      ) {
+    def baseValue(hero: Hero, nowMs: Long): Double = QuickStrike.baseValue(hero, nowMs)
+    def baseEnergyCost(hero: Hero): Long           = QuickStrike.baseEnergyCost(hero)
+  }
+
+  case object CunningShot
+      extends Skill(
+        label = "Хитрый выстрел",
+        cooldown = 2,
+        initialCooldown = 0,
+        effect = Effect.Damage(reducedByDefence = false),
+        hitTemplate =
+          "Подловив оппонента, вы стреляете на упреждение — стрела находит его слепую зону и наносит {} урона!",
+        description =
+          "Хитрый выстрел на упреждение — туда, куда отходит оппонент. Среднее влияние на урон от Силы, Интеллекта, Точности. Низкое влияние от Атаки. Использование расходует {} энергии."
+      ) {
+    def baseValue(hero: Hero, nowMs: Long): Double = CunningStrike.baseValue(hero, nowMs)
+    def baseEnergyCost(hero: Hero): Long           = CunningStrike.baseEnergyCost(hero)
+  }
+
+  case object BleedingShot
+      extends Skill(
+        label = "Кровопускающий выстрел",
+        cooldown = 2,
+        initialCooldown = 1,
+        effect = Effect.BleedDamage(bleedPct = 4),
+        hitTemplate =
+          "Зазубренный наконечник вошёл глубоко: {} урона, и кровь хлынула из раны потоком (-4%).",
+        description =
+          "Зазубренный наконечник и желобки для кровотока — такую стрелу или болт готовили с конкретной целью. Сильное влияние на урон от Ловкости и Интеллекта. Слабое от точности и атаки. Использование расходует {} энергии."
+      ) {
+    def baseValue(hero: Hero, nowMs: Long): Double = Bleeding.baseValue(hero, nowMs)
+    def baseEnergyCost(hero: Hero): Long           = Bleeding.baseEnergyCost(hero)
+  }
+
+  case object WeakSpotShot
+      extends Skill(
+        label = "Выстрел в слабое место",
+        cooldown = 2,
+        initialCooldown = 1,
+        effect = Effect.WeakSpotStrike,
+        hitTemplate =
+          "Вы замечаете слабое место противника и всаживаете туда стрелу — {} урона!",
+        description =
+          "Когда-то давно это оружие было создано для точных выстрелов, способных оборвать жизнь сильных. Сильное влияние на урон от Ловкости, Точности, Интеллекта. Использование расходует {} энергии."
+      ) {
+    def baseValue(hero: Hero, nowMs: Long): Double = WeakSpotStrike.baseValue(hero, nowMs)
+    def baseEnergyCost(hero: Hero): Long           = WeakSpotStrike.baseEnergyCost(hero)
+  }
+
+  case object SplitShot
+      extends Skill(
+        label = "Расщепляющий выстрел",
+        cooldown = 2,
+        initialCooldown = 0,
+        // Доля — литералом, как у Размашистого удара (см. там).
+        effect = Effect.Sweep(splashPct = 50),
+        hitTemplate =
+          "Стрела раскололась о врага, нанеся ему {} урона, — осколки летят в стороны!",
+        description =
+          "Надпиленное древко раскалывается о цель, и осколки задевают её соседей по строю — от такого выстрела сложно увернуться. Среднее влияние на урон от Силы, Интеллекта и Атаки. Использование расходует {} энергии."
+      ) {
+    def baseValue(hero: Hero, nowMs: Long): Double = SweepingStrike.baseValue(hero, nowMs)
+    def baseEnergyCost(hero: Hero): Long           = SweepingStrike.baseEnergyCost(hero)
+  }
+
   // Оружие: 1,2,3,6,8,10 + Вихрь клинка, Веерный порез.
   // Нагрудник: 4,5,7,9,11 + Боевой клич, Отбросить.
   val weaponSkills: List[Skill] = List(
@@ -595,7 +676,17 @@ object Skill extends Enum[Skill] {
 
   /** Умения лука и арбалета: выпадают только на них. Это руны, но применить
     * их можно, лишь когда в руках лук или арбалет (см. [[usableWith]]). */
-  val rangedSkills: List[Skill] = List(PinningShot, Barrage, Disengage, PushShot)
+  val rangedSkills: List[Skill] = List(
+    PinningShot,
+    Barrage,
+    Disengage,
+    PushShot,
+    QuickShot,
+    CunningShot,
+    BleedingShot,
+    WeakSpotShot,
+    SplitShot
+  )
 
   /** Можно ли применить умение с тем, что в руках: умения стрелка — только с
     * луком или арбалетом, прочие умения оружия — только без них. Умения

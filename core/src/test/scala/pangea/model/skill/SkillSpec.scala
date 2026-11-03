@@ -23,7 +23,8 @@ object SkillSpec extends ZIOSpecDefault {
         assertTrue(weapon.size == 8) &&
         assertTrue(armor.size == 7) &&
         assertTrue(hand == Set[Skill](Skill.Block, Skill.Counterstrike)) &&
-        assertTrue(ranged == Set[Skill](Skill.PinningShot, Skill.Barrage, Skill.Disengage, Skill.PushShot)) &&
+        assertTrue(ranged == Set[Skill](Skill.PinningShot, Skill.Barrage, Skill.Disengage, Skill.PushShot,
+          Skill.QuickShot, Skill.CunningShot, Skill.BleedingShot, Skill.WeakSpotShot, Skill.SplitShot)) &&
         assertTrue((weapon intersect armor).isEmpty && (hand intersect (weapon union armor)).isEmpty) &&
         assertTrue((ranged intersect (weapon union armor union hand)).isEmpty) &&
         assertTrue((weapon union ranged union armor union hand) == Skill.values.toSet) &&
