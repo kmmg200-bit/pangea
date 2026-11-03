@@ -50,10 +50,10 @@ object CubeCraftSpec extends ZIOSpecDefault {
         assertTrue(result.items.count(_.gem.exists(_.grade == 2)) == 2)
     },
 
-    test("оружие + 8 надколотых камней → божественное оружие того же уровня и редкости, под доп. слот") {
+    test("оружие + 8 целых камней → божественное оружие того же уровня и редкости, под доп. слот") {
       val sword  = Item(1L, "🟣 Меч Дворянина", 37L, Rarity.Violet, ItemType.Weapon,
         attack = 100, accuracy = 10, energy = 0, armor = 0, defence = 0, evasion = 0)
-      val result = CubeCraft.craft(sword :: List.fill(8)(gem(GemKind.Ruby, 1)), charges = 50, rng)
+      val result = CubeCraft.craft(sword :: List.fill(8)(gem(GemKind.Ruby, 3)), charges = 50, rng)
       val forged = result.items.head
       assertTrue(result.chargesUsed == 1 && result.items.size == 1) &&
       assertTrue(forged.name == "🟣 Топор Владыки Огня" && forged.itemType == ItemType.AdditionalWeapon) &&
@@ -65,7 +65,7 @@ object CubeCraftSpec extends ZIOSpecDefault {
     test("вид божественного оружия — по камням: семь рубинов против черепа дают рубиновую впятеро чаще, чужих видов нет") {
       val sword = Item(1L, "⚫ Меч", 5L, Rarity.Gray, ItemType.Weapon,
         attack = 1, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0)
-      val pool  = sword :: (List.fill(7)(gem(GemKind.Ruby, 1)) :+ gem(GemKind.Skull, 1))
+      val pool  = sword :: (List.fill(7)(gem(GemKind.Ruby, 3)) :+ gem(GemKind.Skull, 3))
       val kinds = (1L to 400L).toList
         .flatMap(seed => CubeCraft.craft(pool, charges = 1, Rng(seed)).items.head.divine.map(_.kind))
       val ruby  = kinds.count(_ == DivineKind.FireLordAxe)
@@ -74,13 +74,24 @@ object CubeCraftSpec extends ZIOSpecDefault {
       assertTrue(skull > 0 && ruby > skull * 3)
     },
 
-    test("камни выше надколотых в ковку не идут, и без оружия божественного оружия не выйдет") {
+    test("надколотые и повреждённые в ковку не идут, и без оружия божественного оружия не выйдет") {
       val sword   = Item(1L, "⚫ Меч", 5L, Rarity.Gray, ItemType.Weapon,
         attack = 1, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0)
+      val cracked = CubeCraft.craft(sword :: List.fill(8)(gem(GemKind.Ruby, 1)), charges = 50, rng)
       val damaged = CubeCraft.craft(sword :: List.fill(8)(gem(GemKind.Ruby, 2)), charges = 50, rng)
-      val noSword = CubeCraft.craft(List.fill(8)(gem(GemKind.Skull, 1)), charges = 50, rng)
-      assertTrue(damaged.items.forall(_.divine.isEmpty)) &&
+      val noSword = CubeCraft.craft(List.fill(8)(gem(GemKind.Skull, 3)), charges = 50, rng)
+      assertTrue(cracked.items.forall(_.divine.isEmpty) && damaged.items.forall(_.divine.isEmpty)) &&
       assertTrue(noSword.items.forall(_.divine.isEmpty))
+    },
+
+    test("в ковку годятся любые целые — и безупречные, и идеальные; лишний старший камень остаётся") {
+      val sword  = Item(1L, "⚫ Меч", 5L, Rarity.Gray, ItemType.Weapon,
+        attack = 1, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0)
+      val mixed  = CubeCraft.craft(sword :: (List.fill(4)(gem(GemKind.Ruby, 4)) ++ List.fill(4)(gem(GemKind.Skull, 5))),
+                     charges = 1, rng)
+      val spare  = CubeCraft.craft(sword :: (gem(GemKind.Ruby, 5) :: List.fill(8)(gem(GemKind.Ruby, 3))), charges = 1, rng)
+      assertTrue(mixed.items.size == 1 && mixed.items.head.divine.isDefined) &&
+      assertTrue(spare.items.exists(_.divine.isDefined) && spare.items.flatMap(_.gem) == List(Gem(GemKind.Ruby, 5)))
     },
 
     test("божественное оружие куб не переплавляет: ни мифрил, ни ингредиент набора его не трогают") {
@@ -343,7 +354,7 @@ object CubeCraftSpec extends ZIOSpecDefault {
       val runes    = lines((22L to 26L).toList.map(i =>
                        gear(i, s"Меч №$i", ItemType.Weapon, details = ItemDetails.Weapon(Skill.CunningStrike))))
       val divine   = lines(gear(27L, "Меч Дворянина", ItemType.Weapon) ::
-                       (List.fill(4)(gem(GemKind.Ruby, 1)) ++ List.fill(4)(gem(GemKind.Skull, 1))))
+                       (List.fill(4)(gem(GemKind.Ruby, 3)) ++ List.fill(4)(gem(GemKind.Skull, 4))))
       val book     = HomeData.empty.noted(CubeCraft.craft(List(gear(4L, "Топор Дворянина", ItemType.Weapon), skin.copy(id = 5L),
                        gear(6L, "Шлем Странника", ItemType.Helmet), skin.copy(id = 7L)), charges = 50, rng).applied.map(CubeState.note))
       assertTrue(salvage == List("Вещь из набора «Упырь» ×3 → Кожа упыря")) &&
@@ -353,7 +364,11 @@ object CubeCraftSpec extends ZIOSpecDefault {
         assertTrue(rerolled == List("Легендарная экипировка + Мифрил → Новая легендарная экипировка того же вида")) &&
         assertTrue(heads == List("Голова существа ×9 → Левитирующая голова монстра")) &&
         assertTrue(runes == List(s"Вещь с руной «${Rune.Active(Skill.CunningStrike).label}» ×5 → Большая руна Хитрого удара")) &&
-        assertTrue(divine == List("Оружие + Надколотый камень ×8 → Божественное оружие")) &&
+        assertTrue(divine == List("Оружие + Целый камень (3 тир и выше) ×8 → Божественное оружие")) &&
+        // старая запись книги — из надколотых — читается по нынешнему рецепту
+        assertTrue(io.circe.parser.decode[pangea.model.home.RecipeNote](
+          """{"ingredients":["Оружие","Надколотый камень","Надколотый камень"],"result":"Божественное оружие","count":1}""")
+          .exists(_.ingredients == List("Оружие", "Целый камень (3 тир и выше)", "Целый камень (3 тир и выше)"))) &&
         // травы, камни и прочее — по названию, как было
         assertTrue(lines(List.fill(3)(gem(GemKind.Ruby, 1))) == List(s"${gem(GemKind.Ruby, 1).name} ×3 → ${gem(GemKind.Ruby, 2).name}"))
     }

@@ -1,6 +1,7 @@
 package pangea.generator.item
 
 import pangea.domain.Rng
+import pangea.model.home.RecipeNote
 import pangea.model.item.{BrewKind, BrewRates, Gem, GemKind, Grip, Item, ItemDetails, ItemSet, ItemType, MaterialKind, Rarity, DivineKind, RoseKind, TrophyKind}
 import pangea.model.monster.MiniBoss
 import pangea.model.rune.{Rune, RuneStone, RuneStoneSize}
@@ -52,7 +53,7 @@ object CubeCraft {
     val Gear: String       = "Экипировка"
     val Legendary: String  = "Легендарная экипировка"
     val Weapon: String     = "Оружие"
-    val CrackedGem: String = "Надколотый камень"
+    val WholeGem: String   = RecipeNote.DivineGem
     val Divine: String     = "Божественное оружие"
     val Head: String       = "Голова существа"
     val LevelUp: String    = "Та же экипировка на уровень выше"
@@ -101,20 +102,25 @@ object CubeCraft {
     }
   }
 
-  // Оружие + 8 надколотых камней → божественное оружие (носится в доп. слоте,
-  // как и прочие вещи этого слота). Камни могут быть разных видов: вид оружия
-  // роллится по их числу — семь рубинов против одного черепа дают рубиновый
-  // вариант в семь раз чаще. Уровень и редкость — от оружия, ушедшего в ковку.
+  // Оружие + 8 целых камней (грейд 3 и выше) → божественное оружие (носится в
+  // доп. слоте, как и прочие вещи этого слота). Камни могут быть разных видов и
+  // грейдов: вид оружия роллится по их числу — семь рубинов против одного
+  // черепа дают рубиновый вариант в семь раз чаще. Уровень и редкость — от
+  // оружия, ушедшего в ковку.
   private object DivineForge extends Recipe {
-    /** Сколько надколотых камней уходит в ковку. */
+    /** Сколько камней уходит в ковку. */
     val Gems: Int = 8
+    /** Самый слабый грейд, что годится в ковку: целый камень, без приставки. */
+    val MinGrade: Int = 3
     val size: Int = 1 + Gems
 
     def tryMatch(pool: List[Item], rng: Rng): Option[(List[Item], Item, Rng)] = {
-      val cracked = pool.filter(_.gem.exists(_.grade == Gem.MinGrade))
+      // Лишних камней в куче больше восьми — в ковку идут младшие: безупречный и
+      // идеальный жалко жечь, пока хватает простых.
+      val whole = pool.filter(_.gem.exists(_.grade >= MinGrade)).sortBy(_.gem.map(_.grade).getOrElse(0))
       pool.find(_.itemType == ItemType.Weapon) match {
-        case Some(weapon) if cracked.sizeIs >= Gems =>
-          val taken      = cracked.take(Gems)
+        case Some(weapon) if whole.sizeIs >= Gems =>
+          val taken      = whole.take(Gems)
           val (kind, r2) = pickKind(taken.flatMap(_.gem).map(_.kind), rng)
           Some((weapon :: taken, DivineKind.item(DivineKind.of(kind), weapon.lvl, weapon.rarity), r2))
         case _ => None
@@ -122,7 +128,7 @@ object CubeCraft {
     }
 
     override def describe(consumed: List[Item], result: Item): (List[String], String) =
-      (consumed.map(i => if (i.itemType == ItemType.Weapon) Book.Weapon else Book.CrackedGem), Book.Divine)
+      (consumed.map(i => if (i.itemType == ItemType.Weapon) Book.Weapon else Book.WholeGem), Book.Divine)
 
     /** Вид камня по весу: шанс каждого — его доля среди восьми. Порядок камней
       * в куче не важен, поэтому тянем из отсортированного списка. */

@@ -257,13 +257,26 @@ final case class RecipeNote(ingredients: List[String], result: String, count: In
 }
 
 object RecipeNote {
+
+  /** Как в книге записан камень для божественного оружия (см. CubeCraft). */
+  val DivineGem: String = "Целый камень (3 тир и выше)"
+
+  /** Божественное оружие раньше ковали из надколотых камней: старая запись в
+    * книге читается уже по нынешнему рецепту, иначе книга врала бы. */
+  private val OldDivineGem: String = "Надколотый камень"
+
   implicit val encoder: Encoder[RecipeNote] = deriveEncoder
   implicit val decoder: Decoder[RecipeNote] = (c: HCursor) =>
     for {
       ingredients <- c.getOrElse[List[String]]("ingredients")(Nil)
       result      <- c.getOrElse[String]("result")("")
       count       <- c.getOrElse[Int]("count")(1)
-    } yield RecipeNote(ingredients, result, count)
+    } yield {
+      val current =
+        if (result == "Божественное оружие") ingredients.map(i => if (i == OldDivineGem) DivineGem else i)
+        else ingredients
+      RecipeNote(current, result, count)
+    }
 }
 
 object HomeData {
