@@ -124,23 +124,26 @@ case class DeathState(
   // Даёт новую травму из текущего тира; если пул пуст (все травмы уже собраны —
   // максимум), новую не выдаёт, лишь продлевает таймер снятия на 8 часов и
   // показывает соответствующее сообщение.
-  /** Что лежит в артефактах и может пропасть вместе с сумкой. */
-  private def stashItems(heroId: pangea.model.hero.HeroId): Task[List[(ArtifactKind, pangea.model.item.Item)]] =
+  /** Что лежит в артефактах и может пропасть вместе с сумкой — с шансом
+    * потери, который зависит от ступени артефакта (см. [[DeathState.stashLossPct]]). */
+  private def stashItems(heroId: pangea.model.hero.HeroId): Task[List[(ArtifactKind, Int, pangea.model.item.Item)]] =
     artifacts match {
       case None => ZIO.succeed(Nil)
       case Some(repo) =>
         repo.get(heroId).either.map {
           case Right(all) =>
-            ArtifactKind.values.toList.filterNot(_.safeFromDeath)
-              .flatMap(kind => all.of(kind).items.data.filterNot(_.isQuestItem).map(kind -> _))
+            ArtifactKind.values.toList.filterNot(_.safeFromDeath).flatMap { kind =>
+              val a = all.of(kind)
+              a.items.data.filterNot(_.isQuestItem).map(item => (kind, DeathState.stashLossPct(a.tier), item))
+            }
           case Left(_) => Nil
         }
     }
 
-  /** Один бросок на вещь: [[DeathState.DropOneIn]] к одному, что она пропадёт. */
-  private def rollLoss(item: pangea.model.item.Item)(remove: => zio.ZIO[Any, Any, Any]): Task[Option[pangea.model.item.Item]] =
-    Random.nextIntBetween(0, DeathState.DropOneIn).flatMap { roll =>
-      if (roll != 0) ZIO.none else remove.ignore.as(Some(item))
+  /** Один бросок на вещь: `lossPct` процентов, что она пропадёт. */
+  private def rollLoss(item: pangea.model.item.Item, lossPct: Int)(remove: => zio.ZIO[Any, Any, Any]): Task[Option[pangea.model.item.Item]] =
+    Random.nextIntBetween(0, 100).flatMap { roll =>
+      if (roll >= lossPct) ZIO.none else remove.ignore.as(Some(item))
     }
 
   private def applyTrauma(
@@ -171,17 +174,18 @@ case class DeathState(
                        pangea.model.inventory.Inventory.Items(Nil))))
       // Сюжетные предметы при смерти не теряются.
       realItems  = inventory.items.data.filter(i => i.id != 0L && !i.isQuestItem)
-      // Ларец и Живая сумка от смерти не спасают: их добро трясут тем же
-      // броском. Прячет только Миниатюрный шкаф (см. `ArtifactKind`).
+      // Ларец и Живая сумка от смерти не спасают, но берегут: чем выше ступень,
+      // тем реже из них что-то пропадает. Прячет целиком только Миниатюрный
+      // шкаф (см. `ArtifactKind`).
       stash     <- stashItems(heroId)
       // Бросок идёт на КАЖДЫЙ предмет отдельно, в том числе на каждый камень и
       // каждую горсть пыли: сложенные в одну строку на экране, в сумке они
       // остаются разными вещами, и уносят их поштучно, а не стопкой.
       lostBag   <- ZIO.foreach(realItems) { item =>
-                     rollLoss(item)(inventoryRepo.removeItem(item.id, heroId).unit)
+                     rollLoss(item, DeathState.LossPct)(inventoryRepo.removeItem(item.id, heroId).unit)
                    }.map(_.flatten)
-      lostStash <- ZIO.foreach(stash) { case (kind, item) =>
-                     rollLoss(item)(ZIO.foreachDiscard(artifacts)(_.take(heroId, kind, item.id)))
+      lostStash <- ZIO.foreach(stash) { case (kind, lossPct, item) =>
+                     rollLoss(item, lossPct)(ZIO.foreachDiscard(artifacts)(_.take(heroId, kind, item.id)))
                    }.map(_.flatten)
       lost       = lostBag ++ lostStash
       // Одно сообщение на всё потерянное: одинаковые вещи схлопнуты в «имя ×N».
@@ -207,6 +211,13 @@ object DeathState {
   /** Сколько процентов опыта сгорает при смерти (до скидки благословения). */
   val ExpLossPct: Long = 10L
 
-  /** Шанс потерять вещь при смерти: один к четырём на каждую. */
-  val DropOneIn: Int = 4
+  /** Шанс потерять вещь при смерти, в процентах на каждую. */
+  val LossPct: Int = 25
+
+  /** Насколько каждая ступень ларца или Живой сумки бережёт добро внутри. */
+  val StashSavePctPerTier: Int = 3
+
+  /** Шанс потерять вещь из ларца или Живой сумки: [[LossPct]] минус
+    * [[StashSavePctPerTier]] за ступень — на 5-й ступени остаётся 10%. */
+  def stashLossPct(tier: Int): Int = (LossPct - StashSavePctPerTier * tier).max(0)
 }

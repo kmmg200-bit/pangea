@@ -41,7 +41,7 @@ object DeathStateSpec extends ZIOSpecDefault {
 
     test("камни из стопки теряются поштучно: бросок на каждый, а не на всю пачку") {
       // Пять одинаковых камней. Складываются они только на экране, поэтому
-      // бросок идёт на каждый: два ролла из пяти «сгорают» (0 = потеря).
+      // бросок идёт на каждый: два ролла из пяти «сгорают» (меньше 25 = потеря).
       val stones = (1 to 5).map(i =>
         pangea.generator.item.GemGenerator.item(pangea.model.item.GemKind.Amethyst, 1)
           .copy(id = 300L + i)).toList
@@ -49,7 +49,7 @@ object DeathStateSpec extends ZIOSpecDefault {
         t <- makeState(richHero, stones)
         (state, _, invRepo, renderer) = t
         // Первый бросок съедает выбор травмы, дальше — по одному на камень.
-        _    <- TestRandom.feedInts(1, 0, 1, 0, 2, 3)
+        _    <- TestRandom.feedInts(1, 0, 99, 24, 25, 99)
         _    <- state.enter(testUser, renderer)
         left  = invRepo.snapshot
         log  <- renderer.sentScreens.map(_.map(_.text).mkString)
@@ -74,7 +74,7 @@ object DeathStateSpec extends ZIOSpecDefault {
         (state, _, _, renderer) = t
         // Первый бросок — выбор травмы; дальше по одному на вещь в артефактах:
         // ларец (два камня), сумка (лист). Шкаф в бросок не попадает вовсе.
-        _   <- TestRandom.feedInts(1, 0, 2, 0)
+        _   <- TestRandom.feedInts(1, 0, 99, 0)
         _   <- state.enter(testUser, renderer)
         all  = artifacts.snapshot
         log <- renderer.sentScreens.map(_.map(_.text).mkString)
@@ -101,6 +101,31 @@ object DeathStateSpec extends ZIOSpecDefault {
         blessed <- lostWith(Some(AzatState(blessingUntil = Some(AzatState.BlessingDurationMs))))
       } yield assertTrue(plain == 100L) &&          // обычные 10% от 1000
               assertTrue(blessed == 90L)            // на 10% меньше самой потери
+    },
+
+    test("ступень ларца и сумки бережёт добро: 22% на 1-й, 13% на 4-й, 10% на 5-й") {
+      import pangea.model.artifact.ArtifactKind
+      import pangea.test.TestArtifactRepository
+      def leaf(id: Long) = pangea.generator.item.MaterialGenerator
+        .item(pangea.model.item.MaterialKind.Chamomile).copy(id = id)
+      def stone(id: Long) = pangea.generator.item.GemGenerator
+        .item(pangea.model.item.GemKind.Amethyst, 1).copy(id = id)
+      val artifacts = TestArtifactRepository.of(
+        casket = TestArtifactRepository.artifact(ArtifactKind.Casket, tier = 4, items = List(stone(101L), stone(102L))),
+        bag    = TestArtifactRepository.artifact(ArtifactKind.LivingBag, tier = 5, items = List(leaf(201L), leaf(202L))))
+      for {
+        t <- makeState(richHero, items = List(testItem), artifacts = Some(artifacts))
+        (state, _, invRepo, renderer) = t
+        // Травма; меч в сумке (20 < 25 — пропал); ларец 4-й ступени: 12 < 13 —
+        // пропал, 13 — уцелел; сумка 5-й: 9 < 10 — пропал, 10 — уцелел.
+        _   <- TestRandom.feedInts(1, 20, 12, 13, 9, 10)
+        _   <- state.enter(testUser, renderer)
+        all  = artifacts.snapshot
+      } yield assertTrue(invRepo.snapshot.isEmpty) &&
+              assertTrue(all.of(ArtifactKind.Casket).items.data.map(_.id) == List(102L)) &&
+              assertTrue(all.of(ArtifactKind.LivingBag).items.data.map(_.id) == List(202L)) &&
+              assertTrue(DeathState.stashLossPct(1) == 22 && DeathState.stashLossPct(4) == 13 &&
+                         DeathState.stashLossPct(5) == 10)
     },
 
     test("enter → показывает экран потерь и авто-переходит в Rest") {

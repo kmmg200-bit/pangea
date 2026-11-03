@@ -24,8 +24,9 @@ object ArtifactRepoError {
 trait ArtifactRepository {
   def get(heroId: HeroId): IO[ArtifactRepoError, HeroArtifacts]
 
-  /** Купить артефакт или поднять его ступень (плату берёт вызывающий). */
-  def upgrade(heroId: HeroId, kind: ArtifactKind): IO[ArtifactRepoError, Artifact]
+  /** Купить артефакт или поднять его ступень, но не выше `maxTier` (плату
+    * берёт вызывающий, он же знает потолок — см. [[HeroArtifacts.maxTier]]). */
+  def upgrade(heroId: HeroId, kind: ArtifactKind, maxTier: Int): IO[ArtifactRepoError, Artifact]
 
   /** Положить вещь внутрь — если артефакт её принимает и место есть. */
   def put(heroId: HeroId, kind: ArtifactKind, item: Item): IO[ArtifactRepoError, Artifact]
@@ -45,11 +46,11 @@ final class ArtifactRepositoryLive(dao: ArtifactDao) extends ArtifactRepository 
   def get(heroId: HeroId): IO[ArtifactRepoError, HeroArtifacts] =
     dao.getOrCreate(heroId).orElseFail(ArtifactRepoError.Failed)
 
-  def upgrade(heroId: HeroId, kind: ArtifactKind): IO[ArtifactRepoError, Artifact] =
+  def upgrade(heroId: HeroId, kind: ArtifactKind, maxTier: Int): IO[ArtifactRepoError, Artifact] =
     for {
       all <- get(heroId)
       cur  = all.of(kind)
-      _   <- ZIO.when(!cur.canUpgrade)(ZIO.fail(ArtifactRepoError.FullyUpgraded))
+      _   <- ZIO.when(!cur.canUpgrade(maxTier))(ZIO.fail(ArtifactRepoError.FullyUpgraded))
       // Первая ступень приходит заряженной: Фет отдаёт артефакт готовым к делу.
       next = cur.copy(tier = cur.tier + 1,
                charges = if (cur.owned || !kind.hasMagic) cur.charges else HeroArtifacts.MaxCharges)

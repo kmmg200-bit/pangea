@@ -11,9 +11,9 @@ class TestArtifactRepository(private var all: HeroArtifacts) extends ArtifactRep
 
   def get(heroId: HeroId): IO[ArtifactRepoError, HeroArtifacts] = ZIO.succeed(all)
 
-  def upgrade(heroId: HeroId, kind: ArtifactKind): IO[ArtifactRepoError, Artifact] = {
+  def upgrade(heroId: HeroId, kind: ArtifactKind, maxTier: Int): IO[ArtifactRepoError, Artifact] = {
     val cur = all.of(kind)
-    if (!cur.canUpgrade) ZIO.fail(ArtifactRepoError.FullyUpgraded)
+    if (!cur.canUpgrade(maxTier)) ZIO.fail(ArtifactRepoError.FullyUpgraded)
     else {
       val next = cur.copy(tier = cur.tier + 1,
         charges = if (cur.owned || !kind.hasMagic) cur.charges else HeroArtifacts.MaxCharges)

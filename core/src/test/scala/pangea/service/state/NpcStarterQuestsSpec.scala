@@ -2,6 +2,7 @@ package pangea.service.state
 
 import pangea.engine.SceneContent
 import pangea.generator.item.MaterialGenerator
+import pangea.model.artifact.{ArtifactKind, HeroArtifacts}
 import pangea.model.bank.BankVault
 import pangea.model.hero.Hero
 import pangea.model.item.{Item, MaterialKind}
@@ -25,6 +26,9 @@ object NpcStarterQuestsSpec extends ZIOSpecDefault {
   private val testUser = User(userId, VkId("vk_test"), TelegramId("tg_test"))
 
   private def tap(key: String): UserAction = UserAction("", Some(s"""{"action":"$key"}"""))
+
+  private def tapBag(key: String): UserAction =
+    UserAction("", Some(s"""{"action":"$key","kind":"LivingBag"}"""))
 
   private def material(id: Long, kind: MaterialKind): Item = MaterialGenerator.item(kind).copy(id = id)
 
@@ -103,7 +107,54 @@ object NpcStarterQuestsSpec extends ZIOSpecDefault {
               assertTrue(after.isDone(NpcQuest.Fet) && said.contains("Фет отсчитывает")) &&
               assertTrue(left.map(_.id) == List(1L)) &&
               assertTrue(h.doubloons == FetShopState.QuestDoubloons) &&
+              // сумки нет — расти нечему, и о сумке ни слова: лимит сдвигается молча
+              assertTrue(!said.contains("🌿")) &&
               assertTrue(!closed.choices.map(_.id).contains("FetQuest"))
+    },
+
+    test("Живая сумка у героя есть — после кожи она подрастает, и потолок у неё 5") {
+      for {
+        heroDao <- TestHeroDao.withHero(userId, hero)
+        content <- ZIO.attempt(SceneContent.load())
+        inv      = TestInventoryRepository.withItems(Nil)
+        // собрана до конца: без задания улучшать уже некуда
+        repo     = TestArtifactRepository.of(
+                     casket = TestArtifactRepository.artifact(ArtifactKind.Casket, tier = HeroArtifacts.MaxTier),
+                     bag    = TestArtifactRepository.artifact(ArtifactKind.LivingBag, tier = HeroArtifacts.MaxTier))
+        state    = FetShopState(heroDao, repo, inv, content)
+        t       <- circle(state, "FetQuest", heroDao, inv, material(2L, MaterialKind.GhoulSkin))
+        (_, _, _, _, said, after, _, _) = t
+        bag      = repo.snapshot.bag
+      } yield assertTrue(after.isDone(NpcQuest.Fet)) &&
+              assertTrue(bag.tier == HeroArtifacts.LivingSkinMaxTier && bag.capacity == 75) &&
+              assertTrue(said.contains("Ступень 5/5, мест внутри: 75")) &&
+              // ларец задание не трогает
+              assertTrue(repo.snapshot.casket.tier == HeroArtifacts.MaxTier) &&
+              assertTrue(HeroArtifacts.maxTier(ArtifactKind.LivingBag, after) == 5) &&
+              assertTrue(HeroArtifacts.maxTier(ArtifactKind.Casket, after) == HeroArtifacts.MaxTier) &&
+              assertTrue(HeroArtifacts.maxTier(ArtifactKind.Wardrobe, after) == HeroArtifacts.MaxTier)
+    },
+
+    test("после кожи сумку за дублоны улучшают до 5-й ступени, а шестой нет") {
+      for {
+        heroDao <- TestHeroDao.withHero(userId, hero.copy(doubloons = 1000L))
+        content <- ZIO.attempt(SceneContent.load())
+        _       <- NpcQuestLog.modify(heroDao, userId)(_.finish(NpcQuest.Fet))
+        repo     = TestArtifactRepository.of(bag = TestArtifactRepository.artifact(ArtifactKind.LivingBag, tier = 3))
+        state    = FetShopState(heroDao, repo, TestInventoryRepository.withItems(Nil), content)
+        r       <- TestRenderer.make
+        _       <- state.action(testUser, tapBag("FetGoods"), r)
+        at3     <- r.sentScreens.map(_.last)
+        _       <- state.action(testUser, tapBag("FetBuyYes"), r)
+        _       <- state.action(testUser, tapBag("FetBuyYes"), r)
+        _       <- state.action(testUser, tapBag("FetBuyYes"), r)
+        full    <- r.sentScreens.map(_.last)
+        h       <- heroDao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(at3.text.contains("ступень 3/5")) &&
+              assertTrue(repo.snapshot.bag.tier == 5 && repo.snapshot.bag.capacity == 75) &&
+              // третья покупка не прошла — заплачено за две
+              assertTrue(h.doubloons == 800L) &&
+              assertTrue(full.choices.map(_.id) == List("FetShop"))
     },
 
     test("Рахадим берёт кусок с любого элементаля и даёт половину ячейки") {

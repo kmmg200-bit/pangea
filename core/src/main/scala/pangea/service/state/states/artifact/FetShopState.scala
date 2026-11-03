@@ -17,7 +17,8 @@ import zio.{Task, ZIO}
 
 /** Лавка Фета в Торговом доме: сборные артефакты Азата. Каждый стоит
  *  [[HeroArtifacts.StepPriceDoubloons]] дублонов, и за ту же цену Фет трижды
- *  его улучшит — каждая ступень добавляет мест внутри. С краю прилавка — три
+ *  его улучшит — каждая ступень добавляет мест внутри; Живую сумку тому, кто
+ *  принёс «Живую кожу», — и в четвёртый раз. С краю прилавка — три
  *  зелья ([[FetPotion]]) по [[FetShopState.PotionPriceDoubloons]] дублонов: их
  *  выпивают сразу, при покупке. И два купона — каждый своей сценой: на смену
  *  расы за [[FetShopState.CouponPriceDoubloons]] (см. RaceQuestState) и на смену
@@ -100,7 +101,9 @@ case class FetShopState(
       else turnIn(user, renderer)
     }.as(StateType.FetShop)
 
-  /** Сдача: кожа уходит Фету, герой получает золото и опыт. */
+  /** Сдача: кожа уходит Фету, герой получает золото и опыт, а Живая сумка
+    * (если она у героя есть) — ступень сверху; потолок у неё теперь
+    * [[HeroArtifacts.LivingSkinMaxTier]]. */
   private def turnIn(user: User, renderer: Renderer): Task[Unit] =
     for {
       hero <- getHero(user)
@@ -113,9 +116,16 @@ case class FetShopState(
             _    <- heroDao.updateDoubloons(user.userId, hero.doubloons + FetShopState.QuestDoubloons)
             done <- quest.complete(user, hero, identity)
             (_, expLine) = done
+            bag  <- artifacts.get(hero.id).mapError(asThrowable).map(_.bag)
+            grown <- ZIO.when(bag.owned)(artifacts.upgrade(hero.id, ArtifactKind.LivingBag,
+                       HeroArtifacts.LivingSkinMaxTier).mapError(asThrowable))
+            // Сумки нет — лимит сдвинулся молча, о нём ни слова.
+            bagLine = grown.fold("")(g => "\n\n" + quest.format("bagGrown",
+                        "tier" -> g.tier.toString, "maxTier" -> HeroArtifacts.LivingSkinMaxTier.toString,
+                        "capacity" -> g.capacity.toString))
             _    <- renderer.show(user, Screen(quest.text("outro"), Nil))
             _    <- renderer.show(user, Screen(quest.format("reward",
-                      "doubloons" -> FetShopState.QuestDoubloons.toString, "exp" -> expLine), Nil))
+                      "doubloons" -> FetShopState.QuestDoubloons.toString, "exp" -> expLine) + bagLine, Nil))
             _    <- showShop(user, renderer)
           } yield ()
       }
@@ -123,18 +133,18 @@ case class FetShopState(
 
   /** Карточка товара: рассказ Фета, цена и что сейчас с артефактом у героя. */
   private def showGoods(user: User, kind: ArtifactKind, renderer: Renderer): Task[Unit] =
-    mine(user, kind).flatMap { a =>
+    mine(user, kind).zip(topTier(user, kind)).flatMap { case (a, top) =>
       val state =
         if (!a.owned) content.format("fet.stateNone", "slots" -> kind.slotsPerTier.toString)
-        else if (a.canUpgrade) content.format("fet.stateOwned",
-          "tier" -> a.tier.toString, "maxTier" -> HeroArtifacts.MaxTier.toString,
+        else if (a.canUpgrade(top)) content.format("fet.stateOwned",
+          "tier" -> a.tier.toString, "maxTier" -> top.toString,
           "capacity" -> a.capacity.toString, "next" -> (a.capacity + kind.slotsPerTier).toString)
         else content.format("fet.stateFull", "capacity" -> a.capacity.toString)
       val buyLabel =
         if (!a.owned) content.format("fet.buyLabel", "price" -> HeroArtifacts.StepPriceDoubloons.toString)
         else content.format("fet.upgradeLabel", "price" -> HeroArtifacts.StepPriceDoubloons.toString)
       val buttons =
-        Option.when(a.canUpgrade)(Choice("FetBuy", Choice.fit(buyLabel),
+        Option.when(a.canUpgrade(top))(Choice("FetBuy", Choice.fit(buyLabel),
           color = ChoiceColor.Positive, data = Map("kind" -> kind.entryName), row = Some(0))).toList :+
           Choice("FetShop", content.text("fet.back"), color = ChoiceColor.Negative, row = Some(1))
       renderer.show(user, Screen(content.text(s"artifact.${kind.key}.pitch") + "\n\n" + state, buttons))
@@ -144,8 +154,9 @@ case class FetShopState(
     for {
       hero <- getHero(user)
       a    <- mine(user, kind)
+      top  <- topTier(user, kind)
       price = HeroArtifacts.StepPriceDoubloons
-      _ <- if (!a.canUpgrade) showGoods(user, kind, renderer)
+      _ <- if (!a.canUpgrade(top)) showGoods(user, kind, renderer)
            else if (hero.doubloons < price)
              renderer.show(user, Screen(content.format("fet.notEnough", "price" -> price.toString), backRow))
            else
@@ -163,16 +174,17 @@ case class FetShopState(
     for {
       hero <- getHero(user)
       a    <- mine(user, kind)
+      top  <- topTier(user, kind)
       price = HeroArtifacts.StepPriceDoubloons
-      _ <- if (!a.canUpgrade) showGoods(user, kind, renderer)
+      _ <- if (!a.canUpgrade(top)) showGoods(user, kind, renderer)
            else if (hero.doubloons < price)
              renderer.show(user, Screen(content.format("fet.notEnough", "price" -> price.toString), backRow))
            else
              heroDao.updateDoubloons(user.userId, hero.doubloons - price) *>
-               artifacts.upgrade(hero.id, kind).mapError(asThrowable).flatMap { grown =>
+               artifacts.upgrade(hero.id, kind, top).mapError(asThrowable).flatMap { grown =>
                  renderer.show(user, Screen(content.format(if (a.owned) "fet.upgraded" else "fet.bought",
                    "title" -> content.text(s"artifact.${kind.key}.title"),
-                   "tier" -> grown.tier.toString, "maxTier" -> HeroArtifacts.MaxTier.toString,
+                   "tier" -> grown.tier.toString, "maxTier" -> top.toString,
                    "capacity" -> grown.capacity.toString), Nil))
                } *> showGoods(user, kind, renderer)
     } yield ()
@@ -353,6 +365,10 @@ case class FetShopState(
         case Some(kind) => f(kind)
         case None       => ZIO.unit
       }
+
+  /** Докуда Фет соберёт артефакт этому герою (см. [[HeroArtifacts.maxTier]]). */
+  private def topTier(user: User, kind: ArtifactKind): Task[Int] =
+    quest.load(user).map(HeroArtifacts.maxTier(kind, _))
 
   private def mine(user: User, kind: ArtifactKind): Task[Artifact] =
     getHero(user).flatMap(h => artifacts.get(h.id).mapError(asThrowable)).map(_.of(kind))

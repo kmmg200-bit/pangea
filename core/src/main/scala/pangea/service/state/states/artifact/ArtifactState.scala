@@ -15,7 +15,7 @@ import pangea.repository.artifact.{ArtifactRepoError, ArtifactRepository}
 import pangea.repository.inventory.{InventoryRepoError, InventoryRepository}
 import pangea.repository.item.ItemRepository
 import pangea.service.state.states.artifact.ArtifactState._
-import pangea.service.state.{HerbLore, InventoryFeedback, ItemMenu, MarisaQuest, StackMove, State, UiScene, UserAction}
+import pangea.service.state.{HerbLore, InventoryFeedback, ItemMenu, MarisaQuest, NpcQuestLog, StackMove, State, UiScene, UserAction}
 import zio.{Random, Task, ZIO}
 
 /** Экран сборного артефакта: Ларца Азата или Живой сумки (вид задаётся при
@@ -62,9 +62,9 @@ case class ArtifactState(
   /** Меню артефакта. `note` — что только что случилось («Забрать всё»):
     * строкой над меню, а не отдельным сообщением. */
   private def showMenu(user: User, renderer: Renderer, note: Option[String] = None): Task[Unit] =
-    mine(user).flatMap { a =>
+    mine(user).zip(NpcQuestLog.load(heroDao, user.userId)).flatMap { case (a, quests) =>
       if (!a.owned) renderer.show(user, Screen(content.text(s"artifact.$key.notOwned"), leaveRow))
-      else renderer.show(user, Screen(StackMove.withNote(note, menuText(a)), List(
+      else renderer.show(user, Screen(StackMove.withNote(note, menuText(a, HeroArtifacts.maxTier(kind, quests))), List(
         Some(Choice("ArtifactPut",   content.text("artifact.putLabel"),  row = Some(0))),
         Some(Choice("ArtifactTake",  content.text("artifact.takeLabel"), row = Some(0))),
         // Выгрести артефакт целиком — как почту.
@@ -75,12 +75,12 @@ case class ArtifactState(
       ).flatten))
     }
 
-  private def menuText(a: Artifact): String =
+  private def menuText(a: Artifact, maxTier: Int): String =
     // У шкафа зарядов нет — и строки про них тоже.
     content.format(if (kind.hasMagic) "artifact.menu" else "artifact.menuPlain",
       "title"      -> content.text(s"artifact.$key.title"),
       "tier"       -> a.tier.toString,
-      "maxTier"    -> HeroArtifacts.MaxTier.toString,
+      "maxTier"    -> maxTier.toString,
       "items"      -> a.occupied.toString,
       "capacity"   -> a.capacity.toString,
       "charges"    -> a.charges.toString,

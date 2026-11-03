@@ -4,6 +4,7 @@ import enumeratum.{Enum, EnumEntry}
 import pangea.model.hero.HeroId
 import pangea.model.inventory.Inventory.Items
 import pangea.model.item.{Item, ItemType}
+import pangea.model.quest.{NpcQuest, NpcQuests}
 import pangea.model.state.StateType
 
 /** Сборные артефакты из Лавки Фета. Ларец Азата глотает драгоценные камни,
@@ -25,8 +26,9 @@ sealed abstract class ArtifactKind(
   val hasMagic:     Boolean,
   /** Ловит ли вещь прямо с добычи, минуя сумку. */
   val autoCollect:  Boolean,
-  /** Уцелеет ли содержимое при смерти. Ларец и сумка — нет: их добро уходит с
-    * тем же броском, что и вещи из сумки (см. `DeathState.dropItems`). */
+  /** Уцелеет ли содержимое при смерти. Ларец и сумка — нет: их добро трясут
+    * так же, как вещи из сумки, только каждая ступень бережёт его чуть лучше
+    * (см. `DeathState.stashLossPct`). */
   val safeFromDeath: Boolean
 ) extends EnumEntry {
   /** Берёт ли артефакт эту вещь себе. */
@@ -78,7 +80,8 @@ final case class Artifact(kind: ArtifactKind, tier: Int, charges: Int, items: It
 
   def hasRoom: Boolean = owned && freeSlots > 0
 
-  def canUpgrade: Boolean = tier < HeroArtifacts.MaxTier
+  /** Есть ли куда расти: потолок у героя свой (см. [[HeroArtifacts.maxTier]]). */
+  def canUpgrade(maxTier: Int): Boolean = tier < maxTier
 
   def withItems(data: List[Item]): Artifact = copy(items = Items(data))
 
@@ -116,6 +119,14 @@ final case class HeroArtifacts(heroId: HeroId, casket: Artifact, bag: Artifact, 
 object HeroArtifacts {
   /** Покупка и три улучшения. */
   val MaxTier: Int = 4
+
+  /** Живая сумка у того, кто принёс Фету живую кожу: ещё одно улучшение. */
+  val LivingSkinMaxTier: Int = 5
+
+  /** Докуда Фет соберёт этот артефакт герою: сумку после «Живой кожи» — на
+    * ступень дальше, остальное — до [[MaxTier]]. */
+  def maxTier(kind: ArtifactKind, quests: NpcQuests): Int =
+    if (kind == ArtifactKind.LivingBag && quests.isDone(NpcQuest.Fet)) LivingSkinMaxTier else MaxTier
 
   /** Цена покупки и каждого улучшения — в дублонах. */
   val StepPriceDoubloons: Long = 100L
