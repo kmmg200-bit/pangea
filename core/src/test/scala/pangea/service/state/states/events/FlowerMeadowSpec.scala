@@ -13,7 +13,7 @@ import pangea.service.state.states.events.FlowerMeadowState.MeadowScene
 import pangea.service.state.states.gustavo.{GustavoHerbsState, GustavoState}
 import pangea.service.state.states.hero.KnowledgeState
 import pangea.service.state.states.merchant.MerchantState
-import pangea.service.state.{HerbLore, UserAction}
+import pangea.service.state.{GatherExp, HerbLore, UserAction}
 import pangea.test._
 import zio.test.{TestClock, TestRandom}
 import zio.test._
@@ -101,6 +101,26 @@ object FlowerMeadowSpec extends ZIOSpecDefault {
               // цветок и правда в сумке, а не в инвентаре героя
               assertTrue(bag.snapshot.of(pangea.model.artifact.ArtifactKind.LivingBag).items.data.size == 1) &&
               assertTrue(inv.snapshot.isEmpty)
+    },
+
+    test("за каждый цветок — опыт: 0,3 × уровень лабиринта, обычное округление, не меньше единицы") {
+      val deep = hero().copy(dungeonLevel = 25)
+      for {
+        t <- meadow(deep, LoreData.empty)
+        (state, dao, _, _, r) = t
+        _     <- dao.writeSceneData(userId, MeadowScene(left = 3, nextAt = 0L).asJson)
+        _     <- TestRandom.feedInts(50, 50, 0, 50) *> TestRandom.feedLongs(120000L)
+        _     <- state.action(testUser, tap("FlowerFind"), r)
+        all   <- texts(r)
+        h     <- dao.getHeroByUserId(userId).map(_.get)
+        up     = deep.gainExp(8L)
+      } yield // 0,3 × 25 = 7,5 → 8
+              assertTrue(all.contains("+8 опыта")) &&
+              assertTrue(h.exp == up.exp && h.lvl == up.lvl) &&
+              assertTrue(GatherExp.amount(1, GatherExp.FlowerPct) == 1L && GatherExp.amount(4, GatherExp.FlowerPct) == 1L) &&
+              assertTrue(GatherExp.amount(5, GatherExp.FlowerPct) == 2L && GatherExp.amount(10, GatherExp.FlowerPct) == 3L) &&
+              assertTrue(GatherExp.amount(7, GatherExp.VeinPct) == 7L) &&
+              assertTrue(GatherExp.amount(1, GatherExp.StashPct) == 1L && GatherExp.amount(10, GatherExp.StashPct) == 8L)
     },
 
     test("без знаний любая трава — «Странный цветок»; догадка (интеллект ÷ 4) даёт знания 1 ранга") {

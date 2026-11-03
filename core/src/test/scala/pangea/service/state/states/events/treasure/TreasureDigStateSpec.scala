@@ -119,6 +119,8 @@ object TreasureDigStateSpec extends ZIOSpecDefault {
         cancelled <- scheduler.cancelled
         scene     <- heroDao.readSceneData(userId)
       } yield assertTrue(result == StateType.TreasureDig) &&
+              // опыт за раскопку при любом исходе: 0,8 × уровень лабиринта (20)
+              assertTrue(screens.exists(_.text.contains("+16 опыта"))) &&
               assertTrue(screens.exists(s => s.text.contains("могила") && s.choices.map(_.id).contains("GraveLeave"))) &&
               assertTrue(cancelled.contains(userId -> TaskKind.SchronDig)) &&
               assertTrue(scene.flatMap(_.as[TreasureDigProgress].toOption).isEmpty)

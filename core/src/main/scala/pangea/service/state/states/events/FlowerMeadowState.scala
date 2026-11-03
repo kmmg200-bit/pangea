@@ -19,7 +19,7 @@ import pangea.repository.artifact.ArtifactRepository
 import pangea.service.artifact.ArtifactIntake
 import pangea.service.state.states.LootState
 import pangea.service.state.states.events.FlowerMeadowState._
-import pangea.service.state.{CharacterMenu, HerbLore, InventoryFeedback, State, UserAction}
+import pangea.service.state.{CharacterMenu, GatherExp, HerbLore, InventoryFeedback, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -122,8 +122,11 @@ case class FlowerMeadowState(
             _         <- ZIO.when(regained > 0L)(
                            heroDao.updateFightStats(user.userId, hero.fightStats.copy(energy = hero.fightStats.energy + regained)))
             energyLine = if (regained > 0L) "\n" + content.format("flowerMeadow.energy", "energy" -> regained.toString) else ""
+            // За каждый цветок — опыт от уровня лабиринта (см. GatherExp).
+            expLine   <- GatherExp.grant(heroDao, content, user, hero, GatherExp.FlowerPct, now)
             _         <- renderer.show(user, Screen(
-                           content.format("flowerMeadow.found", "flower" -> item.name) + energyLine + "\n" + where, Nil))
+                           content.format("flowerMeadow.found", "flower" -> item.name) + energyLine +
+                             (if (expLine.isEmpty) "" else "\n" + expLine) + "\n" + where, Nil))
             // Странный цветок — шанс самому понять, что к чему: о простых травах, а
             // зная их, — о редких, вдвое реже (см. HerbLore.insight).
             _         <- HerbLore.insight(heroDao, inventoryRepo, content, renderer, user, hero, lore, kind, now)

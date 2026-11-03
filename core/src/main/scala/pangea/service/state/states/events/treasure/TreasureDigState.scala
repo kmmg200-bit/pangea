@@ -16,7 +16,7 @@ import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.LootState.LootData
-import pangea.service.state.{State, UserAction}
+import pangea.service.state.{GatherExp, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -103,6 +103,10 @@ case class TreasureDigState(heroDao: HeroDao, scheduler: Scheduler, content: Sce
     for {
       hero <- getHero(user)
       _    <- scheduler.cancel(user.userId, TaskKind.SchronDig)
+      // Опыт — за саму раскопку, что бы под землёй ни оказалось (см. GatherExp).
+      now  <- nowMs
+      exp  <- GatherExp.grant(heroDao, content, user, hero, GatherExp.StashPct, now)
+      _    <- ZIO.when(exp.nonEmpty)(renderer.show(user, Screen(exp, Nil)))
       roll <- Random.nextIntBetween(1, 101)
       joePct = if (hero.lvl >= MiniBoss.AmbushMinHeroLvl) JoePct else 0
       result <- if (roll <= SchronPct)             digSuccess(user, hero, renderer)

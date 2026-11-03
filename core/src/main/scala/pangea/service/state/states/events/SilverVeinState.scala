@@ -13,7 +13,7 @@ import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.LootState.LootData
-import pangea.service.state.{LostSquadQuest, NpcQuestLog, State, UserAction}
+import pangea.service.state.{GatherExp, LostSquadQuest, NpcQuestLog, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -119,6 +119,10 @@ case class SilverVeinState(heroDao: HeroDao, scheduler: Scheduler, content: Scen
       rolled    = (base * (100L + sign * delta.toLong)) / 100L * Achievement.veinPct(hero) / 100L
       reward    = rolled * Achievement.silverPct(hero) / 100L
       _        <- scheduler.cancel(user.userId, TaskKind.Harvest)
+      // Опыт за выбранную жилу — от уровня лабиринта (см. GatherExp).
+      now      <- nowMs
+      exp      <- GatherExp.grant(heroDao, content, user, hero, GatherExp.VeinPct, now)
+      _        <- ZIO.when(exp.nonEmpty)(renderer.show(user, Screen(exp, Nil)))
       gemRoll  <- Random.nextIntBetween(1, 101)
       gem      <- if (gemRoll <= GemDropChancePct) randomGem.map(Some(_)) else ZIO.none
       dustRoll <- Random.nextIntBetween(1, 101)

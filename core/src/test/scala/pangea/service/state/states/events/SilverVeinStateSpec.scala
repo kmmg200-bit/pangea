@@ -122,9 +122,12 @@ object SilverVeinStateSpec extends ZIOSpecDefault {
         result <- state.action(testUser, tap("Harvest"), renderer)
         after  <- heroDao.getHeroByUserId(userId).map(_.get.silver)
         scene  <- heroDao.readSceneData(userId)
+        texts  <- renderer.sentScreens.map(_.map(_.text).mkString(" "))
       } yield assertTrue(result == StateType.Dungeon) &&
               assertTrue(after > before) &&
-              assertTrue(scene.contains(Json.Null))
+              assertTrue(scene.contains(Json.Null)) &&
+              // опыт за жилу: 1 × уровень лабиринта (10)
+              assertTrue(texts.contains("+10 опыта"))
     },
 
     test("пыль из жилы — всегда одна горсть, на любом ролле вида") {
