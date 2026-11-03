@@ -15,7 +15,10 @@ case class SkillSlotState(
   itemId:   Long,
   skill:    Skill,
   cooldown: Int = 0,
-  uses:     Int = 0
+  uses:     Int = 0,
+  // Тетива «Мощного выстрела» натянута: сколько раз герой тянул дальше (см.
+  // Skill.Effect.Charge). None — не целится. На арене едет со слотами стороны.
+  aim:      Option[Int] = None
 )
 
 object SkillSlotState {
@@ -804,6 +807,9 @@ case class SoloPveBattle(
 
   def updateSlot(itemId: Long)(f: SkillSlotState => SkillSlotState): SoloPveBattle =
     copy(skillSlots = skillSlots.map(s => if (s.itemId == itemId) f(s) else s))
+
+  /** Слот «Мощного выстрела», если тетива сейчас натянута. */
+  def aimSlot: Option[SkillSlotState] = skillSlots.find(_.aim.isDefined)
 
   /** Стартовый запас энергии обычного моба: `pctRoll`% (5–30) от его потолка,
    *  умноженные на редкость. Копить с нуля мобу некогда — короткий бой кончится

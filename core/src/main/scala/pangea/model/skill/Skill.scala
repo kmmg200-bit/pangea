@@ -159,6 +159,14 @@ object Skill extends Enum[Skill] {
       * ряду, и пара рвётся (Отбрасывающий выстрел).
       */
     case object Push extends Effect
+
+    /** Сперва без урона: герой натягивает тетиву, и ход на этом кончается. Пока
+      * она натянута, эта же кнопка — «Тянуть дальше»: каждое продление прибавляет
+      * выстрелу `holdPct`%, но не больше `maxHolds` раз. «Атака» спускает
+      * стрелу — дальше как у любого умения: урон, срезанный защитой цели, и
+      * базовая атака следом (Мощный выстрел).
+      */
+    final case class Charge(holdPct: Int, maxHolds: Int) extends Effect
   }
 
   // Процент текущего HP, который тратит Кровавая жатва, и сколько процентов
@@ -654,6 +662,29 @@ object Skill extends Enum[Skill] {
     def baseEnergyCost(hero: Hero): Long           = SweepingStrike.baseEnergyCost(hero)
   }
 
+  /** Выстрел с натяжкой: за него платят ходами без урона, пока тетива
+    * натягивается (см. [[Effect.Charge]]), поэтому и число у него — на уровне
+    * самых сильных умений оружия. Энергия списывается, когда тетиву
+    * натягивают; перезарядка — после выстрела. */
+  case object PowerShot
+      extends Skill(
+        label = "Мощный выстрел",
+        cooldown = 3,
+        initialCooldown = 1,
+        // Числа — литералами, как у Размашистого удара (см. там).
+        effect = Effect.Charge(holdPct = 50, maxHolds = 3),
+        hitTemplate = "🏹 Мощный выстрел ×{}: {} урона!",
+        description =
+          "Тетива натягивается до самого уха — и замирает. Сперва вы только целитесь: ход без урона. Дальше — «Тянуть дальше», и каждое продление прибавляет выстрелу половину силы, не больше трёх раз; «Атака» спускает стрелу. Пока тетива натянута, рука занята: ни пояса, ни других умений. Бьёт на всю дальность оружия. Сильное влияние на урон от Ловкости и Интеллекта. Слабое — от Атаки и Точности. Использование расходует {} энергии."
+      ) {
+    def baseValue(hero: Hero, nowMs: Long): Double = {
+      val b = hero.effectiveBaseStats(nowMs)
+      val f = hero.effectiveFightStats(nowMs)
+      5.0 * b.agi + 5.0 * b.int + 0.5 * f.atk + 0.3 * f.accuracy
+    }
+    def baseEnergyCost(hero: Hero): Long = 12L + hero.lvl
+  }
+
   // Оружие: 1,2,3,6,8,10 + Вихрь клинка, Веерный порез.
   // Нагрудник: 4,5,7,9,11 + Боевой клич, Отбросить.
   val weaponSkills: List[Skill] = List(
@@ -685,7 +716,8 @@ object Skill extends Enum[Skill] {
     CunningShot,
     BleedingShot,
     WeakSpotShot,
-    SplitShot
+    SplitShot,
+    PowerShot
   )
 
   /** Можно ли применить умение с тем, что в руках: умения стрелка — только с

@@ -71,6 +71,8 @@ case class BattleState(
     routes = Map(
       "Attack"      -> Target.Run((u, ua, r) => attackRoute(u, BattleState.parseTarget(ua), r)),
       "Wait"        -> Target.Run((u, _, r) => resolve(u, r, content.text("arena.turn.wait"))(waitTurn)),
+      // Тетива натянута, а бить некого — стрела уходит мимо.
+      "LooseAim"    -> Target.Run((u, _, r) => resolve(u, r, content.text("arena.turn.attack"))(looseTurn)),
       "Move"        -> Target.Run((u, _, r) => moveRoute(u, r)),
       "MoveTo"      -> Target.Run((u, ua, r) => resolve(u, r, content.text("arena.turn.move"))(moveTurn(BattleState.parseTarget(ua)))),
       "SquadTick"   -> Target.Run((u, _, r) => squadTick(u, r)),
@@ -946,8 +948,13 @@ case class BattleState(
     target.orElse(targets.headOption) match {
       case None                                 => cont(hero, battle, content.text("battle.group.noTarget"))
       case Some(pos) if !targets.contains(pos)  => cont(hero, battle, content.text("battle.group.targetGone"))
-      case Some(pos) if pos == battle.group.heroPos => playerStrike(hero, battle.rememberTarget(pos), nowMs, Vector.empty, Set.empty)
-      case Some(pos) => strikeSide(hero, battle, pos, nowMs, Vector.empty, Set.empty).flatMap(closeTurn(_, nowMs, Set.empty))
+      case Some(pos) => battle.aimSlot match {
+        // Тетива натянута: «Атака» спускает «Мощный выстрел» — дальше как у
+        // любого умения: урон со всеми прибавками и базовая атака следом.
+        case Some(slot) => skillHit(hero, battle, slot, nowMs, pos)
+        case None if pos == battle.group.heroPos => playerStrike(hero, battle.rememberTarget(pos), nowMs, Vector.empty, Set.empty)
+        case None => strikeSide(hero, battle, pos, nowMs, Vector.empty, Set.empty).flatMap(closeTurn(_, nowMs, Set.empty))
+      }
     }
   }
 
@@ -957,6 +964,19 @@ case class BattleState(
   private def downTurn(hero: Hero, battle: SoloPveBattle, @annotation.unused nowMs: Long): Task[TurnResult] =
     ZIO.succeed(TurnResult(hero, battle.copy(group = battle.group.copy(heroDown = true)),
       Vector(content.text("arena.downTurn")), Outcome.Continue))
+
+  /** «Выстрелить», когда тетива натянута, а бить некого: стрела уходит мимо,
+    * рука свободна. Ход на этом кончается, умение — на перезарядку. Враг уже
+    * в досягаемости (старая кнопка) — это обычная «Атака»: выстрел по нему. */
+  private def looseTurn(hero: Hero, battle: SoloPveBattle, nowMs: Long): Task[TurnResult] =
+    battle.aimSlot match {
+      case None => cont(hero, battle, content.text("battle.skillUnavailable"))
+      case Some(_) if heroTargets(hero, battle).nonEmpty => attackTurn(None)(hero, battle, nowMs)
+      case Some(slot) =>
+        val missed = battle.updateSlot(slot.itemId)(s => s.copy(cooldown = s.skill.cooldown, uses = s.uses + 1, aim = None))
+        closeTurn(TurnResult(hero, missed, Vector(content.text("battle.powerShot.missed")), Outcome.Continue),
+          nowMs, Set(slot.itemId))
+    }
 
   /** «Ждать»: бить некого — герой пропускает удар, раунд идёт своим чередом. */
   private def waitTurn(hero: Hero, battle: SoloPveBattle, nowMs: Long): Task[TurnResult] =
@@ -3330,7 +3350,8 @@ case class BattleState(
   private def needsTarget(hero: Hero, battle: SoloPveBattle, itemId: Long): Boolean =
     battle.slotByItem(itemId).exists { slot =>
       val ready = slot.cooldown <= 0 && hero.fightStats.energy >= slot.skill.energyCost(hero)
-      ready && (
+      // «Мощный выстрел» по кнопке только натягивают: цель выберет «Атака».
+      ready && !BattleState.charges(slot.skill.effect) && battle.aimSlot.isEmpty && (
         (BattleState.dealsDamage(slot.skill.effect) && skillAims(hero, battle, slot.skill).size > 1) ||
         (BattleState.supports(slot.skill.effect) && supportAllies(battle).nonEmpty))
     }
@@ -3416,6 +3437,12 @@ case class BattleState(
     battle.slotByItem(itemId) match {
       case None =>
         cont(hero, battle, content.text("battle.skillUnavailable"))
+      // Тетива натянута: кнопка «Мощного выстрела» — это «Тянуть дальше», а
+      // другие умения рука, держащая тетиву, не возьмёт.
+      case Some(slot) if slot.aim.isDefined =>
+        holdAim(hero, battle, slot, nowMs)
+      case Some(_) if battle.aimSlot.isDefined =>
+        cont(hero, battle, content.text("battle.powerShot.handsBusy"))
       case Some(slot) if slot.cooldown > 0 =>
         cont(hero, battle, content.text("battle.skillOnCooldown"))
       case Some(slot) if hero.fightStats.energy < slot.skill.energyCost(hero) =>
@@ -3444,6 +3471,8 @@ case class BattleState(
       // Блок и Контрудар тратят бонусное действие раунда — то же, что пояс.
       case Some(slot) if BattleState.bonusAction(slot.skill.effect) && battle.consumableUsedThisRound =>
         cont(hero, battle, content.text("battle.consumableAlreadyUsed"))
+      case Some(slot) if BattleState.charges(slot.skill.effect) =>
+        drawAim(paid(hero, slot), battle, slot, nowMs)
       case Some(slot) =>
         skillHit(paid(hero, slot), battle, slot, nowMs, target)
     }
@@ -3451,6 +3480,27 @@ case class BattleState(
   /** Герой, заплативший энергией за умение. */
   private def paid(hero: Hero, slot: SkillSlotState): Hero =
     hero.copy(fightStats = hero.fightStats.copy(energy = (hero.fightStats.energy - slot.skill.energyCost(hero)).max(0L)))
+
+  /** «Мощный выстрел»: тетива натянута — урона и атаки нет, ход кончается,
+    * враги отвечают. Энергия уже списана; перезарядка — после выстрела. */
+  private def drawAim(hero: Hero, battle: SoloPveBattle, slot: SkillSlotState, nowMs: Long): Task[TurnResult] = {
+    val drawn = battle.updateSlot(slot.itemId)(_.copy(aim = Some(0)))
+    closeTurn(TurnResult(hero, drawn, Vector(content.text("battle.powerShot.draw")), Outcome.Continue),
+      nowMs, Set(slot.itemId))
+  }
+
+  /** «Тянуть дальше»: выстрел сильнее ещё на долю умения, но и этот ход — без
+    * урона. Дальше предела не тянется; сбитому с мысли (арена) — тоже нельзя,
+    * остаётся спустить стрелу. Энергии продление не просит. */
+  private def holdAim(hero: Hero, battle: SoloPveBattle, slot: SkillSlotState, nowMs: Long): Task[TurnResult] =
+    (slot.skill.effect, slot.aim) match {
+      case _ if slot.cooldown > 0 => cont(hero, battle, content.text("battle.skillOnCooldown"))
+      case (Skill.Effect.Charge(pct, max), Some(holds)) if holds < max =>
+        val held = battle.updateSlot(slot.itemId)(_.copy(aim = Some(holds + 1)))
+        val line = content.format("battle.powerShot.hold", "mult" -> BattleState.drawMult(pct, holds + 1))
+        closeTurn(TurnResult(hero, held, Vector(line), Outcome.Continue), nowMs, Set(slot.itemId))
+      case _ => cont(hero, battle, content.text("battle.powerShot.atLimit"))
+    }
 
   /** Таран на свободное место: рывок без удара. Герой встаёт туда сразу —
     * союзник с того места уступает его и встаёт на прежнее место героя, — и ход
@@ -3562,7 +3612,8 @@ case class BattleState(
       closeMod = if (Skill.armorSkills.contains(slot.skill)) 1.0 else BattleState.rangedCloseMod(hero, aimed)
       raw = (slot.skill.baseValue(hero, nowMs) * spread / 100.0 * hero.weaponDust.damageMult * hero.runeMult(slot.skill) *
                closeMod).toLong.max(1L)
-      bumped = aimed.updateSlot(slot.itemId)(s => s.copy(cooldown = s.skill.cooldown, uses = s.uses + 1))
+      // Спущенная стрела «Мощного выстрела» тетиву отпускает.
+      bumped = aimed.updateSlot(slot.itemId)(s => s.copy(cooldown = s.skill.cooldown, uses = s.uses + 1, aim = None))
       tmpl = slot.skill.hitTemplate
       // Урон, срезанный защитой моба (для эффектов, которые «упираются» в защиту).
       // Дебаф Холода снижает итоговое %-снижение цели на monsterColdDefenceCut п.п.;
@@ -3638,6 +3689,16 @@ case class BattleState(
         case Skill.Effect.Pin(turns) =>
           // Урон, срезанный защитой, — и цель не сходит с места.
           dealSkillDamage(hero, rooted(bumped, turns), reduced, dealt => tmpl.replace("{}", dealt.toString), next)
+
+        case Skill.Effect.Charge(pct, _) =>
+          // «Атака» спустила натянутую тетиву: урон, срезанный защитой, и
+          // каждое «Тянуть дальше» прибавляет к нему `pct`%. Первый {} — во
+          // сколько раз сильнее, второй — урон.
+          val holds = slot.aim.getOrElse(0)
+          val drawn = (reduced * (100L + pct.toLong * holds) / 100L).max(1L)
+          val mult  = java.util.regex.Matcher.quoteReplacement(BattleState.drawMult(pct, holds))
+          dealSkillDamage(hero, bumped, drawn,
+            dealt => tmpl.replaceFirst("\\{\\}", mult).replaceFirst("\\{\\}", dealt.toString), next)
 
         case Skill.Effect.Volley(turns) =>
           // По цели — как удар, срезанный защитой; каждому другому в пределах
@@ -4036,8 +4097,11 @@ case class BattleState(
     * брать из них нечего. */
   private def showBelt(user: User, renderer: Renderer): Task[StateType] =
     for {
-      hero  <- getHero(user)
-      belt   = hero.equipment.belt
+      hero   <- getHero(user)
+      // Пояс показывают и после хода, которым бой кончился: боя тогда уже нет.
+      aiming <- heroDao.readActiveBattle(user.userId)
+                  .map(_.flatMap(_.as[SoloPveBattle].toOption).exists(_.aimSlot.isDefined))
+      belt    = hero.equipment.belt
       // Номер у строки и у кнопки — настоящий номер ячейки: иначе высыпанная
       // горсть в первой ячейке сдвинула бы все остальные.
       slots  = BattleState.beltCells(hero)
@@ -4045,6 +4109,8 @@ case class BattleState(
       cap    = ItemDetails.Belt.capacityFor(belt.rarity)
       screen =
         if (belt.itemType != ItemType.Belt) Screen(content.text("battle.belt.none"), Nil, inline = true)
+        // Тетива натянута — до пояса рука не дотянется.
+        else if (aiming) Screen(content.text("battle.powerShot.beltBusy"), Nil, inline = true)
         else if (slots.isEmpty) Screen(content.text("battle.belt.empty"), Nil, inline = true)
         else {
           val lines = slots.map { case (slot, idx) =>
@@ -4130,6 +4196,9 @@ case class BattleState(
     * его задавал (см. [[offerBeltPick]]). */
   private def beltTurn(idx: Int, pick: Option[String] = None)(hero: Hero, battle: SoloPveBattle, nowMs: Long): Task[TurnResult] =
     hero.equipment.belt.details match {
+      // Кнопка из списка, открытого до того, как натянули тетиву.
+      case _: ItemDetails.Belt if battle.aimSlot.isDefined =>
+        cont(hero, battle, content.text("battle.powerShot.beltBusy"))
       case b: ItemDetails.Belt if battle.consumableUsedThisRound =>
         val _ = b
         cont(hero, battle, content.text("battle.consumableAlreadyUsed"))
@@ -5815,6 +5884,7 @@ case class BattleState(
   private def divineTurn(hero: Hero, battle: SoloPveBattle, nowMs: Long): Task[TurnResult] =
     hero.equipment.additionalWeapon.divine match {
       case None                                 => cont(hero, battle, content.text("battle.divine.none"))
+      case Some(_) if battle.aimSlot.isDefined  => cont(hero, battle, content.text("battle.powerShot.handsBusy"))
       case Some(_) if battle.divineUsedThisRound => cont(hero, battle, content.text("battle.divine.alreadyUsed"))
       case Some(divine)                          =>
         val item  = hero.equipment.additionalWeapon
@@ -5866,7 +5936,8 @@ case class BattleState(
     * глоток фляги, только вместо себя выручает по площади; смесь можно и
     * положить в ячейку пояса, тогда её достают оттуда. */
   private def mixTurn(hero: Hero, battle: SoloPveBattle, nowMs: Long): Task[TurnResult] =
-    if (battle.consumableUsedThisRound) cont(hero, battle, content.text("battle.consumableAlreadyUsed"))
+    if (battle.aimSlot.isDefined) cont(hero, battle, content.text("battle.powerShot.handsBusy"))
+    else if (battle.consumableUsedThisRound) cont(hero, battle, content.text("battle.consumableAlreadyUsed"))
     else
       inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
         inv.items.data.find((i: Item) => i.brew.contains(BrewKind.MushroomMix)) match {
@@ -6042,22 +6113,45 @@ case class BattleState(
       "monsterEnergy"    -> mobEnergy.toString,
       "monsterMaxEnergy" -> mobMaxEnergy.toString
     )
+    // Тетива «Мощного выстрела» натянута: рука занята, и вместо умений — одна
+    // «Тянуть дальше», пока есть куда тянуть. Стрелу спускает «Атака».
+    val aiming = battle0.aimSlot
+    val aimLine = aiming.fold("") { slot =>
+      slot.skill.effect match {
+        case Skill.Effect.Charge(pct, max) =>
+          val holds = slot.aim.getOrElse(0)
+          "\n" + content.format(if (holds < max) "battle.powerShot.status" else "battle.powerShot.statusMax",
+            "mult" -> BattleState.drawMult(pct, holds))
+        case _ => ""
+      }
+    }
     // Готовый навык синий, если хватает энергии на каст, и красный — если нет.
     // Блок и Контрудар краснеют и тогда, когда бонусное действие раунда уже
     // потрачено (пояс или второе из них).
-    val skillButtons = battle.skillSlots.collect {
-      case slot if slot.cooldown <= 0 =>
-        val enoughEnergy = hero.fightStats.energy >= slot.skill.energyCost(hero)
-        val bonusSpent   = BattleState.bonusAction(slot.skill.effect) && battle.consumableUsedThisRound
-        pangea.engine.Choice(
-          id = s"Skill_${slot.itemId}",
-          label = slot.skill.label,
-          color =
-            if (enoughEnergy && !bonusSpent) pangea.engine.ChoiceColor.Primary
-            else pangea.engine.ChoiceColor.Negative,
-          // Умения щита стоят в ряду действий, справа от «Атаки»; прочие — над ним.
-          row = Some(if (Skill.handSkills.contains(slot.skill)) 1 else 0)
-        )
+    val skillButtons = aiming match {
+      case Some(slot) =>
+        (slot.skill.effect, slot.aim) match {
+          case (Skill.Effect.Charge(pct, max), Some(holds)) if holds < max && slot.cooldown <= 0 =>
+            List(pangea.engine.Choice(s"Skill_${slot.itemId}",
+              content.format("battle.powerShot.holdLabel", "mult" -> BattleState.drawMult(pct, holds + 1)),
+              row = Some(0)))
+          case _ => Nil
+        }
+      case None =>
+        battle.skillSlots.collect {
+          case slot if slot.cooldown <= 0 =>
+            val enoughEnergy = hero.fightStats.energy >= slot.skill.energyCost(hero)
+            val bonusSpent   = BattleState.bonusAction(slot.skill.effect) && battle.consumableUsedThisRound
+            pangea.engine.Choice(
+              id = s"Skill_${slot.itemId}",
+              label = slot.skill.label,
+              color =
+                if (enoughEnergy && !bonusSpent) pangea.engine.ChoiceColor.Primary
+                else pangea.engine.ChoiceColor.Negative,
+              // Умения щита стоят в ряду действий, справа от «Атаки»; прочие — над ним.
+              row = Some(if (Skill.handSkills.contains(slot.skill)) 1 else 0)
+            )
+        }
     }
     val (handButtons, topButtons) = skillButtons.partition(_.row.contains(1))
     // Ряды кнопок: row 0 — активные навыки; row 1 — Атака; row 2 — Пояс;
@@ -6069,8 +6163,9 @@ case class BattleState(
       pangea.engine.Choice(
         "Belt",
         s"👝 Пояс (${slots.size})",
+        // Пока тетива натянута, до пояса не дотянуться — он красный.
         color =
-          if (slots.isEmpty) pangea.engine.ChoiceColor.Negative
+          if (slots.isEmpty || aiming.isDefined) pangea.engine.ChoiceColor.Negative
           else pangea.engine.ChoiceColor.Primary,
         row = Some(2)
       )
@@ -6079,7 +6174,7 @@ case class BattleState(
     // «Сбежать»: удар по всему полю.
     val divineButton = hero.equipment.additionalWeapon.divine.map { _ =>
       pangea.engine.Choice("UseDivine", pangea.engine.Choice.fit(hero.equipment.additionalWeapon.name),
-        color = if (battle0.divineUsedThisRound) pangea.engine.ChoiceColor.Negative
+        color = if (battle0.divineUsedThisRound || aiming.isDefined) pangea.engine.ChoiceColor.Negative
                 else pangea.engine.ChoiceColor.Positive,
         row = Some(3))
     }
@@ -6088,7 +6183,7 @@ case class BattleState(
     val mixButton = Option.when(mixes > 0)(
       pangea.engine.Choice("ThrowMix",
         pangea.engine.Choice.fit(content.format("battle.mixLabel", "count" -> mixes.toString)),
-        color = if (battle0.consumableUsedThisRound) pangea.engine.ChoiceColor.Negative
+        color = if (battle0.consumableUsedThisRound || aiming.isDefined) pangea.engine.ChoiceColor.Negative
                 else pangea.engine.ChoiceColor.Positive,
         row = Some(2)))
     // Бить некого (напротив пусто, соседей нет) — вместо атаки «Переместиться»
@@ -6102,7 +6197,10 @@ case class BattleState(
         List(
           Option.when(BattleState.stepTargets(battle0).nonEmpty)(
             pangea.engine.Choice("Move", content.text("battle.group.moveLabel"), row = Some(1))),
-          Some(pangea.engine.Choice("Wait", content.text("battle.group.waitLabel"), row = Some(1)))
+          Some(pangea.engine.Choice("Wait", content.text("battle.group.waitLabel"), row = Some(1))),
+          // Тетива натянута, а бить некого: выжидать и шагать можно, не опуская
+          // лука, — или спустить стрелу мимо и освободить руку.
+          aiming.map(_ => pangea.engine.Choice("LooseAim", content.text("battle.powerShot.looseLabel"), row = Some(1)))
         ).flatten
     // «Некромант» (порог 10): тьму можно отпустить или свернуть. Ход на это не
     // тратится, поэтому кнопка стоит не среди действий, а рядом с ними.
@@ -6128,7 +6226,7 @@ case class BattleState(
             row = Some(4)
           )
         ).toList
-    Screen(text, topButtons ++ mainButtons)
+    Screen(text + aimLine, topButtons ++ mainButtons)
   }
 
   /** Пузырьковый нектар: если герой обнулился, а плёнка на нём ещё цела —
@@ -6636,11 +6734,22 @@ object BattleState {
     case _                                         => false
   }
 
+  /** Натягивают ли умение ходами, прежде чем выстрелить (Мощный выстрел). */
+  def charges(effect: Skill.Effect): Boolean = effect match {
+    case Skill.Effect.Charge(_, _) => true
+    case _                         => false
+  }
+
+  /** «×2,5» — во сколько раз сильнее выстрел после `holds` продлений по `pct`%. */
+  def drawMult(pct: Int, holds: Int): String =
+    (BigDecimal(100L + pct.toLong * holds) / 100).bigDecimal.stripTrailingZeros.toPlainString.replace('.', ',')
+
   /** Бьёт ли умение по врагу — таким в группе нужна цель. */
   def dealsDamage(effect: Skill.Effect): Boolean = effect match {
     case Skill.Effect.Damage(_) | Skill.Effect.Sweep(_) | Skill.Effect.Whirl | Skill.Effect.FanBleed(_) | Skill.Effect.Knockback |
          Skill.Effect.BleedDamage(_) | Skill.Effect.WeakSpotStrike | Skill.Effect.BloodHarvest |
-         Skill.Effect.Pin(_) | Skill.Effect.Volley(_) | Skill.Effect.Leap | Skill.Effect.Push => true
+         Skill.Effect.Pin(_) | Skill.Effect.Volley(_) | Skill.Effect.Leap | Skill.Effect.Push |
+         Skill.Effect.Charge(_, _) => true
     case Skill.Effect.Heal | Skill.Effect.RepairArmor | Skill.Effect.GuardRepair(_, _) | Skill.Effect.WarCry(_, _) |
          Skill.Effect.Block | Skill.Effect.Counter => false
   }
