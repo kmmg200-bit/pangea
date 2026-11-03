@@ -224,18 +224,21 @@ object RatKingBattleSpec extends ZIOSpecDefault {
       val gear  = drops.collect { case LootDrop.Gear(i) if i.set.isDefined => i }
       val blood = mats.count(_ == MaterialKind.RatKingBlood)
       val worms = mats.count(_ == MaterialKind.PlagueWorms)
-      assertTrue(mats.toSet == Set[MaterialKind](MaterialKind.RatKingBlood, MaterialKind.PlagueWorms)) &&
+      val chisels = mats.count(_ == MaterialKind.RuneChisel)
+      assertTrue(mats.toSet == Set[MaterialKind](MaterialKind.RatKingBlood, MaterialKind.PlagueWorms, MaterialKind.RuneChisel)) &&
+      // резцу 18 билетов из 175 — меньше, чем червям
+      assertTrue(chisels > worms / 2 && chisels < worms) &&
       assertTrue(runes.forall(_.contains("Большая"))) &&
       // 50 : 50 : 25 — крови и рун поровну, червей вдвое меньше
       assertTrue(blood > worms * 3 / 2 && blood < worms * 5 / 2) &&
       assertTrue(runes.size > worms * 3 / 2 && runes.size < worms * 5 / 2) &&
-      // вещи у него только своего набора, 25 + 25 билетов: их примерно как червей вдвое
+      // вещи у него только своего набора, 32 билета: чуть больше, чем червей
       assertTrue(gear.nonEmpty && gear.forall(_.set.contains(ItemSet.Rat))) &&
       // синяя и фиолетовая — основа, оранжевая попадается на полпроцента роллов
       assertTrue(gear.map(_.rarity).toSet.subsetOf(
         Set[ItemRarity](ItemRarity.Purple, ItemRarity.Blue, ItemRarity.Orange))) &&
       assertTrue(gear.exists(_.rarity == ItemRarity.Purple) && gear.exists(_.rarity == ItemRarity.Blue)) &&
-      assertTrue(gear.size > worms * 3 / 2 && gear.size < worms * 5 / 2) &&
+      assertTrue(gear.size > worms && gear.size < worms * 2) &&
       // ни трофеев, ни серебра, ни дублонов
       assertTrue(!drops.exists {
         case _: LootDrop.Trophy | _: LootDrop.Silver | _: LootDrop.Doubloons => true

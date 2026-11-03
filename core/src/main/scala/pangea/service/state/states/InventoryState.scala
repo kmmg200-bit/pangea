@@ -12,7 +12,7 @@ import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Scree
 import pangea.generator.item.{MaterialGenerator, TreasureMapGenerator}
 import pangea.model.hero.{Equipment, Hero, WeaponCoat, WeaponDust}
 import pangea.model.inventory.Inventory
-import pangea.model.item.{BeltSlot, Gem, GemBreaking, Item, ItemDetails, ItemStack, ItemType, MaterialKind, QuestItemKind, RefillSource, TrophyKind}
+import pangea.model.item.{BeltSlot, Chisel, Gem, GemBreaking, Item, ItemDetails, ItemStack, ItemType, MaterialKind, QuestItemKind, RefillSource, TrophyKind}
 import pangea.model.monster.Race
 import pangea.model.quest.{Difficulty, NpcQuest}
 import pangea.model.rune.{Rune, RuneStone, RuneStoneSize}
@@ -69,6 +69,10 @@ case class InventoryState(
       "BeltSwapBack"      -> Target.Run { (u, _, r) => backToCard(u, r) },
       "PurseReturn"       -> Target.Run { (u, _,  r) => returnPurse(u, r) },
       "PurseOpen"         -> Target.Run { (u, _,  r) => openPurse(u, r) },
+      // «Резец рунописца»: чей узор переписать, подтверждение, переписать.
+      "ChiselUse"         -> Target.Run { (u, ua, r) => offerChisel(u, ua, r) },
+      "ChiselPick"        -> Target.Run { (u, ua, r) => confirmChisel(u, ua, r) },
+      "ChiselDo"          -> Target.Run { (u, ua, r) => doChisel(u, ua, r) },
       "BreakGem"          -> Target.Run { (u, _,  r) => offerBreak(u, r) },
       "BreakGemPick"      -> Target.Run { (u, ua, r) => confirmBreak(u, ua, r) },
       "BreakGemDo"        -> Target.Run { (u, ua, r) => doBreak(u, ua, r) },
@@ -206,6 +210,8 @@ case class InventoryState(
             Option.when(canSocket)(content.choice("SocketInsert", "inventory.socket").copy(color = ChoiceColor.Positive, row = Some(0))),
             Option.when(isPurse)(content.choice("PurseReturn", "purse.return").copy(color = ChoiceColor.Positive, row = Some(0))),
             Option.when(isPurse)(content.choice("PurseOpen", "purse.open").copy(row = Some(0))),
+            Option.when(item.material.contains(MaterialKind.RuneChisel))(
+              content.choice("ChiselUse", "inventory.chisel.use").copy(row = Some(0))),
             Option.when(canBreak)(content.choice("BreakGem", "inventory.breakGem").copy(color = ChoiceColor.Negative, row = Some(0))),
             Option.when(canSocket)(content.choice("CrushGem", "inventory.crushGem").copy(color = ChoiceColor.Negative, row = Some(0))),
             // Неопознанный цветок — приглядеться к нему ещё раз (см. HerbLore.identify).
@@ -872,6 +878,101 @@ case class InventoryState(
       }
     } yield res
 
+  // ── Резец рунописца ────────────────────────────────────────────────────────
+
+  /** Вещи, чей узор резец возьмёт (см. [[Chisel]]): сперва надетые, потом из
+    * сумки. Второе в паре — надета ли вещь. */
+  private def chiselTargets(hero: Hero, bag: List[Item]): List[(Item, Boolean)] =
+    hero.equipment.allItems.filter(Chisel.fits).distinctBy(_.id).map(_ -> true) ++
+      bag.filter(Chisel.fits).map(_ -> false)
+
+  /** Как зовётся узор вещи для экрана: умение, пассивка или «узора нет». */
+  private def chiselPattern(item: Item): String =
+    Chisel.pattern(item).getOrElse(content.text("inventory.chisel.noPattern"))
+
+  /** Список вещей под резец — по [[InventoryState.ChiselPage]] на страницу. */
+  private def offerChisel(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
+    for {
+      hero <- getHero(user)
+      inv  <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
+      all   = chiselTargets(hero, inv.items.data)
+      last  = ((all.size - 1) / ChiselPage).max(0)
+      page  = payloadField(ua, "p").flatMap(_.toIntOption).getOrElse(0).max(0).min(last)
+      back  = Choice("ItemCard", content.text("inventory.chisel.back"), row = Some(ChiselPage + 1))
+      res  <-
+        if (all.isEmpty)
+          renderer.show(user, Screen(content.text("inventory.chisel.none"), List(back))).as(StateType.Inventory)
+        else {
+          val picks = all.slice(page * ChiselPage, (page + 1) * ChiselPage).zipWithIndex.map { case ((item, worn), i) =>
+            Choice("ChiselPick",
+              Choice.fit(content.format(if (worn) "inventory.chisel.worn" else "inventory.chisel.bag",
+                "name" -> item.name, "pattern" -> chiselPattern(item))),
+              data = Map("item" -> item.id.toString), row = Some(i))
+          }
+          val nav = List(
+            Option.when(page > 0)(Choice("ChiselUse", "◀", data = Map("p" -> (page - 1).toString), row = Some(ChiselPage))),
+            Option.when(page < last)(Choice("ChiselUse", "▶", data = Map("p" -> (page + 1).toString), row = Some(ChiselPage)))
+          ).flatten
+          renderer.show(user, Screen(content.text("inventory.chisel.which"), picks ++ nav :+ back)).as(StateType.Inventory)
+        }
+    } yield res
+
+  /** Выбранная под резец вещь — там же, где была, и резец ещё в сумке. Нет
+    * резца — к списку сумки; нет вещи — сказать и снова дать выбрать. */
+  private def withChiselTarget(user: User, ua: UserAction, renderer: Renderer)(
+      f: (Hero, Inventory, Item, Boolean, Item) => Task[StateType]): Task[StateType] =
+    for {
+      hero <- getHero(user)
+      inv  <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
+      id    = payloadField(ua, "item").flatMap(_.toLongOption)
+      res  <- (inv.items.data.find(_.material.contains(MaterialKind.RuneChisel)),
+               id.flatMap(i => chiselTargets(hero, inv.items.data).find(_._1.id == i))) match {
+                case (None, _) => showList(user, renderer)
+                case (Some(_), None) =>
+                  renderer.show(user, Screen(content.text("inventory.chisel.gone"), Nil)) *> offerChisel(user, ua, renderer)
+                case (Some(chisel), Some((item, worn))) => f(hero, inv, item, worn, chisel)
+              }
+    } yield res
+
+  private def confirmChisel(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
+    withChiselTarget(user, ua, renderer) { (_, _, item, _, _) =>
+      renderer.show(user, Screen(
+        content.format("inventory.chisel.confirm", "name" -> item.name, "pattern" -> chiselPattern(item)),
+        List(
+          Choice("ChiselDo", content.text("inventory.chisel.yes"),
+            data = Map("item" -> item.id.toString), color = ChoiceColor.Positive, row = Some(0)),
+          Choice("ChiselUse", content.text("inventory.chisel.back"), row = Some(1))
+        ))).as(StateType.Inventory)
+    }
+
+  /** Резец сводит узор в случайный другой из тех, что бывают у такой вещи, и
+    * рассыпается. С надетой вещи мог уйти или прийти «Тайник» — вместимость
+    * сумки следует за ним; уйти ему, когда сумка без него переполнится,
+    * нельзя: тогда ничего не трогаем и резец цел. */
+  private def doChisel(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
+    withChiselTarget(user, ua, renderer) { (hero, inv, item, worn, chisel) =>
+      val variants = Chisel.variants(item)
+      Random.nextIntBounded(variants.size).flatMap { i =>
+        val rewritten = variants(i)
+        val done      = content.format("inventory.chisel.done", "name" -> item.name,
+                          "before" -> chiselPattern(item), "after" -> chiselPattern(rewritten))
+        val spend     = inventoryRepo.removeItem(chisel.id, hero.id).mapError(e => new Throwable(e.toString))
+        if (worn) {
+          val newEq    = hero.equipment.replacing(rewritten)
+          val capDelta = InventoryState.equipmentStashDelta(hero.equipment, newEq, hero.runes.brandedPassives.toSet)
+          // Резец из сумки уходит — его место освобождается.
+          if (capDelta < 0 && !InventoryState.fitsAfterCapacityChange(inv, capDelta, returningItems = -1))
+            renderer.show(user, Screen(content.text("inventory.chisel.stashBlocked"), Nil)) *> backToCard(user, renderer)
+          else
+            spend *> heroDao.updateEquipment(user.userId, newEq) *>
+              ZIO.when(capDelta != 0)(inventoryRepo.increaseCapacity(hero.id, capDelta).orElse(ZIO.unit)) *>
+              renderer.show(user, Screen(done, Nil)) *> showList(user, renderer)
+        } else
+          inventoryRepo.updateItem(hero.id, rewritten).mapError(e => new Throwable(e.toString)) *> spend *>
+            renderer.show(user, Screen(done, Nil)) *> showList(user, renderer)
+      }
+    }
+
   // ── Ломка камней ───────────────────────────────────────────────────────────
 
   /** Первый шаг: если камень в вещи один — сразу спрашиваем подтверждение, если
@@ -1394,6 +1495,9 @@ object InventoryState {
    *  на герое, не даёт delta (бонус уже был учтён) — как и остальные пассивки,
    *  «работает только одна». Положительное — надет первый «Тайник» в экипировке,
    *  отрицательное — снят последний. */
+  /** Сколько вещей под резец рунописца показывать на одной странице. */
+  val ChiselPage: Int = 8
+
   def equipmentStashDelta(oldEq: Equipment, newEq: Equipment, body: Set[pangea.model.item.PassiveKind] = Set.empty): Long =
     pangea.model.hero.HeroPassives(newEq.passiveKinds ++ body).extraInventorySlots -
       pangea.model.hero.HeroPassives(oldEq.passiveKinds ++ body).extraInventorySlots

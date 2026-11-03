@@ -246,6 +246,17 @@ object MaterialKind extends Enum[MaterialKind] {
     override val worthless: Boolean = true
   }
 
+  /** Падает с минибоссов: переписывает узор на вещи — умение или пассивку —
+    * на другой (см. [[Chisel]]). Применяется из сумки; сам при этом
+    * рассыпается. Ришелье платит за него золотом, как за добычу с боссов. */
+  case object RuneChisel extends MaterialKind("Резец рунописца") {
+    override val description: String =
+      "Тонкий резец с потемневшим жалом. Им не режут — им переписывают: проведёшь по узору на " +
+      "вещи, и старые линии сходятся в новые. Какие именно — резец решает сам. После работы " +
+      "он рассыпается в пыль."
+    override val doubloonPrice: Long = 5L
+  }
+
   /** Травы данного ранга — из них выбирается находка на поляне. */
   def herbsOfRank(rank: Int): IndexedSeq[MaterialKind] = values.filter(_.herbRank == rank)
 

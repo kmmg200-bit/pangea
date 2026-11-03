@@ -108,7 +108,9 @@ object NecromancerCaveSpec extends ZIOSpecDefault {
       val gear  = drops.collect { case LootDrop.Gear(i) if i.set.isDefined => i }
       val gems  = drops.collect { case LootDrop.Gem(i) => i }
       val coins = drops.collect { case LootDrop.Doubloons(n) => n }
-      assertTrue(mats.toSet == Set[MaterialKind](MaterialKind.CursedBones)) &&
+      val bones   = mats.count(_ == MaterialKind.CursedBones)
+      val chisels = mats.count(_ == MaterialKind.RuneChisel)
+      assertTrue(mats.toSet == Set[MaterialKind](MaterialKind.CursedBones, MaterialKind.RuneChisel)) &&
       assertTrue(gear.nonEmpty && gear.forall(_.set.contains(ItemSet.Necromancer))) &&
       // синяя и фиолетовая — основа, оранжевая попадается на полпроцента роллов
       assertTrue(gear.map(_.rarity).toSet.subsetOf(
@@ -118,8 +120,9 @@ object NecromancerCaveSpec extends ZIOSpecDefault {
       assertTrue(gems.nonEmpty && gems.forall(_.gem.exists(_.kind == pangea.model.item.GemKind.Skull))) &&
       assertTrue(coins.nonEmpty && coins.forall(_ == LootGenerator.NecroSkullDoubloons)) &&
       assertTrue(gems.size == coins.size) &&
-      // вещей набора ровно половина роллов, костей и черепов — по четверти
-      assertTrue(gear.size > mats.size && gear.size < mats.size * 3) &&
+      // вещей набора 40% роллов, костей и черепов — по четверти, резцу — десятая часть
+      assertTrue(gear.size > bones && gear.size < bones * 3) &&
+      assertTrue(chisels > bones / 4 && chisels < bones * 2 / 3) &&
       // трофеев и серебра с него не бывает
       assertTrue(!drops.exists { case _: LootDrop.Trophy | _: LootDrop.Silver => true; case _ => false })
     },
