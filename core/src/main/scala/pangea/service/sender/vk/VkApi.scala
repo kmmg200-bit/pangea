@@ -17,7 +17,7 @@ import pangea.service.ErrorLog
 import pangea.service.sender.Api
 import pangea.service.sender.vk.config.VkConfig
 import zio.interop.catz._
-import zio.{Ref, Schedule, Task, ZIO, durationInt}
+import zio.{Duration, Ref, Schedule, Task, ZIO, durationInt}
 
 import java.util.concurrent.TimeUnit
 import scala.util.Random
@@ -186,12 +186,21 @@ object VkApi {
     * приватности. Пока игрок сам их не откроет, повтор не поможет. */
   val UnreachableCodes: Set[Int] = Set(900, 901, 902)
 
-  // Транзиентные сбои VK/сети — лечим повтором. До 3 попыток с задержкой
-  // 250 → 500 → 1000 мс. После — пишем инцидент в send_failures и
+  /** Через сколько ещё раз отправить, когда ВК ответил «игрок закрыл
+    * сообщения» (900–902). ВК порой отвечает так ложно, в сбое: 3 ноября трое
+    * игроков получили 901/902 посреди игры, а следующее же их нажатие дошло.
+    * Одна попытка через паузу отличает сбой от закрытых сообщений; не дошло и
+    * тогда — больше не повторяем. */
+  val UnreachableRetryDelay: Duration = 5.seconds
+
+  // Транзиентные сбои VK/сети — лечим повтором: до 3 попыток с задержкой
+  // 250 → 500 мс. «Игрок закрыл сообщения» — одна попытка через
+  // UnreachableRetryDelay. После — пишем инцидент в send_failures и
   // пробрасываем ошибку, чтобы catchAll в StateHandler мог отработать.
-  // Закрытые игроком сообщения повтор не откроет — их не повторяем.
   private[vk] val SendRetry: Schedule[Any, Throwable, Any] =
-    (Schedule.recurs(2) && Schedule.exponential(250.millis)).whileInput[Throwable](!Api.unreachable(_))
+    ((Schedule.recurs(2) && Schedule.exponential(250.millis)) +++
+      (Schedule.recurs(1) && Schedule.spaced(UnreachableRetryDelay)))
+      .contramap[Any, Throwable](err => if (Api.unreachable(err)) Right(err) else Left(err))
 
   /** Сколько символов тела ответа кладём в текст ошибки (HTML-страницы прокси
     * бывают на десятки килобайт, а ошибка едет в лог и в `send_failures`). */

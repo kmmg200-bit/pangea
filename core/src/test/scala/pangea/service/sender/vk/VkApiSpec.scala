@@ -2,7 +2,7 @@ package pangea.service.sender.vk
 
 import org.http4s.Status
 import zio.test._
-import zio.{Ref, ZIO}
+import zio.{Ref, ZIO, durationInt}
 
 object VkApiSpec extends ZIOSpecDefault {
 
@@ -39,17 +39,32 @@ object VkApiSpec extends ZIOSpecDefault {
         .flip
         .map(err => assertTrue(err.getMessage.length < 500, err.getMessage.endsWith("…")))
     },
-    test("закрытые игроком сообщения (900–902) не повторяются, прочие сбои — до трёх попыток") {
+    test("закрытые игроком сообщения (900–902) — ещё одна попытка, прочие сбои — до трёх попыток") {
       def attempts(err: Throwable) = for {
-        n <- Ref.make(0)
-        _ <- (n.update(_ + 1) *> ZIO.fail(err)).retry(VkApi.SendRetry).ignore
-        r <- n.get
+        n     <- Ref.make(0)
+        fiber <- (n.update(_ + 1) *> ZIO.fail(err)).retry(VkApi.SendRetry).ignore.fork
+        _     <- TestClock.adjust(1.minute)
+        _     <- fiber.join
+        r     <- n.get
       } yield r
       for {
         closed <- ZIO.foreach(VkApi.UnreachableCodes.toList)(c => attempts(VkApi.VkApiError(c, "closed")))
         broken <- attempts(VkApi.VkApiError(10, "Internal server error"))
         lost   <- attempts(new RuntimeException("connection reset"))
-      } yield assertTrue(closed.forall(_ == 1) && broken == 3 && lost == 3)
-    } @@ TestAspect.withLiveClock
+      } yield assertTrue(closed.forall(_ == 2) && broken == 3 && lost == 3)
+    },
+    // ВК порой ложно отвечает «закрыл сообщения» — повтор ждёт, пока сбой пройдёт.
+    test("повтор после 901 — не раньше чем через 5 секунд") {
+      for {
+        n      <- Ref.make(0)
+        fiber  <- (n.update(_ + 1) *> ZIO.fail(VkApi.VkApiError(901, "closed"))).retry(VkApi.SendRetry).ignore.fork
+        _      <- TestClock.adjust(4.seconds)
+        early  <- fiber.poll
+        before <- n.get
+        _      <- TestClock.adjust(1.second)
+        _      <- fiber.join
+        after  <- n.get
+      } yield assertTrue(early.isEmpty, before == 1, after == 2)
+    }
   )
 }
