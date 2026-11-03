@@ -240,8 +240,10 @@ case class CaravanState(
       }
     } yield res
 
-  /** Божественное оружие: одного его вида хватает, чтобы часть охраны
-    * растворилась в темноте. Стоит это одного удара из тех, что в нём остались. */
+  /** Божественное оружие: герой бьёт им в сторону, мимо каравана, и одного
+    * вида того, что стало с деревом, камнем или ручьём, хватает, чтобы часть
+    * охраны растворилась в темноте. У каждого оружия свой текст. Стоит это
+    * одного удара из тех, что в нём остались. */
   private def frighten(user: User, hero: Hero, scene: CaravanScene, blade: Item, renderer: Renderer): Task[StateType] =
     blade.divine match {
       case Some(d) if d.charges <= 0 =>
@@ -253,7 +255,7 @@ case class CaravanState(
         heroDao.updateEquipment(user.userId,
           hero.equipment.copy(additionalWeapon = blade.copy(details = d.spent))) *>
           writeScene(user, next) *>
-          renderer.show(user, Screen(content.format("caravan.supply.divine", "name" -> blade.displayTitle), Nil)) *>
+          renderer.show(user, Screen(content.text(s"caravan.supply.divine.${d.kind.entryName}"), Nil)) *>
           show(user, next, renderer)
       case None => showSupplies(user, scene, renderer).as(StateType.Caravan)
     }

@@ -233,14 +233,24 @@ object CaravanSpec extends ZIOSpecDefault {
         _      <- state.action(testUser, tap("CaravanSupply"), r)
         list   <- r.sentScreens.map(_.last)
         _      <- state.action(testUser, tap("CaravanUse_7"), r)
+        struck <- texts(r)
         after  <- sceneOf(dao)
         charge <- dao.getHeroByUserId(userId).map(_.get.equipment.additionalWeapon.divine.get.charges)
         _      <- state.action(testUser, tap("CaravanScare"), r)
         both   <- sceneOf(dao)
       } yield assertTrue(list.choices.map(_.id).contains("CaravanUse_7")) &&
+              // текст — свой у Меча Тёмного Владыки: удар в сторону, по дубу
+              assertTrue(struck.contains("Вы рубите Мечом Тёмного Владыки придорожный дуб")) &&
               assertTrue(after.exists(s => s.scared == 1 && s.fighting == 15)) &&
               assertTrue(charge == DivineKind.chargesFor(ItemRarity.Orange) - 1) &&
               assertTrue(both.exists(s => s.scared == CaravanState.MaxScares && s.fighting == 10))
+    },
+
+    test("у каждого божественного оружия свой текст для каравана") {
+      for {
+        content <- ZIO.attempt(SceneContent.load())
+        texts    = DivineKind.values.toList.map(k => content.text(s"caravan.supply.divine.${k.entryName}"))
+      } yield assertTrue(texts.forall(_.nonEmpty) && texts.distinct.size == DivineKind.values.size)
     },
 
     test("сонный дурман: охрана вялая, бой идёт двумя волнами, башни в нём не участвуют") {

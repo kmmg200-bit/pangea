@@ -57,7 +57,7 @@ object DivineKind extends Enum[DivineKind] {
     "Древко трещит от жара; такой топор долго не живёт.")
 
   case object AmethystGoddess extends DivineKind(GemKind.Amethyst, "Частица Аметистовой Богини",
-    "Осколок чужого божества: после удара вы видите врагов насквозь и почти не мажете. " +
+    "Осколок чужого божества: после выстрела вы видите врагов насквозь и почти не мажете. " +
     "Камень идёт трещинами с каждым разом — однажды он просто осыплется.")
 
   case object WhiteDeathMace extends DivineKind(GemKind.Sapphire, "Булава Белой Смерти",
