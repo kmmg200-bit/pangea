@@ -138,7 +138,11 @@ case class SoloPveBattle(
   preyName:       Option[String] = None,
   // Приговорённый ушёл, пока стоял в паре, а бой на этом кончился победой над
   // его сородичами: в полях всё ещё он, но в павшие он не идёт.
-  preyGone:       Boolean = false
+  preyGone:       Boolean = false,
+  // На арене: прибавка к уклонению соперника от его бафов — «Перекат», зелье
+  // уворота (см. ArenaBattle). Он здесь «моб», и своих бафов у него в этом
+  // зеркале нет. Держится только за самим соперником, не за его союзниками.
+  monsterDodgeBonus: Long = 0L
 ) {
 
   /** Множитель Стены трофеев к урону героя по тому, кто сейчас в полях. */
@@ -284,6 +288,11 @@ case class SoloPveBattle(
     * соперник. */
   def foeCounterPower: Long =
     if (monsterArenaUnit.forall(_ == SoloPveBattle.ArenaHeroUnit)) monsterCounterPower else 0L
+
+  /** Прибавка к уклонению того, кто в полях: на арене она есть только у самого
+    * соперника. */
+  def foeDodgeBonus: Long =
+    if (monsterArenaUnit.forall(_ == SoloPveBattle.ArenaHeroUnit)) monsterDodgeBonus else 0L
 
   /** Пара пуста: активный моб стоит не напротив героя. */
   def unpaired: Boolean = !group.paired
@@ -937,6 +946,7 @@ object SoloPveBattle {
       secondWindUsed      <- c.getOrElse[Boolean]("secondWindUsed")(false)
       preyName            <- c.getOrElse[Option[String]]("preyName")(None)
       preyGone            <- c.getOrElse[Boolean]("preyGone")(false)
+      monsterDodgeBonus   <- c.getOrElse[Long]("monsterDodgeBonus")(0L)
     } yield SoloPveBattle(monsterLvl, monsterRace, monsterRarity, monsterStats,
                          monsterCurrentHp, monsterCurrentArmor, heroBattleState, consumableUsed, monsterMarked,
                          monsterUndead,
@@ -944,7 +954,8 @@ object SoloPveBattle {
                          story, customName, divineUsed, escapesAfter, noKin, arena, minionLvl, bossTaken,
                          noFlee, lootLevel, holyWater, heroBlockPct, monsterBlockPct,
                          heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall,
-                         monsterLastAllyHit, heroStruck, roundsFought, secondWindUsed, preyName, preyGone)
+                         monsterLastAllyHit, heroStruck, roundsFought, secondWindUsed, preyName, preyGone,
+                         monsterDodgeBonus)
 
   /** Номер самого соперника среди «мобов» зеркала арены; его союзники — от
     * единицы (см. `ArenaSide.allies`). */

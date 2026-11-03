@@ -3353,7 +3353,8 @@ case class BattleState(
       // «Мощный выстрел» по кнопке только натягивают: цель выберет «Атака».
       ready && !BattleState.charges(slot.skill.effect) && battle.aimSlot.isEmpty && (
         (BattleState.dealsDamage(slot.skill.effect) && skillAims(hero, battle, slot.skill).size > 1) ||
-        (BattleState.supports(slot.skill.effect) && supportAllies(battle).nonEmpty))
+        (BattleState.supports(slot.skill.effect) && supportAllies(battle).nonEmpty) ||
+        (BattleState.rolls(slot.skill.effect) && skillAims(hero, battle, slot.skill).size > 1))
     }
 
   /** Экран выбора цели для базовой атаки: те же кнопки, что у умения с уроном. */
@@ -3368,9 +3369,28 @@ case class BattleState(
     val slot       = battle.slotByItem(itemId)
     val skillLabel = slot.map(_.skill.label).getOrElse("")
     val support    = slot.exists(s => BattleState.supports(s.skill.effect))
-    targetChoices(battle, s"Skill_$itemId", skillLabel, support,
-      slot.fold(battle.group.attackTargets)(s => skillTargets(hero, battle, s.skill)),
-      if (slot.exists(_.skill == Skill.Ram)) BattleState.ramSpots(battle) else Nil)
+    slot.map(_.skill.effect) match {
+      case Some(Skill.Effect.Roll(pct, maxPlaces, _)) => rollScreen(battle, itemId, skillLabel, pct, maxPlaces)
+      case _ =>
+        targetChoices(battle, s"Skill_$itemId", skillLabel, support,
+          slot.fold(battle.group.attackTargets)(s => skillTargets(hero, battle, s.skill)),
+          if (slot.exists(_.skill == Skill.Ram)) BattleState.ramSpots(battle) else Nil)
+    }
+  }
+
+  /** Куда перекатиться: свободные места рядом, и у каждого — сколько
+    * уклонения он даст. */
+  private def rollScreen(battle: SoloPveBattle, itemId: Long, label: String, pct: Int, maxPlaces: Int): Screen = {
+    val choices = BattleState.rollSpots(battle, maxPlaces).zipWithIndex.map { case (pos, i) =>
+      val gain = pct.toLong * math.abs(pos - battle.group.heroPos)
+      pangea.engine.Choice(s"Skill_$itemId",
+        pangea.engine.Choice.fit(content.format("battle.roll.spot", "n" -> pos.toString, "pct" -> gain.toString)),
+        data = Map("target" -> pos.toString), row = Some(i / BattleState.AlliesPerRow))
+    }
+    val cancel = pangea.engine.Choice("CancelTarget", content.text("battle.group.cancelTarget"),
+      color = pangea.engine.ChoiceColor.Negative,
+      row = Some((choices.size + BattleState.AlliesPerRow - 1) / BattleState.AlliesPerRow))
+    Screen(content.format("battle.group.chooseSpot", "skill" -> label), choices :+ cancel)
   }
 
   /** По кому герой может ударить оружием: мечом — соседей, из лука — дальше
@@ -3383,10 +3403,14 @@ case class BattleState(
     battle.group.targetsWithin(BattleState.skillReach(hero, skill))
 
   /** Куда можно применить умение: по врагам в досягаемости, а Таран — ещё и на
-    * свободное место рядом (см. [[BattleState.ramSpots]]). */
+    * свободное место рядом (см. [[BattleState.ramSpots]]); Перекат — только на
+    * свободные места своего ряда (см. [[BattleState.rollSpots]]). */
   private def skillAims(hero: Hero, battle: SoloPveBattle, skill: Skill): List[Int] =
     if (skill == Skill.Ram) (skillTargets(hero, battle, skill) ++ BattleState.ramSpots(battle)).sorted
-    else skillTargets(hero, battle, skill)
+    else skill.effect match {
+      case Skill.Effect.Roll(_, maxPlaces, _) => BattleState.rollSpots(battle, maxPlaces)
+      case _                                  => skillTargets(hero, battle, skill)
+    }
 
   /** До каких союзников достают лечение и броня: живые соседи героя по ряду
     * (см. [[BattleState.SupportReach]]) — так же, как удар по врагам. */
@@ -3473,8 +3497,42 @@ case class BattleState(
         cont(hero, battle, content.text("battle.consumableAlreadyUsed"))
       case Some(slot) if BattleState.charges(slot.skill.effect) =>
         drawAim(paid(hero, slot), battle, slot, nowMs)
+      // Перекат — только на свободное место рядом, пригвождённому — никуда;
+      // отказ не стоит ни хода, ни энергии.
+      case Some(slot) if BattleState.rolls(slot.skill.effect) && !skillAims(hero, battle, slot.skill).contains(target) =>
+        cont(hero, battle, content.text(
+          if (battle.effects.heroRooted) "battle.roll.pinned"
+          else if (skillAims(hero, battle, slot.skill).isEmpty) "battle.roll.noRoom"
+          else "battle.group.targetGone"))
+      case Some(slot) if BattleState.rolls(slot.skill.effect) =>
+        rollTurn(paid(hero, slot), battle, slot, target, nowMs)
       case Some(slot) =>
         skillHit(paid(hero, slot), battle, slot, nowMs, target)
+    }
+
+  /** «Перекат»: герой встаёт на свободное место своего ряда и за каждое
+    * пройденное место получает прибавку к уклонению на `rounds` раундов —
+    * этот и следующие. Встал напротив врага — тот с ним в паре. Дальше —
+    * базовая атака с нового места, как после прочих умений: в паре — по паре,
+    * без пары — по ближайшему в досягаемости, а бить некого — ход кончается
+    * тихо. */
+  private def rollTurn(hero: Hero, battle: SoloPveBattle, slot: SkillSlotState, target: Int, nowMs: Long): Task[TurnResult] =
+    slot.skill.effect match {
+      case Skill.Effect.Roll(pct, _, rounds) =>
+        val gain   = pct.toLong * math.abs(target - battle.group.heroPos)
+        val bumped = battle.updateSlot(slot.itemId)(s => s.copy(cooldown = s.skill.cooldown, uses = s.uses + 1))
+        val moved  =
+          if (bumped.group.hasMonster(target)) bumped.moveHeroTo(target)
+          else bumped.copy(group = bumped.group.copy(heroPos = target))
+        // Бафы тикают в конце раунда, после ответа врагов: запас (rounds − 1)
+        // застаёт ответ и в этом раунде, и в следующих.
+        val dodged = moved.copy(heroBattleState = moved.heroBattleState.add(
+          Buff(0L, 0L, 0L, dodgePct = gain, defencePct = 0L, turnsLeft = Some(rounds - 1))))
+        val line   = slot.skill.hitTemplate.replaceFirst("\\{\\}", target.toString).replaceFirst("\\{\\}", gain.toString)
+        val skip   = Set(slot.itemId)
+        if (dodged.group.paired) playerStrike(hero, dodged, nowMs, Vector(line), skip)
+        else followUp(hero, dodged, nowMs, Vector(line), skip)
+      case _ => cont(hero, battle, content.text("battle.skillUnavailable"))
     }
 
   /** Герой, заплативший энергией за умение. */
@@ -3689,6 +3747,10 @@ case class BattleState(
         case Skill.Effect.Pin(turns) =>
           // Урон, срезанный защитой, — и цель не сходит с места.
           dealSkillDamage(hero, rooted(bumped, turns), reduced, dealt => tmpl.replace("{}", dealt.toString), next)
+
+        // Перекат урона не наносит и ведётся своим ходом (см. skillTurn).
+        case Skill.Effect.Roll(_, _, _) =>
+          rollTurn(hero, battle0, slot, target, nowMs)
 
         case Skill.Effect.Charge(pct, _) =>
           // «Атака» спустила натянутую тетиву: урон, срезанный защитой, и
@@ -6315,7 +6377,9 @@ case class BattleState(
     val airPct      = if (battle.effects.mobAirBoostTurns > 0) Element.Air.ProcBonusPct else 0L
     val instinctPct = if (battle.effects.mobInstinct) MiniBoss.WhiteWolf.InstinctBoostPct else 0L
     val evasion     = battle.monsterStats.evasion * (100L + airPct + instinctPct) / 100L
-    val dodge       = BattleState.dodgeChance(0L, evasion, 0L, heroAccuracy)
+    // На арене соперник мог перекатиться или выпить зелье уворота: его бафы
+    // уклонения ложатся поверх, под тот же потолок, что и у героя.
+    val dodge       = (BattleState.dodgeChance(0L, evasion, 0L, heroAccuracy) + battle.foeDodgeBonus).min(95.0)
     // Пока держится грань аметистовой божественного оружия, герой бьёт почти наверняка.
     if (battle.effects.heroTrueStrikeTurns > 0) dodge.min((100L - DivineRates.TrueStrikePct).toDouble) else dodge
   }
@@ -6740,6 +6804,24 @@ object BattleState {
     case _                         => false
   }
 
+  /** Перекатывается ли герой умением по своему ряду (Перекат). */
+  def rolls(effect: Skill.Effect): Boolean = effect match {
+    case Skill.Effect.Roll(_, _, _) => true
+    case _                          => false
+  }
+
+  /** Куда герой может перекатиться: места своего ряда не дальше `maxPlaces`,
+    * без союзника — на занятое союзником не перекатываются. Строй для этого не
+    * нужен: и в бою один на один герой отходит, а враг подходит сам.
+    * Пригвождённому — никуда. */
+  def rollSpots(battle: SoloPveBattle, maxPlaces: Int): List[Int] =
+    if (battle.effects.heroRooted) Nil
+    else {
+      val here = battle.group.heroPos
+      (1 to maxPlaces).toList.flatMap(d => List(here - d, here + d))
+        .filter(p => p >= 1 && p <= Formation.HeroPlaces && battle.group.freeAt(p)).sorted
+    }
+
   /** «×2,5» — во сколько раз сильнее выстрел после `holds` продлений по `pct`%. */
   def drawMult(pct: Int, holds: Int): String =
     (BigDecimal(100L + pct.toLong * holds) / 100).bigDecimal.stripTrailingZeros.toPlainString.replace('.', ',')
@@ -6751,7 +6833,7 @@ object BattleState {
          Skill.Effect.Pin(_) | Skill.Effect.Volley(_) | Skill.Effect.Leap | Skill.Effect.Push |
          Skill.Effect.Charge(_, _) => true
     case Skill.Effect.Heal | Skill.Effect.RepairArmor | Skill.Effect.GuardRepair(_, _) | Skill.Effect.WarCry(_, _) |
-         Skill.Effect.Block | Skill.Effect.Counter => false
+         Skill.Effect.Block | Skill.Effect.Counter | Skill.Effect.Roll(_, _, _) => false
   }
 
   /** Нужен ли умению хоть один враг в досягаемости: удар — по цели, клич — по

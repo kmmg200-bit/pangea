@@ -21,7 +21,7 @@ object SkillSpec extends ZIOSpecDefault {
         val armor  = Skill.armorSkills.toSet
         val hand   = Skill.handSkills.toSet
         assertTrue(weapon.size == 8) &&
-        assertTrue(armor.size == 7) &&
+        assertTrue(armor.size == 8) &&
         assertTrue(hand == Set[Skill](Skill.Block, Skill.Counterstrike)) &&
         assertTrue(ranged == Set[Skill](Skill.PinningShot, Skill.Barrage, Skill.Disengage, Skill.PushShot,
           Skill.QuickShot, Skill.CunningShot, Skill.BleedingShot, Skill.WeakSpotShot, Skill.SplitShot,
@@ -42,7 +42,7 @@ object SkillSpec extends ZIOSpecDefault {
             Skill.FanCut
           )
         ) &&
-        // доспех: 4,5,7,9,11 + Боевой клич, Отбросить
+        // доспех: 4,5,7,9,11 + Боевой клич, Отбросить, Перекат
         assertTrue(
           armor == Set[Skill](
             Skill.MinorHeal,
@@ -51,7 +51,8 @@ object SkillSpec extends ZIOSpecDefault {
             Skill.Restoration,
             Skill.Bulwark,
             Skill.BattleCry,
-            Skill.Shove
+            Skill.Shove,
+            Skill.Roll
           )
         )
       },

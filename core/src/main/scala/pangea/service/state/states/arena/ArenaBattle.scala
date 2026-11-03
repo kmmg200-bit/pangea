@@ -81,6 +81,9 @@ object ArenaBattle {
       monsterBlockPct     = if (foe.shieldUp) foeHero.equipment.blockPct else 0L,
       // …или держит парирующий кинжал наготове: промах героя — и он ответит.
       monsterCounterPower = if (foe.counterUp) counterPower(foeHero, foe.buffs, nowMs) else 0L,
+      // Его бафы уклонения («Перекат», зелье уворота) живут на его стороне —
+      // здесь он «моб», и прибавку передаём ему отдельно.
+      monsterDodgeBonus   = foe.buffs.dodgeBonus,
       // Каждый на своём месте: от расстояния зависит, кто кого достаёт. Сами
       // «мобы» здесь не ходят — только своим ходом, в своём зеркале. Свои
       // союзники — как в лабиринте; дом каждого — его номер на песке.
