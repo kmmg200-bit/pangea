@@ -3819,7 +3819,8 @@ case class BattleState(
           } yield r
 
         case Skill.Effect.BloodHarvest =>
-          // Урон (уже включает +8% тек.HP в baseValue) ценой 10% текущего HP.
+          // Урон (доля тек.HP уже в baseValue, см. Skill.BloodHarvestHpToDamagePct)
+          // ценой 10% текущего HP.
           // Раненый герой едет дальше в цепочке и персистится в commit ЕДИНООБРАЗНО
           // во всех ветках победы — HP-цена не теряется при добивании базовой атакой.
           val hpLost      = (hero.fightStats.hp * Skill.BloodHarvestHpCostPct / 100L).max(0L)

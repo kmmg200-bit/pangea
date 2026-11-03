@@ -115,8 +115,8 @@ object Skill extends Enum[Skill] {
       */
     final case class GuardRepair(defencePct: Long, turns: Int) extends Effect
 
-    /** Урон; герой теряет 10% текущего HP (бонус 12% тек.HP уже учтён в
-      * baseValue).
+    /** Урон; герой теряет 10% текущего HP (доля тек.HP в уроне —
+      * `BloodHarvestHpToDamagePct` — уже учтена в baseValue).
       */
     case object BloodHarvest extends Effect
 
@@ -179,7 +179,7 @@ object Skill extends Enum[Skill] {
   // Процент текущего HP, который тратит Кровавая жатва, и сколько процентов
   // текущего HP она вкладывает в урон (см. baseValue).
   val BloodHarvestHpCostPct: Long     = 10L
-  val BloodHarvestHpToDamagePct: Long = 12L
+  val BloodHarvestHpToDamagePct: Long = 18L
 
   /** Русское склонение слова «ход» после числа: 1 ход, 2–4 хода, 5+ ходов
     * (с учётом 11–14 → «ходов»). */

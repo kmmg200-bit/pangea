@@ -129,9 +129,9 @@ object SkillSpec extends ZIOSpecDefault {
         assertTrue(v(Skill.QuickStrike) == 4.0 * b.agi + 0.4 * f.accuracy + 4.0 * b.int + 0.3 * f.atk) &&
         assertTrue(v(Skill.CunningStrike) == 2.0 * b.str + 4.0 * b.int + 0.3 * f.atk + 0.5 * f.accuracy) &&
         assertTrue(v(Skill.Ram) == 0.5 * f.defence + 0.75 * b.vit + 3.0 * b.int) &&
-        // Жатва: 2 Силы, 0.6 Атаки и 12% текущего HP — ценой 10% текущего HP
-        assertTrue(v(Skill.BloodHarvest) == 2.0 * b.str + 0.6 * f.atk + 0.12 * hp) &&
-        assertTrue(Skill.BloodHarvestHpCostPct == 10L && Skill.BloodHarvestHpToDamagePct == 12L) &&
+        // Жатва: 2 Силы, 0.6 Атаки и 18% текущего HP — ценой 10% текущего HP
+        assertTrue(v(Skill.BloodHarvest) == 2.0 * b.str + 0.6 * f.atk + 0.18 * hp) &&
+        assertTrue(Skill.BloodHarvestHpCostPct == 10L && Skill.BloodHarvestHpToDamagePct == 18L) &&
         assertTrue(v(Skill.Bleeding) == 4.0 * b.agi + 0.3 * f.accuracy + 0.3 * f.atk + 5.0 * b.int) &&
         assertTrue(v(Skill.WeakSpotStrike) == 2.0 * b.agi + 0.4 * f.accuracy + 4.0 * b.int + 0.1 * f.atk) &&
         // Размашистый: половина урона — соседям цели
