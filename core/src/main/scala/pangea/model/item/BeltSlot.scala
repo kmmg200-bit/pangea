@@ -5,9 +5,9 @@ import io.circe.{Decoder, Encoder, HCursor, Json}
 
 /** Что лежит в ячейке пояса. Пояс — не предмет с зарядами, а сумка на поясе:
   * сколько в ней ячеек, решает редкость самого пояса ([[ItemDetails.Belt]]), а
-  * в ячейке лежит фляга со своими зарядами, горсть пыли, склянка отвара,
-  * раскрывшаяся роза со своими раскрытиями или склянка святой воды. Одна
-  * ячейка — один предмет.
+  * в ячейке лежит фляга со своими зарядами, раскрывшаяся роза со своими
+  * раскрытиями или стопка ([[BeltSlot.Stack]]): горсти пыли, склянки отвара,
+  * склянки святой воды — одного вида, и столько, сколько у пояса ячеек.
   *
   * Внутрь кладутся не целые предметы, а их суть: вид и редкость. По ним вещь
   * собирается заново, когда игрок достаёт её обратно, — у фляг, пыли, отваров
@@ -39,26 +39,36 @@ object BeltSlot {
     def taken: BeltSlot   = spent
   }
 
-  /** Горсть пыли: одна ячейка — одна горсть. Высыпанная ячейка помнит, чем
-    * была полна: после боя она сама доберёт такую же горсть из сумки, если
-    * там есть. */
-  final case class Dust(kind: MaterialKind, spent: Boolean = false) extends BeltSlot {
-    def name: String  = kind.displayName
-    def uses: Int     = if (spent) 0 else 1
-    def poured: Dust  = copy(spent = true)
-    def refilled: Dust = copy(spent = false)
-    def taken: BeltSlot = poured
+  /** Ячейка-стопка: горсти одной пыли, склянки одного отвара или святой воды.
+    * Сколько их влезает, решает пояс: столько же, сколько у него ячеек (см.
+    * [[ItemDetails.Belt.stackFor]]) — у белого одна, у легендарного пять.
+    * Берут по одной; опустевшая ячейка помнит, чем была полна, и после боя
+    * сама добирает такие же из сумки до полной. Снимают её целиком — со всем,
+    * что в ней осталось. */
+  sealed trait Stack extends BeltSlot {
+    def count: Int
+    def withCount(n: Int): Stack
+    def uses: Int       = count
+    def spent: Boolean  = count <= 0
+    def taken: BeltSlot = withCount((count - 1).max(0))
+
+    /** Та же ли это вещь, что и в ячейке `other` (сколько их — не важно). */
+    def sameKind(other: BeltSlot): Boolean = other match {
+      case s: Stack => s.withCount(0) == withCount(0)
+      case _        => false
+    }
   }
 
-  /** Склянка отвара в ячейке: одна ячейка — одна склянка, стопка в сумке
-    * остаётся стопкой. Пустая ячейка помнит, чем была полна: после боя она
-    * сама доберёт такой же отвар из сумки, если он там есть. */
-  final case class Brew(kind: BrewKind, spent: Boolean = false) extends BeltSlot {
-    def name: String   = kind.label
-    def uses: Int      = if (spent) 0 else 1
-    def drunk: Brew    = copy(spent = true)
-    def refilled: Brew = copy(spent = false)
-    def taken: BeltSlot = drunk
+  /** Горсти пыли. */
+  final case class Dust(kind: MaterialKind, count: Int = 1) extends Stack {
+    def name: String            = kind.displayName
+    def withCount(n: Int): Dust = copy(count = n)
+  }
+
+  /** Склянки отвара; стопка в сумке остаётся стопкой. */
+  final case class Brew(kind: BrewKind, count: Int = 1) extends Stack {
+    def name: String            = kind.label
+    def withCount(n: Int): Brew = copy(count = n)
   }
 
   /** Раскрывшаяся роза в ячейке: цветок ложится целиком, со всеми своими
@@ -80,14 +90,10 @@ object BeltSlot {
     case _        => false
   }
 
-  /** Склянка святой воды: одна ячейка — одна склянка. Пустая помнит, чем была
-    * полна, и после боя доберёт такую же из сумки, если там есть. */
-  final case class HolyWater(spent: Boolean = false) extends BeltSlot {
-    def name: String        = MaterialKind.HolyWater.displayName
-    def uses: Int           = if (spent) 0 else 1
-    def poured: HolyWater   = copy(spent = true)
-    def refilled: HolyWater = copy(spent = false)
-    def taken: BeltSlot     = poured
+  /** Склянки святой воды. */
+  final case class HolyWater(count: Int = 1) extends Stack {
+    def name: String                 = MaterialKind.HolyWater.displayName
+    def withCount(n: Int): HolyWater = copy(count = n)
   }
 
   /** Что из сумки вообще можно положить на пояс: фляга, пыль, отвар (кроме
@@ -108,14 +114,22 @@ object BeltSlot {
 
   private val dustEnc: Encoder[Dust] = (d: Dust) =>
     Json.obj("type" -> "Dust".asJson, "kind" -> d.kind.entryName.asJson,
-      "spent" -> d.spent.asJson)
+      "count" -> d.count.asJson)
 
   private val brewEnc: Encoder[Brew] = (b: Brew) =>
     Json.obj("type" -> "Brew".asJson, "kind" -> b.kind.entryName.asJson,
-      "spent" -> b.spent.asJson)
+      "count" -> b.count.asJson)
 
   private val holyEnc: Encoder[HolyWater] = (h: HolyWater) =>
-    Json.obj("type" -> "Holy".asJson, "spent" -> h.spent.asJson)
+    Json.obj("type" -> "Holy".asJson, "count" -> h.count.asJson)
+
+  /** Сколько в стопке. Записи до стопок знали одну вещь на ячейку и писали
+    * только, потрачена ли она: потрачена — ноль, нет — одна. */
+  private def countOf(c: HCursor): Decoder.Result[Int] =
+    c.get[Option[Int]]("count").flatMap {
+      case Some(n) => Right(n)
+      case None    => c.getOrElse[Boolean]("spent")(false).map(spent => if (spent) 0 else 1)
+    }
 
   private val roseEnc: Encoder[Rose] = (r: Rose) =>
     Json.obj("type" -> "Rose".asJson, "kind" -> r.kind.entryName.asJson,
@@ -140,19 +154,19 @@ object BeltSlot {
       case "Dust" =>
         for {
           kind  <- c.get[String]("kind").map(MaterialKind.withName)
-          spent <- c.getOrElse[Boolean]("spent")(false)
-        } yield Dust(kind, spent)
+          count <- countOf(c)
+        } yield Dust(kind, count)
       case "Brew" =>
         for {
           kind  <- c.get[String]("kind").map(BrewKind.withName)
-          spent <- c.getOrElse[Boolean]("spent")(false)
-        } yield Brew(kind, spent)
+          count <- countOf(c)
+        } yield Brew(kind, count)
       case "Rose" =>
         for {
           kind    <- c.get[String]("kind").map(RoseKind.withName)
           charges <- c.getOrElse[Int]("charges")(0)
         } yield Rose(kind, charges)
-      case "Holy" => c.getOrElse[Boolean]("spent")(false).map(HolyWater(_))
+      case "Holy" => countOf(c).map(HolyWater(_))
       case other  => Left(io.circe.DecodingFailure(s"Неизвестное содержимое пояса: $other", c.history))
     }
 }

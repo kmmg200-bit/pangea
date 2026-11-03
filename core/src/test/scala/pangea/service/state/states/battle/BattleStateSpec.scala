@@ -485,7 +485,7 @@ object BattleStateSpec extends ZIOSpecDefault {
       } yield assertTrue(after.weaponDust.layers.contains(pangea.model.item.MaterialKind.RubyDust)) &&
               assertTrue(screens.contains("лёг на оружие")) &&
               assertTrue(beltSlots(after.equipment.belt) ==
-                List(BeltSlot.Dust(pangea.model.item.MaterialKind.RubyDust, spent = true)))
+                List(BeltSlot.Dust(pangea.model.item.MaterialKind.RubyDust, count = 0)))
     },
 
     test("Огонь в оружии: прок (30%) поджигает моба — накладывается горение") {

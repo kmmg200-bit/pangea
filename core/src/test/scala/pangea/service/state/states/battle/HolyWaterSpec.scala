@@ -121,12 +121,13 @@ object HolyWaterSpec extends ZIOSpecDefault {
     // ── Предмет ──────────────────────────────────────────────────────────────
 
     test("склянка ложится на пояс, видна в карточке пояса и читается обратно") {
-      val card = belt(BeltSlot.HolyWater(), BeltSlot.HolyWater(spent = true)).statsLines
+      val card = belt(BeltSlot.HolyWater(), BeltSlot.HolyWater(count = 0)).statsLines
       assertTrue(BeltSlot.of(holy(1L)).contains(BeltSlot.HolyWater())) &&
       assertTrue((BeltSlot.HolyWater(): BeltSlot).asJson.as[BeltSlot] == Right(BeltSlot.HolyWater())) &&
-      assertTrue((BeltSlot.HolyWater(spent = true): BeltSlot).asJson.as[BeltSlot] ==
-        Right(BeltSlot.HolyWater(spent = true))) &&
-      assertTrue(card.contains("• Святая вода") && card.contains("• Святая вода — пусто")) &&
+      assertTrue((BeltSlot.HolyWater(count = 0): BeltSlot).asJson.as[BeltSlot] ==
+        Right(BeltSlot.HolyWater(count = 0))) &&
+      // стопка: сколько из скольких — у синего пояса по три в ячейке
+      assertTrue(card.contains("• Святая вода — 1/3") && card.contains("• Святая вода — пусто (0/3)")) &&
       // Ришелье святыней не торгует; в описании — что она делает, а не как ей пользоваться
       assertTrue(MaterialKind.HolyWater.worthless && MaterialKind.HolyWater.description.contains("купели")) &&
       assertTrue(!MaterialKind.HolyWater.description.contains("пояс"))
@@ -195,7 +196,7 @@ object HolyWaterSpec extends ZIOSpecDefault {
         h2    <- dao.getHeroByUserId(userId).map(_.get)
         again <- texts(r)
       } yield assertTrue(b1.holyWater && said.contains("окропляете поле святой водой")) &&
-              assertTrue(slotsOf(h1) == List(BeltSlot.HolyWater(spent = true), BeltSlot.HolyWater())) &&
+              assertTrue(slotsOf(h1) == List(BeltSlot.HolyWater(count = 0), BeltSlot.HolyWater())) &&
               assertTrue(again.contains("уже на поле") && slotsOf(h2) == slotsOf(h1))
     },
 
@@ -262,7 +263,7 @@ object HolyWaterSpec extends ZIOSpecDefault {
     },
 
     test("после боя пустая ячейка сама берёт склянку святой воды из сумки") {
-      val h   = hero(beltItem = belt(BeltSlot.HolyWater(spent = true)))
+      val h   = hero(beltItem = belt(BeltSlot.HolyWater(count = 0)))
       val inv = TestInventoryRepository.withItems(List(holy(42L)))
       for {
         t <- makeState(h, foe(undead = false, hp = 1L), inv)

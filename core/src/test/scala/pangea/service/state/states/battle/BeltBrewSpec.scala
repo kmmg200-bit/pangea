@@ -85,7 +85,7 @@ object BeltBrewSpec extends ZIOSpecDefault {
         after   <- dao.getHeroByUserId(userId).map(_.get)
         screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
       } yield assertTrue(after.fightStats.hp > 10L) &&
-              assertTrue(slots(after) == List(BeltSlot.Brew(BrewKind.WortDecoction, spent = true))) &&
+              assertTrue(slots(after) == List(BeltSlot.Brew(BrewKind.WortDecoction, count = 0))) &&
               // брать из ячейки больше нечего — в списке пояса её нет
               assertTrue(BattleState.beltUsable(after).isEmpty) &&
               assertTrue(screens.contains(BrewKind.WortDecoction.label))
@@ -139,7 +139,7 @@ object BeltBrewSpec extends ZIOSpecDefault {
               assertTrue(ask.inline && ask.choices.map(_.label) == List(Trauma.BruisedLeg.name)) &&
               // на вопрос ход не ушёл: склянка цела, пока травму не назвали
               assertTrue(after.traumaNames == List(Trauma.SplitSkull.name)) &&
-              assertTrue(slots(after) == List(BeltSlot.Brew(BrewKind.BoneSetter, spent = true))) &&
+              assertTrue(slots(after) == List(BeltSlot.Brew(BrewKind.BoneSetter, count = 0))) &&
               assertTrue(log.contains(Trauma.BruisedLeg.name))
     },
 
@@ -187,8 +187,8 @@ object BeltBrewSpec extends ZIOSpecDefault {
         azat  <- dao.readAzatData(userId).map(_.flatMap(_.as[pangea.model.hero.AzatState].toOption))
       } yield assertTrue(after.statBoosts.hasActive("herb:agi", 0L)) &&
               assertTrue(azat.exists(_.instantRests == BrewRates.InstantRests)) &&
-              assertTrue(slots(after) == List(BeltSlot.Brew(BrewKind.ClearEye, spent = true),
-                                             BeltSlot.Brew(BrewKind.Invigorating, spent = true)))
+              assertTrue(slots(after) == List(BeltSlot.Brew(BrewKind.ClearEye, count = 0),
+                                             BeltSlot.Brew(BrewKind.Invigorating, count = 0)))
     },
 
     test("грибная смесь из ячейки достаётся всем, кто стоит в поле") {
@@ -227,7 +227,7 @@ object BeltBrewSpec extends ZIOSpecDefault {
               assertTrue(slots(asked) == slots(h) && !mid.consumableUsedThisRound) &&
               // заправлена фляга кузнеца из третьей ячейки, целителя — как была
               assertTrue(slots(after) == List(
-                BeltSlot.Brew(BrewKind.LivingWater, spent = true),
+                BeltSlot.Brew(BrewKind.LivingWater, count = 0),
                 BeltSlot.Flask(FlaskKind.Healer, ItemRarity.Gray, 1),
                 BeltSlot.Flask(FlaskKind.Smith, ItemRarity.Gray, full))) &&
               // заправка — бонусное действие раунда, как и всё с пояса
@@ -282,6 +282,29 @@ object BeltBrewSpec extends ZIOSpecDefault {
               assertTrue(list.choices.head.data.get("slot").contains("1"))
     },
 
+    test("стопка: глоток тратит одну склянку, в списке — сколько из скольких; после боя доливается до полной") {
+      // синий пояс: три ячейки — и по три склянки в ячейке
+      val h     = hero(BeltSlot.Brew(BrewKind.WortDecoction, 3))
+      val spare = (1L to 4L).toList.map(i => BrewKind.item(BrewKind.WortDecoction).copy(id = 40L + i))
+      val inv   = TestInventoryRepository.withItems(spare)
+      for {
+        t <- makeState(h, battle(h, 1L), inv)
+        (state, dao, r) = t
+        _       <- state.action(testUser, tap("Belt"), r)
+        list    <- r.sentScreens.map(_.last)
+        _       <- state.action(testUser, useSlot(0), r)
+        mid     <- dao.getHeroByUserId(userId).map(_.get)
+        // моб с 1 HP: добьём его, бой кончится — пояс доберёт из сумки
+        _       <- state.action(testUser, tap("Attack"), r)
+        after   <- dao.getHeroByUserId(userId).map(_.get)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(list.text.contains(s"1. ${BrewKind.WortDecoction.label} — 3/3")) &&
+              assertTrue(slots(mid) == List(BeltSlot.Brew(BrewKind.WortDecoction, 2))) &&
+              assertTrue(slots(after) == List(BeltSlot.Brew(BrewKind.WortDecoction, 3))) &&
+              assertTrue(inv.snapshot.size == 3) &&
+              assertTrue(screens.contains("На пояс легло из сумки"))
+    },
+
     test("после боя пустая ячейка сама берёт такой же отвар из сумки") {
       val h     = hero(BeltSlot.Brew(BrewKind.WortDecoction))
       val spare = BrewKind.item(BrewKind.WortDecoction).copy(id = 42L)
@@ -308,7 +331,7 @@ object BeltBrewSpec extends ZIOSpecDefault {
         after   <- dao.getHeroByUserId(userId).map(_.get)
         screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
       } yield assertTrue(after.statBoosts.hasActive(BrewRates.RotCallBoost, 0L)) &&
-              assertTrue(slots(after) == List(BeltSlot.Brew(BrewKind.RotCall, spent = true))) &&
+              assertTrue(slots(after) == List(BeltSlot.Brew(BrewKind.RotCall, count = 0))) &&
               assertTrue(screens.contains("Узелок развязан") && !screens.contains("Джо"))
     },
 
@@ -333,7 +356,7 @@ object BeltBrewSpec extends ZIOSpecDefault {
               assertTrue(!start.consumableUsedThisRound) &&
               // выпит: место запомнено, но герой пока стоит где стоял
               assertTrue(mid.group.pendingShift.contains(5) && mid.group.heroPos == start.group.heroPos) &&
-              assertTrue(slots(midH) == List(BeltSlot.Brew(BrewKind.ShimmerBrew, spent = true))) &&
+              assertTrue(slots(midH) == List(BeltSlot.Brew(BrewKind.ShimmerBrew, count = 0))) &&
               assertTrue(after.group.heroPos == 5 && after.group.pendingShift.isEmpty) &&
               assertTrue(log.contains("проявляетесь на месте 5"))
     },

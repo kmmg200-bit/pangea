@@ -57,6 +57,22 @@ object ItemDetails {
     def put(slot: BeltSlot, capacity: Int): Option[Belt] =
       Option.when(slots.sizeIs < capacity)(copy(slots = slots :+ slot))
 
+    /** Положить стопкой до `have` штук такой же вещи, как `unit`: сперва долить
+      * неполную ячейку того же вида (опустевшую тоже), иначе — новой ячейкой,
+      * если есть место. В ячейку входит `stack` штук. Возвращает пояс и
+      * сколько легло; класть некуда — None. */
+    def putStack(unit: BeltSlot.Stack, have: Int, capacity: Int, stack: Int): Option[(Belt, Int)] =
+      slots.zipWithIndex.collectFirst {
+        case (s: BeltSlot.Stack, i) if s.sameKind(unit) && s.count < stack => (s, i)
+      } match {
+        case Some((s, i)) =>
+          val add = (stack - s.count).min(have)
+          Some((updated(i, s.withCount(s.count + add)), add))
+        case None =>
+          val add = stack.min(have)
+          put(unit.withCount(add), capacity).map(_ -> add)
+      }
+
     /** Достать ячейку по номеру. */
     def at(idx: Int): Option[BeltSlot] = slots.lift(idx)
 
@@ -78,6 +94,10 @@ object ItemDetails {
       case Rarity.Purple | Rarity.Violet => 4
       case Rarity.Orange                 => 5
     }
+
+    /** Сколько штук держит ячейка-стопка (пыль, отвар, святая вода): столько
+      * же, сколько у пояса ячеек — у белого одна, у легендарного пять. */
+    def stackFor(rarity: Rarity): Int = capacityFor(rarity)
   }
 
   /** Пассивный навык предмета (один из `PassiveKind.poolFor(itemType)`). Падает на

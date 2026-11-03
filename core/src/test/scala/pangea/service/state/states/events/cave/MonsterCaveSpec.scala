@@ -283,7 +283,7 @@ object MonsterCaveSpec extends ZIOSpecDefault {
 
     test("с пояса в списке — только то, что в нём ещё есть; у алтаря пояс тоже есть, но ему пока ни к чему") {
       val h = hero().copy(equipment = TestFixtures.emptyEquipment.copy(belt = beltOf(
-                BeltSlot.Dust(MaterialKind.RubyDust, spent = true),
+                BeltSlot.Dust(MaterialKind.RubyDust, count = 0),
                 BeltSlot.Flask(FlaskKind.Healer, ItemRarity.Blue, 0))))
       for {
         t <- cave(h)

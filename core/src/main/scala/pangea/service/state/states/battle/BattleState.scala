@@ -35,7 +35,7 @@ import pangea.model.arena.{ArenaAlly, ArenaRates, ArenaSide}
 import pangea.service.state.states.arena.ArenaBattle
 import pangea.service.state.states.battle.BattleState.{ArenaOwnActions, Victim}
 import pangea.service.schedule.Scheduler
-import pangea.service.state.{AzatData, BoardProgress, LostSquadQuest, MarisaQuest, NpcQuestLog, State, UserAction, KillLogData}
+import pangea.service.state.{AzatData, BeltContents, BoardProgress, LostSquadQuest, MarisaQuest, NpcQuestLog, State, UserAction, KillLogData}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
 
@@ -476,7 +476,7 @@ case class BattleState(
 
   private def showRefilled(user: User, names: List[String], renderer: Renderer): Task[Unit] =
     ZIO.when(names.nonEmpty)(renderer.show(user, Screen(content.format("battle.belt.refilled",
-      "names" -> names.distinct.mkString(", ")), Nil))).unit
+      "names" -> BeltContents.counted(names)), Nil))).unit
 
   private def dungeonCommit(
       user: User,
@@ -4176,10 +4176,16 @@ case class BattleState(
         else if (aiming) Screen(content.text("battle.powerShot.beltBusy"), Nil, inline = true)
         else if (slots.isEmpty) Screen(content.text("battle.belt.empty"), Nil, inline = true)
         else {
+          // Стопка — сколько в ней из скольких: ячейка держит столько, сколько у
+          // пояса ячеек.
+          val stack = ItemDetails.Belt.stackFor(belt.rarity)
           val lines = slots.map { case (slot, idx) =>
             if (slot.uses > 0)
               content.format("battle.belt.line", "n" -> (idx + 1).toString,
-                "name" -> slot.name, "uses" -> slot.uses.toString)
+                "name" -> slot.name, "uses" -> (slot match {
+                  case s: BeltSlot.Stack => s"${s.count}/$stack"
+                  case other             => other.uses.toString
+                }))
             else content.format("battle.belt.spentLine", "n" -> (idx + 1).toString, "name" -> slot.name)
           }
           val buttons = cells.zipWithIndex.map { case ((slot, idx), i) =>
@@ -4297,7 +4303,7 @@ case class BattleState(
               val sprinkled = sprinkleInBattle(hero, d.kind)
               val (dusted, line) = sprinkled
               // Ячейка остаётся пустой, но помнит пыль: после боя доберёт такую же.
-              val next  = b.updated(idx, d.poured)
+              val next  = b.updated(idx, d.taken)
               TurnResult(withBelt(dusted, next), battle.copy(consumableUsedThisRound = consumed),
                 Vector(line) ++ qhLog, Outcome.Continue, endsRound = false)
             }
@@ -4315,7 +4321,7 @@ case class BattleState(
                 quickHandsRoll(hero).map { case (consumed, qhLog) =>
                   // Выпитая ячейка остаётся пустой, но помнит отвар: после боя
                   // доберёт такой же из сумки.
-                  val drunk = withBelt(hero, b.updated(idx, br.drunk))
+                  val drunk = withBelt(hero, b.updated(idx, br.taken))
                   brewEffect(drunk, battle.copy(consumableUsedThisRound = consumed), br.kind, nowMs, qhLog, pick)
                 }
             }
@@ -4349,7 +4355,7 @@ case class BattleState(
             quickHandsRoll(hero).map { case (consumed, qhLog) =>
               // Святая вода держится до конца боя. Ячейка пустеет, но помнит
               // склянку: после боя доберёт такую же из сумки.
-              TurnResult(withBelt(hero, b.updated(idx, h.poured)),
+              TurnResult(withBelt(hero, b.updated(idx, h.taken)),
                 battle.copy(holyWater = true, consumableUsedThisRound = consumed),
                 Vector(content.text("battle.holyWater.poured")) ++ qhLog, Outcome.Continue, endsRound = false)
             }
@@ -4615,33 +4621,23 @@ case class BattleState(
   /** Опустевшие ячейки пояса добирают из сумки то же, чем были полны: горсть
     * пыли, склянку отвара, такой же цветок. Чего не нашлось, остаётся пустым —
     * игрок доложит сам. */
-  private def refillBelt(user: User, hero: Hero): Task[List[String]] =
+  private def refillBelt(user: User, hero: Hero): Task[List[String]] = {
+    val stack = ItemDetails.Belt.stackFor(hero.equipment.belt.rarity)
     hero.equipment.belt.details match {
-      case b: ItemDetails.Belt if b.slots.exists(BattleState.refillable) =>
+      case b: ItemDetails.Belt if b.slots.exists(BattleState.refillable(_, stack)) =>
         for {
           inv <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
-          // Идём по ячейкам, забирая из сумки по одной вещи: две пустые ячейки
-          // одного вида не должны разобрать одну и ту же щепоть дважды.
+          // Идём по ячейкам, забирая из сумки то, что взяли: две неполные
+          // ячейки одного вида не должны разобрать одну и ту же щепоть дважды.
+          // Стопка добирается до полной, роза — одна, взамен осыпавшейся.
           taken = b.slots.foldLeft((List.empty[BeltSlot], List.empty[Item], inv.items.data)) {
-                    case ((slots, used, bag), d: BeltSlot.Dust) if d.spent =>
-                      bag.find(_.material.contains(d.kind)) match {
-                        case Some(item) => (slots :+ d.refilled, used :+ item, bag.filterNot(_.id == item.id))
-                        case None       => (slots :+ d, used, bag)
-                      }
-                    case ((slots, used, bag), br: BeltSlot.Brew) if br.spent =>
-                      bag.find(_.brew.contains(br.kind)) match {
-                        case Some(item) => (slots :+ br.refilled, used :+ item, bag.filterNot(_.id == item.id))
-                        case None       => (slots :+ br, used, bag)
-                      }
+                    case ((slots, used, bag), s: BeltSlot.Stack) if s.count < stack =>
+                      val more = bag.filter(i => BeltSlot.of(i).exists(s.sameKind)).take(stack - s.count)
+                      (slots :+ s.withCount(s.count + more.size), used ++ more, bag.filterNot(i => more.exists(_.id == i.id)))
                     case ((slots, used, bag), r: BeltSlot.Rose) if r.withered =>
                       bag.find(_.rose.exists(_.kind == r.kind)) match {
                         case Some(item) => (slots :+ r.refilled, used :+ item, bag.filterNot(_.id == item.id))
                         case None       => (slots :+ r, used, bag)
-                      }
-                    case ((slots, used, bag), h: BeltSlot.HolyWater) if h.spent =>
-                      bag.find(_.material.contains(pangea.model.item.MaterialKind.HolyWater)) match {
-                        case Some(item) => (slots :+ h.refilled, used :+ item, bag.filterNot(_.id == item.id))
-                        case None       => (slots :+ h, used, bag)
                       }
                     case ((slots, used, bag), other) => (slots :+ other, used, bag)
                   }
@@ -4654,6 +4650,7 @@ case class BattleState(
         } yield used.map(_.name)
       case _ => ZIO.succeed(Nil)
     }
+  }
 
   /** Пояс героя с новым содержимым. */
   private def withBelt(hero: Hero, belt: ItemDetails.Belt): Hero =
@@ -6701,13 +6698,12 @@ object BattleState {
     case _                                                                    => false
   }
 
-  /** Ячейка, которой после боя найдётся замена в сумке. */
-  def refillable(slot: BeltSlot): Boolean = slot match {
-    case d: BeltSlot.Dust => d.spent
-    case b: BeltSlot.Brew => b.spent
-    case r: BeltSlot.Rose => r.withered
-    case h: BeltSlot.HolyWater => h.spent
-    case _                => false
+  /** Ячейка, которую после боя можно добрать из сумки: неполная стопка (в
+    * ячейке их `stack`) или осыпавшаяся роза. */
+  def refillable(slot: BeltSlot, stack: Int): Boolean = slot match {
+    case s: BeltSlot.Stack => s.count < stack
+    case r: BeltSlot.Rose  => r.withered
+    case _                 => false
   }
 
   /** Список без первого такого имени (травмы с одинаковым именем не дубли —

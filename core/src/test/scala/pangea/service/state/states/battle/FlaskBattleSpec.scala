@@ -328,7 +328,7 @@ object FlaskBattleSpec extends ZIOSpecDefault {
         attack = 0, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0,
         details = ItemDetails.Belt(List(
           BeltSlot.Flask(FlaskKind.Vampiric, ItemRarity.Blue, 0),
-          BeltSlot.Brew(BrewKind.WortDecoction, spent = true))))
+          BeltSlot.Brew(BrewKind.WortDecoction, count = 0))))
       val h0    = hero(FlaskKind.Vampiric)
       val h     = h0.copy(fightStats = h0.fightStats.copy(atk = 100000L),
                     equipment = TestFixtures.emptyEquipment.copy(weapon = weapon, chestPlate = chest, belt = beltItem))

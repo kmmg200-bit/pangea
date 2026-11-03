@@ -146,19 +146,26 @@ case class EquipmentState(
           b.at(idx) match {
             case None => showList(user, renderer)
             case Some(slot) =>
+              // Ячейку снимают целиком: стопка уходит в сумку вся, сколько в ней
+              // осталось, — и только если места хватит на всё разом.
+              val back  = BeltContents.items(slot)
               val freed = heroDao.updateEquipment(user.userId,
                 hero.equipment.copy(belt = belt.copy(details = b.without(idx))))
-              val taken = BeltContents.persist(itemRepo, hero.id, BeltContents.item(slot).toList).flatMap(_.headOption match {
-                case None =>
+              val taken = inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
+                if (back.isEmpty)
                   freed *> renderer.show(user, Screen(content.format("equipment.beltCleared",
                     "name" -> slot.name), Nil))
-                case Some(it) =>
-                  inventoryRepo.addItem(hero.id, it).foldZIO(
-                    _ => renderer.show(user, Screen(content.text("equipment.beltTakeFull"), Nil)),
-                    _ => freed *> renderer.show(user, Screen(content.format("equipment.beltTaken",
-                           "name" -> slot.name), Nil))
-                  )
-              })
+                else if (!BeltContents.fits(inv, back))
+                  renderer.show(user, Screen(content.text("equipment.beltTakeFull"), Nil))
+                else
+                  for {
+                    saved <- BeltContents.persist(itemRepo, hero.id, back)
+                    _     <- freed
+                    _     <- ZIO.foreachDiscard(saved)(it => inventoryRepo.addItem(hero.id, it).ignore)
+                    _     <- renderer.show(user, Screen(content.format("equipment.beltTaken",
+                               "name" -> BeltContents.names(back)), Nil))
+                  } yield ()
+              }
               taken *> scene.selectedSlot.fold(showList(user, renderer))(showSlot(user, _, renderer))
           }
         case _ => showList(user, renderer)
@@ -298,7 +305,7 @@ case class EquipmentState(
                                  .map(_.collect { case (it, Left(_)) => InventoryFeedback.refusalLine(content, it) }.distinct)
                      stripped = if (contents.isEmpty) ""
                                 else "\n" + content.format("equipment.beltStripped",
-                                  "names" -> contents.map(_.name).mkString(", "))
+                                  "names" -> BeltContents.names(contents))
                      refused  = if (lost.isEmpty) "" else "\n" + lost.mkString("\n")
                      slotsLine <- InventoryFeedback.freeSlotsLine(inventoryRepo, content, hero.id)
                      _      <- renderer.show(user, Screen(

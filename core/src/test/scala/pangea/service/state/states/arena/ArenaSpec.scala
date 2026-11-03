@@ -380,7 +380,7 @@ object ArenaSpec extends ZIOSpecDefault {
               assertTrue(said.contains("бонусное действие уже потрачено")) &&
               // пыль в ячейке не тронута — ход не прошёл
               assertTrue(me.equipment.belt.details == ItemDetails.Belt(List(
-                BeltSlot.Brew(BrewKind.FuryTincture, spent = true), BeltSlot.Dust(MaterialKind.RubyDust))))
+                BeltSlot.Brew(BrewKind.FuryTincture, count = 0), BeltSlot.Dust(MaterialKind.RubyDust))))
     },
 
     test("пока ходит соперник, кнопки молчат") {

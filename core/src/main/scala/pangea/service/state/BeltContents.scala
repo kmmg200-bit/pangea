@@ -3,6 +3,7 @@ package pangea.service.state
 import pangea.engine.SceneContent
 import pangea.generator.item.{FlaskGenerator, MaterialGenerator}
 import pangea.model.hero.HeroId
+import pangea.model.inventory.Inventory
 import pangea.model.item.{BeltSlot, BrewKind, Item, ItemDetails, MaterialKind, RoseKind}
 import pangea.repository.item.ItemRepository
 import zio.{Task, ZIO}
@@ -22,9 +23,9 @@ object BeltContents {
   private def withSlots(belt: Item, slots: List[BeltSlot]): Item =
     belt.copy(details = ItemDetails.Belt(slots))
 
-  /** Вещь из ячейки: фляга и роза — со своими зарядами, пыль, отвар и святая
-    * вода — если не потрачены. Пустая ячейка помнит, чем была полна, но вернуть
-    * из неё нечего — None. Пустая фляга остаётся флягой: её наполнят. */
+  /** Одна вещь из ячейки: фляга и роза — со своими зарядами, из стопки — одна
+    * штука, если там что-то осталось. Пустая ячейка помнит, чем была полна, но
+    * вернуть из неё нечего — None. Пустая фляга остаётся флягой: её наполнят. */
   def item(slot: BeltSlot): Option[Item] = slot match {
     case f: BeltSlot.Flask =>
       val fresh = FlaskGenerator.item(f.kind, f.rarity)
@@ -43,6 +44,32 @@ object BeltContents {
       }))
   }
 
+  /** Всё, что лежит в ячейке, вещами: стопку снимают целиком — сколько в ней
+    * осталось, столько и выходит; фляга и роза — одна вещь. */
+  def items(slot: BeltSlot): List[Item] = slot match {
+    case s: BeltSlot.Stack => List.fill(s.count.max(0))(item(s)).flatten
+    case other             => item(other).toList
+  }
+
+  /** Названия вещей для строки игроку: одинаковые — одним словом с числом
+    * («Зверобойный отвар ×3»), в том порядке, в каком встретились. */
+  def names(items: List[Item]): String = counted(items.map(_.name))
+
+  /** То же для готовых названий. */
+  def counted(names: List[String]): String =
+    names.distinct.map { n =>
+      val k = names.count(_ == n)
+      if (k > 1) s"$n ×$k" else n
+    }.mkString(", ")
+
+  /** Влезет ли в сумку всё это разом: обычным вещам — по месту, невесомым
+    * (пыль) — не сверх предела [[Item.HoardLimit]] каждого вида. */
+  def fits(inv: Inventory, items: List[Item]): Boolean =
+    inv.hasRoomFor(items.count(!_.weightless).toLong) &&
+      items.flatMap(_.hoardKey).groupBy(identity).forall { case (k, same) =>
+        inv.hoardCount(k) + same.size <= Item.HoardLimit
+      }
+
   /** Итог смены пояса: новый — с содержимым, старый — пустой, `spilled` — что не
     * поместилось в новый и уходит в сумку вещами; `moved` — было ли что
     * перекладывать. */
@@ -51,17 +78,24 @@ object BeltContents {
   /** Новый пояс `next` надевают вместо `worn`: содержимое переезжает — полные
     * ячейки первыми, пустые последними, следом то, что уже лежало в новом (пояса,
     * собранные до этого правила). Что не вошло по ёмкости нового — вещами в
-    * сумку; лишние пустые ячейки просто пропадают. */
+    * сумку; лишние пустые ячейки просто пропадают. Стопка у нового пояса своя:
+    * что сверх неё — тоже в сумку. */
   def swap(worn: Item, next: Item): Swap = {
     val carried       = slotsOf(worn)
     val (full, spent) = (carried ++ slotsOf(next)).partition(_.uses > 0)
     val (kept, extra) = (full ++ spent).splitAt(ItemDetails.Belt.capacityFor(next.rarity))
-    Swap(withSlots(next, kept), withSlots(worn, Nil), extra.flatMap(item), moved = carried.nonEmpty)
+    val stack         = ItemDetails.Belt.stackFor(next.rarity)
+    val trimmed       = kept.map {
+      case s: BeltSlot.Stack if s.count > stack => (s.withCount(stack), items(s.withCount(s.count - stack)))
+      case other                                => (other, Nil)
+    }
+    Swap(withSlots(next, trimmed.map(_._1)), withSlots(worn, Nil),
+      trimmed.flatMap(_._2) ++ extra.flatMap(items), moved = carried.nonEmpty)
   }
 
   /** Пояс снимают: сам он — пустым, содержимое — вещами в сумку. */
   def strip(belt: Item): (Item, List[Item]) =
-    (withSlots(belt, Nil), slotsOf(belt).flatMap(item))
+    (withSlots(belt, Nil), slotsOf(belt).flatMap(items))
 
   /** Сохранить вещи из ячеек, прежде чем класть их в сумку: у свежей вещи id
     * ещё нет (-1), а сумка различает вещи по id — две такие слились бы в одну, и
@@ -74,5 +108,5 @@ object BeltContents {
   def movedLine(content: SceneContent, moved: Boolean, spilled: List[Item]): String =
     if (!moved) ""
     else if (spilled.isEmpty) "\n" + content.text("inventory.beltMoved")
-    else "\n" + content.format("inventory.beltMovedSpilled", "names" -> spilled.map(_.name).mkString(", "))
+    else "\n" + content.format("inventory.beltMovedSpilled", "names" -> names(spilled))
 }

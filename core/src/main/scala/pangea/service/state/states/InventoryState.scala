@@ -1176,19 +1176,44 @@ case class InventoryState(
       }
     }
 
-  /** Положить расходник на пояс: фляга — со своими зарядами, пыль — горстью.
-    * Ячеек у пояса столько, сколько раньше вмещалось склянок (см.
+  /** Положить расходник на пояс: фляга — со своими зарядами, роза — со своими
+    * раскрытиями, пыль, отвар и святая вода — стопкой: из сумки уходит сразу
+    * столько таких же, сколько влезает в ячейку (см.
+    * [[ItemDetails.Belt.stackFor]]), а неполная ячейка того же вида сперва
+    * доливается. Ячеек у пояса столько, сколько раньше вмещалось склянок (см.
     * [[ItemDetails.Belt.capacityFor]]); нет пояса — вещь остаётся в сумке, нет
     * места — спрашиваем, что снять ([[beltSwapScreen]]). */
   private def putOnBelt(user: User, renderer: Renderer): Task[StateType] =
     withSelected(user, renderer) { (item, hero) =>
-      val belt = hero.equipment.belt
+      val belt  = hero.equipment.belt
+      val cap   = ItemDetails.Belt.capacityFor(belt.rarity)
+      val stack = ItemDetails.Belt.stackFor(belt.rarity)
       (BeltSlot.of(item), belt.details) match {
         case (None, _) => showList(user, renderer)
         case (Some(_), _) if belt.itemType != ItemType.Belt =>
           renderer.show(user, Screen(content.text("inventory.beltNone"), Nil)) *> backToCard(user, renderer)
+        case (Some(unit: BeltSlot.Stack), b: ItemDetails.Belt) =>
+          inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
+            val same = sameInBag(inv.items.data, unit, item)
+            b.putStack(unit, same.size, cap, stack) match {
+              case None =>
+                renderer.show(user, beltSwapScreen(unit, b)).as(StateType.Inventory)
+              case Some((filled, n)) =>
+                // В той ячейке, куда легло: она одна изменилась (или встала новой).
+                val in = filled.slots.zipWithIndex.collectFirst {
+                  case (s: BeltSlot.Stack, i) if s.sameKind(unit) && !b.slots.lift(i).contains(s) => s.count
+                }
+                inventoryRepo.removeItems(same.take(n).map(_.id).toSet, hero.id).mapError(e => new Throwable(e.toString)) *>
+                  heroDao.updateEquipment(user.userId,
+                    hero.equipment.copy(belt = belt.copy(details = filled))) *>
+                  renderer.show(user, Screen(content.format("inventory.beltPutStack",
+                    "name" -> unit.name, "count" -> n.toString,
+                    "have" -> in.getOrElse(n).toString, "stack" -> stack.toString), Nil)) *>
+                  backToCard(user, renderer)
+            }
+          }
         case (Some(slot), b: ItemDetails.Belt) =>
-          b.put(slot, ItemDetails.Belt.capacityFor(belt.rarity)) match {
+          b.put(slot, cap) match {
             case None =>
               renderer.show(user, beltSwapScreen(slot, b)).as(StateType.Inventory)
             case Some(filled) =>
@@ -1197,11 +1222,27 @@ case class InventoryState(
                   hero.equipment.copy(belt = belt.copy(details = filled))) *>
                 renderer.show(user, Screen(content.format("inventory.beltPutDone",
                   "name" -> slot.name, "used" -> filled.slots.size.toString,
-                  "cap" -> ItemDetails.Belt.capacityFor(belt.rarity).toString), Nil)) *>
+                  "cap" -> cap.toString), Nil)) *>
                 backToCard(user, renderer)
           }
         case _ => showList(user, renderer)
       }
+    }
+
+  /** Такие же вещи в сумке, что и стопка `unit`, — выбранная первой: её-то
+    * игрок и кладёт, остальные идут следом. */
+  private def sameInBag(bag: List[Item], unit: BeltSlot.Stack, picked: Item): List[Item] = {
+    val same = bag.filter(i => BeltSlot.of(i).exists(unit.sameKind))
+    same.filter(_.id == picked.id) ++ same.filterNot(_.id == picked.id)
+  }
+
+  /** Ляжет ли вещь на пояс, ничего не снимая: есть свободная ячейка или — для
+    * стопки — неполная ячейка того же вида. */
+  private def fitsOnBelt(slot: BeltSlot, b: ItemDetails.Belt, rarity: pangea.model.item.Rarity): Boolean =
+    slot match {
+      case unit: BeltSlot.Stack =>
+        b.putStack(unit, 1, ItemDetails.Belt.capacityFor(rarity), ItemDetails.Belt.stackFor(rarity)).isDefined
+      case _ => b.slots.sizeIs < ItemDetails.Belt.capacityFor(rarity)
     }
 
   /** Пояс полон: по кнопке на ячейку — что снять ради новой вещи, и «Назад».
@@ -1218,42 +1259,47 @@ case class InventoryState(
       } :+ content.choice("BeltSwapBack", "common.back").copy(row = Some(belt.slots.size)))
 
   /** Положить выбранную вещь на пояс вместо ячейки `slot`: снятое уходит в сумку
-    * вещью (пустой ячейке возвращать нечего). Сумке должно хватить места: новая
-    * вещь освобождает своё, снятая занимает; пыли — не больше сотни горстей.
-    * Ячейка успела освободиться — вещь просто ложится на пояс. */
+    * вещами — стопка вся, сколько в ней осталось (пустой ячейке возвращать
+    * нечего); новая стопка набирается из сумки до полной. Сумке должно хватить
+    * места: взятое освобождает своё, снятое занимает; пыли — не больше сотни
+    * горстей. Место на поясе успело найтись — вещь просто ложится на пояс. */
   private def swapOnBelt(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     withSelected(user, renderer) { (item, hero) =>
-      val belt = hero.equipment.belt
-      val cap  = ItemDetails.Belt.capacityFor(belt.rarity)
+      val belt  = hero.equipment.belt
+      val stack = ItemDetails.Belt.stackFor(belt.rarity)
       (BeltSlot.of(item), belt.details, payloadField(ua, "slot").flatMap(_.toIntOption)) match {
-        case (Some(_), b: ItemDetails.Belt, _) if belt.itemType == ItemType.Belt && b.slots.sizeIs < cap =>
+        case (Some(slot), b: ItemDetails.Belt, _) if belt.itemType == ItemType.Belt && fitsOnBelt(slot, b, belt.rarity) =>
           putOnBelt(user, renderer)
         case (Some(slot), b: ItemDetails.Belt, Some(idx)) if belt.itemType == ItemType.Belt =>
           b.at(idx) match {
             case None => backToCard(user, renderer)
             case Some(old) =>
-              val back = BeltContents.item(old)
+              val back = BeltContents.items(old)
               inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
-                val freeAfter = inv.freeSlots + (if (item.weightless) 0L else 1L)
-                val hoardFull = back.exists(r => r.hoardKey.exists(k =>
-                                  inv.hoardCount(k) - (if (item.hoardKey.contains(k)) 1 else 0) >= Item.HoardLimit))
-                if (back.exists(!_.weightless) && freeAfter < 1L)
-                  renderer.show(user, Screen(content.text("common.swapNoRoom"), Nil)) *> backToCard(user, renderer)
-                else if (hoardFull)
-                  renderer.show(user, Screen(back.map(InventoryFeedback.refusalLine(content, _)).getOrElse(""), Nil)) *>
+                // Что уходит из сумки на пояс: стопкой — сколько влезет, иначе — сама вещь.
+                val (put, taken) = slot match {
+                  case unit: BeltSlot.Stack =>
+                    val same = sameInBag(inv.items.data, unit, item).take(stack)
+                    (unit.withCount(same.size), same)
+                  case other => (other, List(item))
+                }
+                val after = inv.withItems(inv.items.data.filterNot(i => taken.exists(_.id == i.id)))
+                if (!BeltContents.fits(after, back))
+                  renderer.show(user, Screen(back.find(r => r.weightless && !BeltContents.fits(after, List(r)))
+                    .map(InventoryFeedback.refusalLine(content, _)).getOrElse(content.text("common.swapNoRoom")), Nil)) *>
                     backToCard(user, renderer)
                 else
                   for {
                     // Место есть — теперь и сохраняем снятое (см. BeltContents.persist).
-                    saved <- BeltContents.persist(Some(itemRepository), hero.id, back.toList)
-                    _     <- inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString))
+                    saved <- BeltContents.persist(Some(itemRepository), hero.id, back)
+                    _     <- inventoryRepo.removeItems(taken.map(_.id).toSet, hero.id).mapError(e => new Throwable(e.toString))
                     _     <- heroDao.updateEquipment(user.userId,
-                               hero.equipment.copy(belt = belt.copy(details = b.updated(idx, slot))))
+                               hero.equipment.copy(belt = belt.copy(details = b.updated(idx, put))))
                     _     <- ZIO.foreachDiscard(saved)(r => inventoryRepo.addItem(hero.id, r).mapError(e => new Throwable(e.toString)))
-                    _     <- renderer.show(user, Screen(back match {
-                               case Some(r) => content.format("inventory.beltSwapped", "name" -> slot.name, "old" -> r.name)
-                               case None    => content.format("inventory.beltSwappedEmpty", "name" -> slot.name, "old" -> old.name)
-                             }, Nil))
+                    name   = BeltContents.names(taken)
+                    _     <- renderer.show(user, Screen(
+                               if (back.isEmpty) content.format("inventory.beltSwappedEmpty", "name" -> name, "old" -> old.name)
+                               else content.format("inventory.beltSwapped", "name" -> name, "old" -> BeltContents.names(back)), Nil))
                     res   <- backToCard(user, renderer)
                   } yield res
               }

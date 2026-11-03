@@ -527,6 +527,36 @@ object InventoryStateSpec extends ZIOSpecDefault {
               assertTrue(said.contains("на пояс, ") && said.contains("— в сумку"))
     },
 
+    test("отвар на пояс — стопкой: в легендарный пять из сумки разом, в белый — один; неполная ячейка доливается") {
+      val brews = (1L to 7L).toList.map(i => pangea.model.item.BrewKind.item(pangea.model.item.BrewKind.WortDecoction).copy(id = 300L + i))
+      val wort  = pangea.model.item.BrewKind.WortDecoction
+      for {
+        q1 <- makeState(wearingBelt(beltItem(80L, "Пояс", Rarity.Orange)), brews)
+        (s1, d1, i1, r1) = q1
+        _  <- s1.action(testUser, selectItem(brews.head.id), r1)
+        _  <- s1.action(testUser, tap("BeltPut"), r1)
+        h1 <- d1.getHeroByUserId(userId).map(_.get)
+        t1 <- r1.sentScreens.map(_.map(_.text).mkString("\n"))
+        // в ячейке три из пяти: доливается она, новой ячейки не нужно
+        q2 <- makeState(wearingBelt(beltItem(80L, "Пояс", Rarity.Orange, List(healer, BeltSlot.Brew(wort, 3)))), brews)
+        (s2, d2, i2, r2) = q2
+        _  <- s2.action(testUser, selectItem(brews.head.id), r2)
+        _  <- s2.action(testUser, tap("BeltPut"), r2)
+        h2 <- d2.getHeroByUserId(userId).map(_.get)
+        q3 <- makeState(wearingBelt(beltItem(80L, "Пояс", Rarity.White)), brews)
+        (s3, d3, i3, r3) = q3
+        _  <- s3.action(testUser, selectItem(brews.head.id), r3)
+        _  <- s3.action(testUser, tap("BeltPut"), r3)
+        h3 <- d3.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(BeltContents.slotsOf(h1.equipment.belt) == List(BeltSlot.Brew(wort, 5))) &&
+              assertTrue(i1.snapshot.count(_.brew.contains(wort)) == 2) &&
+              assertTrue(t1.contains(s"На пояс: ${wort.label} ×5 — в ячейке 5/5")) &&
+              assertTrue(BeltContents.slotsOf(h2.equipment.belt) == List(healer, BeltSlot.Brew(wort, 5))) &&
+              assertTrue(i2.snapshot.count(_.brew.contains(wort)) == 5) &&
+              assertTrue(BeltContents.slotsOf(h3.equipment.belt) == List(BeltSlot.Brew(wort, 1))) &&
+              assertTrue(i3.snapshot.count(_.brew.contains(wort)) == 6)
+    },
+
     test("замена на поясе: сумке негде взять снятое → отказ; пустую ячейку меняют и при полной сумке") {
       val dust   = dustItem(MaterialKind.RubyDust, 90L)
       val full   = (1L to 20L).toList.map(i => helm.copy(id = 200L + i))
@@ -540,7 +570,7 @@ object InventoryStateSpec extends ZIOSpecDefault {
         h1   <- d1.getHeroByUserId(userId).map(_.get)
         t1   <- r1.sentScreens.map(_.map(_.text).mkString("\n"))
         // высыпанная пыль — пустая ячейка: вернуть нечего, место в сумке не нужно
-        q2   <- makeState(wearingBelt(beltItem(80L, "Пояс", Rarity.Gray, List(ruby.poured))), flask :: full.drop(1))
+        q2   <- makeState(wearingBelt(beltItem(80L, "Пояс", Rarity.Gray, List(ruby.withCount(0)))), flask :: full.drop(1))
         (s2, d2, _, r2) = q2
         _    <- s2.action(testUser, selectItem(flask.id), r2)
         _    <- s2.action(testUser, tap("BeltPut"), r2)

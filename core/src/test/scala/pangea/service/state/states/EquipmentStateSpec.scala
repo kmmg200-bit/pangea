@@ -145,7 +145,7 @@ object EquipmentStateSpec extends ZIOSpecDefault {
 
     test("снять пояс: он уходит пустым, содержимое — сохранёнными вещами в сумку") {
       val slots = List(BeltSlot.Flask(FlaskKind.Healer, Rarity.Blue, 3), BeltSlot.Dust(MaterialKind.RubyDust),
-                       BeltSlot.Dust(MaterialKind.RubyDust, spent = true))
+                       BeltSlot.Dust(MaterialKind.RubyDust, count = 0))
       val belt  = Item(80L, "Пояс", 1L, Rarity.Blue, ItemType.Belt,
                     attack = 0, accuracy = 0, energy = 0, armor = 1, defence = 0, evasion = 0,
                     details = ItemDetails.Belt(slots))
@@ -166,6 +166,37 @@ object EquipmentStateSpec extends ZIOSpecDefault {
               // фляга и пыль — вещами с настоящим id; высыпанная пыль вернуть нечего
               assertTrue(bag.count(i => i.id != 80L) == 2 && bag.forall(_.id > 0L)) &&
               assertTrue(said.contains("Содержимое пояса — в сумку: "))
+    },
+
+    test("ячейку снимают целиком: вся стопка — в сумку; места на всё нет — отказ, стопка на поясе") {
+      val wort  = pangea.model.item.BrewKind.WortDecoction
+      val slots = List(BeltSlot.Brew(wort, 3))
+      val belt  = Item(80L, "Пояс", 1L, Rarity.Blue, ItemType.Belt,
+                    attack = 0, accuracy = 0, energy = 0, armor = 1, defence = 0, evasion = 0,
+                    details = ItemDetails.Belt(slots))
+      val hero  = TestFixtures.hero(userId).copy(equipment = TestFixtures.emptyEquipment.copy(belt = belt))
+      val take  = UserAction("", Some("""{"action":"BeltTake","slot":"0"}"""))
+      val stuff = (1L to 19L).toList.map(i => blade(500L + i, s"Клинок $i", 1L, 1))
+      for {
+        heroDao  <- TestHeroDao.withHero(userId, hero)
+        renderer <- TestRenderer.make
+        content  <- ZIO.attempt(SceneContent.load())
+        invRepo   = TestInventoryRepository.accepting
+        state     = EquipmentState(heroDao, invRepo, content, Some(TestItemRepository.make))
+        _        <- state.action(testUser, take, renderer)
+        after    <- heroDao.getHeroByUserId(userId).map(_.get)
+        said     <- renderer.sentScreens.map(_.map(_.text).mkString("\n"))
+        // в сумке осталось одно место, а склянок три
+        dao2     <- TestHeroDao.withHero(userId, hero)
+        inv2      = TestInventoryRepository.withItems(stuff)
+        state2    = EquipmentState(dao2, inv2, content, Some(TestItemRepository.make))
+        _        <- state2.action(testUser, take, renderer)
+        kept     <- dao2.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(BeltContents.slotsOf(after.equipment.belt).isEmpty) &&
+              assertTrue(invRepo.snapshot.count(_.brew.contains(wort)) == 3 && invRepo.snapshot.forall(_.id > 0L)) &&
+              assertTrue(said.contains(s"${wort.label} ×3 снят с пояса")) &&
+              assertTrue(BeltContents.slotsOf(kept.equipment.belt) == slots) &&
+              assertTrue(inv2.snapshot.size == 19)
     },
 
     test("снять пояс с флягой, когда в сумке одно место → отказ, пояс с содержимым остаётся на герое") {
