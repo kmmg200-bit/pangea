@@ -49,7 +49,7 @@ case class ElementalSearchState(
 
   override def targetStates: Set[StateType] = Set(StateType.Dungeon, StateType.ElementalSearch)
 
-  /** Вход: считаем попытки по уровню босса и ставим первый таймер. */
+  /** Вход: бросаем число находок и ставим первый таймер. */
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     for {
       scene <- readScene(user)
@@ -58,9 +58,7 @@ case class ElementalSearchState(
         case Some(_) => showSearch(user, renderer)
         case None =>
           for {
-            hero  <- getHero(user)
-            bonus <- Random.nextLongBetween(1L, 3L) // 1 или 2 сверх BossLvL
-            tries  = bonus + pangea.model.monster.MiniBoss.bossLvl(hero.lvl)
+            tries <- Random.nextLongBetween(MinTries, MaxTries + 1L)
             _     <- writeScene(user, SearchScene(tries.toInt))
             _     <- scheduleNext(user)
             _     <- showSearch(user, renderer)
@@ -121,14 +119,13 @@ case class ElementalSearchState(
                  StateType.ElementalSearch, FindAction)
     } yield ()
 
-  /** Случайный камень: вид любой, кроме черепа; грейд по качеству 90/9/1. */
+  /** Случайный камень: вид любой, кроме черепа; надколотый или, реже,
+    * повреждённый (95/5). */
   private def randomGem: Task[Item] =
     for {
       kindIdx <- Random.nextIntBounded(DroppableKinds.size)
       roll    <- Random.nextIntBetween(1, 101)
-      grade    = if (roll <= CrackedPct) Gem.MinGrade
-                 else if (roll <= CrackedPct + DamagedPct) Gem.MinGrade + 1
-                 else WholeGrade
+      grade    = if (roll <= CrackedPct) Gem.MinGrade else Gem.MinGrade + 1
     } yield GemGenerator.item(DroppableKinds(kindIdx), grade)
 
   private def readScene(user: User): Task[Option[SearchScene]] =
@@ -155,11 +152,13 @@ object ElementalSearchState {
   val MinDelayMs: Long = 2L * 60L * 1000L
   val MaxDelayMs: Long = 4L * 60L * 1000L
 
-  /** Качество находки: «надколотый» почти всегда, «цельный» — большая редкость. */
-  val CrackedPct: Int = 90
-  val DamagedPct: Int = 9
-  /** Грейд «цельного» камня — базовое имя без приставки (напр. просто «Рубин»). */
-  val WholeGrade: Int = 3
+  /** Сколько находок за осмотр: от одной до трёх, от уровня не зависит. */
+  val MinTries: Long = 1L
+  val MaxTries: Long = 3L
+
+  /** Качество находки: «надколотый» почти всегда, остальное — «повреждённый».
+    * Целых камней в логове не бывает. */
+  val CrackedPct: Int = 95
 
   /** Виды камней, которые можно найти в логове: череп исключён. */
   val DroppableKinds: IndexedSeq[GemKind] = GemKind.values.filterNot(_ == GemKind.Skull)

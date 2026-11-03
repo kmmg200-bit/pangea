@@ -40,16 +40,16 @@ object ElementalSearchStateSpec extends ZIOSpecDefault {
 
   override def spec = suite("ElementalSearchState")(
 
-    test("вход: считает попытки по BossLvL и ставит таймер, не показывая время") {
+    test("вход: бросает число находок и ставит таймер, не показывая время") {
       for {
         t <- makeState()
         (state, dao, _, scheduler, renderer) = t
-        _        <- TestRandom.feedLongs(1L, 0L) // бонус попыток = 1, задержка = минимум
+        _        <- TestRandom.feedLongs(3L, 0L) // находок 3, задержка = минимум
         _        <- state.enter(testUser, renderer)
         scene    <- sceneOf(dao)
         tasks    <- scheduler.scheduled
         screens  <- renderer.sentScreens
-      } yield assertTrue(scene.exists(_.triesLeft == 4)) && // BossLvL 3 + бонус 1
+      } yield assertTrue(scene.exists(_.triesLeft == 3)) &&
               assertTrue(tasks.exists(_.kind == TaskKind.ElementalSearch)) &&
               assertTrue(screens.last.text.contains("изучаете окрестности")) &&
               // время до находки не раскрываем ни в тексте, ни в кнопках
@@ -61,7 +61,7 @@ object ElementalSearchStateSpec extends ZIOSpecDefault {
       for {
         t <- makeState()
         (state, dao, invRepo, scheduler, renderer) = t
-        _       <- TestRandom.feedLongs(1L, 0L)
+        _       <- TestRandom.feedLongs(3L, 0L)
         _       <- state.enter(testUser, renderer)
         // Находка: вид камня, качество, затем задержка следующего таймера.
         _       <- TestRandom.feedInts(0, 50)
@@ -71,7 +71,7 @@ object ElementalSearchStateSpec extends ZIOSpecDefault {
         screens <- renderer.sentScreens
       } yield assertTrue(result == StateType.ElementalSearch) &&
               assertTrue(invRepo.snapshot.size == 1) &&
-              assertTrue(scene.exists(_.triesLeft == 3)) &&
+              assertTrue(scene.exists(_.triesLeft == 2)) &&
               assertTrue(screens.map(_.text).mkString.contains("Вы нашли"))
     },
 
@@ -79,7 +79,7 @@ object ElementalSearchStateSpec extends ZIOSpecDefault {
       for {
         t <- makeState()
         (state, _, _, _, renderer) = t
-        _       <- TestRandom.feedLongs(1L, 0L)
+        _       <- TestRandom.feedLongs(3L, 0L)
         _       <- state.enter(testUser, renderer)
         _       <- TestRandom.feedInts(0, 50)
         _       <- TestRandom.feedLongs(0L)
@@ -99,7 +99,7 @@ object ElementalSearchStateSpec extends ZIOSpecDefault {
       for {
         t <- makeState(artifacts = Some(casket))
         (state, _, invRepo, _, renderer) = t
-        _       <- TestRandom.feedLongs(1L, 0L)
+        _       <- TestRandom.feedLongs(3L, 0L)
         _       <- state.enter(testUser, renderer)
         _       <- TestRandom.feedInts(0, 50)
         _       <- TestRandom.feedLongs(0L)
@@ -116,7 +116,7 @@ object ElementalSearchStateSpec extends ZIOSpecDefault {
       for {
         t <- makeState(bagFull = true)
         (state, _, _, _, renderer) = t
-        _       <- TestRandom.feedLongs(1L, 0L)
+        _       <- TestRandom.feedLongs(3L, 0L)
         _       <- state.enter(testUser, renderer)
         _       <- TestRandom.feedInts(0, 50)
         _       <- TestRandom.feedLongs(0L)
@@ -145,7 +145,7 @@ object ElementalSearchStateSpec extends ZIOSpecDefault {
       for {
         t <- makeState()
         (state, dao, _, scheduler, renderer) = t
-        _         <- TestRandom.feedLongs(1L, 0L)
+        _         <- TestRandom.feedLongs(3L, 0L)
         _         <- state.enter(testUser, renderer)
         result    <- state.action(testUser, tap("LeaveSearch"), renderer)
         scene     <- dao.readSceneData(userId)
@@ -155,16 +155,15 @@ object ElementalSearchStateSpec extends ZIOSpecDefault {
               assertTrue(cancelled.map(_._2).contains(TaskKind.ElementalSearch))
     },
 
-    test("череп в логове не находится, а качество катается 90/9/1") {
-      // Прогоняем все виды и границы качества через саму таблицу состояния.
+    test("находок от одной до трёх, череп в логове не находится, качество 95/5") {
       val kinds = ElementalSearchState.DroppableKinds
+      assertTrue(ElementalSearchState.MinTries == 1L && ElementalSearchState.MaxTries == 3L) &&
       assertTrue(!kinds.contains(GemKind.Skull)) &&
       assertTrue(kinds.size == GemKind.values.size - 1) &&
-      assertTrue(ElementalSearchState.CrackedPct == 90) &&
-      assertTrue(ElementalSearchState.DamagedPct == 9)
+      assertTrue(ElementalSearchState.CrackedPct == 95)
     },
 
-    test("качество: 90 — надколотый, 99 — повреждённый, 100 — цельный") {
+    test("качество: 95 — надколотый, 96 и 100 — повреждённый, целых нет") {
       def gradeFor(roll: Int) =
         for {
           t <- makeState()
@@ -175,12 +174,12 @@ object ElementalSearchStateSpec extends ZIOSpecDefault {
           _ <- state.action(testUser, tap("ElementalFind"), renderer)
         } yield invRepo.snapshot.head.gem.map(_.grade)
       for {
-        cracked <- gradeFor(90)
-        damaged <- gradeFor(99)
-        whole   <- gradeFor(100)
+        cracked <- gradeFor(95)
+        damaged <- gradeFor(96)
+        top     <- gradeFor(100)
       } yield assertTrue(cracked.contains(1)) &&
               assertTrue(damaged.contains(2)) &&
-              assertTrue(whole.contains(ElementalSearchState.WholeGrade))
+              assertTrue(top.contains(2))
     }
   )
 }
