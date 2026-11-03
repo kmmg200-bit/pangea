@@ -262,6 +262,49 @@ cd web && npm install && npm run dev       # приложение на :5173, /a
 npm run sign -- dev-secret <vk_id игрока>  # адрес, открывающий приложение от его имени
 ```
 
+## Бэкапы базы
+
+Каждый день в 3:00 (МСК — время сервера) cron запускает `scripts/backup-db.sh`:
+дамп базы (`pg_dump -Fc`), проверка, что архив читается, и копия на Яндекс Диск
+в папку `pangea-backups`. На Диске хранятся копии за 30 дней, на сервере — 3
+последние (`/root/backups/pangea`). Дамп снимается внутри работающего контейнера
+postgres: бот не останавливается и не перезапускается. Не вышло — сообщество
+пишет в ВК всем из `BACKUP_ALERT_VK_IDS`. Журнал — `/var/log/pangea-backup.log`.
+
+Настроить один раз:
+
+1. На сервере: `apt install rclone`.
+2. На своём компьютере (там, где есть браузер): `brew install rclone`, затем
+   `rclone authorize "yandex"` — откроется Яндекс, войти и разрешить доступ. В
+   терминале появится токен `{"access_token":...}` — скопировать его целиком.
+3. На сервере: `rclone config` → `n` (новый) → имя `yadisk` → тип `yandex` →
+   `client_id` и `client_secret` пустые → `Edit advanced config?` — `n` →
+   `Use web browser...?` — `n` → вставить токен из шага 2 → `y` → `q`.
+   Проверка: `rclone lsd yadisk:` показывает папки Диска.
+4. В `.env`: `BACKUP_ALERT_VK_IDS=<id>,<id>`.
+5. Первый запуск руками: `scripts/backup-db.sh` — в конце «готово: pangea_….dump».
+   Проверить сообщение о сбое: `BACKUP_REMOTE=nope: scripts/backup-db.sh`.
+6. Включить расписание: `cp scripts/pangea-backup.cron /etc/cron.d/pangea-backup`.
+
+Восстановление — только руками и при остановленном боте:
+
+```bash
+rclone copy yadisk:pangea-backups/pangea_<дата>.dump /root/backups/restore/
+docker compose stop app
+docker compose exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner' \
+  < /root/backups/restore/pangea_<дата>.dump
+docker compose start app
+```
+
+Проверить копию, не трогая игру, — восстановить её в отдельную базу:
+
+```bash
+docker compose exec -T postgres sh -c 'createdb -U "$POSTGRES_USER" restore_test'
+docker compose exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d restore_test --no-owner' \
+  < /root/backups/restore/pangea_<дата>.dump
+docker compose exec -T postgres sh -c 'dropdb -U "$POSTGRES_USER" restore_test'
+```
+
 ## Метрики и графики
 
 Бот пишет метрики (`pangea.metrics.GameMetrics`): время ходов и где ход ждёт —

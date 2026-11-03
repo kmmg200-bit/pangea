@@ -1,0 +1,8 @@
+# Бэкап базы Пангеи на Яндекс Диск — каждый день в 3:00 по времени сервера (МСК),
+# см. scripts/backup-db.sh. Установка:
+#   cp scripts/pangea-backup.cron /etc/cron.d/pangea-backup
+# Имя в /etc/cron.d — без точки: файлы с точкой в имени cron пропускает.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+0 3 * * * root /root/game/pangea/scripts/backup-db.sh >> /var/log/pangea-backup.log 2>&1
