@@ -46,6 +46,8 @@ case class HerbWorkbenchState(
   artifacts:     Option[ArtifactRepository] = None
 ) extends State {
 
+  private val stow = HomeStow(inventoryRepo, artifacts, content)
+
   private val branch = new Branch(
     routes = Map(
       "WbMenu"      -> Target.Run { (u, ua, r) => menu(u, page(ua), r) },
@@ -150,8 +152,7 @@ case class HerbWorkbenchState(
         case (Nil, 0) => say(user, content.text("home.workbench.noHerbs"), renderer) *> menu(user, 0, renderer)
         case (taken, left) =>
           saveHome(user, home.copy(herbs = home.herbs ++ taken)) *>
-            say(user, content.format("home.workbench.herbsPut", "n" -> taken.size.toString) +
-              (if (left > 0) "\n" + content.format("home.workbench.herbsLeft", "n" -> left.toString) else ""), renderer) *>
+            say(user, stow.herbsText(taken.size, left), renderer) *>
             menu(user, 0, renderer)
       }
     }
@@ -473,25 +474,9 @@ case class HerbWorkbenchState(
   /** Собрать вещи из сумки, а следом из Живой сумки — не больше `room`.
     * Возвращает взятое и сколько подходящего осталось за бортом. */
   private def gather(user: User, accepts: Item => Boolean, room: Int): Task[(List[Item], Int)] =
-    for {
-      hero  <- getHero(user)
-      inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
-      fromBag = inv.items.data.filter(i => accepts(i) && !i.isQuestItem)
-      living <- artifacts.fold(ZIO.succeed(List.empty[Item]))(a =>
-                  a.get(hero.id).fold(_ => Nil, _.of(ArtifactKind.LivingBag).items.data))
-      fromLiving = living.filter(accepts)
-      all        = fromBag ++ fromLiving
-      taken      = all.take(room.max(0))
-      takenIds   = taken.map(_.id).toSet
-      _ <- ZIO.when(fromBag.exists(i => takenIds.contains(i.id)))(
-             inventoryRepo.removeItems(fromBag.map(_.id).filter(takenIds.contains).toSet, hero.id).mapError(asThrowable))
-      // Живая сумка отдаёт своё одной записью: остаток её содержимого как есть,
-      // заряды не тратятся.
-      _ <- ZIO.foreachDiscard(artifacts.filter(_ => fromLiving.exists(i => takenIds.contains(i.id))))(a =>
-             a.applyMagic(hero.id, ArtifactKind.LivingBag, living.filterNot(i => takenIds.contains(i.id)), 0).mapError(asThrowable))
-    } yield (taken, all.size - taken.size)
+    getHero(user).flatMap(hero => stow.gather(hero.id, accepts, ArtifactKind.LivingBag, room))
 
-  private def isHerb(it: Item): Boolean = it.material.exists(_.isHerb)
+  private def isHerb(it: Item): Boolean = HomeStow.isHerb(it)
 
   /** Сваренное в котелке идёт в тот же счёт «Зельевара I», что и в кубе. */
   private def brewedAchievement(user: User, hero: Hero, made: List[Item], renderer: Renderer): Task[Unit] = {

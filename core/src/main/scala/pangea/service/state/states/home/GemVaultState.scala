@@ -35,6 +35,8 @@ case class GemVaultState(
   artifacts:     Option[ArtifactRepository] = None
 ) extends State {
 
+  private val stow = HomeStow(inventoryRepo, artifacts, content)
+
   private val branch = new Branch(
     routes = Map(
       "GvMenu"    -> Target.Run { (u, ua, r) => menu(u, page(ua), r) },
@@ -124,28 +126,15 @@ case class GemVaultState(
   private def putAll(user: User, renderer: Renderer): Task[StateType] =
     withVault(user) { home =>
       for {
-        hero      <- getHero(user)
-        inv       <- inventoryRepo.get(hero.id).mapError(asThrowable)
-        fromBag    = inv.items.data.filter(i => i.gem.isDefined && !i.isQuestItem)
-        casket    <- artifacts.fold(ZIO.succeed(List.empty[Item]))(a =>
-                       a.get(hero.id).fold(_ => Nil, _.of(ArtifactKind.Casket).items.data))
-        fromCasket = casket.filter(_.gem.isDefined)
-        all        = fromBag ++ fromCasket
-        taken      = all.take((home.gemShelves - home.gems.size).max(0))
-        ids        = taken.map(_.id).toSet
-        res       <- if (all.isEmpty) say(user, content.text("home.gems.nothingToPut"), renderer) *> menu(user, 0, renderer)
-                     else for {
-                       _ <- ZIO.when(fromBag.exists(i => ids.contains(i.id)))(
-                              inventoryRepo.removeItems(fromBag.map(_.id).filter(ids.contains).toSet, hero.id).mapError(asThrowable))
-                       // Ларец отдаёт своё одной записью: остаток как есть, заряды не тратятся.
-                       _ <- ZIO.foreachDiscard(artifacts.filter(_ => fromCasket.exists(i => ids.contains(i.id))))(a =>
-                              a.applyMagic(hero.id, ArtifactKind.Casket, casket.filterNot(i => ids.contains(i.id)), 0).mapError(asThrowable))
-                       _ <- saveHome(user, home.copy(gems = home.gems ++ taken))
-                       left = all.size - taken.size
-                       _ <- say(user, content.format("home.gems.put", "n" -> taken.size.toString) +
-                              (if (left > 0) "\n" + content.format("home.gems.putLeft", "n" -> left.toString) else ""), renderer)
-                       s <- menu(user, 0, renderer)
-                     } yield s
+        hero <- getHero(user)
+        got  <- stow.gather(hero.id, HomeStow.isGem, ArtifactKind.Casket, home.gemShelves - home.gems.size)
+        res  <- got match {
+                  case (Nil, 0) => say(user, content.text("home.gems.nothingToPut"), renderer) *> menu(user, 0, renderer)
+                  case (taken, left) =>
+                    saveHome(user, home.copy(gems = home.gems ++ taken)) *>
+                      say(user, stow.gemsText(taken.size, left), renderer) *>
+                      menu(user, 0, renderer)
+                }
       } yield res
     }
 

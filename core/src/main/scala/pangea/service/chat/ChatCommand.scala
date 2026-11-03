@@ -25,9 +25,6 @@ object ChatCommand {
 
     /** Слоты снаряжения: что надето, без характеристик. */
     case object Gear extends Self
-
-    /** Таблица конкурса активности этой недели. */
-    case object Rating extends Self
   }
 
   /** Чем отличать сообщения беседы друг от друга в защите от повторов.
@@ -68,7 +65,6 @@ object ChatCommand {
   def selfCommand(text: String): Option[Self] = bare(text) match {
     case "мой профиль"                        => Some(Self.Profile)
     case "мое снаряжение"                     => Some(Self.Gear)
-    case "рейтинг" | "рейтинг активности"     => Some(Self.Rating)
     case _                                    => None
   }
 

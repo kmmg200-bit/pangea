@@ -9,11 +9,13 @@ import pangea.generator.item.ItemGenerator
 import pangea.model.hero.Hero
 import pangea.model.hero.{AzatState, CubeStatus, Equipment}
 import pangea.model.home.{Furniture, HomeData, HomeRates, House}
-import pangea.model.item.{ItemType, QuestItemKind}
+import pangea.model.artifact.ArtifactKind
+import pangea.model.item.{Item, ItemType, QuestItemKind}
 import pangea.model.schedule.TaskKind
 import pangea.model.state.StateType
 import pangea.model.stats.{ParamsBuff, StatBoost}
 import pangea.model.user.User
+import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.bank.BankRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
@@ -45,14 +47,20 @@ import java.util.concurrent.TimeUnit
   * (2 / 1,5 / 1 ч), травмы проходят, HP, броня, энергия и отряд — как новые; встал
   * раньше — ничего этого нет. Выспался — ещё и «выспался»: больше опыта на
   * время ([[House.restedMs]]). Пока герой спит, отметка о начале сна лежит в
-  * `scene_data`, а будит его таймер ([[TaskKind.HomeSleep]]). */
+  * `scene_data`, а будит его таймер ([[TaskKind.HomeSleep]]).
+  *
+  * «Разложить всё» — три «Положить всё» одной кнопкой ([[HomeStow]]): рунные
+  * камни — на алтарь, травы — на полки верстака (со второго дома), камни — в
+  * хранилище (на острове); чего в доме нет, то пропускается. */
 case class HomeState(
   heroDao:       HeroDao,
   scheduler:     Scheduler,
   content:       SceneContent,
   inventoryRepo: InventoryRepository,
   itemRepo:      ItemRepository,
-  bank:          Option[BankRepository] = None
+  bank:          Option[BankRepository] = None,
+  // Живая сумка и Ларец: «Разложить всё» берёт травы и камни и из них.
+  artifacts:     Option[ArtifactRepository] = None
 ) extends State {
   import HomeState._
 
@@ -61,6 +69,8 @@ case class HomeState(
 
   /** Магические стойки: обмен надетого на то, что висит на стойке. */
   private val racks = Racks(heroDao, inventoryRepo, content)
+
+  private val stow = HomeStow(inventoryRepo, artifacts, content)
 
   private val branch = new Branch(
     routes = Map(
@@ -92,6 +102,7 @@ case class HomeState(
       "HomeWakeYes" -> Target.Run { (u, _, r) => wakeEarly(u, r) },
       "HomeWakeNo"  -> Target.Run { (u, _, r) => showSleeping(u, r) },
       "HomeLibrary" -> Target.Run { (u, _, r) => library(u, r) },
+      "HomeStowAll" -> Target.Run { (u, _, r) => stowAll(u, r) },
       "HomeAltar"   -> Target.Goto(StateType.RuneAltar),
       "HomeHerbs"   -> Target.Goto(StateType.HerbWorkbench),
       "HomeGems"    -> Target.Goto(StateType.GemVault),
@@ -244,8 +255,8 @@ case class HomeState(
       home.house match {
         case None => office(user, renderer)
         case Some(h) =>
-          // Ряд 0 — отдых, чтение и уборка, ряд 1 — хозяйство дома, дальше —
-          // обстановка, Юнона и дверь.
+          // Ряд 0 — отдых, чтение и уборка, ряд 1 — хозяйство дома, ряд 2 —
+          // «Разложить всё», дальше — обстановка, Юнона и дверь.
           val second = h.tier >= House.Townhouse.tier
           val buttons = List(
             Some(Choice("HomeBed", content.text("home.house.bed"), color = ChoiceColor.Positive, row = Some(0))),
@@ -257,11 +268,43 @@ case class HomeState(
             Option.when(second)(Choice("HomeAzat", content.text("home.house.azat"), row = Some(1))),
             Option.when(h == House.Island)(Choice("HomeGems", content.text("home.house.gems"), row = Some(1))),
             Option.when(home.count(Furniture.ArtisanBench) > 0)(Choice("HomeBench", content.text("home.house.bench"), row = Some(1))),
-            Some(Choice("HomeSlots", content.text("home.house.slots"), row = Some(2))),
-            Some(Choice("HomeOffice", content.text("home.house.office"), row = Some(2))),
-            Some(Choice("LeaveHome", content.text("home.house.leave"), color = ChoiceColor.Negative, row = Some(3)))
+            Some(Choice("HomeStowAll", content.text("home.house.stowAll"), color = ChoiceColor.Positive, row = Some(2))),
+            Some(Choice("HomeSlots", content.text("home.house.slots"), row = Some(3))),
+            Some(Choice("HomeOffice", content.text("home.house.office"), row = Some(3))),
+            Some(Choice("LeaveHome", content.text("home.house.leave"), color = ChoiceColor.Negative, row = Some(4)))
           ).flatten
           renderer.show(user, Screen(content.text(s"home.houses.${h.key}.inside"), buttons)).as(StateType.Home)
+      }
+    }
+
+  /** «Разложить всё»: рунные камни — на алтарь, травы — на полки верстака,
+    * камни — в хранилище, пока есть место; травы и камни берутся и из Живой
+    * сумки и Ларца. Нет верстака или хранилища в этом доме — их шаг
+    * пропускается. Дом пишется одной записью, итог — одним сообщением. */
+  private def stowAll(user: User, renderer: Renderer): Task[StateType] =
+    loadHome(user).flatMap { home =>
+      home.house match {
+        case None => office(user, renderer)
+        case Some(h) =>
+          for {
+            hero  <- getHero(user)
+            runes <- stow.runeStones(hero.id)
+            herbs <- if (h.tier >= House.Townhouse.tier)
+                       stow.gather(hero.id, HomeStow.isHerb, ArtifactKind.LivingBag, home.herbShelves - home.herbs.size)
+                     else ZIO.succeed((List.empty[Item], 0))
+            gems  <- if (h == House.Island)
+                       stow.gather(hero.id, HomeStow.isGem, ArtifactKind.Casket, home.gemShelves - home.gems.size)
+                     else ZIO.succeed((List.empty[Item], 0))
+            next   = HomeStow.addRunes(home, runes).copy(herbs = home.herbs ++ herbs._1, gems = home.gems ++ gems._1)
+            _     <- ZIO.when(next != home)(saveHome(user, next))
+            lines  = List(
+                       Option.when(runes.nonEmpty)(stow.runesText(runes)),
+                       Option.when(herbs != ((Nil, 0)))(stow.herbsText(herbs._1.size, herbs._2)),
+                       Option.when(gems != ((Nil, 0)))(stow.gemsText(gems._1.size, gems._2))
+                     ).flatten
+            _     <- say(user, if (lines.isEmpty) content.text("home.house.stowNothing") else lines.mkString("\n\n"), renderer)
+            s     <- showHouse(user, renderer)
+          } yield s
       }
     }
 

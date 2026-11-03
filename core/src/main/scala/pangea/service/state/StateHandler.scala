@@ -38,7 +38,7 @@ class StateHandler(
   admin: AdminPanel,
   content: SceneContent,
   lock: PlayerLock,
-  // Конкурс активности в группе, код друга и промокоды. Без них (тесты) этих
+  // Билеты за активность в группе, код друга и промокоды. Без них (тесты) этих
   // частей просто нет: события группы не считаются, бонус за 10 уровень не
   // платится, промокод уходит сцене обычным текстом.
   activity: Option[ActivityContest] = None,
@@ -49,9 +49,9 @@ class StateHandler(
   /** Имена игроков в беседе: имя героя, а нет его — из ВК. */
   private val players = VkPlayers(api, heroDao)
 
-  /** Событие группы ВК для конкурса активности: вышел пост, игрок поставил
+  /** Событие группы ВК для билетов за активность: вышел пост, игрок поставил
     * лайк или оставил комментарий. Лок игрока не нужен — героя это не трогает,
-    * только таблицы конкурса. */
+    * только таблицы билетов. */
   def groupEvent(event: GroupEvent): Task[Unit] =
     ZIO.foreachDiscard(activity)(contest =>
       ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS)).flatMap(now => contest.handle(event, now)))
@@ -164,10 +164,6 @@ class StateHandler(
           name <- players.getDisplayName(sender).orElse(ZIO.succeed(StateHandler.TransferSomeone))
           text <- command match {
                     case ChatCommand.Self.Gear => ZIO.succeed(ChatProfile.gear(name, hero))
-                    // Таблица конкурса активности: она общая, но спрашивают её тоже
-                    // в беседе — ответ туда же.
-                    case ChatCommand.Self.Rating =>
-                      activity.fold[Task[String]](ZIO.succeed(content.text("activity.off")))(_.board(now))
                     case ChatCommand.Self.Profile =>
                       AzatData.load(heroDao, sender.userId, now).map(azat =>
                         ChatProfile.profile(name, hero, now, azat.blessingUntil, azat.instantRests, content))

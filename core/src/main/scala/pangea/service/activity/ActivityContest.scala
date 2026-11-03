@@ -1,6 +1,6 @@
 package pangea.service.activity
 
-import pangea.dao.activity.{ActivityDao, ActivityScore}
+import pangea.dao.activity.{ActivityDao, TicketPrize, WeekTickets}
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Players, SceneContent}
 import pangea.model.hero.{AzatState, Hero}
@@ -8,14 +8,13 @@ import pangea.model.user.{User, VkId}
 import pangea.repository.user.UserRepository
 import zio.{Task, ZIO, ZLayer}
 
-/** Конкурс активности в группе ВК. Платы за каждый лайк нет — ВК не любит
-  * «мотивированную активность», — зато лайки и комментарии под свежими постами
-  * копятся баллами, а в конце недели лучшие получают дублоны.
+/** Билеты за активность в группе ВК. Лайк свежего поста — золотой билет, по
+  * одному на пост; комментарий под свежим постом — серебряный, по одному в
+  * сутки. В конце недели каждый золотой оборачивается дублоном, каждый
+  * серебряный — сотней серебра, и игрок получает об этом одно письмо.
   *
-  * Неделя — московская, с понедельника 00:00. Баллы идут только игрокам с
-  * героем и только за посты, вышедшие не раньше недели назад: старую ленту
-  * пролайкать ради баллов не выйдет. Лайк и комментарий засчитываются по
-  * одному на пост. */
+  * Свежий пост — вышедший не раньше суток назад. Сутки и неделя — московские
+  * (неделя с понедельника 00:00). Билеты идут только игрокам с героем. */
 final case class ActivityContest(
   dao:      ActivityDao,
   userRepo: UserRepository,
@@ -25,22 +24,22 @@ final case class ActivityContest(
 ) {
   import ActivityContest._
 
-  /** Событие группы: пост запоминаем, лайк и комментарий засчитываем. */
+  /** Событие группы: пост запоминаем, за лайк и комментарий даём билет. */
   def handle(event: GroupEvent, now: Long): Task[Unit] = event match {
     case GroupEvent.PostPublished(post, at) => dao.recordPost(post, at)
-    case GroupEvent.Liked(vk, post)         => count(vk, post, Kind.Like, now)
-    case GroupEvent.Commented(vk, post)     => count(vk, post, Kind.Comment, now)
+    case GroupEvent.Liked(vk, post)         => ticket(vk, post, Kind.Gold, post, now)
+    case GroupEvent.Commented(vk, post)     => ticket(vk, post, Kind.Silver, dayStart(now), now)
   }
 
-  private def count(vk: Long, post: Long, kind: Kind, now: Long): Task[Unit] =
+  private def ticket(vk: Long, post: Long, kind: Kind, slot: Long, now: Long): Task[Unit] =
     dao.postedAt(post).flatMap {
       case Some(at) if now - at <= PostWindowMs =>
         player(VkId(vk.toString)).flatMap {
-          case Some((user, _)) => dao.recordAction(user.userId, post, kind.key, kind.points, weekStart(now), now).unit
+          case Some((user, _)) => dao.recordTicket(user.userId, kind.key, slot, weekStart(now), now).unit
           case None            => ZIO.unit
         }
       // Пост старый или мы его не видели (вышел до того, как бот стал их
-      // запоминать) — баллов за него нет.
+      // запоминать) — билета за него нет.
       case _ => ZIO.unit
     }
 
@@ -51,90 +50,74 @@ final case class ActivityContest(
       case None       => ZIO.none
     }
 
-  /** Подвести итоги прошедшей недели, если их ещё не подводили: лучшим —
-    * дублоны в отложенные выплаты (дойдут с ближайшим действием, где бы игрок ни
-    * был), в беседу — итоги, каждому победителю — письмо. Зовётся раз в минуту:
-    * подведённая неделя повторно ничего не платит. */
+  /** Оплатить билеты прошедшей недели, если её ещё не подводили: деньги — в
+    * отложенные выплаты (дойдут с ближайшим действием, где бы игрок ни был),
+    * каждому — одно письмо, в беседу — сколько роздано всего. Зовётся раз в
+    * минуту: подведённая неделя повторно ничего не платит. */
   def settle(now: Long): Task[Unit] = {
     val week = weekStart(now) - WeekMs
     dao.awarded(week).flatMap {
       case true  => ZIO.unit
       case false =>
         for {
-          top     <- dao.top(week, Winners)
-          found   <- ZIO.foreach(top)(score => byUserId(score).map(_.map { case (u, h) => (score, u, h) }))
+          tickets <- dao.tickets(week)
+          found   <- ZIO.foreach(tickets)(t => byUserId(t).map(_.map { case (u, h) => (t, u, h) }))
           winners  = found.flatten
-          paid    <- dao.award(week, winners.map { case (_, _, hero) => hero.id -> Prize }, now)
-          _       <- ZIO.when(paid && winners.nonEmpty)(congratulate(winners))
+          prizes   = winners.map { case (t, _, hero) => TicketPrize(hero.id, t.silver * SilverPerTicket, t.gold * DoubloonsPerTicket) }
+          paid    <- dao.award(week, prizes, now)
+          _       <- ZIO.when(paid && winners.nonEmpty)(congratulate(winners.map { case (t, u, _) => t -> u }))
         } yield ()
     }
   }
 
-  private def byUserId(score: ActivityScore): Task[Option[(User, Hero)]] =
+  private def byUserId(t: WeekTickets): Task[Option[(User, Hero)]] =
     for {
-      user <- userRepo.getUserById(score.userId).option.map(_.flatten)
-      hero <- heroDao.getHeroByUserId(score.userId)
+      user <- userRepo.getUserById(t.userId).option.map(_.flatten)
+      hero <- heroDao.getHeroByUserId(t.userId)
     } yield for { u <- user; h <- hero } yield (u, h)
 
-  private def congratulate(winners: List[(ActivityScore, User, Hero)]): Task[Unit] =
+  private def congratulate(winners: List[(WeekTickets, User)]): Task[Unit] = {
+    val doubloons = winners.map(_._1.gold * DoubloonsPerTicket).sum
+    val silver    = winners.map(_._1.silver * SilverPerTicket).sum
     for {
-      named <- ZIO.foreach(winners) { case (score, user, _) => nameOf(user).map(name => (score, user, name)) }
-      lines  = named.zipWithIndex.map { case ((score, user, name), i) =>
-                 content.format("activity.resultLine", "place" -> (i + 1).toString,
-                   "name" -> mention(user, name), "points" -> score.points.toString)
-               }
-      _     <- players.announce(content.format("activity.results",
-                 "lines" -> lines.mkString("\n"), "prize" -> Prize.toString)).ignore
-      _     <- ZIO.foreachDiscard(named.zipWithIndex) { case ((score, user, _), i) =>
-                 players.notify(user, content.format("activity.youWon", "place" -> (i + 1).toString,
-                   "points" -> score.points.toString, "prize" -> Prize.toString)).ignore
-               }
+      _ <- ZIO.foreachDiscard(winners) { case (t, user) => players.notify(user, letter(t)).ignore }
+      _ <- players.announce(content.format("activity.results",
+             "doubloons" -> doubloons.toString, "silver" -> silver.toString)).ignore
     } yield ()
+  }
 
-  /** Таблица текущей недели — для команды «Рейтинг» в беседе. Имена без
-    * упоминаний: таблицу спрашивают часто, и звать пятерых лучших каждый раз
-    * незачем. */
-  def board(now: Long): Task[String] =
-    for {
-      top   <- dao.top(weekStart(now), Winners)
-      named <- ZIO.foreach(top)(score => byUserId(score).flatMap {
-                 case Some((user, _)) => nameOf(user).map(name => Some(score -> name))
-                 case None            => ZIO.none
-               })
-      lines  = named.flatten.zipWithIndex.map { case ((score, name), i) =>
-                 content.format("activity.resultLine", "place" -> (i + 1).toString,
-                   "name" -> name, "points" -> score.points.toString)
-               }
-      left   = timeLeft(now)
-    } yield
-      if (lines.isEmpty) content.format("activity.boardEmpty", "left" -> left, "prize" -> Prize.toString)
-      else content.format("activity.board", "lines" -> lines.mkString("\n"), "left" -> left, "prize" -> Prize.toString)
-
-  private def nameOf(user: User): Task[String] =
-    players.getDisplayName(user).orElse(ZIO.succeed(content.text("activity.someone")))
-
-  /** Кликабельное упоминание игрока в ВК. */
-  private def mention(user: User, name: String): String = s"[id${user.vkId.value}|$name]"
+  /** Письмо игроку: что принесли билеты каждого вида — сами билеты не считаем. */
+  private def letter(t: WeekTickets): String = {
+    val gold   = Option.when(t.gold > 0L)(content.format("activity.goldLine",
+                   "doubloons" -> (t.gold * DoubloonsPerTicket).toString))
+    val silver = Option.when(t.silver > 0L)(content.format("activity.silverLine",
+                   "silver" -> (t.silver * SilverPerTicket).toString))
+    content.format("activity.yourTickets", "lines" -> (gold.toList ++ silver).mkString("\n"))
+  }
 }
 
 object ActivityContest {
 
-  /** За что дают баллы и сколько. */
-  sealed abstract class Kind(val key: String, val points: Long)
+  /** Вид билета. */
+  sealed abstract class Kind(val key: String)
   object Kind {
-    case object Like    extends Kind("like", 1L)
-    case object Comment extends Kind("comment", 2L)
+    case object Gold   extends Kind("gold")
+    case object Silver extends Kind("silver")
   }
 
-  /** Сколько лучших награждаем по итогам недели и чем. */
-  val Winners: Int = 5
-  val Prize: Long  = 100L
+  /** Что даёт билет в конце недели. */
+  val DoubloonsPerTicket: Long = 1L
+  val SilverPerTicket: Long    = 100L
 
   private val DayMs: Long = 24L * 60L * 60L * 1000L
   val WeekMs: Long        = 7L * DayMs
 
-  /** Баллы идут за посты не старше этого: свежая лента, а не архив. */
-  val PostWindowMs: Long = WeekMs
+  /** Билеты идут за посты не старше этого. */
+  val PostWindowMs: Long = DayMs
+
+  /** Начало московских суток (мс) — серебряный билет даётся раз за них. */
+  def dayStart(nowMs: Long): Long =
+    Math.floorDiv(nowMs + AzatState.MoscowOffsetMs, DayMs) * DayMs - AzatState.MoscowOffsetMs
 
   /** Начало недели (мс): понедельник, 00:00 по Москве — как и прочие сутки игры
     * (см. [[AzatState.midnightsBetween]]). */
@@ -143,12 +126,6 @@ object ActivityContest {
     // 1 января 1970-го — четверг: понедельник той же недели на три дня раньше.
     val monday = day - Math.floorMod(day + 3L, 7L)
     monday * DayMs - AzatState.MoscowOffsetMs
-  }
-
-  /** Сколько осталось до конца недели: «2д 5ч». */
-  def timeLeft(nowMs: Long): String = {
-    val secs  = ((weekStart(nowMs) + WeekMs - nowMs) / 1000L).max(0L)
-    s"${secs / 86400L}д ${(secs % 86400L) / 3600L}ч"
   }
 
   val live: ZLayer[ActivityDao with UserRepository with HeroDao with Players with SceneContent, Nothing, ActivityContest] =

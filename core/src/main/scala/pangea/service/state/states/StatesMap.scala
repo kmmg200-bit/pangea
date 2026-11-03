@@ -282,7 +282,7 @@ object StatesMap {
           GustavoSupplies -> GustavoSuppliesState(heroDao, content),
           GustavoBelt     -> GustavoBeltState(heroDao, content, bank),
           Tavern          -> TavernState(heroDao, scheduler, content, bank),
-          Home            -> HomeState(heroDao, scheduler, content, inventoryRepo, itemRepo, bank),
+          Home            -> HomeState(heroDao, scheduler, content, inventoryRepo, itemRepo, bank, artifacts),
           RuneAltar       -> RuneAltarState(heroDao, inventoryRepo, itemRepo, content),
           HerbWorkbench   -> HerbWorkbenchState(heroDao, inventoryRepo, itemRepo, content, artifacts),
           GemVault        -> GemVaultState(heroDao, inventoryRepo, itemRepo, content, artifacts),

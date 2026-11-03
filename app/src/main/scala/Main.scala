@@ -151,12 +151,12 @@ object Main extends ZIOAppDefault {
       background.repeat(1.minute, "Сверка платежей упала")(now.flatMap(donations.reconcile))
     }
 
-  /** Итоги недели конкурса активности: раз в минуту смотрим, не началась ли
+  /** Оплата билетов за активность: раз в минуту смотрим, не началась ли
     * новая неделя и подведена ли прошлая. Подведённая повторно ничего не
     * платит — минута тут лишь задержка до наград после полуночи понедельника. */
   private def contestLoop(background: Background) =
     ZIO.serviceWithZIO[ActivityContest] { contest =>
-      background.repeat(1.minute, "Итоги конкурса активности упали")(now.flatMap(contest.settle))
+      background.repeat(1.minute, "Оплата билетов за активность упала")(now.flatMap(contest.settle))
     }
 
   /** Почта: срок хранения вышел — всё, что лежит на почте, сгорает, и хозяину

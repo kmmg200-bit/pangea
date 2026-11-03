@@ -38,6 +38,8 @@ case class RuneAltarState(
   content:       SceneContent
 ) extends State {
 
+  private val stow = HomeStow(inventoryRepo, None, content)
+
   private val branch = new Branch(
     routes = Map(
       "AltarMenu"   -> Target.Run { (u, ua, r) => menu(u, page(ua, "p"), r) },
@@ -97,22 +99,15 @@ case class RuneAltarState(
   /** Все рунные камни из сумки — на алтарь, счётом по рунам. */
   private def putAll(user: User, renderer: Renderer): Task[StateType] =
     for {
-      hero   <- getHero(user)
-      inv    <- inventoryRepo.get(hero.id).mapError(asThrowable)
-      stones  = inv.items.data.flatMap(i => i.runeStone.map(rs => (i, rs)))
-      res    <- if (stones.isEmpty) say(user, content.text("home.altar.nothingToPut"), renderer) *> menu(user, 0, renderer)
-                else {
-                  val added = stones.groupMapReduce(_._2.runeKey)(_._2.size.points)(_ + _)
-                  for {
-                    home <- loadHome(user)
-                    _    <- inventoryRepo.removeItems(stones.map(_._1.id).toSet, hero.id).mapError(asThrowable)
-                    _    <- saveHome(user, added.foldLeft(home) { case (h, (k, n)) => h.withRune(k, h.runeCount(k) + n) })
-                    lines = added.toList.flatMap { case (k, n) => Rune.byKey(k).map(r => (r.label, n)) }.sortBy(_._1)
-                              .map { case (name, n) => content.format("home.altar.putLine", "name" -> name, "n" -> n.toString) }
-                    _    <- say(user, content.format("home.altar.put", "lines" -> lines.mkString("\n")), renderer)
-                    s    <- menu(user, 0, renderer)
-                  } yield s
-                }
+      hero  <- getHero(user)
+      added <- stow.runeStones(hero.id)
+      res   <- if (added.isEmpty) say(user, content.text("home.altar.nothingToPut"), renderer) *> menu(user, 0, renderer)
+               else for {
+                 home <- loadHome(user)
+                 _    <- saveHome(user, HomeStow.addRunes(home, added))
+                 _    <- say(user, stow.runesText(added), renderer)
+                 s    <- menu(user, 0, renderer)
+               } yield s
     } yield res
 
   // ── Вещи с рунами ───────────────────────────────────────────────────────────
@@ -143,11 +138,9 @@ case class RuneAltarState(
                 for {
                   home <- loadHome(user)
                   _    <- inventoryRepo.removeItems(plan.map(_._1.id).toSet, hero.id).mapError(asThrowable)
-                  _    <- saveHome(user, added.foldLeft(home) { case (h, (k, n)) => h.withRune(k, h.runeCount(k) + n) })
-                  lines = added.toList.flatMap { case (k, n) => Rune.byKey(k).map(r => (r.label, n)) }.sortBy(_._1)
-                            .map { case (name, n) => content.format("home.altar.putLine", "name" -> name, "n" -> n.toString) }
+                  _    <- saveHome(user, HomeStow.addRunes(home, added))
                   _    <- say(user, content.format("home.altar.given", "n" -> plan.size.toString,
-                            "lines" -> lines.mkString("\n")), renderer)
+                            "lines" -> HomeStow.runeLines(content, added).mkString("\n")), renderer)
                   s    <- menu(user, 0, renderer)
                 } yield s
               }

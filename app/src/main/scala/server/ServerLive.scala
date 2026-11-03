@@ -147,7 +147,7 @@ final class ServerLive(
     GroupEvent.typeOf(json) match {
       case Some(tpe) if GroupEvent.Types.contains(tpe) =>
         val expected = config.vkSecret.map(_.trim).filter(_.nonEmpty)
-        if (expected.isEmpty) ZIO.logWarning(s"$tpe: VK_SECRET не задан — конкурс активности не считает")
+        if (expected.isEmpty) ZIO.logWarning(s"$tpe: VK_SECRET не задан — билеты за активность не выдаются")
         else if (GroupEvent.secretOf(json) != expected) ZIO.logWarning(s"$tpe с неверным секретом — пропускаю")
         else ZIO.foreachDiscard(GroupEvent.parse(json))(stateHandler.groupEvent)
       case _ => ZIO.attempt(println(json.noSpaces))
