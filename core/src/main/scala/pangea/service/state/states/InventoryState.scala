@@ -890,7 +890,25 @@ case class InventoryState(
   private def chiselPattern(item: Item): String =
     Chisel.pattern(item).getOrElse(content.text("inventory.chisel.noPattern"))
 
-  /** Список вещей под резец — по [[InventoryState.ChiselPage]] на страницу. */
+  /** Сколько мест освободить в сумке, чтобы переписать вещь. Резец снимает с
+    * надетой вещи «Тайник» наверняка (нынешний узор в розыгрыш не входит), и
+    * без него сумка может не вместить своего. Резец, уходя, своё место
+    * освобождает. 0 — переписывать можно. */
+  private def chiselShortage(hero: Hero, inv: Inventory, item: Item, worn: Boolean): Long =
+    if (!worn || !item.passive.contains(pangea.model.item.PassiveKind.Stash)) 0L
+    else Chisel.variants(item).headOption.fold(0L) { v =>
+      val capDelta = InventoryState.equipmentStashDelta(hero.equipment, hero.equipment.replacing(v),
+                       hero.runes.brandedPassives.toSet)
+      (inv.occupied - 1L - (inv.maxItems + capDelta)).max(0L)
+    }
+
+  /** Отказ: сначала освободить место — с вещи уйдёт «Тайник». */
+  private def chiselStashLine(item: Item, shortage: Long): String =
+    content.format("inventory.chisel.stashBlocked", "name" -> item.name, "count" -> shortage.toString)
+
+  /** Список вещей под резец — по [[InventoryState.ChiselPage]] на страницу.
+    * Надетые вещи с «Тайником», которые сейчас не переписать, — под списком
+    * строкой о том, сколько мест освободить. */
   private def offerChisel(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     for {
       hero <- getHero(user)
@@ -913,7 +931,10 @@ case class InventoryState(
             Option.when(page > 0)(Choice("ChiselUse", "◀", data = Map("p" -> (page - 1).toString), row = Some(ChiselPage))),
             Option.when(page < last)(Choice("ChiselUse", "▶", data = Map("p" -> (page + 1).toString), row = Some(ChiselPage)))
           ).flatten
-          renderer.show(user, Screen(content.text("inventory.chisel.which"), picks ++ nav :+ back)).as(StateType.Inventory)
+          val notes = all.collect { case (item, worn) if chiselShortage(hero, inv, item, worn) > 0L =>
+                        chiselStashLine(item, chiselShortage(hero, inv, item, worn)) }
+          renderer.show(user, Screen((content.text("inventory.chisel.which") :: notes).mkString("\n"),
+            picks ++ nav :+ back)).as(StateType.Inventory)
         }
     } yield res
 
@@ -935,8 +956,11 @@ case class InventoryState(
     } yield res
 
   private def confirmChisel(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
-    withChiselTarget(user, ua, renderer) { (_, _, item, _, _) =>
-      renderer.show(user, Screen(
+    withChiselTarget(user, ua, renderer) { (hero, inv, item, worn, _) =>
+      val shortage = chiselShortage(hero, inv, item, worn)
+      if (shortage > 0L)
+        renderer.show(user, Screen(chiselStashLine(item, shortage), Nil)) *> offerChisel(user, ua, renderer)
+      else renderer.show(user, Screen(
         content.format("inventory.chisel.confirm", "name" -> item.name, "pattern" -> chiselPattern(item)),
         List(
           Choice("ChiselDo", content.text("inventory.chisel.yes"),
@@ -960,9 +984,10 @@ case class InventoryState(
         if (worn) {
           val newEq    = hero.equipment.replacing(rewritten)
           val capDelta = InventoryState.equipmentStashDelta(hero.equipment, newEq, hero.runes.brandedPassives.toSet)
-          // Резец из сумки уходит — его место освобождается.
-          if (capDelta < 0 && !InventoryState.fitsAfterCapacityChange(inv, capDelta, returningItems = -1))
-            renderer.show(user, Screen(content.text("inventory.chisel.stashBlocked"), Nil)) *> backToCard(user, renderer)
+          // Подтвердили до того, как сумка наполнилась (старая кнопка), — та же проверка.
+          val shortage = chiselShortage(hero, inv, item, worn)
+          if (shortage > 0L)
+            renderer.show(user, Screen(chiselStashLine(item, shortage), Nil)) *> offerChisel(user, ua, renderer)
           else
             spend *> heroDao.updateEquipment(user.userId, newEq) *>
               ZIO.when(capDelta != 0)(inventoryRepo.increaseCapacity(hero.id, capDelta).orElse(ZIO.unit)) *>

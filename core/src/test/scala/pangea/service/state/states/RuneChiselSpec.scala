@@ -108,18 +108,25 @@ object RuneChiselSpec extends ZIOSpecDefault {
               assertTrue(!inv.items.data.exists(_.id == chisel.id))
     },
 
-    test("с надетых сапог не уходит «Тайник», если без него сумка переполнится; резец цел") {
-      // 14 вещей и резец: без «Тайника» в сумке останется 10 мест из 20
+    test("сапоги с «Тайником»: сколько мест освободить — видно в списке и при выборе, до подтверждения не дойти") {
+      // 14 вещей и резец: без «Тайника» сумке в 20 мест останется 10, а лежать
+      // в ней будет 14 — освободить 4
       val stuff = (100L until 114L).toList.map(i => gear(i, s"Вещь $i", ItemType.Gloves))
       for {
         t <- makeState(wearing(stashed), chisel :: stuff)
         (state, heroDao, invRepo, r) = t
         _    <- state.action(testUser, selectItem(chisel.id), r)
+        _    <- state.action(testUser, tap("ChiselUse"), r)
+        list <- r.sentScreens.map(_.last)
+        _    <- state.action(testUser, tap("ChiselPick", "item" -> stashed.id.toString), r)
+        pick <- r.sentScreens.map(_.takeRight(2).map(_.text).mkString("\n"))
+        // старая кнопка подтверждения — та же проверка
         _    <- state.action(testUser, tap("ChiselDo", "item" -> stashed.id.toString), r)
         hero <- heroDao.getHeroByUserId(userId).map(_.get)
         inv  <- invRepo.get(baseHero.id)
         log  <- r.sentScreens.map(_.map(_.text).mkString("\n"))
-      } yield assertTrue(log.contains("Без «Тайника» сумка не вместит")) &&
+      } yield assertTrue(list.text.contains("«Сапоги»: резец снимет с неё «Тайник»") && list.text.contains("мест: 4")) &&
+              assertTrue(pick.contains("освободите в сумке мест: 4") && !log.contains("Переписать узор на «Сапоги»")) &&
               assertTrue(hero.equipment.boots.passive.contains(PassiveKind.Stash)) &&
               assertTrue(inv.items.data.exists(_.id == chisel.id))
     },
