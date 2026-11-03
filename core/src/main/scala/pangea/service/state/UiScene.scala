@@ -45,6 +45,9 @@ object UiScene {
   val Skills:    String = "skillsScene"
   val Socketing: String = "socketingScene"
 
+  /** Рунический алтарь: над какой руной ждёт числа — вложить в понимание или
+    * забрать в сумку. */
+  val Altar:     String = "altarScene"
   /** Верстак травника: какой изученный отвар ждёт числа. */
   val Workbench: String = "workbenchScene"
 

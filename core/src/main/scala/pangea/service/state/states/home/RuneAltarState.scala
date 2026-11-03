@@ -1,6 +1,7 @@
 package pangea.service.state.states.home
 
-import io.circe.jawn
+import io.circe.generic.semiauto.deriveEncoder
+import io.circe.{Decoder, Encoder, HCursor, jawn}
 import io.circe.syntax.EncoderOps
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
@@ -13,7 +14,7 @@ import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.state.states.merchant.MerchantState
-import pangea.service.state.{ItemMenu, State, UserAction}
+import pangea.service.state.{ItemMenu, State, UiScene, UserAction}
 import zio.{Task, ZIO}
 
 /** Рунический алтарь в доме (есть в любом доме: Юнона не стала снимать его с
@@ -47,11 +48,12 @@ case class RuneAltarState(
       "AltarBurnRarity" -> Target.Run { (u, ua, r) => toggleRarity(u, ua, r) },
       "AltarBurnSets"   -> Target.Run { (u, _, r) => toggleSets(u, r) },
       "AltarRune"   -> Target.Run { (u, ua, r) => runeScreen(u, ua, r) },
-      "AltarDeepen" -> Target.Run { (u, ua, r) => deepen(u, ua, r) },
-      "AltarTake"   -> Target.Run { (u, ua, r) => take(u, ua, r) },
-      "LeaveAltar"  -> Target.Goto(StateType.Home)
+      "AltarDeepen" -> Target.Run { (u, ua, r) => ask(u, ua, RuneAltarState.Deepen, r) },
+      "AltarTake"   -> Target.Run { (u, ua, r) => ask(u, ua, RuneAltarState.Take, r) },
+      "LeaveAltar"  -> Target.Run { (u, _, _) => clearPending(u).as(StateType.Home) }
     ),
-    fallback = Target.Run { (u, _, r) => menu(u, 0, r) }
+    // Написанное у алтаря: число узоров, если алтарь его ждёт; иначе — сам алтарь.
+    fallback = Target.Run { (u, ua, r) => onText(u, ua, r) }
   )
 
   override def targetStates: Set[StateType] = branch.gotoTargets
@@ -64,7 +66,7 @@ case class RuneAltarState(
   /** Описание алтаря, сколько на нём узоров, руны кнопками по страницам;
     * «Положить все руны», «Сдать вещи», «Что сдавать» и «Назад». */
   private def menu(user: User, p: Int, renderer: Renderer): Task[StateType] =
-    loadHome(user).flatMap { home =>
+    clearPending(user) *> loadHome(user).flatMap { home =>
       // Без дома и алтаря нет — обратно к Юноне.
       if (!home.owns) ZIO.succeed(StateType.Home)
       else {
@@ -85,7 +87,8 @@ case class RuneAltarState(
           Choice("AltarSettings", content.text("home.altar.settings"), row = Some(ItemMenu.NavRow + 1)),
           Choice("LeaveAltar", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(ItemMenu.NavRow + 1))
         )
-        val text = content.text("home.altar.text") + "\n\n" +
+        // Под кнопками только значки — их расшифровка идёт текстом над счётом узоров.
+        val text = content.text("home.altar.text") + "\n\n" + content.text("home.altar.legend") + "\n\n" +
           (if (total == 0L) content.text("home.altar.empty") else content.format("home.altar.total", "n" -> total.toString))
         renderer.show(user, Screen(text, buttons ++ nav ++ tail)).as(StateType.RuneAltar)
       }
@@ -196,14 +199,18 @@ case class RuneAltarState(
   /** Экран руны: сколько узоров, сколько выйдет камнями, понимание; углубить,
     * забрать, назад — на ту страницу списка, с которой руну выбрали. */
   private def runeScreen(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
+    runeScreenOf(user, runeOf(ua), page(ua, "rp"), renderer)
+
+  private def runeScreenOf(user: User, picked: Option[Rune], rp: Int, renderer: Renderer): Task[StateType] =
     for {
+      _    <- clearPending(user)
       hero <- getHero(user)
       home <- loadHome(user)
-      res  <- runeOf(ua).filter(r => home.runeCount(r.key) > 0L) match {
-        case None => menu(user, page(ua, "rp"), renderer)
+      res  <- picked.filter(r => home.runeCount(r.key) > 0L) match {
+        case None => menu(user, rp, renderer)
         case Some(rune) =>
           val n    = home.runeCount(rune.key)
-          val data = Map("k" -> rune.key, "rp" -> page(ua, "rp").toString)
+          val data = Map("k" -> rune.key, "rp" -> rp.toString)
           val text = content.format("home.altar.rune", "name" -> rune.label, "n" -> n.toString,
             "big" -> (n / RuneStone.PiecesPerBig).toString, "small" -> (n % RuneStone.PiecesPerBig).toString,
             "u" -> hero.runes.understandingOf(rune).toString, "cap" -> Rune.cap(hero.lvl).toString)
@@ -211,53 +218,100 @@ case class RuneAltarState(
             Choice("AltarDeepen", content.text("home.altar.deepen"), color = ChoiceColor.Positive, data = data, row = Some(0)),
             Choice("AltarTake", content.text("home.altar.take"), data = data, row = Some(0)),
             Choice("AltarMenu", content.text("home.house.back"), color = ChoiceColor.Negative,
-              data = Map("p" -> page(ua, "rp").toString), row = Some(1))
+              data = Map("p" -> rp.toString), row = Some(1))
           ))).as(StateType.RuneAltar)
       }
     } yield res
 
-  /** Углубить понимание узорами с алтаря — как у Казимира, до потолка по
-    * уровню; лишнее остаётся лежать. */
-  private def deepen(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
+  /** «Углубить» и «Забрать» сперва спрашивают, сколько узоров: алтарь
+    * запоминает, над какой руной и что делать, и ждёт числа (см. [[onText]]). */
+  private def ask(user: User, ua: UserAction, act: String, renderer: Renderer): Task[StateType] =
     for {
       hero <- getHero(user)
       home <- loadHome(user)
+      rp    = page(ua, "rp")
       res  <- runeOf(ua).filter(r => home.runeCount(r.key) > 0L) match {
-        case None => say(user, content.text("home.altar.gone"), renderer) *> menu(user, page(ua, "rp"), renderer)
+        case None => say(user, content.text("home.altar.gone"), renderer) *> menu(user, rp, renderer)
         case Some(rune) =>
-          val n   = home.runeCount(rune.key)
+          val n    = home.runeCount(rune.key)
+          val text =
+            if (act == RuneAltarState.Deepen)
+              content.format("home.altar.askDeepen", "name" -> rune.label, "n" -> n.toString,
+                "u" -> hero.runes.understandingOf(rune).toString, "cap" -> Rune.cap(hero.lvl).toString)
+            else content.format("home.altar.askTake", "name" -> rune.label, "n" -> n.toString)
+          writeScene(user, RuneAltarState.AltarScene(Some(act), Some(rune.key), rp)) *>
+            renderer.show(user, Screen(text, List(
+              Choice("AltarRune", content.text("home.house.back"), color = ChoiceColor.Negative,
+                data = Map("k" -> rune.key, "rp" -> rp.toString), row = Some(0))
+            ))).as(StateType.RuneAltar)
+      }
+    } yield res
+
+  /** Написанное у алтаря: число узоров для того, что алтарь ждёт; ждать нечего —
+    * просто алтарь. Больше, чем лежит, — берётся сколько есть. */
+  private def onText(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
+    readScene(user).flatMap { scene =>
+      (scene.act, scene.rune.flatMap(Rune.byKey)) match {
+        case (Some(act), Some(rune)) =>
+          ua.text.filterNot(_.isWhitespace).toLongOption.filter(_ > 0L) match {
+            case None =>
+              say(user, content.text("home.altar.notNumber"), renderer) *>
+                ask(user, UserAction("", Some(Map("k" -> rune.key, "rp" -> scene.page.toString).asJson.noSpaces)),
+                  act, renderer)
+            case Some(n) =>
+              clearPending(user) *>
+                (if (act == RuneAltarState.Deepen) deepen(user, rune, n, scene.page, renderer)
+                 else take(user, rune, n, scene.page, renderer))
+          }
+        case _ => menu(user, 0, renderer)
+      }
+    }
+
+  /** Углубить понимание `asked` узорами с алтаря (не больше, чем лежит) — как у
+    * Казимира, до потолка по уровню; лишнее остаётся лежать. */
+  private def deepen(user: User, rune: Rune, asked: Long, rp: Int, renderer: Renderer): Task[StateType] =
+    for {
+      hero <- getHero(user)
+      home <- loadHome(user)
+      n     = home.runeCount(rune.key)
+      res  <-
+        if (n <= 0L) say(user, content.text("home.altar.gone"), renderer) *> menu(user, rp, renderer)
+        else {
           val cap = Rune.cap(hero.lvl)
-          val (updated, gained) = hero.runes.deepen(rune, n, cap)
+          val (updated, gained) = hero.runes.deepen(rune, asked.min(n), cap)
           if (gained == 0L)
             say(user, content.format("home.altar.atCap", "name" -> rune.label, "max" -> cap.toString), renderer) *>
-              runeScreen(user, ua, renderer)
+              runeScreenOf(user, Some(rune), rp, renderer)
           else for {
             _ <- heroDao.updateRunes(user.userId, updated)
             _ <- saveHome(user, home.withRune(rune.key, n - gained))
             _ <- say(user, content.format("home.altar.deepened", "name" -> rune.label,
                    "u" -> updated.understandingOf(rune).toString, "gain" -> gained.toString,
                    "left" -> (n - gained).toString), renderer)
-            s <- if (n - gained > 0L) runeScreen(user, ua, renderer) else menu(user, page(ua, "rp"), renderer)
+            s <- if (n - gained > 0L) runeScreenOf(user, Some(rune), rp, renderer) else menu(user, rp, renderer)
           } yield s
-      }
+        }
     } yield res
 
-  /** Забрать камнями: пятёрки — большими (по слоту на каждую), остаток —
-    * малыми (у них свой предел в сумке). Что не влезло — остаётся на алтаре. */
-  private def take(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
+  /** Забрать в сумку `asked` узоров (не больше, чем лежит) камнями: пятёрки —
+    * большими (по слоту на каждую), остаток — малыми (у них свой предел в
+    * сумке). Что не влезло — остаётся на алтаре. */
+  private def take(user: User, rune: Rune, asked: Long, rp: Int, renderer: Renderer): Task[StateType] =
     for {
       hero <- getHero(user)
       inv  <- inventoryRepo.get(hero.id).mapError(asThrowable)
       home <- loadHome(user)
-      res  <- runeOf(ua).filter(r => home.runeCount(r.key) > 0L) match {
-        case None => say(user, content.text("home.altar.gone"), renderer) *> menu(user, page(ua, "rp"), renderer)
-        case Some(rune) =>
-          val n        = home.runeCount(rune.key)
+      n     = home.runeCount(rune.key)
+      res  <-
+        if (n <= 0L) say(user, content.text("home.altar.gone"), renderer) *> menu(user, rp, renderer)
+        else {
+          val want     = asked.min(n)
           val per      = RuneStone.PiecesPerBig.toLong
-          val bigFit   = (n / per).min(inv.freeSlots)
-          val smallFit = (n % per).min((Item.HoardLimit - inv.hoardCount(s"rune:${rune.key}")).max(0).toLong)
+          val bigFit   = (want / per).min(inv.freeSlots)
+          val smallFit = (want % per).min((Item.HoardLimit - inv.hoardCount(s"rune:${rune.key}")).max(0).toLong)
           val left     = n - bigFit * per - smallFit
-          if (bigFit + smallFit == 0L) say(user, content.text("home.altar.noRoom"), renderer) *> runeScreen(user, ua, renderer)
+          if (bigFit + smallFit == 0L)
+            say(user, content.text("home.altar.noRoom"), renderer) *> runeScreenOf(user, Some(rune), rp, renderer)
           else for {
             stones <- ZIO.foreach(List.fill(bigFit.toInt)(RuneStoneSize.Big) ++ List.fill(smallFit.toInt)(RuneStoneSize.Small)) { size =>
                         itemRepo.persist(hero.id, RuneStone.item(rune, size))
@@ -267,10 +321,20 @@ case class RuneAltarState(
             line    = content.format("home.altar.taken", "big" -> bigFit.toString, "small" -> smallFit.toString) +
                         (if (left > 0L) "\n" + content.format("home.altar.takenLeft", "left" -> left.toString) else "")
             _      <- say(user, line, renderer)
-            s      <- if (left > 0L) runeScreen(user, ua, renderer) else menu(user, page(ua, "rp"), renderer)
+            s      <- if (left > 0L) runeScreenOf(user, Some(rune), rp, renderer) else menu(user, rp, renderer)
           } yield s
-      }
+        }
     } yield res
+
+  private def readScene(user: User): Task[RuneAltarState.AltarScene] =
+    UiScene.read(heroDao, user.userId, UiScene.Altar, RuneAltarState.AltarScene())
+
+  private def writeScene(user: User, scene: RuneAltarState.AltarScene): Task[Unit] =
+    UiScene.write(heroDao, user.userId, UiScene.Altar, scene)
+
+  /** Снять ожидание числа — если оно было: лишней записи не делаем. */
+  private def clearPending(user: User): Task[Unit] =
+    readScene(user).flatMap(s => ZIO.when(s.act.isDefined)(UiScene.clear(heroDao, user.userId, UiScene.Altar)).unit)
 
   // ── Вспомогательное ─────────────────────────────────────────────────────────
 
@@ -302,6 +366,23 @@ case class RuneAltarState(
 }
 
 object RuneAltarState {
+
+  /** Что алтарь ждёт числом: вложить узоры в понимание или забрать в сумку. */
+  val Deepen: String = "deepen"
+  val Take: String   = "take"
+
+  /** Ожидание числа у алтаря: что делать (`act`), с какой руной и на какую
+    * страницу списка вернуться. Пусто — ничего не ждёт. */
+  final case class AltarScene(act: Option[String] = None, rune: Option[String] = None, page: Int = 0)
+  object AltarScene {
+    implicit val encoder: Encoder[AltarScene] = deriveEncoder
+    implicit val decoder: Decoder[AltarScene] = (c: HCursor) =>
+      for {
+        act  <- c.getOrElse[Option[String]]("act")(None)
+        rune <- c.getOrElse[Option[String]]("rune")(None)
+        page <- c.getOrElse[Int]("page")(0)
+      } yield AltarScene(act, rune, page)
+  }
 
   /** Что уйдёт по «Сдать вещи»: вещи с рунами тех редкостей, что отмечены в
     * настройке (она общая с Казимиром), — каждая вместе со своей руной. Рунные

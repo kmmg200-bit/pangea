@@ -51,11 +51,26 @@ object RuneAltarStateSpec extends ZIOSpecDefault {
   private def homeOf(dao: TestHeroDao): Task[HomeData] =
     dao.readHomeData(userId).map(_.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty))
   private def last(r: TestRenderer)  = r.sentScreens.map(_.last)
+  /** Число, написанное игроком в ответ на вопрос алтаря. */
+  private def typed(text: String): UserAction = UserAction(text, None)
   private def texts(r: TestRenderer) = r.sentScreens.map(_.map(_.text).mkString("\n"))
 
   private val cottage = HomeData(tier = 1, metJunona = true)
 
   override def spec = suite("Рунический алтарь")(
+
+    test("внизу — одни значки, а что они значат, сказано текстом перед счётом узоров") {
+      for {
+        t      <- make(hero(), Nil, cottage)
+        (state, _, _, r) = t
+        _      <- state.enter(testUser, r)
+        screen <- last(r)
+        labels  = screen.choices.filter(c => Set("AltarPutAll", "AltarGive", "AltarSettings").contains(c.id)).map(_.label)
+        legend  = screen.text.indexOf("⬇ — положить")
+      } yield assertTrue(labels == List("⬇", "🔥", "⚙")) &&
+              assertTrue(legend > 0 && legend < screen.text.indexOf("Алтарь пуст") &&
+                         screen.text.contains("🔥 — сжечь вещи с рунами") && screen.text.contains("⚙ — настройки"))
+    },
 
     test("«Сдать вещи»: вещи с рунами отмеченных редкостей — узорами по редкости; камни и неотмеченные остаются") {
       // по умолчанию отмечены серые и белые — та же настройка, что у Казимира
@@ -147,19 +162,42 @@ object RuneAltarStateSpec extends ZIOSpecDefault {
         _      <- state.action(testUser, tap("AltarRune", "k" -> cunning.key, "rp" -> "0"), r)
         screen <- last(r)
         _      <- state.action(testUser, tap("AltarDeepen", "k" -> cunning.key, "rp" -> "0"), r)
+        asked  <- last(r)
+        _      <- state.action(testUser, typed("100"), r)
         after  <- dao.getHeroByUserId(userId).map(_.get)
         home   <- homeOf(dao)
         said   <- texts(r)
         // у потолка — узоры остаются, понимание не растёт
         _      <- state.action(testUser, tap("AltarDeepen", "k" -> cunning.key, "rp" -> "0"), r)
+        _      <- state.action(testUser, typed("3"), r)
         atCap  <- texts(r)
         home2  <- homeOf(dao)
       } yield assertTrue(screen.text.contains("На алтаре: 12. В сумку выйдет больших рун — 2, малых — 2.")) &&
               assertTrue(screen.text.contains("Понимание: 25/30")) &&
               assertTrue(screen.choices.map(_.id) == List("AltarDeepen", "AltarTake", "AltarMenu")) &&
+              // сперва спрашивает, сколько; больше, чем лежит, — берёт сколько есть
+              assertTrue(asked.text.contains("Сколько узоров") && asked.text.contains("Напишите число")) &&
               assertTrue(after.runes.understandingOf(cunning) == 30L && home.runeCount(cunning.key) == 7L) &&
               assertTrue(said.contains("стало глубже: 30 (+5). На алтаре осталось: 7.")) &&
               assertTrue(atCap.contains("насколько позволяет опыт (30)") && home2.runeCount(cunning.key) == 7L)
+    },
+
+    test("забрать сколько сказали: 6 из 13 — одна большая и одна малая, 7 ждут на алтаре; не число — переспросит") {
+      for {
+        t <- make(hero(), Nil, cottage.withRune(cunning.key, 13L))
+        (state, dao, inv, r) = t
+        _     <- state.action(testUser, tap("AltarTake", "k" -> cunning.key, "rp" -> "0"), r)
+        _     <- state.action(testUser, typed("много"), r)
+        still <- homeOf(dao)
+        again <- last(r)
+        _     <- state.action(testUser, typed("6"), r)
+        home  <- homeOf(dao)
+        got    = inv.snapshot.flatMap(_.runeStone)
+        said  <- texts(r)
+      } yield assertTrue(said.contains("Нужно число больше нуля") && still.runeCount(cunning.key) == 13L) &&
+              assertTrue(again.text.contains("Сколько узоров")) &&
+              assertTrue(got.count(_.size == RuneStoneSize.Big) == 1 && got.count(_.size == RuneStoneSize.Small) == 1) &&
+              assertTrue(home.runeCount(cunning.key) == 7L)
     },
 
     test("забрать: пятёрки — большими, остаток — малыми; места мало — берёт, что влезло, остальное на алтаре") {
@@ -167,6 +205,7 @@ object RuneAltarStateSpec extends ZIOSpecDefault {
         t <- make(hero(), Nil, cottage.withRune(cunning.key, 13L))
         (state, dao, inv, r) = t
         _    <- state.action(testUser, tap("AltarTake", "k" -> cunning.key, "rp" -> "0"), r)
+        _    <- state.action(testUser, typed("13"), r)
         home <- homeOf(dao)
         got   = inv.snapshot.flatMap(_.runeStone)
         said <- texts(r)
@@ -174,6 +213,7 @@ object RuneAltarStateSpec extends ZIOSpecDefault {
         t2 <- make(hero(), (1L to 19L).map(sword).toList, cottage.withRune(cunning.key, 13L))
         (state2, dao2, inv2, r2) = t2
         _     <- state2.action(testUser, tap("AltarTake", "k" -> cunning.key, "rp" -> "0"), r2)
+        _     <- state2.action(testUser, typed("13"), r2)
         home2 <- homeOf(dao2)
         got2   = inv2.snapshot.flatMap(_.runeStone)
         said2 <- texts(r2)
