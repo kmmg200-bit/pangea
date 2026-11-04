@@ -244,6 +244,70 @@ object ElementalBattleSpec extends ZIOSpecDefault {
               assertTrue(!log.contains("Легендарный Элементаль"))
     },
 
+    test("комбо Огонь+Воздух его не ранит, а лечит на половину урона комбо") {
+      // Оружие с рубином (Огонь) и бриллиантом (Воздух): оба прока — комбо.
+      val blade = pangea.model.item.Item(7L, "Меч", 1L, pangea.model.item.Rarity.Blue, pangea.model.item.ItemType.Weapon,
+        attack = 0, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0,
+        sockets = List(Some(pangea.model.item.Gem(pangea.model.item.GemKind.Ruby, 1)),
+                       Some(pangea.model.item.Gem(pangea.model.item.GemKind.Diamond, 1))))
+      val h     = hero().copy(equipment = TestFixtures.emptyEquipment.copy(weapon = blade))
+      val maxHp = MiniBoss.FireElemental.stats(bossLvl).hp
+      // Сколько комбо сняло бы — 30% макс. HP (горения на нём нет); половина — лечение.
+      val heal  = maxHp * 30L / 100L * BattleState.ComboFireAirFeedsFirePct / 100L
+      // Один и тот же ход: проки мимо — только удар героя; оба прока — удар и комбо.
+      def turn(procRoll: Int) =
+        for {
+          t <- makeState(h, lairBattle(turn = 3, hpPct = 50L, armorPct = 0L)) // пропуск, без шипов
+          (state, dao, r) = t
+          _     <- seedTurn(procRoll, procRoll, procRoll, procRoll)
+          _     <- state.action(testUser, tap("Attack"), r)
+          after <- battleAfter(dao)
+          log   <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+        } yield (after.monsterCurrentHp, log)
+      for {
+        plain <- turn(90)
+        combo <- turn(1)
+        (hpPlain, _)      = plain
+        (hpCombo, logCombo) = combo
+      } yield assertTrue(logCombo.contains("впитывает жар")) &&
+              assertTrue(!logCombo.contains("чудовищный урон")) &&
+              assertTrue(hpCombo - hpPlain == heal)
+    },
+
+    test("лечение комбо не поднимает его выше максимума") {
+      val blade = pangea.model.item.Item(7L, "Меч", 1L, pangea.model.item.Rarity.Blue, pangea.model.item.ItemType.Weapon,
+        attack = 0, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0,
+        sockets = List(Some(pangea.model.item.Gem(pangea.model.item.GemKind.Ruby, 1)),
+                       Some(pangea.model.item.Gem(pangea.model.item.GemKind.Diamond, 1))))
+      val h     = hero().copy(equipment = TestFixtures.emptyEquipment.copy(weapon = blade))
+      val maxHp = MiniBoss.FireElemental.stats(bossLvl).hp
+      for {
+        t <- makeState(h, lairBattle(turn = 3, hpPct = 100L, armorPct = 0L))
+        (state, dao, r) = t
+        _     <- seedTurn(1, 1, 1, 1)
+        _     <- state.action(testUser, tap("Attack"), r)
+        after <- battleAfter(dao)
+      } yield assertTrue(after.monsterCurrentHp <= maxHp)
+    },
+
+    test("прок Огня с оружия его не поджигает: пламя гаснет, горения нет") {
+      val ruby = pangea.model.item.Item(7L, "Меч", 1L, pangea.model.item.Rarity.Blue, pangea.model.item.ItemType.Weapon,
+        attack = 0, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0,
+        sockets = List(Some(pangea.model.item.Gem(pangea.model.item.GemKind.Ruby, 1))))
+      val h = hero().copy(equipment = TestFixtures.emptyEquipment.copy(weapon = ruby))
+      for {
+        t <- makeState(h, lairBattle(turn = 3, armorPct = 0L)) // пропуск, без шипов
+        (state, dao, r) = t
+        _     <- seedTurn(1, 1, 1) // прок Огня срабатывает
+        _     <- state.action(testUser, tap("Attack"), r)
+        after <- battleAfter(dao)
+        log   <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(after.effects.monsterBurn.isEmpty) &&
+              assertTrue(log.contains("Пламя гаснет, не коснувшись элементаля")) &&
+              assertTrue(!log.contains(pangea.model.battle.Element.Fire.procText)) &&
+              assertTrue(!log.contains("Пламя снимает"))
+    },
+
     test("огненного нельзя поджечь") {
       val battle = lairBattle(turn = 3)
       assertTrue(battle.withEffects(

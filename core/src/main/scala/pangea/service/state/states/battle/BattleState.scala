@@ -2669,7 +2669,8 @@ case class BattleState(
 
   /** Применяет сработавшие проки стихий `fired` к мобу: сперва комбо, затем
     * одиночные. Чистая функция — ею же пользуется стихийная фляга, у которой прок
-    * гарантирован. */
+    * гарантирован. Иммунитеты цели соблюдает сама (итог — через `withEffects`):
+    * кого огонь не берёт, того прок Огня не поджигает. */
   private def applyProcs(battle: SoloPveBattle, fired: Set[Element]): (SoloPveBattle, Vector[String]) = {
     val maxHp      = battle.monsterStats.hp
     val maxArmor   = MonsterSkill.monsterMaxArmor(battle)
@@ -2680,6 +2681,9 @@ case class BattleState(
     // холод по горящему гасит огонь и сам не ложится, огонь по замёрзшему
     // растапливает лёд и сам не занимается.
     val steam      = fired(Element.Fire) && fired(Element.Cold)
+
+    // Кого огонь не берёт (огненный элементаль — он сам пламя).
+    val fireproof  = battle.boss.exists(_.immuneToBurn)
 
     var b   = battle
     var log = Vector.empty[String]
@@ -2692,15 +2696,24 @@ case class BattleState(
     }
 
     // Комбо Огонь+Воздух: мгновенный урон 30% макс.HP + текущий % горения, горение → 2%.
+    // Кого огонь не берёт — огненного элементаля, он сам пламя (immuneToBurn), —
+    // того комбо не ранит, а раздувает: лечит на часть того урона.
     if (fireAir) {
       val burnPct = b.effects.monsterBurn.map(_.pct).getOrElse(0)
       val dmg     = (maxHp.toDouble * (30 + burnPct) / 100.0).toLong.max(0L)
-      b = b.copy(monsterCurrentHp = (b.monsterCurrentHp - dmg).max(0L))
-      log = log :+ content.format("battle.comboFireAir", "damage" -> dmg.toString)
-      // Горение после взрыва — по тем же правилам огня и холода.
+      if (fireproof) {
+        val heal = (dmg * BattleState.ComboFireAirFeedsFirePct / 100L).min((maxHp - b.monsterCurrentHp).max(0L))
+        b = b.copy(monsterCurrentHp = b.monsterCurrentHp + heal)
+        log = log :+ content.format("battle.comboFireAirAbsorbed", "monster" -> b.monsterName, "heal" -> heal.toString)
+      } else {
+        b = b.copy(monsterCurrentHp = (b.monsterCurrentHp - dmg).max(0L))
+        log = log :+ content.format("battle.comboFireAir", "damage" -> dmg.toString)
+      }
+      // Горение после взрыва — по тем же правилам огня и холода; кого огонь не
+      // берёт, тот и не загорается.
       if (!steam) {
         if (b.effects.coldOnMonster) thaw()
-        else b = b.copy(effects = b.effects.copy(monsterBurn = Some(Burn(Burn.Initial))))
+        else if (!fireproof) b = b.copy(effects = b.effects.copy(monsterBurn = Some(Burn(Burn.Initial))))
       }
     }
 
@@ -2739,6 +2752,9 @@ case class BattleState(
       }
     }
     if (fired(Element.Fire) && !fireAir && !steam && b.effects.coldOnMonster) thaw()
+    // Огненного элементаля не поджечь — он и сам пламя.
+    else if (fired(Element.Fire) && !fireAir && !steam && fireproof)
+      log = log :+ content.text("battle.burnImmune")
     else if (fired(Element.Fire) && !fireAir && !steam) {
       val burn = b.effects.monsterBurn.map(_.reignited).getOrElse(Burn.onIgnite)
       b = b.copy(effects = b.effects.copy(monsterBurn = Some(burn)))
@@ -2774,7 +2790,7 @@ case class BattleState(
       b = burnt
       log = log :+ content.format("battle.lightningBurn", "energy" -> lost.toString)
     }
-    (b, log)
+    (b.withEffects(b.effects), log)
   }
 
   /** Умения, которые моб может применить прямо сейчас: доступные его расе,
@@ -4114,7 +4130,7 @@ case class BattleState(
           val head = content.format("battle.flaskSplash", "flask" -> flaskName)
           val lines =
             if (element == Element.Fire && guarded.boss.exists(_.immuneToBurn))
-              Vector(head, content.text("battle.flaskSplashImmune"))
+              Vector(head, content.text("battle.burnImmune"))
             else Vector(head) ++ procLog
           TurnResult(hero, guarded, lines ++ qhLog, Outcome.Continue, endsRound = false)
 
@@ -6983,6 +6999,10 @@ object BattleState {
 
   /** Сколько процентов ПОТОЛКА брони срезает комбо Молния+Холод. */
   val ComboArmorCutPct: Long = 10L
+
+  /** Комбо Огонь+Воздух по тому, кого огонь не берёт (огненный элементаль):
+    * не урон, а лечение — на этот процент урона, который комбо нанесло бы. */
+  val ComboFireAirFeedsFirePct: Long = 50L
 
   /** На сколько тиков комбо запирает умение моба. Гаснет один каст — тот, что был
     * бы ответом на комбо. Двойка, а не единица, потому что тик буфов идёт в начале
