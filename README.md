@@ -268,22 +268,28 @@ npm run sign -- dev-secret <vk_id игрока>  # адрес, открываю�
 ## Бэкапы базы
 
 Каждый день в 3:00 (МСК — время сервера) cron запускает `scripts/backup-db.sh`:
-дамп базы (`pg_dump -Fc`), проверка, что архив читается, и копия на Яндекс Диск
-в папку `pangea-backups`. На Диске хранятся копии за 30 дней, на сервере — 3
-последние (`/root/backups/pangea`). Дамп снимается внутри работающего контейнера
-postgres: бот не останавливается и не перезапускается. Не вышло — сообщество
-пишет в ВК всем из `BACKUP_ALERT_VK_IDS`. Журнал — `/var/log/pangea-backup.log`.
+дамп базы (`pg_dump -Fc`, без данных служебной `vk_seen_messages`), проверка,
+что архив читается, и копия на Google Drive в папку `pangea-backups`. Там
+хранятся копии за 30 дней, на сервере — 3 последние (`/root/backups/pangea`).
+Дамп снимается внутри работающего контейнера postgres: бот не останавливается и
+не перезапускается. Не вышло — сообщество пишет в ВК всем из
+`BACKUP_ALERT_VK_IDS`. Журнал — `/var/log/pangea-backup.log`.
+
+rclone ходит в Google Drive с доступом «только свои файлы» (`scope = drive.file`):
+остальное содержимое Диска ему не видно. Удалённые копии Google держит в
+корзине ещё 30 дней.
 
 Настроить один раз:
 
 1. На сервере: `apt install rclone`.
 2. На своём компьютере (там, где есть браузер): `brew install rclone`, затем
-   `rclone authorize "yandex"` — откроется Яндекс, войти и разрешить доступ. В
-   терминале появится токен `{"access_token":...}` — скопировать его целиком.
-3. На сервере: `rclone config` → `n` (новый) → имя `yadisk` → тип `yandex` →
-   `client_id` и `client_secret` пустые → `Edit advanced config?` — `n` →
-   `Use web browser...?` — `n` → вставить токен из шага 2 → `y` → `q`.
-   Проверка: `rclone lsd yadisk:` показывает папки Диска.
+   `rclone authorize "drive" "eyJzY29wZSI6ImRyaXZlLmZpbGUifQ"` (это
+   `{"scope":"drive.file"}`) — откроется Google, войти и разрешить. В терминале
+   появится строка между `--->` и `<---End paste` — скопировать её.
+3. На сервере: `rclone config` → `n` → имя `gdrive` → тип `drive` →
+   `client_id` и `client_secret` пустые → `scope` — `drive.file` → прочее по
+   умолчанию → `Use web browser...?` — `n` → вставить строку из шага 2 → `y`.
+   Проверка: `rclone about gdrive:` показывает место на Диске.
 4. В `.env`: `BACKUP_ALERT_VK_IDS=<id>,<id>`.
 5. Первый запуск руками: `scripts/backup-db.sh` — в конце «готово: pangea_….dump».
    Проверить сообщение о сбое: `BACKUP_REMOTE=nope: scripts/backup-db.sh`.
@@ -292,7 +298,7 @@ postgres: бот не останавливается и не перезапус�
 Восстановление — только руками и при остановленном боте:
 
 ```bash
-rclone copy yadisk:pangea-backups/pangea_<дата>.dump /root/backups/restore/
+rclone copy gdrive:pangea-backups/pangea_<дата>.dump /root/backups/restore/
 docker compose stop app
 docker compose exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner' \
   < /root/backups/restore/pangea_<дата>.dump

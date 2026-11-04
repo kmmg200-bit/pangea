@@ -1,24 +1,28 @@
 #!/usr/bin/env bash
-# Бэкап базы Пангеи на Яндекс Диск. Каждый день в 3:00 его запускает cron (см.
+# Бэкап базы Пангеи на Google Drive. Каждый день в 3:00 его запускает cron (см.
 # scripts/pangea-backup.cron); руками — так же: scripts/backup-db.sh.
 #
 # Дамп снимается внутри уже работающего контейнера postgres (docker compose
 # exec): ничего не пересоздаётся и не перезапускается, бот не задевается.
 # Postgres снимает согласованный снимок — останавливать игру не нужно.
 #
-# Шаги: дамп (pg_dump -Fc) → проверка, что архив читается → копия на Диск
-# (rclone, remote «yadisk») → на Диске удаляются копии старше 30 дней, на
-# сервере остаются 3 последние. Сломался любой шаг — сообщение в ВК всем из
+# Шаги: дамп (pg_dump -Fc) → проверка, что архив читается → копия на Google
+# Drive (rclone, remote «gdrive») → там удаляются копии старше 30 дней, на
+# сервере остаются 3 последние.
+#
+# Данные vk_seen_messages в дамп не идут: это отметки «сообщение ВК уже
+# обработано», они живут сутки, и восстанавливать их незачем — схема таблицы
+# в дампе остаётся. Сломался любой шаг — сообщение в ВК всем из
 # BACKUP_ALERT_VK_IDS (.env) и выход с ошибкой; старые копии тогда не трогаются.
 #
-# BACKUP_REMOTE — куда класть копии вместо yadisk:pangea-backups. Нужен, чтобы
+# BACKUP_REMOTE — куда класть копии вместо gdrive:pangea-backups. Нужен, чтобы
 # проверить сообщение о сбое: BACKUP_REMOTE=nope: scripts/backup-db.sh
 set -euo pipefail
 
 cd "$(dirname "$(readlink -f "$0")")/.."
 
 LOCAL_DIR=/root/backups/pangea
-REMOTE=${BACKUP_REMOTE:-yadisk:pangea-backups}
+REMOTE=${BACKUP_REMOTE:-gdrive:pangea-backups}
 KEEP_DAYS=30
 KEEP_LOCAL=3
 
@@ -58,13 +62,14 @@ mkdir -p "$LOCAL_DIR"
 file="$LOCAL_DIR/pangea_$(date +%F_%H%M).dump"
 
 step="дамп базы"
-docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$file.part"
+docker compose exec -T postgres sh -c \
+  'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc --exclude-table-data=vk_seen_messages' > "$file.part"
 mv "$file.part" "$file"
 
 step="проверка архива"
 docker compose exec -T postgres pg_restore --list < "$file" > /dev/null
 
-step="загрузка на Яндекс Диск"
+step="загрузка на Google Drive"
 rclone copy "$file" "$REMOTE" --retries 5 --low-level-retries 10
 
 step="уборка старых копий"
