@@ -120,9 +120,9 @@ case class FetShopState(
       else turnIn(user, renderer)
     }.as(StateType.FetShop)
 
-  /** Сдача: кожа уходит Фету, герой получает золото и опыт, а Живая сумка
-    * (если она у героя есть) — ступень сверху; потолок у неё теперь
-    * [[HeroArtifacts.QuestMaxTier]]. */
+  /** Сдача: кожа уходит Фету, герой получает золото, опыт и Живую сумку: своя
+    * есть — ступень сверху, нет — Фет выдаёт новую (как ларец и шкаф в их
+    * заданиях). Потолок сумки у героя теперь [[HeroArtifacts.QuestMaxTier]]. */
   private def turnIn(user: User, renderer: Renderer): Task[Unit] =
     for {
       hero <- getHero(user)
@@ -135,16 +135,16 @@ case class FetShopState(
             _    <- heroDao.updateDoubloons(user.userId, hero.doubloons + FetShopState.QuestDoubloons)
             done <- quest.complete(user, hero, identity)
             (_, expLine) = done
-            bag  <- artifacts.get(hero.id).mapError(asThrowable).map(_.bag)
-            grown <- ZIO.when(bag.owned)(artifacts.upgrade(hero.id, ArtifactKind.LivingBag,
-                       HeroArtifacts.QuestMaxTier).mapError(asThrowable))
-            // Сумки нет — лимит сдвинулся молча, о нём ни слова.
-            bagLine = grown.fold("")(g => "\n\n" + quest.format("bagGrown",
-                        "tier" -> g.tier.toString, "maxTier" -> HeroArtifacts.QuestMaxTier.toString,
-                        "capacity" -> g.capacity.toString))
+            before <- artifacts.get(hero.id).mapError(asThrowable).map(_.bag)
+            // Новая сумка приходит первой ступенью и с полными зарядами, своя —
+            // растёт на ступень (см. ArtifactRepository.upgrade).
+            grown <- artifacts.upgrade(hero.id, ArtifactKind.LivingBag, HeroArtifacts.QuestMaxTier).mapError(asThrowable)
+            bagLine = quest.format(if (before.owned) "bagGrown" else "bagNew",
+                        "tier" -> grown.tier.toString, "maxTier" -> HeroArtifacts.QuestMaxTier.toString,
+                        "capacity" -> grown.capacity.toString)
             _    <- renderer.show(user, Screen(quest.text("outro"), Nil))
             _    <- renderer.show(user, Screen(quest.format("reward",
-                      "doubloons" -> FetShopState.QuestDoubloons.toString, "exp" -> expLine) + bagLine, Nil))
+                      "doubloons" -> FetShopState.QuestDoubloons.toString, "exp" -> expLine) + "\n\n" + bagLine, Nil))
             _    <- showShop(user, renderer)
           } yield ()
       }

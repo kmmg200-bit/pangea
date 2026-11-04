@@ -90,13 +90,14 @@ object NpcStarterQuestsSpec extends ZIOSpecDefault {
               assertTrue(!closed.choices.map(_.id).contains("KazQuest"))
     },
 
-    test("Фет берёт кожу упыря и отсыпает золотом") {
+    test("Фет берёт кожу упыря, отсыпает золотом, а своей сумки нет — выдаёт новую Живую сумку") {
+      val repo = TestArtifactRepository.empty
       for {
         heroDao <- TestHeroDao.withHero(userId, hero)
         content <- ZIO.attempt(SceneContent.load())
         // мифрил рядом лежит, но Фету он не нужен
         inv      = TestInventoryRepository.withItems(List(material(1L, MaterialKind.Mithril)))
-        state    = FetShopState(heroDao, TestArtifactRepository.empty, inv, content)
+        state    = FetShopState(heroDao, repo, inv, content)
         t       <- circle(state, "FetQuest", heroDao, inv,
                      material(2L, MaterialKind.GhoulSkin))
         (menu, intro, empty, halfway, said, after, closed, left) = t
@@ -107,8 +108,12 @@ object NpcStarterQuestsSpec extends ZIOSpecDefault {
               assertTrue(after.isDone(NpcQuest.Fet) && said.contains("Фет отсчитывает")) &&
               assertTrue(left.map(_.id) == List(1L)) &&
               assertTrue(h.doubloons == FetShopState.QuestDoubloons) &&
-              // сумки нет — расти нечему, и о сумке ни слова: лимит сдвигается молча
-              assertTrue(!said.contains("🌿")) &&
+              // новая сумка: первая ступень из пяти, пятнадцать мест и полные заряды
+              assertTrue(repo.snapshot.bag.tier == 1 && repo.snapshot.bag.capacity == 15 &&
+                         repo.snapshot.bag.charges == HeroArtifacts.MaxCharges) &&
+              assertTrue(said.contains("забирай даром") && said.contains("ступень 1/5, мест внутри: 15")) &&
+              // ларец и шкаф задание не трогает
+              assertTrue(!repo.snapshot.casket.owned && !repo.snapshot.wardrobe.owned) &&
               assertTrue(!closed.choices.map(_.id).contains("FetQuest"))
     },
 
