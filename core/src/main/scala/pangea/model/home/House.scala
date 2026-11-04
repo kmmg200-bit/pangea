@@ -180,7 +180,13 @@ object HomeRates {
   * (видна в библиотеке, когда она есть, а пишется и без неё).
   *
   * На острове — `wall`: Стена трофеев, чьи уникальные трофеи на ней висят
-  * (имена именных мобов, без повторов; см. [[NamedTrophy]]). */
+  * (имена именных мобов, без повторов; см. [[NamedTrophy]]).
+  *
+  * `stored` — кладовая: спрятанная обстановка, ключи [[Furniture]] в том
+  * порядке, в каком её прятали. Места она не занимает и не работает; вернуть
+  * — когда в доме есть место, а при переезде в дом просторнее она встаёт сама
+  * ([[unpacked]]). Стойки в кладовой — всегда старшие по номеру: ключи от
+  * младших работают как прежде. */
 final case class HomeData(
   tier:      Int               = 0,
   metJunona: Boolean           = false,
@@ -195,7 +201,8 @@ final case class HomeData(
   cleanedMs: Long              = 0L,
   racks:     List[Equipment]   = Nil,
   recipes:   List[RecipeNote]  = Nil,
-  wall:      List[String]      = Nil
+  wall:      List[String]      = Nil,
+  stored:    List[String]      = Nil
 ) {
   def house: Option[House] = House.byTier(tier)
 
@@ -211,7 +218,38 @@ final case class HomeData(
   /** Сколько в доме такой обстановки. */
   def count(f: Furniture): Int = furniture.count(_ == f.key)
 
-  /** Есть ли в доме личный посыльный ([[Furniture.Courier]]). */
+  /** Сколько такой обстановки у героя всего — в доме и в кладовой. */
+  def owned(f: Furniture): Int = count(f) + stored.count(_ == f.key)
+
+  /** Стоек в кладовой — это старшие по номеру. */
+  def storedRacks: Int = stored.count(_ == Furniture.Rack.key)
+
+  /** Стойки, что стоят в доме: №1..activeRacks. */
+  def activeRacks: Int = (racks.size - storedRacks).max(0)
+
+  /** Убрать в кладовую одну такую вещь; стойку — старшую из стоящих. */
+  def hidden(f: Furniture): HomeData = {
+    val i = furniture.lastIndexOf(f.key)
+    if (i < 0) this else copy(furniture = furniture.patch(i, Nil, 1), stored = stored :+ f.key)
+  }
+
+  /** Вернуть из кладовой в дом одну такую вещь. */
+  def returned(f: Furniture): HomeData = {
+    val i = stored.indexOf(f.key)
+    if (i < 0) this else copy(stored = stored.patch(i, Nil, 1), furniture = furniture :+ f.key)
+  }
+
+  /** Переезд в дом просторнее: из кладовой встаёт то, что спрятано первым, —
+    * сколько хватит мест. */
+  @scala.annotation.tailrec
+  final def unpacked: HomeData =
+    stored.headOption.flatMap(Furniture.byKey) match {
+      case Some(f) if slotsFree > 0 => returned(f).unpacked
+      case _                        => this
+    }
+
+  /** Есть ли в доме личный посыльный ([[Furniture.Courier]]): спрятанный в
+    * кладовую не работает. */
   def hasCourier: Boolean = count(Furniture.Courier) > 0
 
   /** Сколько стоек можно поставить в этот дом. */
@@ -309,5 +347,7 @@ object HomeData {
       racks    <- c.getOrElse[List[Equipment]]("racks")(Nil)
       recipes  <- c.getOrElse[List[RecipeNote]]("recipes")(Nil)
       wall     <- c.getOrElse[List[String]]("wall")(Nil)
-    } yield HomeData(tier, met, runes, herbs, brews, cauldron, charges, gems, furn, cleared, cleaned, racks, recipes, wall)
+      stored   <- c.getOrElse[List[String]]("stored")(Nil)
+    } yield HomeData(tier, met, runes, herbs, brews, cauldron, charges, gems, furn, cleared, cleaned, racks, recipes,
+      wall, stored)
 }

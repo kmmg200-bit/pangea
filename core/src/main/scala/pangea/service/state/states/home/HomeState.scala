@@ -82,6 +82,9 @@ case class HomeState(
       "HomeFurnItem"   -> Target.Run { (u, ua, r) => furnItem(u, ua, r) },
       "HomeFurnBuy"    -> Target.Run { (u, ua, r) => furnBuy(u, ua, r) },
       "HomeClutterPay" -> Target.Run { (u, _, r) => clutterPay(u, r) },
+      "HomeStash"      -> Target.Run { (u, ua, r) => stash(u, ua, r) },
+      "HomeStore"      -> Target.Run { (u, _, r) => store(u, r) },
+      "HomeUnstash"    -> Target.Run { (u, ua, r) => unstash(u, ua, r) },
       "HomeSlots"      -> Target.Run { (u, _, r) => slots(u, r) },
       "HomeRack"       -> Target.Run { (u, ua, r) => rack(u, ua, r) },
       "HomeRackSwap"   -> Target.Run { (u, ua, r) => rackSwap(u, ua, r) },
@@ -213,8 +216,14 @@ case class HomeState(
               // Алтарь Азата больше прежнего — первый дом с алтарём или переезд
               // на остров — приходит полным. Дальше энергию дома пополняют сами.
               val charges = if (h.altarCharges > home.altarMax) h.altarCharges else home.charges
-              saveHome(user, home.copy(tier = h.tier, metJunona = true, charges = charges)) *>
+              // В доме просторнее из кладовой встаёт, что спрятано первым, — сколько хватит мест.
+              val moved   = home.copy(tier = h.tier, metJunona = true, charges = charges)
+              val settled = moved.unpacked
+              val placed  = moved.stored.take(moved.stored.size - settled.stored.size).flatMap(Furniture.byKey)
+              saveHome(user, settled) *>
                 renderer.show(user, Screen(content.text(s"home.houses.${h.key}.bought"), Nil)) *>
+                ZIO.when(placed.nonEmpty)(say(user, content.format("home.store.unpacked",
+                  "names" -> placed.map(furnName).mkString(", ")), renderer)) *>
                 showHouse(user, renderer)
           }
       }
@@ -376,19 +385,24 @@ case class HomeState(
         val lines   = (clutter.toList ++ placed ++ free).zipWithIndex.map { case (l, i) =>
           content.format("home.slots.line", "n" -> (i + 1).toString, "what" -> l)
         }
+        val stored = Option.when(home.stored.nonEmpty)(
+          "\n\n" + content.format("home.slots.stored", "n" -> home.stored.size.toString)).getOrElse("")
         val text = content.format("home.slots.text", "used" -> home.slotsUsed.toString,
-          "max" -> home.slotsMax.toString, "lines" -> lines.mkString("\n"))
-        // Стойки — по две в ряд, за ними «Назад».
-        val rackButtons = home.racks.indices.toList.map { i =>
+          "max" -> home.slotsMax.toString, "lines" -> lines.mkString("\n")) + stored
+        // Стойки, что стоят в доме, — по две в ряд, за ними кладовая и «Назад».
+        val rackButtons = (0 until home.activeRacks).toList.map { i =>
           Choice("HomeRack", content.format("home.rack.button", "n" -> (i + 1).toString),
             data = Map("n" -> (i + 1).toString), row = Some(1 + i / 2))
         }
-        val backRow = 1 + (home.racks.size + 1) / 2
+        val backRow = 1 + (home.activeRacks + 1) / 2
         renderer.show(user, Screen(text, List(
           Option.when(home.hasClutter)(Choice("HomeClean", content.text("home.house.clean"), color = ChoiceColor.Positive, row = Some(0))),
           Some(Choice("HomeFurnish", content.text("home.slots.furnish"), row = Some(0))),
           Option.when(home.count(Furniture.ArtisanBench) > 0)(Choice("HomeBench", content.text("home.house.bench"), row = Some(0)))
-        ).flatten ++ rackButtons :+ backToHouse.copy(row = Some(backRow)))).as(StateType.Home)
+        ).flatten ++ rackButtons ++
+          Option.when(home.stored.nonEmpty)(Choice("HomeStore",
+            content.format("home.store.button", "n" -> home.stored.size.toString), row = Some(backRow))).toList :+
+          backToHouse.copy(row = Some(backRow)))).as(StateType.Home)
       }
     }
 
@@ -642,7 +656,7 @@ case class HomeState(
 
   /** Номер стойки из кнопки — если такая стойка в доме есть. */
   private def rackNo(ua: UserAction, home: HomeData): Option[Int] =
-    payload(ua, "n").flatMap(_.toIntOption).filter(n => n >= 1 && n <= home.racks.size)
+    payload(ua, "n").flatMap(_.toIntOption).filter(n => n >= 1 && n <= home.activeRacks)
 
   /** «Прибраться»: взяться за хлам самому. Как сон — пока убирается, дом его
     * не отпускает; прервался — наубиранное не пропадает. Доделывает таймер. */
@@ -739,41 +753,221 @@ case class HomeState(
       }
     }
 
-  /** Купить: нужно свободное место и дублоны; вещь встаёт в дом сразу. */
+  /** Купить: нужны дублоны и место. Места нет — Юнона спрашивает, что спрятать
+    * в кладовую ([[stashAsk]]); дублонов нет — до этого вопроса не доходит.
+    * Вещь встаёт в дом сразу. */
   private def furnBuy(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     for {
       hero <- getHero(user)
       home <- loadHome(user)
       res  <- furnOf(ua, home) match {
         case None => furnish(user, renderer)
-        case Some(Furniture.ArtisanBench) if home.count(Furniture.ArtisanBench) > 0 =>
-          say(user, content.text("home.furnish.benchHave"), renderer) *> furnish(user, renderer)
-        case Some(Furniture.Courier) if home.hasCourier =>
-          say(user, content.text("home.furnish.courierHave"), renderer) *> furnish(user, renderer)
-        case Some(Furniture.Rack) if home.racks.size >= home.racksMax =>
-          say(user, content.format("home.furnish.rackMax", "max" -> home.racksMax.toString), renderer) *> furnish(user, renderer)
-        case Some(_) if home.slotsFree <= 0 =>
-          say(user, content.text("home.furnish.noSlot"), renderer) *> furnish(user, renderer)
         case Some(f) =>
-          charge(hero, PayDoubloons, f.doubloons).flatMap {
-            case Left(lack) =>
-              say(user, content.format("home.office.lack", "lack" -> priceText(lack, PayDoubloons)), renderer) *> furnish(user, renderer)
-            case Right(_) if f == Furniture.Rack =>
-              val bought = home.copy(furniture = home.furniture :+ f.key, racks = home.racks :+ Equipment.empty)
-              val n      = bought.racks.size
-              for {
-                key <- itemRepo.persist(hero.id, QuestItemKind.item(QuestItemKind.rackKeys(n - 1)))
-                _   <- inventoryRepo.addItem(hero.id, key).mapError(e => new Throwable(e.toString))
-                _   <- saveHome(user, bought)
-                _   <- say(user, furnText(f, "bought", bought) + "\n" + content.format("home.rack.keyGiven", "n" -> n.toString), renderer)
-                s   <- furnish(user, renderer)
-              } yield s
-            case Right(_) =>
-              val bought = home.copy(furniture = home.furniture :+ f.key)
-              saveHome(user, bought) *> say(user, furnText(f, "bought", bought), renderer) *> furnish(user, renderer)
+          buyRefusal(f, home).orElse(lackOf(hero, f)) match {
+            case Some(why)                   => say(user, why, renderer) *> furnish(user, renderer)
+            case None if home.slotsFree <= 0 => stashAsk(user, home, Goal.Buy(f), renderer)
+            case None                        => place(user, hero, home, f, renderer)
           }
       }
     } yield res
+
+  /** Почему эту вещь не купить, будь в доме хоть сколько места; `None` —
+    * можно. Верстак и посыльный — по одному, стоек — сколько вмещает дом; то,
+    * что лежит в кладовой, второй раз не продают — его возвращают. */
+  private def buyRefusal(f: Furniture, home: HomeData): Option[String] = f match {
+    case Furniture.ArtisanBench if home.count(f) > 0 => Some(content.text("home.furnish.benchHave"))
+    case Furniture.Courier if home.count(f) > 0      => Some(content.text("home.furnish.courierHave"))
+    case Furniture.ArtisanBench | Furniture.Courier | Furniture.Rack if home.owned(f) > home.count(f) =>
+      Some(content.text("home.furnish.inStore"))
+    case Furniture.Rack if home.racks.size >= home.racksMax =>
+      Some(content.format("home.furnish.rackMax", "max" -> home.racksMax.toString))
+    case _ => None
+  }
+
+  /** Не хватает дублонов на вещь — сколько. */
+  private def lackOf(hero: Hero, f: Furniture): Option[String] =
+    Option.when(hero.doubloons < f.doubloons)(
+      content.format("home.office.lack", "lack" -> priceText(f.doubloons - hero.doubloons, PayDoubloons)))
+
+  /** Списать дублоны и поставить вещь в дом; к стойке — её номерной ключ. */
+  private def place(user: User, hero: Hero, home: HomeData, f: Furniture, renderer: Renderer): Task[StateType] =
+    charge(hero, PayDoubloons, f.doubloons).flatMap {
+      case Left(lack) =>
+        say(user, content.format("home.office.lack", "lack" -> priceText(lack, PayDoubloons)), renderer) *> furnish(user, renderer)
+      case Right(_) if f == Furniture.Rack =>
+        val bought = home.copy(furniture = home.furniture :+ f.key, racks = home.racks :+ Equipment.empty)
+        val n      = bought.racks.size
+        for {
+          key <- itemRepo.persist(hero.id, QuestItemKind.item(QuestItemKind.rackKeys(n - 1)))
+          _   <- inventoryRepo.addItem(hero.id, key).mapError(e => new Throwable(e.toString))
+          _   <- saveHome(user, bought)
+          _   <- say(user, furnText(f, "bought", bought) + "\n" + content.format("home.rack.keyGiven", "n" -> n.toString), renderer)
+          s   <- furnish(user, renderer)
+        } yield s
+      case Right(_) =>
+        val bought = home.copy(furniture = home.furniture :+ f.key)
+        saveHome(user, bought) *> say(user, furnText(f, "bought", bought), renderer) *> furnish(user, renderer)
+    }
+
+  // ── Кладовая ────────────────────────────────────────────────────────────────
+
+  /** «Что спрячем из текущей обстановки дома?» — мест нет, а вещь хотят купить
+    * или вернуть из кладовой. На выбор — то, что стоит в доме (стойка —
+    * старшая из стоящих); вещь того же рода прятать незачем. Прятать нечего —
+    * значит, мест нет. */
+  private def stashAsk(user: User, home: HomeData, goal: Goal, renderer: Renderer): Task[StateType] = {
+    val kinds = Furniture.values.filter(k => k != goal.f && home.count(k) > 0)
+    if (kinds.isEmpty) say(user, content.text("home.furnish.noSlot"), renderer) *> backFrom(user, goal, renderer)
+    else {
+      val buttons = kinds.zipWithIndex.map { case (k, i) =>
+        Choice("HomeStash", ItemMenu.truncate(standingName(k, home)),
+          data = Map("f" -> k.key, "for" -> goal.tag, "t" -> goal.f.key), row = Some(i))
+      }
+      val back = goal match {
+        case _: Goal.Buy  => "HomeFurnish"
+        case _: Goal.Back => "HomeStore"
+      }
+      renderer.show(user, Screen(content.text("home.stash.ask"), buttons :+
+        Choice(back, content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(kinds.size))))
+        .as(StateType.Home)
+    }
+  }
+
+  /** Спрятать выбранное — и сразу сделать то, ради чего прятали: купить вещь
+    * или вернуть другую из кладовой. Спрятать нельзя — Юнона говорит почему и
+    * спрашивает снова. Покупку проверяем до того, как что-то спрятано: без
+    * дублонов ничего не трогаем. */
+  private def stash(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
+    for {
+      hero <- getHero(user)
+      home <- loadHome(user)
+      azat <- loadAzat(user)
+      res  <- goalOf(ua, home) match {
+        case None => slots(user, renderer)
+        case Some(goal) =>
+          payload(ua, "f").flatMap(Furniture.byKey).filter(f => f != goal.f && home.count(f) > 0) match {
+            case None => stashAsk(user, home, goal, renderer)
+            case Some(f) =>
+              stashRefusal(f, home, azat) match {
+                case Some(why) => say(user, why, renderer) *> stashAsk(user, home, goal, renderer)
+                case None      => stashFor(user, hero, home, f, goal, renderer)
+              }
+          }
+      }
+    } yield res
+
+  /** Место освобождено ради `goal`: купить или вернуть. Место есть и так (экран
+    * устарел) — ничего не прячем. */
+  private def stashFor(user: User, hero: Hero, home: HomeData, f: Furniture, goal: Goal,
+                       renderer: Renderer): Task[StateType] = {
+    val needed = home.slotsFree <= 0
+    val freed  = if (needed) home.hidden(f) else home
+    val hidden = ZIO.when(needed)(say(user, content.format("home.stash.hidden", "name" -> standingName(f, home)), renderer))
+    goal match {
+      case Goal.Buy(t) =>
+        buyRefusal(t, home).orElse(lackOf(hero, t)) match {
+          case Some(why) => say(user, why, renderer) *> furnish(user, renderer)
+          case None      => saveHome(user, freed) *> hidden *> place(user, hero, freed, t, renderer)
+        }
+      case Goal.Back(t) =>
+        if (!home.stored.contains(t.key)) store(user, renderer)
+        else
+          saveHome(user, freed.returned(t)) *> hidden *>
+            say(user, content.format("home.store.returned", "name" -> storedName(t, freed)), renderer) *>
+            store(user, renderer)
+    }
+  }
+
+  /** Почему это сейчас не спрятать; `None` — можно. Прячут только пустое: со
+    * стойки снят комплект, в верстаке нет куба, полкам и хранилищу хватает
+    * места и без сундука. */
+  private def stashRefusal(f: Furniture, home: HomeData, azat: AzatState): Option[String] = {
+    val after = home.hidden(f)
+    f match {
+      case Furniture.Rack =>
+        val n = home.activeRacks
+        home.racks.lift(n - 1).filter(r => Racks.real(r.allItems).nonEmpty)
+          .map(_ => content.format("home.stash.rackBusy", "n" -> n.toString))
+      case Furniture.ArtisanBench if azat.cubeHome => Some(content.text("home.stash.benchCube"))
+      case Furniture.ApothecaryChest if home.herbs.size > after.herbShelves || home.brews.size > after.brewShelves =>
+        Some(content.format("home.stash.shelves",
+          "herbs" -> after.herbShelves.toString, "brews" -> after.brewShelves.toString))
+      case Furniture.JewelerChest if home.gems.size > after.gemShelves =>
+        Some(content.format("home.stash.gems", "gems" -> after.gemShelves.toString))
+      case _ => None
+    }
+  }
+
+  /** Кладовая: что спрятано, и «Вернуть» на каждый род вещей. Пусто — назад к
+    * обстановке. */
+  private def store(user: User, renderer: Renderer): Task[StateType] =
+    loadHome(user).flatMap { home =>
+      if (!home.owns) office(user, renderer)
+      else if (home.stored.isEmpty) slots(user, renderer)
+      else {
+        val lines = storedNames(home).map(n => content.format("home.store.line", "name" -> n))
+        val kinds = Furniture.values.filter(k => home.stored.contains(k.key))
+        val buttons = kinds.zipWithIndex.map { case (k, i) =>
+          Choice("HomeUnstash", ItemMenu.truncate(content.format("home.store.return", "name" -> storedName(k, home))),
+            data = Map("f" -> k.key), row = Some(i))
+        }
+        renderer.show(user, Screen(content.format("home.store.text", "lines" -> lines.mkString("\n")), buttons :+
+          Choice("HomeSlots", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(kinds.size))))
+          .as(StateType.Home)
+      }
+    }
+
+  /** Вернуть из кладовой: есть место — вещь встаёт сразу; нет — Юнона
+    * спрашивает, что спрятать взамен. */
+  private def unstash(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
+    loadHome(user).flatMap { home =>
+      payload(ua, "f").flatMap(Furniture.byKey).filter(f => home.stored.contains(f.key)) match {
+        case None                           => store(user, renderer)
+        case Some(f) if home.slotsFree <= 0 => stashAsk(user, home, Goal.Back(f), renderer)
+        case Some(f) =>
+          saveHome(user, home.returned(f)) *>
+            say(user, content.format("home.store.returned", "name" -> storedName(f, home)), renderer) *>
+            store(user, renderer)
+      }
+    }
+
+  /** Цель из кнопки «спрятать»: что купить (если это продают для этого дома) или
+    * что вернуть из кладовой. */
+  private def goalOf(ua: UserAction, home: HomeData): Option[Goal] =
+    payload(ua, "t").flatMap(Furniture.byKey).flatMap { t =>
+      payload(ua, "for").flatMap {
+        case Goal.BuyTag  => Option.when(home.house.exists(_.tier >= t.minTier))(Goal.Buy(t))
+        case Goal.BackTag => Some(Goal.Back(t))
+        case _            => None
+      }
+    }
+
+  /** Назад туда, откуда спрашивали: к «Обустройству» или в кладовую. */
+  private def backFrom(user: User, goal: Goal, renderer: Renderer): Task[StateType] = goal match {
+    case _: Goal.Buy  => furnish(user, renderer)
+    case _: Goal.Back => store(user, renderer)
+  }
+
+  /** Название того, что стоит в доме; у стойки — номер старшей из стоящих (её и
+    * прячут). */
+  private def standingName(f: Furniture, home: HomeData): String =
+    if (f == Furniture.Rack) content.format("home.rack.title", "n" -> home.activeRacks.toString) else furnName(f)
+
+  /** Название того, что лежит в кладовой; у стойки — номер младшей из спрятанных
+    * (её и вернут). */
+  private def storedName(f: Furniture, home: HomeData): String =
+    if (f == Furniture.Rack) content.format("home.rack.title", "n" -> (home.activeRacks + 1).toString) else furnName(f)
+
+  /** Всё в кладовой по названиям; стойки — с номерами по порядку. */
+  private def storedNames(home: HomeData): List[String] =
+    home.stored.foldLeft((List.empty[String], home.activeRacks)) { case ((acc, racksSeen), key) =>
+      Furniture.byKey(key) match {
+        case Some(Furniture.Rack) =>
+          (acc :+ content.format("home.rack.title", "n" -> (racksSeen + 1).toString), racksSeen + 1)
+        case Some(f) => (acc :+ furnName(f), racksSeen)
+        case None    => (acc, racksSeen)
+      }
+    }._1
 
   /** Вывезти хлам через Юнону — за серебро (с ячейкой), без уборки руками. */
   private def clutterPay(user: User, renderer: Renderer): Task[StateType] =
@@ -944,6 +1138,20 @@ object HomeState {
   /** Способ платы в кнопке покупки. */
   val PaySilver: String    = "s"
   val PayDoubloons: String = "d"
+
+  /** Ради чего прячут обстановку в кладовую: купить вещь или вернуть другую из
+    * кладовой. `tag` — как цель записана в кнопке. */
+  sealed trait Goal {
+    def f: Furniture
+    def tag: String
+  }
+  object Goal {
+    val BuyTag: String  = "buy"
+    val BackTag: String = "back"
+
+    final case class Buy(f: Furniture) extends Goal { def tag: String = BuyTag }
+    final case class Back(f: Furniture) extends Goal { def tag: String = BackTag }
+  }
 
   /** Когда герой лёг спать (`scene_data`). */
   val SleepStartKey: String = "homeSleepStartedAt"
