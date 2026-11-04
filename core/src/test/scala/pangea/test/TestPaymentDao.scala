@@ -24,7 +24,9 @@ class TestPaymentDao(
     patch(orderId)(_.copy(paymentId = Some(paymentId), paymentUrl = Some(paymentUrl), updatedAt = updatedAt))
 
   override def setStatus(orderId: OrderId, status: PaymentStatus, bankStatus: String, updatedAt: Long): Task[Unit] =
-    patch(orderId)(_.copy(status = status, bankStatus = Some(bankStatus), updatedAt = updatedAt))
+    patch(orderId)(p =>
+      if (status.replaces(p.status)) p.copy(status = status, bankStatus = Some(bankStatus), updatedAt = updatedAt)
+      else p)
 
   override def byOrderId(orderId: OrderId): Task[Option[Payment]] =
     rowsRef.get.map(_.get(orderId.value))

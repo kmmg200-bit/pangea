@@ -210,6 +210,22 @@ object DonationsSpec extends ZIOSpecDefault {
                 assertTrue(after == 100L)
       },
 
+      test("опоздавший AUTHORIZED не откатывает CONFIRMED: заказ остаётся оплаченным") {
+        for {
+          k     <- kit()
+          _     <- k.donations.start(user, pack, "player@mail.ru", now)
+          order <- orderOf(k.payments)
+          _     <- k.donations.notified(notification(order.orderId.value, "CONFIRMED"), now)
+          late  <- k.donations.notified(notification(order.orderId.value, "AUTHORIZED"), now + 1L)
+          after <- orderOf(k.payments)
+          coins <- k.payments.doubloonsOf(userId)
+        } yield assertTrue(late == Donations.Notified.Accepted) &&
+                assertTrue(after.status == PaymentStatus.Confirmed) &&
+                assertTrue(after.bankStatus.contains("CONFIRMED")) &&
+                assertTrue(after.granted) &&
+                assertTrue(coins == 100L)
+      },
+
       test("чужая подпись ничего не выдаёт") {
         for {
           k     <- kit()

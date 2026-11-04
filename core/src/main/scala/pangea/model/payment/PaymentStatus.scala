@@ -17,6 +17,24 @@ sealed trait PaymentStatus extends EnumEntry {
     case PaymentStatus.New | PaymentStatus.FormShowed | PaymentStatus.Authorized => false
     case _                                                                       => true
   }
+
+  /** Можно ли записать этот статус поверх `current`. Статус назад не ходит:
+    * при одностадийной оплате банк шлёт `AUTHORIZED` и `CONFIRMED` почти разом,
+    * нотификации разбираются параллельно, и опоздавший `AUTHORIZED` затирал
+    * `CONFIRMED` — дублоны выданы, а заказ в базе «ещё в пути». Опоздавший
+    * `CONFIRMED` после отказа при этом проходит: раз деньги взяты, выдать надо. */
+  def replaces(current: PaymentStatus): Boolean = current.order <= order
+
+  /** Порядок статусов в жизни заказа. Незнакомый статус банка — среди
+    * промежуточных: закрытый заказ он не переоткрывает. */
+  private def order: Int = this match {
+    case PaymentStatus.New                                => 0
+    case PaymentStatus.FormShowed                         => 1
+    case PaymentStatus.Authorized | PaymentStatus.Unknown => 2
+    case PaymentStatus.Rejected                           => 3
+    case PaymentStatus.Confirmed                          => 4
+    case PaymentStatus.Refunded                           => 5
+  }
 }
 
 object PaymentStatus extends Enum[PaymentStatus] with DoobieEnum[PaymentStatus] {

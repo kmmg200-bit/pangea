@@ -1,5 +1,7 @@
 package pangea.dao.payment
 
+import cats.data.NonEmptyList
+import doobie.Fragments
 import doobie.free.{connection => FC}
 import doobie.implicits._
 import doobie.util.fragment.Fragment
@@ -30,9 +32,13 @@ class PaymentDaoLive(xa: Transactor[Task]) extends PaymentDao {
           where order_id = ${orderId.value}"""
       .update.run.transact(xa).unit
 
+  /** Статус назад не ходит ([[PaymentStatus.replaces]]): проверка — в самом
+    * `update`, иначе две параллельные нотификации снова гоняются между чтением
+    * и записью. Опоздавший статус просто ничего не меняет. */
   override def setStatus(orderId: OrderId, status: PaymentStatus, bankStatus: String, updatedAt: Long): Task[Unit] =
-    sql"""update payments set status = $status, bank_status = $bankStatus, updated_at = $updatedAt
-          where order_id = ${orderId.value}"""
+    (fr"""update payments set status = $status, bank_status = $bankStatus, updated_at = $updatedAt
+          where order_id = ${orderId.value} and""" ++
+      Fragments.in(fr"status", NonEmptyList.of(status, PaymentStatus.values.filter(s => s != status && status.replaces(s)): _*)))
       .update.run.transact(xa).unit
 
   override def byOrderId(orderId: OrderId): Task[Option[Payment]] =
