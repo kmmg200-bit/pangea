@@ -15,10 +15,12 @@ trait Server {
 
 object Server {
 
-  /** Маршруты бота: вебхук кассы, Mini App, выдача логов. Колбэка ВК среди них
-    * нет — его принимает [[VkIngest]] (у сборщика или в общем процессе). */
+  /** Маршруты бота: проверка жив ли, вебхук кассы, Mini App, выдача логов.
+    * Колбэка ВК среди них нет — его принимает [[VkIngest]] (у сборщика или в
+    * общем процессе). */
   def botRoutes(donations: Donations, background: Background, adminConfig: AdminConfig, miniApp: MiniApp): HttpRoutes[Task] =
-    new PaymentRoutes(donations, background).routes <+>
+    HealthRoutes.routes <+>
+      new PaymentRoutes(donations, background).routes <+>
       new LogsRoutes(adminConfig).routes <+>
       new MiniAppRoutes(miniApp).routes
 }

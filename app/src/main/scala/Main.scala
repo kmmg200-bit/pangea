@@ -52,7 +52,7 @@ import pangea.service.sender.vk.config.VkConfig
 import pangea.service.sender.vk.{VkLongPoll, VkPlayers}
 import pangea.service.state.{PlayerLock, StateHandler}
 import pangea.service.state.states.StatesMap
-import server.{MetricsServer, Server, ServerLive, VkInboxHandler, VkIngest}
+import server.{HealthRoutes, MetricsServer, Server, ServerLive, VkInboxHandler, VkIngest}
 import server.model.{Role, ServerConfig}
 import zio._
 import zio.interop.catz._
@@ -273,7 +273,7 @@ object Main extends ZIOAppDefault {
   /** Сборщик: колбэк ВК и Long Poll — в очередь, больше ничего. */
   private val collectorProgram =
     ZIO.serviceWithZIO[Background] { background =>
-      (longPollLoop(background) *> ZIO.serviceWithZIO[VkIngest](ingest => serve(ingest.routes)))
+      (longPollLoop(background) *> ZIO.serviceWithZIO[VkIngest](ingest => serve(HealthRoutes.routes <+> ingest.routes)))
         .ensuring(background.shutdown)
     }
 

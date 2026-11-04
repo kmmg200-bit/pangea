@@ -46,6 +46,21 @@ if [ "$status" != healthy ]; then
 fi
 
 echo "$(date +%T) Новый готов. Гашу старый: доделает начатые ходы и выйдет"
-docker stop -t 30 "$old" >/dev/null && docker rm "$old" >/dev/null
+docker stop -t 30 "$old" >/dev/null
+
+# Как остановился старый — до удаления, пока его лог ещё есть: 137 значит, что
+# за 30 секунд он не вышел сам и Docker его добил. Лог за 5 минут — в файл.
+code=$(docker inspect -f '{{.State.ExitCode}}' "$old")
+saved="/var/log/pangea-deploy/$(docker inspect -f '{{.Name}}' "$old" | tr -d /)-$(date +%F_%H%M%S).log"
+mkdir -p /var/log/pangea-deploy
+docker logs --since 5m "$old" > "$saved" 2>&1 || true
+if [ "$code" = 137 ]; then
+  echo "$(date +%T) Старый не вышел сам за 30 с — Docker его добил (exit 137). Как шла остановка:"
+else
+  echo "$(date +%T) Старый вышел сам (exit $code). Как шла остановка:"
+fi
+grep -E "Остановка|фон|ERROR" "$saved" | tail -10 || true
+echo "Лог старого за 5 минут: $saved"
+docker rm "$old" >/dev/null
 docker compose up -d --no-deps --no-recreate --scale app=1 app
 echo "$(date +%T) Готово: $(docker compose ps app --format '{{.Name}} — {{.Status}}')"
