@@ -494,3 +494,15 @@ docker compose exec grafana grafana cli admin reset-admin-password '<новый 
 
 Дашборд лежит в `docker/grafana/dashboards/pangea.json`: правки в интерфейсе
 при перезапуске Grafana перезапишутся файлом, постоянные — коммитом в него.
+
+Дашборд «Донат» (`docker/grafana/dashboards/donations.json`) берёт данные не
+из Prometheus, а прямо из базы — таблицы `payments`: суммы точные, история
+целиком. Grafana ходит туда под ролью `pangea_grafana`, которую создаёт
+миграция: только чтение и только нужные колонки (почты для чека она не видит).
+Пароль роли задаётся один раз — на сервере, в каталоге проекта:
+
+```bash
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+# в psql: \password pangea_grafana — и тот же пароль в .env как GRAFANA_DB_PASSWORD
+docker compose up -d --no-deps grafana
+```

@@ -1,0 +1,22 @@
+apiVersion: 1
+
+# База игры — для дашборда «Донат»: суммы точные и история целиком, чего
+# Prometheus (30 дней, сглаженные счётчики) не даёт. Роль pangea_grafana видит
+# только нужные колонки и только читает (миграция 20261104220000_grafana_reader);
+# пароль — GRAFANA_DB_PASSWORD из .env, задаётся на сервере один раз.
+datasources:
+  - name: База Пангеи
+    uid: pangea-db
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: postgres:5432
+    user: pangea_grafana
+    editable: false
+    jsonData:
+      database: ${POSTGRES_DB}
+      sslmode: disable
+      postgresVersion: 1700
+      maxOpenConns: 2
+      maxIdleConns: 1
+    secureJsonData:
+      password: ${GRAFANA_DB_PASSWORD}

@@ -1,0 +1,409 @@
+{
+  "uid": "pangea-donations",
+  "title": "Донат",
+  "description": "Оплаченные заказы из базы (таблица payments): когда, сколько и кто. Возвраты не в счёт.",
+  "tags": [
+    "pangea"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "1m",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "За период, ₽",
+      "description": "Сколько заплатили за выбранный период (выданные заказы, без возвратов).",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "yellow"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT coalesce(sum(p.amount_kopecks), 0) / 100.0 AS \"₽\"\nFROM payments p\nWHERE p.granted AND p.status <> 'Refunded' AND $__timeFilter(to_timestamp(p.created_at / 1000.0))"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Донатов за период",
+      "description": "Сколько оплаченных заказов за выбранный период.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "yellow"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT count(*) AS \"донатов\"\nFROM payments p\nWHERE p.granted AND p.status <> 'Refunded' AND $__timeFilter(to_timestamp(p.created_at / 1000.0))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Донатеров за период",
+      "description": "Сколько разных игроков платили за выбранный период.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "yellow"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT count(DISTINCT p.user_id) AS \"игроков\"\nFROM payments p\nWHERE p.granted AND p.status <> 'Refunded' AND $__timeFilter(to_timestamp(p.created_at / 1000.0))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Всего с запуска, ₽",
+      "description": "Все выданные заказы за всё время, без возвратов — от периода не зависит.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "yellow"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT coalesce(sum(p.amount_kopecks), 0) / 100.0 AS \"₽\"\nFROM payments p\nWHERE p.granted AND p.status <> 'Refunded'"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "По дням, ₽",
+      "description": "Сумма донатов за сутки по московскому времени. Время — когда игрок создал заказ (оплата — в течение часа после).",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 24,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "yellow"
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "barAlignment": 1,
+            "lineWidth": 1,
+            "fillOpacity": 80,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc('day', to_timestamp(p.created_at / 1000.0) AT TIME ZONE 'Europe/Moscow') AT TIME ZONE 'Europe/Moscow' AS time,\n       sum(p.amount_kopecks) / 100.0 AS \"₽\"\nFROM payments p\nWHERE p.granted AND p.status <> 'Refunded' AND $__timeFilter(to_timestamp(p.created_at / 1000.0))\nGROUP BY 1\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Каждый донат: когда, сколько и кто",
+      "description": "Точка — один оплаченный заказ: высота — сумма в рублях, цвет — герой. Время — когда создан заказ.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 24,
+        "h": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 12,
+            "showPoints": "always",
+            "lineWidth": 0,
+            "fillOpacity": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "time_series",
+          "rawSql": "SELECT to_timestamp(p.created_at / 1000.0) AS time,\n       coalesce(h.name, 'vk.com/id' || u.vk_id) AS metric,\n       p.amount_kopecks / 100.0 AS \"₽\"\nFROM payments p\nLEFT JOIN users u ON u.id = p.user_id\nLEFT JOIN heroes h ON h.user_id = p.user_id\nWHERE p.granted AND p.status <> 'Refunded' AND $__timeFilter(to_timestamp(p.created_at / 1000.0))\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Донаты списком",
+      "description": "Оплаченные заказы за период, свежие сверху.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 24,
+        "h": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Когда"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsLocal"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": true,
+          "reducer": [
+            "sum"
+          ],
+          "fields": [
+            "₽",
+            "Дублоны"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT to_timestamp(p.created_at / 1000.0) AS \"Когда\",\n       coalesce(h.name, '—') AS \"Герой\",\n       'vk.com/id' || u.vk_id AS \"ВК\",\n       p.amount_kopecks / 100 AS \"₽\",\n       p.doubloons AS \"Дублоны\",\n       p.sku AS \"Пакет\"\nFROM payments p\nLEFT JOIN users u ON u.id = p.user_id\nLEFT JOIN heroes h ON h.user_id = p.user_id\nWHERE p.granted AND p.status <> 'Refunded' AND $__timeFilter(to_timestamp(p.created_at / 1000.0))\nORDER BY p.created_at DESC\nLIMIT 500"
+        }
+      ]
+    }
+  ]
+}
