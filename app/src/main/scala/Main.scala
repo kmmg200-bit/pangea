@@ -1,5 +1,7 @@
 package app
 
+import cats.syntax.semigroupk._
+import org.http4s.HttpRoutes
 import pangea.dao.activity.ActivityDao
 import pangea.dao.arena.ArenaDao
 import pangea.dao.Transactor
@@ -49,9 +51,10 @@ import pangea.service.sender.vk.config.VkConfig
 import pangea.service.sender.vk.{VkLongPoll, VkPlayers}
 import pangea.service.state.{PlayerLock, StateHandler}
 import pangea.service.state.states.StatesMap
-import server.{MetricsServer, Server, VkInboxHandler}
-import server.model.ServerConfig
+import server.{MetricsServer, Server, ServerLive, VkInboxHandler, VkIngest}
+import server.model.{Role, ServerConfig}
 import zio._
+import zio.interop.catz._
 import zio.logging.backend.SLF4J
 import zio.metrics.connectors.prometheus.PrometheusPublisher
 import zio.metrics.connectors.{MetricsConfig, prometheus}
@@ -67,9 +70,15 @@ object Main extends ZIOAppDefault {
   override val bootstrap: ZLayer[ZIOAppArgs, Nothing, Unit] =
     (Runtime.removeDefaultLoggers >>> SLF4J.slf4j) ++ Runtime.setUnhandledErrorLogLevel(LogLevel.Error)
 
+  /** Бот (и общий процесс): игра целиком. */
   private type Env =
-    Server with SchedulerPoller with Donations with ActivityContest with Transfers with Background with PrometheusPublisher
-      with VkConfig with VkLongPoll with VkInboxDao with InboxWorker
+    SchedulerPoller with Donations with ActivityContest with Transfers with Background with PrometheusPublisher
+      with VkConfig with VkLongPoll with VkInboxDao with InboxWorker with VkIngest with ServerConfig with AdminConfig
+      with MiniApp
+
+  /** Сборщик: только приём событий ВК в очередь — без игры. */
+  private type CollectorEnv =
+    VkIngest with VkConfig with VkLongPoll with ServerConfig with Background with PrometheusPublisher
 
   /** Метрики: реестр ZIO раз в 5 секунд переписывается в текст для Prometheus
     * (его отдаёт MetricsServer); плюс метрики JVM — память, GC, потоки, CPU.
@@ -144,7 +153,21 @@ object Main extends ZIOAppDefault {
       Scheduler.live,
       SchedulerPoller.live,
       ServerConfig.live,
-      Server.live
+      VkIngest.live
+    )
+
+  private val collectorEnv =
+    ZLayer.make[CollectorEnv](
+      metrics,
+      Background.live,
+      VkConfig.live,
+      PostgresConfig.live,
+      Transactor.live,
+      VkInboxDao.live,
+      VkLongPoll.live,
+      AdminConfig.live,
+      ServerConfig.live,
+      VkIngest.live
     )
 
   /** Сверка платежей: добирает потерянные нотификации и застрявшие выдачи.
@@ -183,7 +206,7 @@ object Main extends ZIOAppDefault {
     ZIO.serviceWithZIO[VkConfig] { config =>
       ZIO.when(config.longPoll)(
         ZIO.serviceWithZIO[VkLongPoll](longPoll =>
-          ZIO.serviceWithZIO[Server](server => background.forkUntilShutdown(longPoll.run(server.longPoll)))))
+          ZIO.serviceWithZIO[VkIngest](ingest => background.forkUntilShutdown(longPoll.run(ingest.longPoll)))))
     }
 
   /** Очередь входящих событий ВК (см. InboxWorker): разбор — до остановки;
@@ -203,11 +226,28 @@ object Main extends ZIOAppDefault {
 
   private val now = ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
 
-  /** Фон и сервер. Остановка (SIGTERM от `docker stop` → прерывание главного
-    * fiber'а): сервер закрывает порт, затем фон дожидается начатых ходов и
-    * витков циклов — и лишь потом закрываются слои: пул базы, клиенты ВК и
-    * банка. Раньше фон шёл через `forkDaemon`, и пул закрывался прямо под ним. */
-  private val program =
+  /** HTTP-сервер с этими маршрутами и сервер метрик для Prometheus. */
+  private def serve(routes: HttpRoutes[Task]) =
+    ZIO.serviceWithZIO[ServerConfig](config => (new ServerLive(config, routes): Server).run()) <&>
+      ZIO.serviceWithZIO[PrometheusPublisher](MetricsServer.run)
+
+  /** Маршруты бота: касса, Mini App, логи. */
+  private val botRoutes =
+    for {
+      donations  <- ZIO.service[Donations]
+      background <- ZIO.service[Background]
+      admin      <- ZIO.service[AdminConfig]
+      miniApp    <- ZIO.service[MiniApp]
+    } yield Server.botRoutes(donations, background, admin, miniApp)
+
+  /** Бот: разбор очереди ВК, таймеры, фоновые циклы, касса, Mini App, логи.
+    * `vk` — ещё и приём событий ВК (колбэк и Long Poll): общий процесс, `ROLE=all`.
+    *
+    * Остановка (SIGTERM от `docker stop` → прерывание главного fiber'а): сервер
+    * закрывает порт, затем фон дожидается начатых ходов и витков циклов — и лишь
+    * потом закрываются слои: пул базы, клиенты ВК и банка. Раньше фон шёл через
+    * `forkDaemon`, и пул закрывался прямо под ним. */
+  private def botProgram(vk: Boolean) =
     ZIO.serviceWithZIO[Background] { background =>
       (pollerLoop(background) *>
         reconcileLoop(background) *>
@@ -215,13 +255,27 @@ object Main extends ZIOAppDefault {
         mailLoop(background) *>
         inboxLoop(background) *>
         inboxCleanupLoop(background) *>
-        longPollLoop(background) *>
-        (ZIO.serviceWithZIO[Server](_.run()) <&> ZIO.serviceWithZIO[PrometheusPublisher](MetricsServer.run)))
+        ZIO.when(vk)(longPollLoop(background)) *>
+        botRoutes.flatMap(routes =>
+          ZIO.serviceWithZIO[VkIngest](ingest => serve(if (vk) ingest.routes <+> routes else routes))))
+        .ensuring(background.shutdown)
+    }
+
+  /** Сборщик: колбэк ВК и Long Poll — в очередь, больше ничего. */
+  private val collectorProgram =
+    ZIO.serviceWithZIO[Background] { background =>
+      (longPollLoop(background) *> ZIO.serviceWithZIO[VkIngest](ingest => serve(ingest.routes)))
         .ensuring(background.shutdown)
     }
 
   // Сервер упал целиком (не поднялся слой, не открылся порт) — причина в лог,
   // а не только в консоль.
   override def run: ZIO[ZIOAppArgs with Scope, Any, Any] =
-    program.provideLayer(env).tapErrorCause(cause => ZIO.logErrorCause("Сервер остановился с ошибкой", cause))
+    Role.fromEnv.flatMap { role =>
+      ZIO.logInfo(s"Роль процесса: ${role.name}") *> (role match {
+        case Role.Collector => collectorProgram.provideLayer(collectorEnv)
+        case Role.Bot       => botProgram(vk = false).provideLayer(env)
+        case Role.All       => botProgram(vk = true).provideLayer(env)
+      })
+    }.tapErrorCause(cause => ZIO.logErrorCause("Сервер остановился с ошибкой", cause))
 }

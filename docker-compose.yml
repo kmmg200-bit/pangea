@@ -18,11 +18,14 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # Бот (ROLE=bot): разбор очереди ВК — ходы игроков, — таймеры, фоновые
+  # циклы, касса, Mini App, логи. Порта наружу нет: запросы к нему (/pay, /api,
+  # /logs) приводит caddy. Схему базы ведёт он: миграции катятся при его старте.
   app:
     build: .
-    ports:
-      - "80:8080"
+    image: pangea-app
     environment:
+      ROLE: bot
       POSTGRES_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -50,20 +53,46 @@ services:
     # умолчанию Docker даёт лишь 10.
     stop_grace_period: 30s
 
-  # HTTPS спереди: VK Mini App (web/) и маршруты бота, которым нужен HTTPS
-  # (/api, /pay, /logs), — по адресу DOMAIN из .env (см. docker/caddy/Caddyfile).
-  # Сертификат Let's Encrypt Caddy получает и продлевает сам и хранит в
-  # caddy_data. Порт 80 остаётся за ботом: на него по HTTP приходит Callback ВК.
-  # Пока DOMAIN не задан, Caddy не запускается — контейнер просто ждёт.
+  # Сборщик (ROLE=collector) — тот же образ, что у бота: колбэк ВК (через
+  # caddy) и Long Poll кладут события в очередь vk_inbox, ход играет бот.
+  # Выкладывается отдельно и редко: пока выкатывают бота, ВК отвечает он.
+  # Образ собирает сервис app, здесь он только берётся — пересобрали бота, а
+  # сборщик работает на прежнем, пока его не пересоздадут явно.
+  collector:
+    image: pangea-app
+    pull_policy: never
+    environment:
+      ROLE: collector
+      POSTGRES_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      VK_TOKEN: ${VK_TOKEN}
+      VK_SECRET: ${VK_SECRET:-}
+      VK_LONG_POLL: ${VK_LONG_POLL:-false}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  # Входная дверь: порты 80 и 443 — только у него (см. docker/caddy/Caddyfile).
+  # По HTTP (80) — колбэк ВК на сборщика, вебхук кассы и логи на бота: адреса
+  # прежние, их знают ВК и касса. По HTTPS (443, адрес DOMAIN из .env) — ещё и
+  # VK Mini App (web/). Сертификат Let's Encrypt Caddy получает и продлевает
+  # сам и хранит в caddy_data. Без DOMAIN не запускается: без него ни ВК, ни
+  # касса до бота не дойдут.
   caddy:
     build: ./web
     entrypoint:
       - /bin/sh
       - -c
-      - '[ -n "$$DOMAIN" ] || { echo "DOMAIN не задан в .env — HTTPS выключен"; exec sleep 2147483647; }; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile'
+      - '[ -n "$$DOMAIN" ] || { echo "DOMAIN не задан в .env — без него не запускаюсь"; exit 1; }; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile'
     environment:
       DOMAIN: ${DOMAIN:-}
     ports:
+      - "80:80"
       - "443:443"
     volumes:
       - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
@@ -71,10 +100,11 @@ services:
       - caddy_config:/config
     depends_on:
       - app
+      - collector
     restart: unless-stopped
 
-  # Метрики бота (GameMetrics): Prometheus раз в 15 секунд читает их с app:9464
-  # — порт внутренний, наружу не открыт — и хранит 30 дней.
+  # Метрики (GameMetrics): Prometheus раз в 15 секунд читает их с бота и
+  # сборщика (:9464 — порт внутренний, наружу не открыт) и хранит 30 дней.
   prometheus:
     image: prom/prometheus:v2.53.2
     command:

@@ -11,5 +11,9 @@ scrape_configs:
     # деплой) Docker 29 стирает из DNS имя сервиса «app» вместе со старым
     # контейнером, а имя контейнера живёт — его старый перед удалением
     # отдаёт. Имя постоянно: проект закреплён в docker-compose.yml (name).
+    # Бот — ходы, таймеры, база; сборщик — доставка событий от ВК.
     static_configs:
       - targets: ["pangea-app-1:9464"]
+        labels: { role: bot }
+      - targets: ["pangea-collector-1:9464"]
+        labels: { role: collector }
