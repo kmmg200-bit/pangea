@@ -21,6 +21,8 @@ services:
   # Бот (ROLE=bot): разбор очереди ВК — ходы игроков, — таймеры, фоновые
   # циклы, касса, Mini App, логи. Порта наружу нет: запросы к нему (/pay, /api,
   # /logs) приводит caddy. Схему базы ведёт он: миграции катятся при его старте.
+  # Ботов может быть два разом — так его выкладывает scripts/deploy-bot.sh:
+  # новый рядом со старым, старый гасится, когда новый готов (healthcheck).
   app:
     build: .
     image: pangea-app
@@ -30,6 +32,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_LOCK_POOL_SIZE: ${POSTGRES_LOCK_POOL_SIZE:-20}
       VK_TOKEN: ${VK_TOKEN}
       VK_SECRET: ${VK_SECRET:-}
       VK_LONG_POLL: ${VK_LONG_POLL:-false}
@@ -48,6 +51,14 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    # Готов — когда слушает 8080: миграции прошли, слои поднялись (база, локи,
+    # ведущий). По нему scripts/deploy-bot.sh решает, что старого пора гасить.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 180s
     # SIGTERM → SIGKILL. Остановке нужно до 5 с на HTTP-сервер и до 15 с на
     # фоновые дела (ServerLive.ShutdownTimeout, Background.Grace); по
     # умолчанию Docker даёт лишь 10.

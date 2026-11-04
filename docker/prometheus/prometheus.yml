@@ -3,17 +3,27 @@ global:
   scrape_interval: 15s
 
 scrape_configs:
+  # Боты — ходы, таймеры, база. По имени сервиса через DNS: при выкладке
+  # (scripts/deploy-bot.sh) их два разом, а номера контейнеров меняются;
+  # Prometheus перечитывает список раз в 15 с. Пропал из DNS на пересоздании —
+  # вернётся на следующем перечитывании.
   - job_name: pangea
     # Время замера — по Prometheus: экспортёр ставит свои метки времени, а
     # при опросе реже его обновления это давало бы повторы.
     honor_timestamps: false
-    # По имени контейнера, а не сервиса: при пересоздании контейнера (каждый
-    # деплой) Docker 29 стирает из DNS имя сервиса «app» вместе со старым
-    # контейнером, а имя контейнера живёт — его старый перед удалением
-    # отдаёт. Имя постоянно: проект закреплён в docker-compose.yml (name).
-    # Бот — ходы, таймеры, база; сборщик — доставка событий от ВК.
+    dns_sd_configs:
+      - names: ["app"]
+        type: A
+        port: 9464
+        refresh_interval: 15s
+    relabel_configs:
+      - target_label: role
+        replacement: bot
+
+  # Сборщик — доставка событий от ВК. Один и пересоздаётся редко — по имени
+  # контейнера (проект закреплён в docker-compose.yml: name).
+  - job_name: pangea-collector
+    honor_timestamps: false
     static_configs:
-      - targets: ["pangea-app-1:9464"]
-        labels: { role: bot }
       - targets: ["pangea-collector-1:9464"]
         labels: { role: collector }

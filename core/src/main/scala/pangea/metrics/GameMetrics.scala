@@ -58,6 +58,18 @@ object GameMetrics {
   val vkSendFailures: Metric.Counter[Long] =
     Metric.counter("pangea_vk_send_failures_total", "Сообщения игрокам, не ушедшие и после повторов (как send_failures)")
 
+  // ── Несколько ботов: локи игроков и ведущий ─────────────────────────────────
+
+  /** Пул соединений под локи игроков (AdvisoryLocks) по состоянию: active —
+    * заняты ходами сейчас, idle — свободны, pending — ходы ждут соединения
+    * (пул кончился), max — размер пула. Снимается раз в секунду. */
+  val lockPool: Metric.Gauge[Double] =
+    Metric.gauge("pangea_lock_pool_connections", "Пул соединений под локи игроков по состоянию")
+
+  /** 1 — этот бот ведущий (делает одиночные фоновые дела), 0 — нет. */
+  val leader: Metric.Gauge[Double] =
+    Metric.gauge("pangea_leader", "Ведущий ли этот бот")
+
   // ── Очередь входящих событий ВК (vk_inbox) ────────────────────────────────────
 
   /** От записи события в очередь до начала его обработки: опрос, очередь

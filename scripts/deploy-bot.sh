@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Выкладка бота без паузы в ходах: новый бот поднимается рядом со старым, и,
+# когда он готов (healthcheck в docker-compose), старый гасится — доделывает
+# начатые ходы и выходит. Пока их двое, ходы одного игрока разводит лок в
+# Postgres, а одиночные фоновые дела делает только ведущий (см. README,
+# «Выкладка бота»). Сборщик, caddy и база не трогаются.
+#
+#   scripts/deploy-bot.sh
+#
+# Новый не поднялся — гасим его, старый работает дальше, скрипт выходит с
+# ошибкой.
+set -euo pipefail
+
+cd "$(dirname "$(readlink -f "$0")")/.."
+
+git pull --ff-only
+docker compose build app
+
+old=$(docker compose ps -q app)
+if [ -z "$old" ]; then
+  echo "Бот не запущен — обычный старт"
+  docker compose up -d --no-deps app
+  exit 0
+fi
+if [ "$(echo "$old" | wc -l)" -ne 1 ]; then
+  echo "Ботов уже несколько — разберитесь руками: docker compose ps app"
+  exit 1
+fi
+
+echo "$(date +%T) Поднимаю новый бот рядом со старым ($(docker inspect -f '{{.Name}}' "$old" | tr -d /))"
+docker compose up -d --no-deps --no-recreate --scale app=2 app
+new=$(docker compose ps -q app | grep -v "$old")
+
+echo "$(date +%T) Жду, пока новый ($(docker inspect -f '{{.Name}}' "$new" | tr -d /)) будет готов"
+status=starting
+for _ in $(seq 1 60); do
+  status=$(docker inspect -f '{{.State.Health.Status}}' "$new")
+  [ "$status" = healthy ] || [ "$status" = unhealthy ] && break
+  sleep 5
+done
+if [ "$status" != healthy ]; then
+  echo "$(date +%T) Новый бот не поднялся ($status) — гашу его, старый работает дальше. Его лог:"
+  docker logs --tail 50 "$new"
+  docker stop -t 30 "$new" >/dev/null && docker rm "$new" >/dev/null
+  exit 1
+fi
+
+echo "$(date +%T) Новый готов. Гашу старый: доделает начатые ходы и выйдет"
+docker stop -t 30 "$old" >/dev/null && docker rm "$old" >/dev/null
+docker compose up -d --no-deps --no-recreate --scale app=1 app
+echo "$(date +%T) Готово: $(docker compose ps app --format '{{.Name}} — {{.Status}}')"

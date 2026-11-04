@@ -4,10 +4,14 @@ import pureconfig.ConfigSource
 import pureconfig.generic.auto._
 import zio.{ZIO, ZLayer}
 
+/** @param lockPoolSize сколько соединений у пула локов игроков (см.
+  *                     `AdvisoryLocks`): столько ходов разом может идти под
+  *                     локом, следующий ждёт соединения. */
 case class PostgresConfig(
   jdbcUrl: String,
   username: String,
-  password: String
+  password: String,
+  lockPoolSize: Int
 )
 
 object PostgresConfig {

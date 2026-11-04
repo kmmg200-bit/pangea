@@ -34,7 +34,8 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.repository.user.UserRepository
 import pangea.client.tbank.{TBankClient, TBankConfig}
-import pangea.service.Background
+import pangea.service.{Background, Leader}
+import pangea.dao.lock.AdvisoryLocks
 import pangea.metrics.GameMetrics
 import pangea.service.inbox.InboxWorker
 import pangea.service.activity.ActivityContest
@@ -74,7 +75,7 @@ object Main extends ZIOAppDefault {
   private type Env =
     SchedulerPoller with Donations with ActivityContest with Transfers with Background with PrometheusPublisher
       with VkConfig with VkLongPoll with VkInboxDao with InboxWorker with VkIngest with ServerConfig with AdminConfig
-      with MiniApp
+      with MiniApp with Leader
 
   /** Сборщик: только приём событий ВК в очередь — без игры. */
   private type CollectorEnv =
@@ -147,7 +148,9 @@ object Main extends ZIOAppDefault {
       MiniAppConfig.live,
       MiniApp.live,
       Parcels.live,
+      AdvisoryLocks.live,
       PlayerLock.live,
+      Leader.live,
       Transfers.live,
       StateHandler.live,
       Scheduler.live,
@@ -175,7 +178,7 @@ object Main extends ZIOAppDefault {
     * основной путь — раз в минуту более чем достаточно. */
   private def reconcileLoop(background: Background) =
     ZIO.serviceWithZIO[Donations] { donations =>
-      background.repeat(1.minute, "Сверка платежей упала")(now.flatMap(donations.reconcile))
+      leaderRepeat(background, 1.minute, "Сверка платежей упала")(now.flatMap(donations.reconcile))
     }
 
   /** Оплата билетов за активность: раз в минуту смотрим, не началась ли
@@ -183,7 +186,7 @@ object Main extends ZIOAppDefault {
     * платит — минута тут лишь задержка до наград после полуночи понедельника. */
   private def contestLoop(background: Background) =
     ZIO.serviceWithZIO[ActivityContest] { contest =>
-      background.repeat(1.minute, "Оплата билетов за активность упала")(now.flatMap(contest.settle))
+      leaderRepeat(background, 1.minute, "Оплата билетов за активность упала")(now.flatMap(contest.settle))
     }
 
   /** Почта: срок хранения вышел — всё, что лежит на почте, сгорает, и хозяину
@@ -191,7 +194,7 @@ object Main extends ZIOAppDefault {
     * Хода хозяина не ждём; минута — лишь задержка после срока. */
   private def mailLoop(background: Background) =
     ZIO.serviceWithZIO[Transfers] { transfers =>
-      background.repeat(1.minute, "Обход почты упал")(now.flatMap(transfers.mailRound))
+      leaderRepeat(background, 1.minute, "Обход почты упал")(now.flatMap(transfers.mailRound))
     }
 
   /** Отложенные события: готовые задачи из очереди — каждые пять секунд. */
@@ -218,13 +221,19 @@ object Main extends ZIOAppDefault {
     * в метрику. */
   private def inboxCleanupLoop(background: Background) =
     ZIO.serviceWithZIO[VkInboxDao] { inbox =>
-      background.repeat(1.hour, "Уборка очереди ВК упала")(
+      leaderRepeat(background, 1.hour, "Уборка очереди ВК упала")(
         now.flatMap(t => inbox.forget(t - InboxWorker.Keep.toMillis).unit)) *>
         background.repeat(5.seconds, "Очередь ВК: не посчитать ждущие")(
           inbox.pending.flatMap(n => GameMetrics.vkInboxPending.set(n.toDouble)))
     }
 
   private val now = ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+
+  /** Цикл, витки которого делает только ведущий бот (см. Leader): одиночные
+    * дела — два бота разом сделали бы их дважды. Остальные боты пропускают
+    * виток и пробуют на следующем — вдруг ведущим стали они. */
+  private def leaderRepeat(background: Background, every: Duration, failed: String)(tick: Task[Unit]) =
+    ZIO.serviceWithZIO[Leader](leader => background.repeat(every, failed)(leader.ifLeader(tick)))
 
   /** HTTP-сервер с этими маршрутами и сервер метрик для Prometheus. */
   private def serve(routes: HttpRoutes[Task]) =
