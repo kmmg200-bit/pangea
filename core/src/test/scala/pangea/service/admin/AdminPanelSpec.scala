@@ -48,7 +48,17 @@ object AdminPanelSpec extends ZIOSpecDefault {
       running <- Ref.make(false)
     } yield new NameBackfill(dao, users, api, bg, running, Duration.Zero)
 
-  private def panel(hero: Hero = TestFixtures.hero(userId), password: Option[String] = Some(Password)) =
+  /** Доплата за новый курс поверх заданных платежей, без пауз. */
+  private def bonus(payments: TestPaymentDao) =
+    for {
+      users   <- TestUserRepository.withUser(testUser)
+      api     <- TestApi.make
+      bg      <- Background.make(Background.Grace)
+      running <- Ref.make(false)
+    } yield new RateBonus(payments, users, api, bg, running, Duration.Zero)
+
+  private def panel(hero: Hero = TestFixtures.hero(userId), password: Option[String] = Some(Password),
+                    payments: Task[TestPaymentDao] = TestPaymentDao.withHeroes(userId)) =
     for {
       dao      <- TestHeroDao.withHero(userId, hero)
       inv       = TestInventoryRepository.accepting
@@ -56,8 +66,9 @@ object AdminPanelSpec extends ZIOSpecDefault {
       levels   <- Ref.make(Map.empty[UserId, Int])
       r        <- TestRenderer.make
       backfill <- names(dao)
+      rate     <- payments.flatMap(bonus)
     } yield (new AdminPanelLive(dao, inv, TestItemRepository.make, new StubAdminDao(levels), Map.empty,
-               AdminConfig(password), sessions, backfill), dao, inv, r)
+               AdminConfig(password), sessions, backfill, rate), dao, inv, r)
 
   /** Панель с заданными уровнями прав: их видно и после нажатий. */
   private def leveled(start: Map[UserId, Int], password: Option[String] = Some(Password)) =
@@ -67,8 +78,9 @@ object AdminPanelSpec extends ZIOSpecDefault {
       levels   <- Ref.make(start)
       r        <- TestRenderer.make
       backfill <- names(dao)
+      rate     <- TestPaymentDao.withHeroes(userId).flatMap(bonus)
     } yield (new AdminPanelLive(dao, TestInventoryRepository.accepting, TestItemRepository.make, new StubAdminDao(levels),
-               Map.empty, AdminConfig(password), sessions, backfill), levels, r)
+               Map.empty, AdminConfig(password), sessions, backfill, rate), levels, r)
 
   private def said(r: TestRenderer): Task[String] = r.sentScreens.map(_.map(_.text).mkString("\n"))
 
@@ -97,7 +109,8 @@ object AdminPanelSpec extends ZIOSpecDefault {
       } yield assertTrue(opened && ok) &&
               assertTrue(ask.text.contains("Пришлите пароль")) &&
               assertTrue(main.choices.map(_.id) ==
-                List("AdminItems", "AdminMoney", "AdminStats", AdminPanel.Level1Id, AdminPanel.NamesId, AdminPanel.CancelId)) &&
+                List("AdminItems", "AdminMoney", "AdminStats", AdminPanel.Level1Id, AdminPanel.NamesId,
+                     AdminPanel.RateBonusId, AdminPanel.CancelId)) &&
               assertTrue(wrong.contains("Неверно") && !after)
     },
 
@@ -255,6 +268,33 @@ object AdminPanelSpec extends ZIOSpecDefault {
         after <- dao.getHeroByUserId(userId).map(_.get)
       } yield assertTrue(money.choices.count(_.id.startsWith(AdminPanel.SilverPrefix)) == 3) &&
               assertTrue(after.silver == 10100L && after.doubloons == 105L)
+    },
+
+    test("доплата за курс: сначала сколько начислится и «Начислить?», после — дублоны у игрока") {
+      val hero = TestFixtures.hero(userId)
+      val paid = pangea.model.payment.Payment(0L, pangea.model.payment.OrderId("d-old"), userId, "d550", 100000L, 550L,
+        "x@y.z", Some("pay"), None, pangea.model.payment.PaymentStatus.Confirmed, Some("CONFIRMED"), granted = true, 1L, 1L)
+      for {
+        payments <- TestPaymentDao.withHeroes(userId).tap(_.insert(paid))
+        t        <- panel(payments = ZIO.succeed(payments))
+        (p, _, _, r) = t
+        _       <- enter(p, r)
+        _       <- p.intercept(testUser, hero, tap(AdminPanel.RateBonusId), r)
+        ask     <- r.sentScreens.map(_.last)
+        _       <- p.intercept(testUser, hero, tap(AdminPanel.RateBonusGoId), r)
+        started <- said(r)
+        // начисление идёт в фоне — дожидаемся его
+        _       <- payments.rateBonuses.repeatUntil(_.nonEmpty)
+        coins   <- payments.doubloonsOf(userId)
+        // всё доплачено — второй раз кнопки «Начислить» нет
+        _       <- p.intercept(testUser, hero, tap(AdminPanel.RateBonusId), r)
+        again   <- r.sentScreens.map(_.last)
+      } yield assertTrue(ask.text.contains("заказов: 1") && ask.text.contains("дублонов: 550")) &&
+              assertTrue(ask.choices.exists(_.id == AdminPanel.RateBonusGoId)) &&
+              assertTrue(started.contains(RateBonus.Started)) &&
+              assertTrue(coins == 550L) &&
+              assertTrue(again.text.contains("доплачивать некому")) &&
+              assertTrue(!again.choices.exists(_.id == AdminPanel.RateBonusGoId))
     },
 
     test("сводка по серверу показывает игроков, деньги и наборы") {

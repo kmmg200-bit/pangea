@@ -41,6 +41,17 @@ object TBankConfigSpec extends ZIOSpecDefault {
       } yield assertTrue(DonationSku.validate(config.packs).isEmpty)
     },
 
+    test("прайс-лист влезает в клавиатуру ВК: по ряду на пакет, ряд «Проверить» и «Назад»; суточного лимита нет") {
+      for {
+        config <- ZIO.attempt(ConfigSource.file(new File(ConfigPath)).at("tbank").loadOrThrow[TBankConfig])
+      } yield assertTrue(config.dailyLimit == 0L) &&
+              assertTrue(config.packs.size + 2 <= pangea.service.sender.vk.VkRenderer.MaxRows) &&
+              assertTrue(config.packs.map(_.id).toSet.intersect(pangea.service.admin.RateBonus.OldRateSkus).isEmpty) &&
+              assertTrue(config.packs.map(p => p.doubloons -> p.price) == List(
+                200L -> 20000L, 500L -> 50000L, 1100L -> 100000L, 2400L -> 200000L,
+                5000L -> 400000L, 8000L -> 600000L, 15000L -> 1000000L))
+    },
+
     test("донат включается только с ключами терминала и непустым прайсом") {
       val base = ConfigSource
         .file(new File(ConfigPath))

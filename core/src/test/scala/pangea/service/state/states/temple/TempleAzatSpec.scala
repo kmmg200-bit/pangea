@@ -26,9 +26,9 @@ object TempleAzatSpec extends ZIOSpecDefault {
 
   override def spec = suite("TempleAzat / HallAzat")(
 
-    test("Donate: 250 дублонов → недельное благословение + 250 отдыхов, дублоны списаны") {
+    test("Donate: 300 дублонов → недельное благословение + 250 отдыхов, дублоны списаны") {
       for {
-        dao      <- TestHeroDao.withHero(userId, hero(doubloons = 300L))
+        dao      <- TestHeroDao.withHero(userId, hero(doubloons = 350L))
         renderer <- TestRenderer.make
         content  <- ZIO.attempt(SceneContent.load())
         state     = TempleAzatState(dao, TestInventoryRepository.accepting, TestItemRepository.make, content)
@@ -38,6 +38,23 @@ object TempleAzatSpec extends ZIOSpecDefault {
       } yield assertTrue(azat.blessingUntil.isDefined) &&
               assertTrue(azat.instantRests == AzatState.BlessingInstantRests) &&
               assertTrue(left == 50L)
+    },
+
+    test("благословение стоит 300: кнопка с ценой, а 299 дублонов не хватает") {
+      for {
+        dao      <- TestHeroDao.withHero(userId, hero(doubloons = 299L))
+        renderer <- TestRenderer.make
+        content  <- ZIO.attempt(SceneContent.load())
+        state     = TempleAzatState(dao, TestInventoryRepository.accepting, TestItemRepository.make, content)
+        _        <- state.action(testUser, tap("AskBlessing"), renderer)
+        offer    <- renderer.sentScreens.map(_.last)
+        _        <- state.action(testUser, tap("Donate"), renderer)
+        azat     <- readAzat(dao)
+        left     <- doubloonsOf(dao)
+      } yield assertTrue(TempleAzatState.BlessingCost == 300L) &&
+              assertTrue(offer.text.contains("Пожертвование в 300 дублонов")) &&
+              assertTrue(offer.choices.find(_.id == "Donate").exists(_.label == "Пожертвовать 300 дублонов")) &&
+              assertTrue(azat.blessingUntil.isEmpty) && assertTrue(left == 299L)
     },
 
     test("Donate без дублонов → благословение не выдаётся") {

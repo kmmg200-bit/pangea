@@ -27,6 +27,9 @@ object AdminScreen {
   case object Money    extends AdminScreen
   case object Stats    extends AdminScreen
 
+  /** Доплата за новый курс: сколько начислится и «Начислить?». */
+  case object RateBonus extends AdminScreen
+
   /** Каталог: разделы и листание внутри раздела. */
   case object Sections                                  extends AdminScreen
   final case class Listing(category: String, page: Int) extends AdminScreen
@@ -93,7 +96,8 @@ class AdminPanelLive(
   states:        Map[StateType, State],
   config:        AdminConfig,
   sessions:      Ref[Map[UserId, AdminScreen]],
-  names:         NameBackfill
+  names:         NameBackfill,
+  rateBonus:     RateBonus
 ) extends AdminPanel {
 
   import AdminPanel._
@@ -160,6 +164,8 @@ class AdminPanelLive(
       case Some("AdminEquip")                   => goTo(user, AdminScreen.EquipType, renderer)
       case Some(Level1Id)                       => toggleLevel1(user, renderer)
       case Some(NamesId)                        => backfillNames(user, renderer)
+      case Some(RateBonusId)                    => goTo(user, AdminScreen.RateBonus, renderer)
+      case Some(RateBonusGoId)                  => payRateBonus(user, renderer)
       case Some(a) if a.startsWith(SectionPrefix) =>
         goTo(user, AdminScreen.Listing(a.drop(SectionPrefix.length), 0), renderer)
       case Some(a) if a.startsWith(GivePrefix)  => give(user, hero, a.drop(GivePrefix.length), screen, renderer)
@@ -204,6 +210,13 @@ class AdminPanelLive(
       renderer.show(user, Screen(if (started) NameBackfill.Started else NameBackfill.Busy, Nil))) *>
       show(user, AdminScreen.Main, renderer)
 
+  /** Доплата за новый курс: идёт в фоне, сводка придёт письмом (см.
+    * [[RateBonus]]). Панель возвращается на главный экран. */
+  private def payRateBonus(user: User, renderer: Renderer): Task[Unit] =
+    rateBonus.start(user).flatMap(started =>
+      renderer.show(user, Screen(if (started) RateBonus.Started else RateBonus.Busy, Nil))) *>
+      goTo(user, AdminScreen.Main, renderer)
+
   /** Уйти из панели и вернуть игрока в ту сцену, где он был. */
   private def leave(user: User, renderer: Renderer): Task[Unit] =
     for {
@@ -227,6 +240,7 @@ class AdminPanelLive(
           if (level >= Level1) Choice(Level1Id, "✅ Админ 1", color = ChoiceColor.Positive, row = Some(1))
           else Choice(Level1Id, "Админ 1", row = Some(1)),
           Choice(NamesId, "🏷 Имена из ВК", row = Some(2)),
+          Choice(RateBonusId, "🟡 Доплата за курс", row = Some(2)),
           cancelButton.copy(row = Some(3)))))
       }
 
@@ -279,6 +293,12 @@ class AdminPanelLive(
       val doubloons = DoubloonSteps.zipWithIndex.map { case (n, i) =>
         Choice(s"$DoubloonPrefix$n", s"+${amount(n)} 💰", color = ChoiceColor.Positive, row = Some(1 + i / 3)) }
       renderer.show(user, Screen(MoneyText, silver ++ doubloons :+ back("AdminMain", 2)))
+
+    case AdminScreen.RateBonus =>
+      rateBonus.preview.flatMap { p =>
+        val go = if (p.orders > 0) List(Choice(RateBonusGoId, "✅ Начислить", color = ChoiceColor.Positive, row = Some(0))) else Nil
+        renderer.show(user, Screen(RateBonus.previewText(p), go :+ back("AdminMain", 1)))
+      }
 
     case AdminScreen.Stats =>
       adminDao.stats.either.flatMap {
@@ -396,6 +416,8 @@ object AdminPanel {
   val DoubloonPrefix: String = "AdminDoubloon_"
   val Level1Id: String       = "AdminLevel1"
   val NamesId: String        = "AdminNames"
+  val RateBonusId: String    = "AdminRateBonus"
+  val RateBonusGoId: String  = "AdminRateBonusGo"
 
   /** Уровень «Админ 1»: вход без пароля и пересылка /home в личку. */
   val Level1: Int = 1
@@ -475,7 +497,8 @@ object AdminPanel {
   }
 
   val live: ZLayer[
-    HeroDao with InventoryRepository with ItemRepository with AdminDao with StatesMap with AdminConfig with NameBackfill,
+    HeroDao with InventoryRepository with ItemRepository with AdminDao with StatesMap with AdminConfig with NameBackfill
+      with RateBonus,
     Nothing,
     AdminPanel
   ] =
@@ -489,7 +512,8 @@ object AdminPanel {
         config    <- ZIO.service[AdminConfig]
         sessions  <- Ref.make(Map.empty[UserId, AdminScreen])
         names     <- ZIO.service[NameBackfill]
-      } yield new AdminPanelLive(heroDao, inventory, items, admin, statesMap.states, config, sessions, names))
+        bonus     <- ZIO.service[RateBonus]
+      } yield new AdminPanelLive(heroDao, inventory, items, admin, statesMap.states, config, sessions, names, bonus))
 
   /** Панель, которой нет: для тестов и сборок без админки. */
   val disabled: AdminPanel = new AdminPanel {

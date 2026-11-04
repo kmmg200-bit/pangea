@@ -1,7 +1,7 @@
 package pangea.dao.payment
 
 import cats.data.NonEmptyList
-import doobie.Fragments
+import doobie.{ConnectionIO, Fragments}
 import doobie.free.{connection => FC}
 import doobie.implicits._
 import doobie.util.fragment.Fragment
@@ -81,11 +81,34 @@ class PaymentDaoLive(xa: Transactor[Task]) extends PaymentDao {
     * абсолютного значения: выдача приходит из вебхука, то есть вне хода
     * игрока и вне `PlayerLock`, и запись целого значения затёрла бы трату,
     * случившуюся в этот же момент. */
-  override def grantOnce(orderId: OrderId, userId: UserId, doubloons: Long, updatedAt: Long): Task[GrantResult] = {
-    val mark =
+  override def grantOnce(orderId: OrderId, userId: UserId, doubloons: Long, updatedAt: Long): Task[GrantResult] =
+    markThenCredit(
       sql"""update payments set granted = true, updated_at = $updatedAt
-            where order_id = ${orderId.value} and not granted""".update.run
+            where order_id = ${orderId.value} and not granted""".update.run,
+      userId, doubloons)
 
+  override def rateBonusDue(skus: Set[String]): Task[List[Payment]] =
+    NonEmptyList.fromList(skus.toList.sorted) match {
+      case None => ZIO.succeed(Nil)
+      case Some(nel) =>
+        (fr"select" ++ columns ++
+          fr"from payments where granted and status <> 'Refunded' and" ++ Fragments.in(fr"sku", nel) ++
+          fr"""and not exists (select 1 from doubloon_rate_bonus b where b.order_id = payments.order_id)
+               order by user_id, created_at""")
+          .query[Payment].to[List].transact(xa)
+    }
+
+  override def grantRateBonus(orderId: OrderId, userId: UserId, doubloons: Long, grantedAt: Long): Task[GrantResult] =
+    markThenCredit(
+      sql"""insert into doubloon_rate_bonus(order_id, user_id, doubloons, granted_at)
+            values (${orderId.value}, ${userId.value}, $doubloons, $grantedAt)
+            on conflict (order_id) do nothing""".update.run,
+      userId, doubloons)
+
+  /** Отметка «выдано» и начисление — одной транзакцией. Отметка не легла
+    * (уже стоит) — значит, выдано раньше; героя нет — транзакция рвётся, и
+    * отметка снимается вместе с ней. */
+  private def markThenCredit(mark: ConnectionIO[Int], userId: UserId, doubloons: Long): Task[GrantResult] = {
     val credit =
       sql"""update heroes set doubloons = doubloons + $doubloons
             where user_id = ${userId.value}""".update.run
@@ -95,7 +118,7 @@ class PaymentDaoLive(xa: Transactor[Task]) extends PaymentDao {
         case 0 => FC.pure[GrantResult](GrantResult.AlreadyGranted)
         case _ =>
           credit.flatMap {
-            // Героя нет — рвём транзакцию, чтобы снялся и флаг выдачи.
+            // Героя нет — рвём транзакцию, чтобы снялась и отметка.
             case 0 => FC.raiseError[GrantResult](PaymentDaoLive.NoHero)
             case _ => FC.pure[GrantResult](GrantResult.Granted)
           }

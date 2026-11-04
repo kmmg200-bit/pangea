@@ -20,8 +20,8 @@ import zio.{Task, ZIO}
 import java.util.concurrent.TimeUnit
 
 /** Храм Азата: вход, Жрец (лор + благословение) и переход в Зал Азата. Благословение
- *  — пожертвование 250 дублонов даёт недельный баф ([[AzatState.blessingUntil]]) и
- *  250 мгновенных отдыхов.
+ *  — пожертвование [[TempleAzatState.BlessingCost]] дублонов даёт недельный баф
+ *  ([[AzatState.blessingUntil]]) и 250 мгновенных отдыхов.
  *
  *  Жрец же рассказывает о некромантах — бесплатно, когда к нему отправил
  *  Трактирщик, — и продаёт святую воду. Тому, в ком тьма пустила корни (набор
@@ -193,7 +193,7 @@ case class TempleAzatState(
                    "\n\n" + content.format("temple.blessing.active", "remaining" -> azat.blessingRemaining(now).getOrElse(""))
                  else "")
       choices = List(
-        content.choice("Donate", "temple.blessing.donate"),
+        content.choice("Donate", "temple.blessing.donate", "cost" -> BlessingCost.toString),
         content.choice("BackToPriest", "temple.back")
       )
       _ <- renderer.show(user, Screen(s"🪙 ${hero.silver}  🟡 ${hero.doubloons}\n\n$text", choices))
@@ -233,7 +233,7 @@ case class TempleAzatState(
 }
 
 object TempleAzatState {
-  val BlessingCost: Long = 250L
+  val BlessingCost: Long = 300L
 
   /** Склянка святой воды у Жреца. */
   val HolyWaterPrice: Long = 1000L

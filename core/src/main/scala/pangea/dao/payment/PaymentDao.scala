@@ -62,6 +62,14 @@ trait PaymentDao {
     * Флаг выдачи и начисление идут одной транзакцией: иначе падение между
     * ними либо потеряет оплаченные дублоны, либо начислит их дважды. */
   def grantOnce(orderId: OrderId, userId: UserId, doubloons: Long, updatedAt: Long): Task[GrantResult]
+
+  /** Заказы, которым положена доплата за смену курса: выданные, без возврата,
+    * купленные пакетами `skus` и ещё не доплаченные. По игроку, старые первыми. */
+  def rateBonusDue(skus: Set[String]): Task[List[Payment]]
+
+  /** Доплатить заказ за смену курса ровно один раз: отметка о доплате и
+    * начисление — одной транзакцией, как в [[grantOnce]]. */
+  def grantRateBonus(orderId: OrderId, userId: UserId, doubloons: Long, grantedAt: Long): Task[GrantResult]
 }
 
 object PaymentDao {
