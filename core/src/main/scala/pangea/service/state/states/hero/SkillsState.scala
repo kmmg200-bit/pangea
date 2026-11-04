@@ -17,8 +17,9 @@ import zio.{Task, ZIO}
  * Экран «Эффекты» — список кнопками ВСЕХ активных умений, пассивок и наборов,
  * которые сейчас действуют на герое: активные — с оружия/нагрудника и клейм на
  * теле ([[Hero.activeSkillSlots]]), пассивные — со всего остального снаряжения
- * и клейм ([[Hero.passives]], дубли уже схлопнуты в множество), наборы — по
- * порогам. У руны с клейма — пометка «на теле», в описании — понимание.
+ * и клейм ([[Hero.passives]]), наборы — по порогам. У руны с клейма — пометка
+ * «на теле», в описании — понимание. Умение и на вещи, и на теле — две кнопки:
+ * с вещи и «на теле».
  * Нажатие на кнопку показывает полное описание; список — только просмотр.
  */
 case class SkillsState(heroDao: HeroDao, content: SceneContent) extends State {
@@ -134,18 +135,23 @@ object SkillsState {
     def describe(hero: Hero): String
   }
   object SkillEntry {
-    /** `worn` — сколько надетых вещей несут это умение (см. [[times]]). */
-    final case class Active(itemId: Long, skill: Skill, worn: Int = 1) extends SkillEntry {
+    /** `worn` — сколько надетых вещей несут это умение (см. [[times]]);
+     *  `twin` — оно же есть и по другую сторону: на теле у вещи, на вещи у
+     *  клейма (см. [[twinNote]]). */
+    final case class Active(itemId: Long, skill: Skill, worn: Int = 1, twin: Boolean = false) extends SkillEntry {
+      private def onBody: Boolean = Rune.isBodySlot(itemId)
       def buttonId: String = s"$ActivePrefix$itemId"
-      def label: String    = (if (Rune.isBodySlot(itemId)) s"${skill.label} (на теле)" else skill.label) + times(worn)
-      def describe(hero: Hero): String = skill.describe(hero) + sameSkills(worn)
+      def label: String    = if (onBody) s"${skill.label} (на теле)" else skill.label + times(worn)
+      def describe(hero: Hero): String =
+        skill.describe(hero) + (if (onBody) "" else sameSkills(worn)) + twinNote(twin, onBody)
     }
-    final case class Passive(kind: PassiveKind, onBody: Boolean, worn: Int = 1) extends SkillEntry {
-      def buttonId: String = s"$PassivePrefix${kind.entryName}"
-      def label: String    = (if (onBody) s"${kind.label} (на теле)" else kind.label) + times(worn)
+    final case class Passive(kind: PassiveKind, onBody: Boolean, worn: Int = 1, twin: Boolean = false) extends SkillEntry {
+      def buttonId: String = s"$PassivePrefix${kind.entryName}" + (if (onBody) BodySuffix else "")
+      def label: String    = if (onBody) s"${kind.label} (на теле)" else kind.label + times(worn)
       def describe(hero: Hero): String = {
         val n = hero.runes.understandingOf(Rune.Passive(kind))
-        kind.describe + (if (n > 0L) s" Понимание: $n." else "") + sameSkills(worn)
+        kind.describe + (if (n > 0L) s" Понимание: $n." else "") +
+          (if (onBody) "" else sameSkills(worn)) + twinNote(twin, onBody)
       }
     }
 
@@ -192,10 +198,18 @@ object SkillsState {
   private val ActivePrefix  = "ActiveSkill_"
   private val PassivePrefix = "PassiveSkill_"
   private val SetPrefix     = "Set_"
+  private val BodySuffix    = "_body"
 
   /** «Тайник ×2»: умение пришло с нескольких надетых вещей. С одной — без
    *  числа, иначе «×1» стоял бы почти у всего списка. */
   private def times(worn: Int): String = if (worn > 1) s" ×$worn" else ""
+
+  /** Умение и на вещи, и на теле: в карточке каждой из двух кнопок — что второе
+   *  такое же есть и что они не складываются. */
+  private def twinNote(twin: Boolean, onBody: Boolean): String =
+    if (!twin) ""
+    else if (onBody) "\n\nЭто же умение есть и на надетой вещи. Одинаковые умения не складываются — действует одно."
+    else "\n\nЭто же умение выжжено у вас на теле. Одинаковые умения не складываются — действует одно."
 
   /** В карточке — почему ×2 не вдвое сильнее: одинаковые умения не складываются. */
   private def sameSkills(worn: Int): String =
@@ -205,14 +219,32 @@ object SkillsState {
   /** Все умения/пассивки/наборы, реально действующие на герое прямо сейчас —
    *  снятые с надетого снаряжения. Активные (оружие/нагрудник) идут первыми,
    *  затем пассивки по алфавиту метки, затем наборы, набравшие хотя бы один
-   *  порог — стабильный порядок между перерисовками. Дубли схлопнуты в одну
-   *  кнопку, а сколько вещей их несут — видно по «×2». */
+   *  порог — стабильный порядок между перерисовками. Одинаковые вещи схлопнуты
+   *  в одну кнопку, а сколько их — видно по «×2»; умение, которое ещё и
+   *  выжжено на теле, получает рядом вторую кнопку «на теле». */
   def entries(hero: Hero): List[SkillEntry] = {
-    val eq   = hero.equipment
-    val worn = eq.passiveKinds
-    hero.activeSkillSlots.map(s => SkillEntry.Active(s.itemId, s.skill, wornWith(eq, s.skill))) ++
-      hero.passives.kinds.toList.sortBy(_.label).map(k =>
-        SkillEntry.Passive(k, onBody = !worn.contains(k), eq.allItems.count(_.passive.contains(k)))) ++
+    val eq            = hero.equipment
+    val worn          = eq.passiveKinds
+    val bodyPassives  = hero.runes.brandedPassives.toSet
+    val bodyActives   = hero.runes.brandedActives.toSet
+    // В бою клеймо, повторяющее умение вещи, не нужно (см. Hero.activeSkillSlots),
+    // а в списке его видно: оно выжжено, и игрок должен это знать.
+    val actives = hero.activeSkillSlots.flatMap { s =>
+      if (Rune.isBodySlot(s.itemId)) List(SkillEntry.Active(s.itemId, s.skill))
+      else {
+        val twin = bodyActives.contains(s.skill)
+        SkillEntry.Active(s.itemId, s.skill, wornWith(eq, s.skill), twin) ::
+          (if (twin) List(SkillEntry.Active(Rune.bodySlotId(s.skill), s.skill, twin = true)) else Nil)
+      }
+    }
+    val passives = hero.passives.kinds.toList.sortBy(_.label).flatMap { k =>
+      val onItem = worn.contains(k)
+      val onBody = bodyPassives.contains(k)
+      val twin   = onItem && onBody
+      Option.when(onItem)(SkillEntry.Passive(k, onBody = false, eq.allItems.count(_.passive.contains(k)), twin)).toList ++
+        Option.when(onBody)(SkillEntry.Passive(k, onBody = true, twin = twin)).toList
+    }
+    actives ++ passives ++
       Option.when(eq.weaponGems.nonEmpty || hero.weaponDust.gems.nonEmpty)(SkillEntry.WeaponFx).toList ++
       Option.when(eq.armorGems.nonEmpty)(SkillEntry.ArmorFx).toList ++
       hero.sets.activeBonuses.map { case (set, _) => SkillEntry.Set(set, hero.sets.shownPieces(set)) }

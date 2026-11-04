@@ -66,11 +66,36 @@ object SkillsStateSpec extends ZIOSpecDefault {
         list     <- renderer.sentScreens.map(_.last)
         _        <- state.action(testUser, tap(s"ActiveSkill_${Rune.bodySlotId(Skill.Ram)}"), renderer)
         ram      <- renderer.sentScreens.map(_.last)
-        _        <- state.action(testUser, tap("PassiveSkill_Healer"), renderer)
+        _        <- state.action(testUser, tap("PassiveSkill_Healer_body"), renderer)
         healer   <- renderer.sentScreens.map(_.last)
       } yield assertTrue(list.text.startsWith("🎓 Эффекты")) &&
               assertTrue(list.choices.map(_.label).take(3) == List("Хитрый удар", "Таран (на теле)", "Целитель (на теле)")) &&
               assertTrue(ram.text.contains("Понимание: 12.") && healer.text.contains("Понимание: 3."))
+    },
+
+    test("умение и на вещи, и на теле — две кнопки: с вещи и «на теле», в карточках — что не складываются") {
+      val runes = RuneData.empty.brand(Rune.Active(Skill.CunningStrike)).brand(Rune.Passive(PassiveKind.Jeweler))
+      val eq    = TestFixtures.emptyEquipment.copy(
+        weapon    = weaponWith(Skill.CunningStrike, 1L),
+        firstRing = passiveItem(ItemType.Ring, PassiveKind.Jeweler, id = 30L))
+      for {
+        heroDao  <- TestHeroDao.withHero(userId, TestFixtures.hero(userId).copy(equipment = eq, runes = runes))
+        renderer <- TestRenderer.make
+        content  <- ZIO.attempt(SceneContent.load())
+        state     = SkillsState(heroDao, content)
+        _        <- state.enter(testUser, renderer)
+        list     <- renderer.sentScreens.map(_.last)
+        _        <- state.action(testUser, tap("ActiveSkill_1"), renderer)
+        onItem   <- renderer.sentScreens.map(_.last)
+        _        <- state.action(testUser, tap(s"ActiveSkill_${Rune.bodySlotId(Skill.CunningStrike)}"), renderer)
+        onBody   <- renderer.sentScreens.map(_.last)
+        _        <- state.action(testUser, tap("PassiveSkill_Jeweler_body"), renderer)
+        ringBody <- renderer.sentScreens.map(_.last)
+        labels    = list.choices.map(_.label)
+      } yield assertTrue(labels.take(4) == List("Хитрый удар", "Хитрый удар (на теле)", "Ювелир", "Ювелир (на теле)")) &&
+              assertTrue(onItem.text.contains("Это же умение выжжено у вас на теле. Одинаковые умения не складываются — действует одно.")) &&
+              assertTrue(onBody.text.contains("Это же умение есть и на надетой вещи. Одинаковые умения не складываются — действует одно.")) &&
+              assertTrue(ringBody.text.contains("Это же умение есть и на надетой вещи."))
     },
 
     test("enter с оружием и нагрудником → 2 кнопки активных умений с их названиями") {
