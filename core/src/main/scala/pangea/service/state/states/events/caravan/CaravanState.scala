@@ -91,8 +91,17 @@ case class CaravanState(
       heroDao.writeSceneData(user.userId, LootData(items = scene.goods, silvers = Nil).asJson)
         .as(StateType.Loot)
 
+  /** Охрана перебита — с обозом осталось одно: разобрать поклажу (да ещё
+    * заглянуть в «Персонажа»). Любая другая кнопка — старая, со сцен подхода
+    * или с экрана добычи, нажатая раньше, чем пришёл новый экран, — снова
+    * показывает обоз. Иначе она шла бы в сцену подхода, и «Напасть» начинал
+    * бы с перебитым караваном лишнюю волну. */
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
-    branch.act(user, ua, renderer)
+    readScene(user).flatMap {
+      case Some(scene) if scene.spoils && !parseAction(ua.payload).exists(SpoilsActions.contains) =>
+        showSpoils(user, renderer).as(StateType.Caravan)
+      case _ => branch.act(user, ua, renderer)
+    }
 
   // ── Встреча ───────────────────────────────────────────────────────────────
 
@@ -491,6 +500,9 @@ object CaravanState {
   val UsePrefix: String  = "CaravanUse_"
   val BeltPrefix: String = "CaravanBelt_"
   val BuyPrefix: String  = "CaravanBuy_"
+
+  /** Что можно нажать у разбитого обоза: забрать поклажу и открыть «Персонажа». */
+  val SpoilsActions: Set[String] = Set("CaravanSpoils", "OpenCharacter")
 
   /** Дважды напугать один караван нельзя: клинок и рык уводят по четверти, и
     * вместе это уже половина. */

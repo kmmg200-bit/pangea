@@ -372,6 +372,25 @@ object CaravanSpec extends ZIOSpecDefault {
               assertTrue(loot.exists(l => l.items.size == 3 && l.returnState.isEmpty))
     },
 
+    test("у разбитого обоза старые кнопки не начинают новую волну — снова показан обоз") {
+      for {
+        t <- caravan()
+        (state, dao, _, r) = t
+        // последняя волна позади, а игрок жмёт кнопки со старых экранов
+        _      <- put(dao, scene(stage = CaravanRates.StageMoment).copy(wave = 2, spoils = true))
+        stale  <- ZIO.foreach(List("CaravanAttack", "CaravanBack", "OpenInventory", "CaravanLeave"))(a =>
+                    state.action(testUser, tap(a), r).zip(r.sentScreens.map(_.last)))
+        battle <- battleOf(dao)
+        kept   <- sceneOf(dao)
+        out    <- state.action(testUser, tap("CaravanSpoils"), r)
+        loot   <- lootOf(dao)
+      } yield assertTrue(stale.forall { case (st, screen) =>
+                st == StateType.Caravan && screen.choices.map(_.id) == List("CaravanSpoils") }) &&
+              assertTrue(battle.isEmpty) &&
+              assertTrue(kept.exists(s => s.spoils && s.wave == 2 && s.goods.size == 3)) &&
+              assertTrue(out == StateType.Loot && loot.exists(_.items.size == 3))
+    },
+
     test("прилавок каравана сравнивает товар с надетым — как у Ришелье") {
       for {
         // товар каравана — шлемы, и шлем у героя уже надет: есть с чем сравнить
