@@ -120,13 +120,23 @@ object HeroArtifacts {
   /** Покупка и три улучшения. */
   val MaxTier: Int = 4
 
-  /** Живая сумка у того, кто принёс Фету живую кожу: ещё одно улучшение. */
-  val LivingSkinMaxTier: Int = 5
+  /** Потолок артефакта у того, кто прошёл его задание ([[capQuest]]): ещё
+    * одно улучшение сверх [[MaxTier]]. */
+  val QuestMaxTier: Int = 5
 
-  /** Докуда Фет соберёт этот артефакт герою: сумку после «Живой кожи» — на
-    * ступень дальше, остальное — до [[MaxTier]]. */
+  /** Какое задание поднимает потолок артефакта до [[QuestMaxTier]]: Живой
+    * сумки — «Живая кожа» Фета, ларца — «Бродячий ларец», шкафа — «Тот, кто
+    * уговаривает деревья». */
+  def capQuest(kind: ArtifactKind): Option[NpcQuest] = kind match {
+    case ArtifactKind.LivingBag => Some(NpcQuest.Fet)
+    case ArtifactKind.Casket    => Some(NpcQuest.StrayCasket)
+    case ArtifactKind.Wardrobe  => Some(NpcQuest.HedgeSong)
+  }
+
+  /** Докуда Фет соберёт этот артефакт герою: после его задания — на ступень
+    * дальше, иначе — до [[MaxTier]]. */
   def maxTier(kind: ArtifactKind, quests: NpcQuests): Int =
-    if (kind == ArtifactKind.LivingBag && quests.isDone(NpcQuest.Fet)) LivingSkinMaxTier else MaxTier
+    if (capQuest(kind).exists(quests.isDone)) QuestMaxTier else MaxTier
 
   /** Цена покупки и каждого улучшения — в дублонах. */
   val StepPriceDoubloons: Long = 100L

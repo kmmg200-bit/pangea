@@ -105,6 +105,8 @@ object HomeAlert {
       MurlocElder      -> "старейшина мурлоков",
       MurlocVillage    -> "деревня мурлоков",
       SquadMine        -> "штольня под Серебряной жилой",
+      StrayCasket      -> "бродячий ларец в лабиринте",
+      HedgeSong        -> "эльф поёт изгороди",
       RaceQuest        -> "квест смены расы",
       NameChange       -> "смена имени"
     )

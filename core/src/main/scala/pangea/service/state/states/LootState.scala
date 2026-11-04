@@ -80,7 +80,9 @@ case class LootState(
   override def targetStates: Set[StateType] =
     Set(StateType.Dungeon, StateType.GlobalMap, StateType.TreasureMobsFight, StateType.TreasureSchron, StateType.Loot, StateType.Girl,
         StateType.MarisaHunt, StateType.FlowerMeadow, StateType.MonsterCave, StateType.Caravan,
-        StateType.MurlocElder, StateType.MurlocVillage, StateType.Home, StateType.SquadMine, StateType.Construction,
+        StateType.MurlocElder, StateType.MurlocVillage, StateType.Home, StateType.SquadMine, StateType.StrayCasket,
+        StateType.HedgeSong,
+        StateType.Construction,
         StateType.Inventory)
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =

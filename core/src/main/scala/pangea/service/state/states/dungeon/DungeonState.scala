@@ -16,7 +16,9 @@ import pangea.model.skill.MonsterEnergy
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.service.schedule.Scheduler
-import pangea.service.state.{CharacterMenu, InstantRest, KillLogData, MurlocQuest, NpcQuestLog, SquadDuty, State, UserAction}
+import pangea.model.quest.NpcQuests
+import pangea.service.state.{CharacterMenu, InstantRest, KillLogData, MurlocQuest, NpcQuestLog, RareQuests, SquadDuty, State,
+  UserAction}
 import pangea.service.state.states.events.RaceRevengeState.RevengeScene
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
@@ -53,7 +55,8 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
   )
 
   override def targetStates: Set[StateType] =
-    branch.gotoTargets + StateType.HeroStats + StateType.MurlocElder + StateType.RottenJoe
+    branch.gotoTargets + StateType.HeroStats + StateType.MurlocElder + StateType.RottenJoe ++
+      RareQuests.Encounters.map(_._2)
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     for {
@@ -103,10 +106,11 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
    *  не досталось экрана добычи после двухсотого убитого, выходит здесь. */
   private def findEvent(user: User, renderer: Renderer): Task[StateType] =
     NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
-      if (MurlocQuest.elderPending(quests)) ZIO.succeed(StateType.MurlocElder) else rollEvent(user, renderer)
+      if (MurlocQuest.elderPending(quests)) ZIO.succeed(StateType.MurlocElder)
+      else rollEvent(user, renderer, quests)
     }
 
-  private def rollEvent(user: User, renderer: Renderer): Task[StateType] =
+  private def rollEvent(user: User, renderer: Renderer, quests: NpcQuests): Task[StateType] =
     for {
       now    <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
       hero   <- getHero(user)
@@ -135,6 +139,10 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
       pool    = StateType.eventsAt(hero.dungeonLevel, hero.passives.battleEncounterFactor)
       idx    <- Random.nextIntBounded(pool.size)
       event   = pool(idx)
+      // Редкое задание лабиринта — своим броском, после обязательных встреч и
+      // до пула (см. RareQuests). Встреча уже назначена — не бросаем.
+      forced  = gang.isDefined || avengers.isDefined || doomed.isDefined || called || rotten
+      rare   <- if (forced) ZIO.none else RareQuests.roll(quests, hero.dungeonLevel)
       result <- (gang, avengers, doomed) match {
                   case (Some(g), _, _)    => gangTrap(user, hero, g, killLog, renderer)
                   case (_, Some(race), _) => revenge(user, race, killLog)
@@ -142,10 +150,16 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
                   case _ if called        => wolfOnCall(user, hero, renderer)
                   case _ if rotten        => joeOnCall(user, hero, renderer)
                   case _ =>
-                    event match {
-                      case StateType.Battle => startBattle(user, hero)
-                      case StateType.Spring => healAtSpring(user, hero, now, renderer)
-                      case other            => ZIO.succeed(other)
+                    rare match {
+                      // Встреча начинается с чистого листа: что бы ни осталось
+                      // в scene_data от прошлой такой же встречи, оно не её.
+                      case Some(scene) => heroDao.writeSceneData(user.userId, io.circe.Json.Null).as(scene)
+                      case None =>
+                        event match {
+                          case StateType.Battle => startBattle(user, hero)
+                          case StateType.Spring => healAtSpring(user, hero, now, renderer)
+                          case other            => ZIO.succeed(other)
+                        }
                     }
                 }
     } yield result

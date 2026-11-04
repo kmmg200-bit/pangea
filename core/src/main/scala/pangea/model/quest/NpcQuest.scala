@@ -3,6 +3,7 @@ package pangea.model.quest
 import enumeratum._
 import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder, HCursor, Json}
+import pangea.model.item.Gem
 
 /** Сюжетные задания горожан — по одному на каждого, кто встречает новичка в
   * Кинэте. Каждое учит одной механике и рассказывает свой кусок истории города.
@@ -77,6 +78,20 @@ object NpcQuest extends Enum[NpcQuest] {
   /** С какого по счёту убитого выпадает фонарь старшины. */
   val LostSquadKill: Long = 500L
 
+  /** «Бродячий ларец»: редкая встреча в лабиринте (см. RareQuests) — чужой
+    * Ларец Азата, голодный, без хозяина. Шаги: 1 — ларец увязался за героем,
+    * `counter` — сколько камней ему скормлено; 2 — сыт и помнит дорогу к
+    * хозяину; 3 — хозяин упокоен, ларец нести Фету. Камни, что он съел, лежат
+    * в [[NpcQuests.strayGems]] — Фет вернёт их в ларец героя. */
+  case object StrayCasket extends NpcQuest("strayCasket")
+
+  /** «Тот, кто уговаривает деревья»: редкая встреча в лабиринте (см.
+    * RareQuests) — эльф Элиар поёт изгороди, прося у неё ветвь, а на песню идут
+    * орки-лесорубы, три волны. Задание берётся только победой: шаг 1 — ветвь на
+    * руках, нести Фету. «Не сейчас», уход между волнами и смерть его не
+    * начинают — эльфа надо встретить снова. */
+  case object HedgeSong extends NpcQuest("hedgeSong")
+
   def byKey(key: String): Option[NpcQuest] = values.find(_.key == key)
 
   /** Сколько репутации Горн просит набрать трофеями. */
@@ -135,10 +150,13 @@ object NpcQuestProgress {
 
 /** Все сюжетные задания героя и знания, которые они дают. Durable, лежит в
   * `heroes.npc_quests`. `recipes` — рецепты куба, которые герою уже объяснили
-  * (пока только запись; показ в меню куба — следующим шагом). */
+  * (пока только запись; показ в меню куба — следующим шагом). `strayGems` —
+  * камни, которые съел бродячий ларец ([[NpcQuest.StrayCasket]]): вид и
+  * качество каждого, по порядку; в конце задания Фет кладёт их в ларец героя. */
 final case class NpcQuests(
-  quests:  Map[String, NpcQuestProgress] = Map.empty,
-  recipes: List[String]                  = Nil
+  quests:    Map[String, NpcQuestProgress] = Map.empty,
+  recipes:   List[String]                  = Nil,
+  strayGems: List[Gem]                     = Nil
 ) {
   def of(q: NpcQuest): NpcQuestProgress = quests.getOrElse(q.key, NpcQuestProgress.empty)
 
@@ -169,15 +187,17 @@ object NpcQuests {
   val DustAssemblyRecipe: String = "dustAssembly"
 
   implicit val encoder: Encoder[NpcQuests] = (q: NpcQuests) => Json.obj(
-    "quests"  -> q.quests.asJson,
-    "recipes" -> q.recipes.asJson
+    "quests"    -> q.quests.asJson,
+    "recipes"   -> q.recipes.asJson,
+    "strayGems" -> q.strayGems.asJson
   )
 
   /** Декодер рукописный, с запасными значениями: новое поле не должно ронять
     * разбор уже сохранённых заданий (см. память о производных декодерах). */
   implicit val decoder: Decoder[NpcQuests] = (c: HCursor) =>
     for {
-      quests  <- c.getOrElse[Map[String, NpcQuestProgress]]("quests")(Map.empty)
-      recipes <- c.getOrElse[List[String]]("recipes")(Nil)
-    } yield NpcQuests(quests, recipes)
+      quests    <- c.getOrElse[Map[String, NpcQuestProgress]]("quests")(Map.empty)
+      recipes   <- c.getOrElse[List[String]]("recipes")(Nil)
+      strayGems <- c.getOrElse[List[Gem]]("strayGems")(Nil)
+    } yield NpcQuests(quests, recipes, strayGems)
 }

@@ -71,6 +71,8 @@ import pangea.model.state.StateType.{
   MurlocElder,
   MurlocVillage,
   SquadMine,
+  StrayCasket,
+  HedgeSong,
   RaceQuest,
   NameChange,
   TreasureHunt,
@@ -135,6 +137,8 @@ import pangea.service.state.states.road.QuestRoadState
 import pangea.service.state.states.events.thieves.{ThievesSpoilsState, ThievesState}
 import pangea.service.state.states.murloc.{MurlocElderState, MurlocVillageState}
 import pangea.service.state.states.lostsquad.SquadMineState
+import pangea.service.state.states.straycasket.StrayCasketState
+import pangea.service.state.states.hedgesong.HedgeSongState
 import pangea.service.state.states.race.RaceQuestState
 import pangea.service.state.states.name.NameChangeState
 import pangea.service.state.states.merchant.MerchantState
@@ -315,6 +319,8 @@ object StatesMap {
           MurlocElder       -> MurlocElderState(heroDao, inventoryRepo, itemRepo, content),
           MurlocVillage     -> MurlocVillageState(heroDao, inventoryRepo, itemRepo, content),
           SquadMine         -> SquadMineState(heroDao, inventoryRepo, itemRepo, content),
+          StrayCasket       -> StrayCasketState(heroDao, inventoryRepo, itemRepo, content, artifacts),
+          HedgeSong         -> HedgeSongState(heroDao, inventoryRepo, itemRepo, content),
           RaceQuest         -> RaceQuestState(heroDao, inventoryRepo, content),
           NameChange        -> NameChangeState(heroDao, inventoryRepo, content),
           Outskirts -> OutskirtsState(

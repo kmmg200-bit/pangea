@@ -15,7 +15,7 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
-import pangea.service.state.{AzatData, LostSquadQuest, MarisaQuest, MurlocQuest, State, UserAction}
+import pangea.service.state.{AzatData, HedgeSongQuest, LostSquadQuest, MarisaQuest, MurlocQuest, State, StrayCasketQuest, UserAction}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
 
@@ -51,6 +51,12 @@ case class DeathState(
       // Смерть у завала в штольне: штрафы обычные, дружина снова ждёт за
       // завалом, проснуться — в городе.
       escort        = battle.exists(_.story.contains(LostSquadQuest.EscortStory))
+      // Смерть от хозяина бродячего ларца: штрафы обычные, задание остаётся на
+      // том же шаге — проснуться в лабиринте, ларец снова поведёт к нему.
+      stray         = battle.exists(_.story.contains(StrayCasketQuest.FightStory))
+      // Смерть в волнах у поющего эльфа: штрафы обычные, задание так и не
+      // начато — эльфа надо встретить снова; проснуться в лабиринте.
+      hedge         = battle.exists(_.story.contains(HedgeSongQuest.WaveStory))
       // Герой пал раньше, а отряд доигрывал за него и проиграл: травму за этот
       // бой он уже получил, когда упал (см. BattleState) — второй смерть не даёт.
       fellEarlier   = battle.exists(_.group.heroDown)
@@ -110,6 +116,8 @@ case class DeathState(
                       else if (escort) Json.obj(
                         "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
                         "wakeLines" -> List("lostSquad.escort.death").asJson)
+                      else if (stray) Json.obj("wakeLines" -> List("strayCasket.death").asJson)
+                      else if (hedge) Json.obj("wakeLines" -> List("hedgeSong.death").asJson)
                       else Json.obj()
       _            <- heroDao.writeSceneData(user.userId, Json.obj(
                         "restDurationMs" -> deathRestMs.asJson,

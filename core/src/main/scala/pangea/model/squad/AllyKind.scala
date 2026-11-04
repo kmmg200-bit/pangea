@@ -139,6 +139,15 @@ object AllyKind extends Enum[AllyKind] {
     hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
     accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
 
+  /** Элиар из «Того, кто уговаривает деревья»: эльф, который поёт изгороди и
+    * бьётся рядом с героем, пока на песню идут орки, — по силе именной эльф
+    * уровня задания. Имя, уровень и статы лежат на самом союзнике
+    * ([[UndeadForm]], см. HedgeSongQuest.elf); нанять его негде, после боя он
+    * в отряд не встаёт. Стихии нет. */
+  case object HedgeElf extends AllyKind("Эльф-певец", Race.Elf, None, maxLvl = 150L,
+    hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
+    accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
+
   val values: IndexedSeq[AllyKind] = findValues
 
   /** Кого можно нанять за столом таверны. Нежить и крысы туда не садятся. */

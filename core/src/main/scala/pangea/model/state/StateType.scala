@@ -163,6 +163,12 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   // «Пропавшая дружина».
   case object SquadMine extends StateType // штольня под Серебряной жилой: вывести дружину или забрать груз
 
+  // «Бродячий ларец».
+  case object StrayCasket extends StateType // бродячий ларец в лабиринте: встреча, путь к хозяину, бой с ним
+
+  // «Тот, кто уговаривает деревья».
+  case object HedgeSong extends StateType // эльф поёт изгороди: встреча, три волны орков, ветвь
+
   // Смена расы: купон из лавки Фета — история расы до пробуждения в новом теле.
   case object RaceQuest extends StateType
 

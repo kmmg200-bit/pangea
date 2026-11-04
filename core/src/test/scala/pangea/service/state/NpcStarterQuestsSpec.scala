@@ -126,7 +126,7 @@ object NpcStarterQuestsSpec extends ZIOSpecDefault {
         (_, _, _, _, said, after, _, _) = t
         bag      = repo.snapshot.bag
       } yield assertTrue(after.isDone(NpcQuest.Fet)) &&
-              assertTrue(bag.tier == HeroArtifacts.LivingSkinMaxTier && bag.capacity == 75) &&
+              assertTrue(bag.tier == HeroArtifacts.QuestMaxTier && bag.capacity == 75) &&
               assertTrue(said.contains("Ступень 5/5, мест внутри: 75")) &&
               // ларец задание не трогает
               assertTrue(repo.snapshot.casket.tier == HeroArtifacts.MaxTier) &&

@@ -14,7 +14,7 @@ import pangea.model.hero.{Equipment, Hero, WeaponCoat, WeaponDust}
 import pangea.model.inventory.Inventory
 import pangea.model.item.{BeltSlot, Chisel, Gem, GemBreaking, Item, ItemDetails, ItemStack, ItemType, MaterialKind, QuestItemKind, RefillSource, TrophyKind}
 import pangea.model.monster.Race
-import pangea.model.quest.{Difficulty, NpcQuest}
+import pangea.model.quest.{Difficulty, NpcQuest, NpcQuests}
 import pangea.model.rune.{Rune, RuneStone, RuneStoneSize}
 import pangea.model.state.StateType
 import pangea.model.stats.FightStats
@@ -27,7 +27,9 @@ import pangea.service.state.states.home.Racks
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.states.murloc.MurlocVillageState
 import pangea.service.state.states.race.RaceQuestState
-import pangea.service.state.{BeltContents, HerbLore, InventoryFeedback, ItemMenu, MarisaQuest, MurlocQuest, NpcQuestLog, QuestSupport, SlotChoice, StackMove, State, UiScene, UserAction}
+import pangea.service.state.{BeltContents, HedgeSongQuest, HerbLore, InventoryFeedback, ItemMenu, MarisaQuest, MurlocQuest, NpcQuestLog, QuestGoods,
+  QuestSupport, SlotChoice, StackMove, State,
+  StrayCasketQuest, UiScene, UserAction}
 import zio.{Random, Task, ZIO}
 
 case class InventoryState(
@@ -93,6 +95,10 @@ case class InventoryState(
       "MapAlone"          -> Target.Run { (u, _,  r) => startHunt(u, r, withMarisa = false) },
       // «Деревня Мурлоков»: по карте старейшины — к развилке (налёт или помощь).
       "UseMurlocMap"      -> Target.Run { (u, _,  r) => useMurlocMap(u, r) },
+      // «Бродячий ларец»: скормить камень выбранного качества; сытого — отпустить,
+      // чтобы вёл к хозяину.
+      "StrayFeed"         -> Target.Run { (u, ua, r) => feedStray(u, ua, r) },
+      "StrayGo"           -> Target.Run { (u, _,  r) => goStray(u, r) },
       // Трактаты Густаво: читать, пока не осилишь.
       "ReadTreatise"      -> Target.Run { (u, _,  r) => readTreatise(u, r) },
       "IdentifyFlower"    -> Target.Run { (u, _,  r) => identifyFlower(u, r) },
@@ -106,7 +112,8 @@ case class InventoryState(
 
   override def targetStates: Set[StateType] =
     Set(StateType.HeroStats, StateType.Backpack, StateType.Inventory, StateType.Socketing,
-        StateType.MarisaHunt, StateType.MurlocVillage, StateType.RaceQuest, StateType.NameChange) ++ BackpackOrigins
+        StateType.MarisaHunt, StateType.MurlocVillage, StateType.RaceQuest, StateType.NameChange,
+        StateType.StrayCasket) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.
@@ -466,7 +473,13 @@ case class InventoryState(
     for {
       quests <- NpcQuestLog.load(heroDao, user.userId)
       opened  = quests.of(NpcQuest.Marisa).bonus
-      exit    = content.choice("InventoryList", "inventory.exit").copy(row = Some(1), color = ChoiceColor.Negative)
+      // Бродячий ларец, пока голоден, — кнопка на каждое качество камней при
+      // герое, по ряду на кнопку; выход — рядом ниже.
+      feed   <- if (item.questItem.contains(QuestItemKind.StrayCasket) && StrayCasketQuest.hungry(quests))
+                  getHero(user).flatMap(h => QuestGoods.all(inventoryRepo, artifacts, h.id)).map(strayFeedChoices)
+                else ZIO.succeed(Nil)
+      exit    = content.choice("InventoryList", "inventory.exit")
+                  .copy(row = Some(if (feed.isEmpty) 1 else feed.size), color = ChoiceColor.Negative)
       // Что с предметом сделать — своя кнопка у каждого вида; текст карточки —
       // общий с Mini App (см. InventoryState.questText).
       use     = item.questItem match {
@@ -487,10 +500,73 @@ case class InventoryState(
           Some(Choice("RackKeyUse", content.text("home.rack.useKey"), color = ChoiceColor.Positive, row = Some(0)))
         case Some(book) if HerbLore.isTreatise(book) =>
           Some(content.choice("ReadTreatise", "knowledge.readLabel").copy(color = ChoiceColor.Positive, row = Some(0)))
+        // Сытый бродячий ларец: «Идти за ларцом» — он поведёт к хозяину.
+        case Some(QuestItemKind.StrayCasket) if StrayCasketQuest.leads(quests) =>
+          Some(content.choice("StrayGo", "strayCasket.goLabel").copy(row = Some(0)))
         case _ => None
       }
-      _ <- renderer.show(user, Screen(InventoryState.questText(content, item, opened), use.toList :+ exit))
+      text    = InventoryState.questText(content, item, quests) +
+                  (if (item.questItem.contains(QuestItemKind.StrayCasket) && StrayCasketQuest.hungry(quests) && feed.isEmpty)
+                     "\n" + content.text("strayCasket.card.noGems") else "")
+      _ <- renderer.show(user, Screen(text, use.toList ++ feed :+ exit))
     } yield StateType.Inventory
+
+  // ── «Бродячий ларец»: кормление с карточки ─────────────────────────────────
+
+  /** Кнопки кормления: по одной на каждое качество камней при герое — в сумке и
+    * в своём ларце, — с числом. Нажатая скармливает один камень этого качества. */
+  private def strayFeedChoices(goods: List[QuestGoods.Good]): List[Choice] = {
+    val labels = content.list("strayCasket.feed.grades")
+    StrayCasketQuest.grades(goods).zipWithIndex.flatMap { case ((grade, n), i) =>
+      labels.lift(grade - 1).map(l => Choice("StrayFeed", Choice.fit(l.replace("{n}", n.toString)),
+        data = Map("grade" -> grade.toString), color = ChoiceColor.Positive, row = Some(i)))
+    }
+  }
+
+  /** Скормить ларцу камень выбранного качества: строка о съеденном, каждое
+    * второе — воспоминание прежнего хозяина, десятое — ларец сыт. Дальше та же
+    * карточка: покормить ещё. */
+  private def feedStray(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
+    withSelected(user, renderer) { (item, hero) =>
+      val grade = payloadField(ua, "grade").flatMap(_.toIntOption)
+      for {
+        quests <- NpcQuestLog.load(heroDao, user.userId)
+        goods  <- QuestGoods.all(inventoryRepo, artifacts, hero.id)
+        chosen  = grade.flatMap(StrayCasketQuest.pick(goods, _))
+        after  <- (item.questItem, chosen) match {
+                    case (Some(QuestItemKind.StrayCasket), Some(good)) if StrayCasketQuest.hungry(quests) =>
+                      StrayCasketQuest.feed(heroDao, inventoryRepo, artifacts, user.userId, hero.id, good)
+                        .map(_.map(good -> _))
+                    case _ => ZIO.none
+                  }
+        res    <- after match {
+                    case None => showItem(user, item.id, renderer)
+                    case Some((good, next)) =>
+                      val n      = StrayCasketQuest.fed(next)
+                      val eaten  = content.format("strayCasket.feed.eaten", "gem" -> good.item.name,
+                                     "fed" -> n.toString, "goal" -> StrayCasketQuest.GemsGoal.toString)
+                      val memory = StrayCasketQuest.memoryAfter(n).flatMap(i => content.list("strayCasket.memories").lift(i - 1))
+                      val sated  = Option.when(StrayCasketQuest.leads(next))(content.text("strayCasket.sated"))
+                      renderer.show(user, Screen(eaten, Nil)) *>
+                        ZIO.foreachDiscard(memory.toList ++ sated.toList)(t => renderer.show(user, Screen(t, Nil))) *>
+                        showItem(user, item.id, renderer)
+                  }
+      } yield res
+    }
+
+  /** Отпустить сытый ларец: он ведёт к хозяину — только в лабиринте («Персонаж»
+    * открыт из него), на любом уровне. В городе и в прочих сценах — отказ, как
+    * у сюжетных карт, только наоборот. */
+  private def goStray(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      from   <- heroDao.readReturnState(user.userId)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      res    <- if (!StrayCasketQuest.leads(quests)) backToCard(user, renderer)
+                else if (!from.contains(StateType.Dungeon))
+                  renderer.show(user, Screen(content.text("strayCasket.card.onlyInLabyrinth"), Nil)) *>
+                    backToCard(user, renderer)
+                else ZIO.succeed(StateType.StrayCasket)
+    } yield res
 
   /** Повернуть ключ стойки: магия меняет надетое местами с тем, что висит на
     * стойке дома, — где угодно, кроме боя (из боя в сумку не попасть). */
@@ -1394,23 +1470,32 @@ object InventoryState {
   /** Текст карточки вещи, как в сумке бота, — без кнопок и без строки с
     * серебром: у сюжетного предмета — описание, у отвара — что он делает и где
     * работает, у прочего — характеристики и сравнение с надетым. Им же
-    * описывает вещи Mini App. `letterOpened` — письмо Марисы уже вскрыто. */
-  def cardText(content: SceneContent, item: Item, hero: Hero, letterOpened: Boolean): String = item match {
-    case _ if item.isQuestItem => questText(content, item, letterOpened)
+    * описывает вещи Mini App. `quests` — ход заданий героя: вскрыто ли письмо
+    * Марисы, сколько съел бродячий ларец. */
+  def cardText(content: SceneContent, item: Item, hero: Hero, quests: NpcQuests): String = item match {
+    case _ if item.isQuestItem => questText(content, item, quests)
     case Brewed(kind)          => brewText(content, item, kind)
     case _                     => itemText(item, hero.equipment, Some(hero))
   }
 
-  /** Сюжетный предмет: описание, у письма и карты — ещё и сложность; к
-    * невскрытому письму — подсказка, у кого спросить. */
-  def questText(content: SceneContent, item: Item, letterOpened: Boolean): String = {
+  /** Сюжетный предмет: описание, у письма, карты и бродячего ларца — ещё и
+    * сложность; к невскрытому письму — подсказка, у кого спросить; у ларца —
+    * что с ним сейчас. */
+  def questText(content: SceneContent, item: Item, quests: NpcQuests): String = {
     def difficulty(n: Int) = content.format("marisa.difficulty", "difficulty" -> Difficulty.render(n))
+    val letterOpened = quests.of(NpcQuest.Marisa).bonus
     item.questItem match {
       case Some(QuestItemKind.MarisaLetter) =>
         s"${item.displayTitle}\n${difficulty(MarisaQuest.LetterDifficulty)}\n\n${QuestItemKind.MarisaLetter.description}" +
           (if (letterOpened) "" else "\n\n" + content.text("marisa.letterHint"))
       case Some(QuestItemKind.MurlocVillageMap) =>
         s"${item.displayTitle}\n${difficulty(MurlocQuest.MapDifficulty)}\n\n${QuestItemKind.MurlocVillageMap.description}"
+      case Some(QuestItemKind.StrayCasket) =>
+        val now = StrayCasketQuest.cardLine(content, quests)
+        s"${item.displayTitle}\n${difficulty(StrayCasketQuest.Level)}\n\n${QuestItemKind.StrayCasket.description}" +
+          (if (now.isEmpty) "" else "\n\n" + now)
+      case Some(QuestItemKind.HedgeBranch) =>
+        s"${item.displayTitle}\n${difficulty(HedgeSongQuest.Level)}\n\n${QuestItemKind.HedgeBranch.description}"
       case Some(kind @ (QuestItemKind.KelvinMap | QuestItemKind.RaceCoupon | QuestItemKind.NameCoupon)) =>
         s"${item.displayTitle}\n\n${kind.description}"
       case Some(kind) if QuestItemKind.rackOf(kind).isDefined || HerbLore.isTreatise(kind) =>

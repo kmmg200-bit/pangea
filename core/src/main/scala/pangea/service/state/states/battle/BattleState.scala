@@ -35,7 +35,7 @@ import pangea.model.arena.{ArenaAlly, ArenaRates, ArenaSide}
 import pangea.service.state.states.arena.ArenaBattle
 import pangea.service.state.states.battle.BattleState.{ArenaOwnActions, Victim}
 import pangea.service.schedule.Scheduler
-import pangea.service.state.{AzatData, BeltContents, BoardProgress, LostSquadQuest, MarisaQuest, NpcQuestLog, State, UserAction, KillLogData}
+import pangea.service.state.{AzatData, BeltContents, BoardProgress, HedgeSongQuest, LostSquadQuest, MarisaQuest, NpcQuestLog, State, UserAction, KillLogData}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
 
@@ -563,10 +563,11 @@ case class BattleState(
       case Outcome.Fled =>
         // Сюжетный бой идёт не в лабиринте — бежать из него в город.
         val to = if (res.battle.story.isDefined) StateType.GlobalMap else StateType.Dungeon
-        // Сбежал из налёта на мурлоков или из боя у завала — развязки «после
-        // боя» не будет: роутинг добычи стираем, иначе его подхватила бы
-        // следующая победа и засчитала несыгранный бой.
-        val dropRouting = res.battle.story.exists(s => s == MurlocQuest.RaidStory || s == LostSquadQuest.EscortStory)
+        // Сбежал (или ничья) из налёта на мурлоков, из боя у завала или от
+        // орков у поющего эльфа — развязки «после боя» не будет: роутинг
+        // добычи стираем, иначе его подхватила бы следующая победа и засчитала
+        // несыгранный бой.
+        val dropRouting = res.battle.story.exists(BattleState.RaidStories.contains)
         // Лежачий сам не бежит: это отряд доигрывал бой и не взял верх — ничья,
         // все отступают и выносят его (см. autoResolve).
         val fledKey = if (res.battle.group.heroDown) "battle.squad.retreat" else "battle.fled"
@@ -5182,6 +5183,8 @@ case class BattleState(
           case pangea.model.squad.AllyKind.SquadGnome => s
           // Мурлок-собрат выходил из воды только на этот бой — туда и уходит.
           case pangea.model.squad.AllyKind.MurlocKin  => s
+          // Элиар пел изгороди только этот бой — с ней и остаётся.
+          case pangea.model.squad.AllyKind.HedgeElf   => s
           case pangea.model.squad.AllyKind.Rat        => s.summonRat(form, a.lvl, nowMs)
           case _                                      => s.admitRisen(form, a.lvl, nowMs)
         }
@@ -5706,7 +5709,7 @@ case class BattleState(
       // разбойники третьего уровня и падают как третьего.
       // Подъём «Пропавшей дружины» сквозь гоблинов — такой же: награда как за
       // обычный бой, по уровню героя.
-      raid       = battle.story.exists(s => s == MurlocQuest.RaidStory || s == LostSquadQuest.EscortStory)
+      raid       = battle.story.exists(BattleState.RaidStories.contains)
       storyFight = battle.story.isDefined && !raid
       killLevel  = battle.lootLevel.getOrElse(if (raid) hero.lvl else hero.dungeonLevel.toLong)
       // Минибосс боя — тот, кто пал минибоссом, когда бы он ни пал: Некроманта
@@ -6438,6 +6441,12 @@ case class BattleState(
 
 object BattleState {
 
+  /** Сюжетные бои, которые награждаются как обычные: опыт и добыча с каждого
+    * павшего (налёт на мурлоков, бой у завала, волны орков у поющего эльфа).
+    * Сбежали или ничья — роутинг добычи у них стирается: развязки «после боя»
+    * не будет. Прочие сюжетные бои — без добычи по таблицам. */
+  val RaidStories: Set[String] = Set(MurlocQuest.RaidStory, LostSquadQuest.EscortStory, HedgeSongQuest.WaveStory)
+
   /** Умение союзника, выбранное на ход. Удар несёт свою цель: без цели его
     * в выборе просто нет, и доставать её потом неоткуда. */
   private[battle] sealed abstract class AllyCast(val skill: AllySkill)
@@ -6453,11 +6462,12 @@ object BattleState {
   val AlliesPerRow: Int = 2
 
   /** Чем кончается выбывший союзник: наёмника уносит свиток, поднятый
-    * рассыпается, дружинника «Пропавшей дружины» оттаскивают свои, а
-    * мурлока-собрата забирает вода. */
+    * рассыпается, дружинника «Пропавшей дружины» оттаскивают свои,
+    * мурлока-собрата забирает вода, а поющего эльфа прячет изгородь. */
   def goneKey(a: BattleAlly): String =
     if (a.kind == pangea.model.squad.AllyKind.SquadGnome) "battle.ally.squadGnomeDown"
     else if (a.kind == pangea.model.squad.AllyKind.MurlocKin) "battle.ally.kinDown"
+    else if (a.kind == pangea.model.squad.AllyKind.HedgeElf) "battle.ally.hedgeElfDown"
     else if (a.undead.isDefined) "battle.ally.crumbled"
     else "battle.ally.scroll"
 

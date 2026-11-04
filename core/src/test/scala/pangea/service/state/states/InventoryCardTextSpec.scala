@@ -2,6 +2,7 @@ package pangea.service.state.states
 
 import pangea.engine.SceneContent
 import pangea.model.item.{Item, ItemType, QuestItemKind, Rarity}
+import pangea.model.quest.{NpcQuest, NpcQuests}
 import pangea.model.user.UserId
 import pangea.test.TestFixtures
 import zio.ZIO
@@ -13,6 +14,10 @@ object InventoryCardTextSpec extends ZIOSpecDefault {
 
   private val hero = TestFixtures.hero(UserId(1L))
 
+  /** Письмо Марисы вскрыто — так это помнит журнал заданий. */
+  private val openedLetter: NpcQuests =
+    NpcQuests.empty.take(NpcQuest.Marisa, 0L).update(NpcQuest.Marisa)(_.copy(bonus = true))
+
   private val helmet: Item =
     Item(5L, "Шлем", 2L, Rarity.White, ItemType.Helmet,
       attack = 0, accuracy = 0, energy = 0, armor = 3, defence = 0, evasion = 0)
@@ -22,7 +27,7 @@ object InventoryCardTextSpec extends ZIOSpecDefault {
     test("сюжетный предмет — описание; у карты Мурлоков — и сложность") {
       for {
         content <- ZIO.attempt(SceneContent.load())
-        text     = InventoryState.cardText(content, QuestItemKind.item(QuestItemKind.MurlocVillageMap), hero, letterOpened = false)
+        text     = InventoryState.cardText(content, QuestItemKind.item(QuestItemKind.MurlocVillageMap), hero, NpcQuests.empty)
       } yield assertTrue(
         text.contains(QuestItemKind.MurlocVillageMap.description),
         text.contains("Сложность"),
@@ -34,8 +39,8 @@ object InventoryCardTextSpec extends ZIOSpecDefault {
       for {
         content <- ZIO.attempt(SceneContent.load())
         letter   = QuestItemKind.item(QuestItemKind.MarisaLetter)
-        sealed_  = InventoryState.cardText(content, letter, hero, letterOpened = false)
-        opened   = InventoryState.cardText(content, letter, hero, letterOpened = true)
+        sealed_  = InventoryState.cardText(content, letter, hero, NpcQuests.empty)
+        opened   = InventoryState.cardText(content, letter, hero, openedLetter)
         hint     = content.text("marisa.letterHint")
       } yield assertTrue(
         sealed_.contains(QuestItemKind.MarisaLetter.description) && sealed_.contains(hint),
@@ -47,7 +52,7 @@ object InventoryCardTextSpec extends ZIOSpecDefault {
       for {
         content <- ZIO.attempt(SceneContent.load())
       } yield assertTrue(
-        InventoryState.cardText(content, helmet, hero, letterOpened = false) ==
+        InventoryState.cardText(content, helmet, hero, NpcQuests.empty) ==
           InventoryState.itemText(helmet, hero.equipment, Some(hero))
       )
     }

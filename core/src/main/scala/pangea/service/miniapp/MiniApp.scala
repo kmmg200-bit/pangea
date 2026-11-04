@@ -5,7 +5,6 @@ import pangea.engine.SceneContent
 import pangea.model.auction.AuctionLot
 import pangea.model.hero.Hero
 import pangea.model.item.Item
-import pangea.model.quest.NpcQuest
 import pangea.repository.auction.AuctionRepository
 import pangea.repository.hero.HeroRepository
 import pangea.repository.inventory.InventoryRepository
@@ -91,12 +90,12 @@ final class MiniAppLive(
       describe <- describer(hero)
     } yield MiniAppView.auction(hero, onSale, mine, ms, describe)
 
-  /** Описание вещи — как в карточке бота. Вскрыто ли письмо Марисы, знает
-    * журнал заданий: к невскрытому карточка добавляет подсказку. */
+  /** Описание вещи — как в карточке бота. Что сказать на карточке сюжетного
+    * предмета (вскрыто ли письмо Марисы, сыт ли бродячий ларец), знает журнал
+    * заданий. */
   private def describer(hero: Hero): Task[Item => String] =
     NpcQuestLog.load(heroDao, hero.userId).map { quests =>
-      val opened = quests.of(NpcQuest.Marisa).bonus
-      (item: Item) => InventoryState.cardText(content, item, hero, opened)
+      (item: Item) => InventoryState.cardText(content, item, hero, quests)
     }
 
   private val now = ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))

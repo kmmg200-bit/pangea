@@ -12,13 +12,15 @@ import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
-import pangea.service.state.{CityExit, NpcQuestDialog, State, UserAction}
+import pangea.service.state.{CityExit, HedgeSongQuest, NpcQuestDialog, QuestSupport, StackMove, State, StrayCasketQuest, UserAction}
 import zio.{Task, ZIO}
 
 /** Лавка Фета в Торговом доме: сборные артефакты Азата. Каждый стоит
  *  [[HeroArtifacts.StepPriceDoubloons]] дублонов, и за ту же цену Фет трижды
  *  его улучшит — каждая ступень добавляет мест внутри; Живую сумку тому, кто
- *  принёс «Живую кожу», — и в четвёртый раз. С краю прилавка — три
+ *  принёс «Живую кожу», ларец тому, кто принёс бродячий ларец, и шкаф тому,
+ *  кто принёс ветвь живой изгороди, — и в четвёртый раз (см.
+ *  [[HeroArtifacts.maxTier]]). С краю прилавка — три
  *  зелья ([[FetPotion]]) по [[FetShopState.PotionPriceDoubloons]] дублонов: их
  *  выпивают сразу, при покупке. И два купона — каждый своей сценой: на смену
  *  расы за [[FetShopState.CouponPriceDoubloons]] (см. RaceQuestState) и на смену
@@ -36,12 +38,21 @@ case class FetShopState(
   /** «Живая кожа»: кусок с Гнилого Джо — из такого Фет доращивает сумку. */
   private val quest = NpcQuestDialog(heroDao, content, NpcQuest.Fet, "Fet")
 
+  /** «Бродячий ларец»: развязка — здесь, у прилавка; от разговора о задании
+    * нужны только закрытие и опыт. */
+  private val stray = NpcQuestDialog(heroDao, content, NpcQuest.StrayCasket, "Stray")
+
+  /** «Тот, кто уговаривает деревья»: ветвь от Элиара — тоже сюда. */
+  private val hedge = NpcQuestDialog(heroDao, content, NpcQuest.HedgeSong, "Hedge")
+
   private val branch = new Branch(
     routes = Map(
       "FetShop"     -> Target.Run { (u, _, r)  => showShop(u, r).as(StateType.FetShop) },
       quest.questAction   -> Target.Run { (u, _, r) => questTalk(u, r) },
       quest.acceptAction  -> Target.Run { (u, _, r) => quest.accept(u, r) *> showShop(u, r).as(StateType.FetShop) },
       quest.declineAction -> Target.Run { (u, _, r) => showShop(u, r).as(StateType.FetShop) },
+      "FetStray"    -> Target.Run { (u, _, r)  => strayTurnIn(u, r).as(StateType.FetShop) },
+      "FetBranch"   -> Target.Run { (u, _, r)  => branchTurnIn(u, r).as(StateType.FetShop) },
       "FetGoods"    -> Target.Run { (u, ua, r) => withKind(ua)(showGoods(u, _, r)).as(StateType.FetShop) },
       "FetBuy"      -> Target.Run { (u, ua, r) => withKind(ua)(confirm(u, _, r)).as(StateType.FetShop) },
       "FetBuyYes"   -> Target.Run { (u, ua, r) => withKind(ua)(buy(u, _, r)).as(StateType.FetShop) },
@@ -84,9 +95,17 @@ case class FetShopState(
                         Choice("FetCoupon", content.text("fet.coupon.title"), row = Some(couponRow)),
                         Choice("FetNameCoupon", content.text("fet.nameCoupon.title"), row = Some(couponRow)))
       val questRow = couponRow + (if (coupons.isEmpty) 0 else 1)
-      val leaveRow = questRow + quest.button(quests).size
+      // Задание Фета, бродячий ларец и ветвь от Элиара — в одном ряду: рядов у
+      // ВК мало.
+      val strayBtn  = Option.when(StrayCasketQuest.toFet(quests))(
+                        content.choice("FetStray", "strayCasket.fet.showLabel"))
+      val branchBtn = Option.when(HedgeSongQuest.toFet(quests))(
+                        content.choice("FetBranch", "hedgeSong.fet.showLabel"))
+      val talk      = (quest.button(quests).toList ++ strayBtn.toList ++ branchBtn.toList)
+                        .map(_.copy(row = Some(questRow)))
+      val leaveRow = questRow + (if (talk.isEmpty) 0 else 1)
       renderer.show(user, Screen(content.text("fet.counter"),
-        goods ++ potions ++ coupons ++ quest.button(quests).map(_.copy(row = Some(questRow))).toList ++ List(
+        goods ++ potions ++ coupons ++ talk ++ List(
           Choice("LeaveFetShop", content.text("fet.leave"),
             color = ChoiceColor.Negative, row = Some(leaveRow)),
           CityExit.button(content, Some(leaveRow)))))
@@ -103,7 +122,7 @@ case class FetShopState(
 
   /** Сдача: кожа уходит Фету, герой получает золото и опыт, а Живая сумка
     * (если она у героя есть) — ступень сверху; потолок у неё теперь
-    * [[HeroArtifacts.LivingSkinMaxTier]]. */
+    * [[HeroArtifacts.QuestMaxTier]]. */
   private def turnIn(user: User, renderer: Renderer): Task[Unit] =
     for {
       hero <- getHero(user)
@@ -118,10 +137,10 @@ case class FetShopState(
             (_, expLine) = done
             bag  <- artifacts.get(hero.id).mapError(asThrowable).map(_.bag)
             grown <- ZIO.when(bag.owned)(artifacts.upgrade(hero.id, ArtifactKind.LivingBag,
-                       HeroArtifacts.LivingSkinMaxTier).mapError(asThrowable))
+                       HeroArtifacts.QuestMaxTier).mapError(asThrowable))
             // Сумки нет — лимит сдвинулся молча, о нём ни слова.
             bagLine = grown.fold("")(g => "\n\n" + quest.format("bagGrown",
-                        "tier" -> g.tier.toString, "maxTier" -> HeroArtifacts.LivingSkinMaxTier.toString,
+                        "tier" -> g.tier.toString, "maxTier" -> HeroArtifacts.QuestMaxTier.toString,
                         "capacity" -> g.capacity.toString))
             _    <- renderer.show(user, Screen(quest.text("outro"), Nil))
             _    <- renderer.show(user, Screen(quest.format("reward",
@@ -130,6 +149,93 @@ case class FetShopState(
           } yield ()
       }
     } yield ()
+
+  // ── «Бродячий ларец» ──────────────────────────────────────────
+
+  /** Развязка: Фет узнаёт ларец своего друга и оставляет его себе на память, а
+    * герою взамен — новый Ларец Азата, если своего нет, или ступень к своему;
+    * потолок ларца у героя теперь [[HeroArtifacts.QuestMaxTier]]. Камни, что
+    * съел бродячий ларец, Фет сразу кладёт в ларец героя (не влезли — в
+    * сумку). Задание закрыто, опыт — как за задание горожанина. */
+  private def strayTurnIn(user: User, renderer: Renderer): Task[Unit] =
+    for {
+      hero   <- getHero(user)
+      quests <- stray.load(user)
+      _      <- if (!StrayCasketQuest.toFet(quests)) showShop(user, renderer)
+                else for {
+                  before <- artifacts.get(hero.id).mapError(asThrowable).map(_.casket)
+                  _      <- QuestSupport.removeItems(inventoryRepo, hero, Set(QuestItemKind.StrayCasket))
+                  done   <- stray.complete(user, hero, _.copy(strayGems = Nil))
+                  (_, expLine) = done
+                  grown  <- artifacts.upgrade(hero.id, ArtifactKind.Casket, HeroArtifacts.QuestMaxTier).option
+                  placed <- returnGems(hero, StrayCasketQuest.returned(quests))
+                  (inCasket, inBag) = placed
+                  casketLine = grown.fold("")(g => content.format(
+                                 if (before.owned) "strayCasket.fet.casketGrown" else "strayCasket.fet.newCasket",
+                                 "title" -> content.text("artifact.casket.title"), "tier" -> g.tier.toString,
+                                 "maxTier" -> HeroArtifacts.QuestMaxTier.toString, "capacity" -> g.capacity.toString))
+                  gemsLine = List(
+                               Option.when(inCasket.nonEmpty)(content.format("strayCasket.fet.gems",
+                                 "gems" -> StackMove.names(inCasket))),
+                               Option.when(inBag.nonEmpty)(content.format("strayCasket.fet.gemsToBag",
+                                 "gems" -> StackMove.names(inBag)))).flatten
+                  _      <- renderer.show(user, Screen(content.text("strayCasket.fet.outro"), Nil))
+                  _      <- renderer.show(user, Screen((List(casketLine).filter(_.nonEmpty) ++ gemsLine :+ expLine)
+                              .mkString("\n\n"), Nil))
+                  _      <- renderer.show(user, Screen(content.text("strayCasket.questDone"), Nil))
+                  _      <- showShop(user, renderer)
+                } yield ()
+    } yield ()
+
+  // ── «Тот, кто уговаривает деревья» ────────────────────────────
+
+  /** Развязка: ветвь живой изгороди — Фету; герою — новый Миниатюрный шкаф,
+    * если своего нет, или ступень к своему; потолок шкафа у героя теперь
+    * [[HeroArtifacts.QuestMaxTier]]. Задание закрыто, опыт — как за задание
+    * горожанина. */
+  private def branchTurnIn(user: User, renderer: Renderer): Task[Unit] =
+    for {
+      hero   <- getHero(user)
+      quests <- hedge.load(user)
+      _      <- if (!HedgeSongQuest.toFet(quests)) showShop(user, renderer)
+                else for {
+                  before <- artifacts.get(hero.id).mapError(asThrowable).map(_.wardrobe)
+                  _      <- QuestSupport.removeItems(inventoryRepo, hero, Set(QuestItemKind.HedgeBranch))
+                  done   <- hedge.complete(user, hero, identity)
+                  (_, expLine) = done
+                  grown  <- artifacts.upgrade(hero.id, ArtifactKind.Wardrobe, HeroArtifacts.QuestMaxTier).option
+                  line    = grown.fold("")(g => content.format(
+                              if (before.owned) "hedgeSong.fet.wardrobeGrown" else "hedgeSong.fet.newWardrobe",
+                              "title" -> content.text("artifact.wardrobe.title"), "tier" -> g.tier.toString,
+                              "maxTier" -> HeroArtifacts.QuestMaxTier.toString, "capacity" -> g.capacity.toString))
+                  _      <- renderer.show(user, Screen(content.text("hedgeSong.fet.outro"), Nil))
+                  _      <- renderer.show(user, Screen((List(line).filter(_.nonEmpty) :+ expLine).mkString("\n\n"), Nil))
+                  _      <- renderer.show(user, Screen(content.text("hedgeSong.questDone"), Nil))
+                  _      <- showShop(user, renderer)
+                } yield ()
+    } yield ()
+
+  /** Съеденные камни — снова вещами: в ларец героя, а что не влезло — в сумку.
+    * Возвращает, что легло в ларец и что в сумку. Место в ларце есть всегда:
+    * ступень сверху добавляет пятнадцать мест, а камней не больше десяти, —
+    * сумка тут на всякий случай. Без хранилища вещей камни не создать — тогда
+    * ничего. */
+  private def returnGems(hero: Hero, gems: List[Item]): Task[(List[Item], List[Item])] =
+    itemRepo match {
+      case None => ZIO.succeed((Nil, Nil))
+      case Some(items) =>
+        ZIO.foldLeft(gems)((List.empty[Item], List.empty[Item])) { case ((inCasket, inBag), gem) =>
+          items.persist(hero.id, gem).flatMap { saved =>
+            artifacts.put(hero.id, ArtifactKind.Casket, saved).either.flatMap {
+              case Right(_) => ZIO.succeed((inCasket :+ saved, inBag))
+              case Left(_)  => inventoryRepo.addItem(hero.id, saved).either.map {
+                case Right(_) => (inCasket, inBag :+ saved)
+                case Left(_)  => (inCasket, inBag)
+              }
+            }
+          }
+        }
+    }
 
   /** Карточка товара: рассказ Фета, цена и что сейчас с артефактом у героя. */
   private def showGoods(user: User, kind: ArtifactKind, renderer: Renderer): Task[Unit] =
