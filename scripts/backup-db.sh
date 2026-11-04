@@ -10,9 +10,10 @@
 # Drive (rclone, remote «gdrive») → там удаляются копии старше 30 дней, на
 # сервере остаются 3 последние.
 #
-# Данные vk_seen_messages в дамп не идут: это отметки «сообщение ВК уже
-# обработано», они живут сутки, и восстанавливать их незачем — схема таблицы
-# в дампе остаётся. Сломался любой шаг — сообщение в ВК всем из
+# Данные vk_inbox (очередь входящих событий ВК: неделя сырых событий, ~90
+# тысяч в день) и vk_seen_messages (прежние отметки «уже обработано») в дамп не
+# идут: это служебное, восстанавливать его незачем, а дамп раздулся бы в
+# десятки раз. Схемы таблиц в дампе остаются. Сломался любой шаг — сообщение в ВК всем из
 # BACKUP_ALERT_VK_IDS (.env) и выход с ошибкой; старые копии тогда не трогаются.
 #
 # BACKUP_REMOTE — куда класть копии вместо gdrive:pangea-backups. Нужен, чтобы
@@ -63,7 +64,7 @@ file="$LOCAL_DIR/pangea_$(date +%F_%H%M).dump"
 
 step="дамп базы"
 docker compose exec -T postgres sh -c \
-  'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc --exclude-table-data=vk_seen_messages' > "$file.part"
+  'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc --exclude-table-data=vk_inbox --exclude-table-data=vk_seen_messages' > "$file.part"
 mv "$file.part" "$file"
 
 step="проверка архива"

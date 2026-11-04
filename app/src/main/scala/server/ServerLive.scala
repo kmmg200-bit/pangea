@@ -8,16 +8,14 @@ import org.http4s.dsl.Http4sDsl
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.implicits._
 import org.http4s.{HttpApp, HttpRoutes}
-import pangea.dao.vk.SeenMessageDao
+import pangea.dao.vk.VkInboxDao
 import pangea.metrics.GameMetrics
-import pangea.model.user.VkId
+import pangea.model.vk.{InboxEvent, InboxKind}
 import pangea.service.{Background, ErrorLog}
 import pangea.service.admin.{AdminConfig, AdminPanel}
 import pangea.service.donation.Donations
 import pangea.service.miniapp.MiniApp
-import pangea.service.state.{StateHandler, UserAction}
 import pangea.service.activity.GroupEvent
-import pangea.service.chat.ChatCommand
 import server.model.{ServerConfig, VkEvent}
 import zio.interop.catz._
 import zio.{Task, UIO, ZIO}
@@ -27,11 +25,10 @@ import scala.concurrent.duration.{DurationInt, FiniteDuration}
 
 final class ServerLive(
   config: ServerConfig,
-  stateHandler: StateHandler,
   adminConfig: AdminConfig,
   donations: Donations,
   background: Background,
-  seen: SeenMessageDao,
+  inbox: VkInboxDao,
   miniApp: MiniApp
 ) extends Server {
 
@@ -63,93 +60,59 @@ final class ServerLive(
         // посты для конкурса) падало — «Body Has Been Consumed Completely
         // Already». Событие ВК разбираем из того же JSON.
         json <- req.as[Json]
-        // «ok» — сразу, событие — в фоне. ВК ждёт ответа: не дождавшись, он
-        // повторяет событие, а после череды таймаутов притормаживает отправку
-        // всем игрокам разом. Порядок ходов одного игрока держит его лок,
-        // повтор ВК отсекает номер события. В фон — не обычным fork: тот
-        // прервался бы вместе с запросом, как только мы ответим. И не
-        // forkDaemon: остановка сервера оборвала бы ход посреди записей, а ВК
-        // после «ok» его уже не повторит, — фон ход дождётся (см. Background).
-        _    <- background.fork(handle(json, ServerLive.Callback))
+        // «ok» — когда событие легло в очередь (vk_inbox), а не когда сыгран
+        // ход: запись — миллисекунды, а ВК, не дождавшись ответа, повторяет
+        // событие и после череды таймаутов притормаживает отправку всем
+        // игрокам разом. Не легло (база недоступна) — 500, и ВК повторит
+        // событие сам: потерять его нельзя. Ход сыграет InboxWorker.
+        _    <- accept(json, ServerLive.Callback)
         resp <- Ok("ok")
       } yield resp
   }
 
-  /** Пачка сообщений, которые бот сам забрал у ВК по Long Poll (см. VkLongPoll).
-    * По Callback ВК присылает их по одному, и порядок ходов игрока держит сам
-    * ВК; здесь они приходят разом — поэтому сообщения одного игрока идут по
-    * очереди, в порядке ВК, а разные игроки — параллельно, как и по Callback. */
-  override def longPoll(updates: List[Json]): UIO[Unit] =
-    ZIO.foreachDiscard(updates.groupBy(ServerLive.peerOf).values)(own =>
-      background.fork(ZIO.foreachDiscard(own)(handle(_, ServerLive.LongPoll))))
+  /** Пачка сообщений, которые бот сам забрал у ВК по Long Poll (см.
+    * VkLongPoll), — в очередь по одному, в порядке ВК: по нему и пойдут ходы
+    * каждого игрока. */
+  override def longPoll(updates: List[Json]): Task[Unit] =
+    ZIO.foreachDiscard(updates)(accept(_, ServerLive.LongPoll))
 
-  /** Событие ВК целиком, пришедшее путём `source`: сообщение игрока или из
-    * беседы — либо событие группы. Любая поломка — и ошибка, и падение кода
-    * (defect) — в лог со всей причиной и с тем, чьё это сообщение. */
-  private def handle(json: Json, source: String): Task[Unit] =
+  /** Событие ВК, пришедшее путём `source`, — в очередь: сообщение игрока или из
+    * беседы, либо событие группы. Одно сообщение приходит двумя путями —
+    * Callback и Long Poll: в очередь ложится пришедшее первым, второе только
+    * отмечается в метриках. */
+  private def accept(json: Json, source: String): Task[Unit] =
     json.as[VkEvent].toOption match {
       case Some(value) =>
-        val msg = value.`object`.message
+        val msg  = value.`object`.message
+        val kind = if (msg.fromChat) InboxKind.Chat else InboxKind.Message
         // Пароль админ-панели приходит обычным сообщением, а лог отдаётся
         // наружу — в логе от него остаётся только метка.
         val logged = AdminPanel.maskSecrets(msg.text, adminConfig.password)
-        // Одно сообщение приходит двумя путями — Callback и Long Poll: в ход
-        // идёт пришедшее первым, второе только отмечается в метриках.
-        (for {
+        for {
           now   <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
-          first <- seen.firstTime(msg.peerId, msg.id, msg.conversationMessageId.getOrElse(0L), now)
-          _     <- GameMetrics.vkMessage(if (msg.fromChat) "chat" else "message", source, first, msg.date)
-          _     <- ZIO.when(first)(
-                     ZIO.logInfo(s"peer=${msg.peerId} from=${msg.fromId.getOrElse(0L)} id=${msg.id} cmid=${msg.conversationMessageId.getOrElse(0L)} via=$source text=$logged payload=${msg.payload.getOrElse("")}") *>
-                       // Беседа — не игрок: её peer_id за героя принимать нельзя, оттуда
-                       // мы слушаем только команды вроде «Передать».
-                       (if (msg.fromChat) handleChat(msg)
-                        else
-                          stateHandler
-                            .makeActionVK(
-                              VkId(msg.peerId.toString),
-                              msg.id,
-                              UserAction(msg.text, msg.payload)
-                            )))
-        } yield ())
-          .catchAllCause(ErrorLog.logged(s"VK: сообщение не обработано: peer=${msg.peerId} id=${msg.id}"))
-      case None =>
-        GameMetrics.vkEvents.tagged("kind", "group").increment *>
-          groupEvent(json).catchAllCause(ErrorLog.logged("VK: событие группы не обработано"))
+          first <- inbox.accept(InboxEvent.messageKey(msg.peerId, msg.id, msg.conversationMessageId.getOrElse(0L)),
+                                msg.peerId, kind, source, json, msg.date.map(_ * 1000L), now)
+          _     <- GameMetrics.vkMessage(kind.entryName, source, first, msg.date)
+          _     <- ZIO.when(first)(ZIO.logInfo(
+                     s"peer=${msg.peerId} from=${msg.fromId.getOrElse(0L)} id=${msg.id} cmid=${msg.conversationMessageId.getOrElse(0L)} via=$source text=$logged payload=${msg.payload.getOrElse("")}"))
+        } yield ()
+      case None => acceptGroup(json, source)
     }
 
-  /** Что умеет общая беседа: «Передать» в ответ (или пересылкой) на
-    * сообщение того, кому передают, команды о себе — «Мой профиль» и «Моё
-    * снаряжение», ответ на которые уходит в саму беседу, — и «Туториал»: ссылка
-    * на статью о том, как всё устроено в игре. Всё прочее там нас не касается. */
-  private def handleChat(msg: VkEvent.Message): Task[Unit] =
-    msg.fromId.filter(_ > 0L) match {
-      case None => ZIO.unit
-      case Some(from) if ChatCommand.tutorialCommand(msg.text) =>
-        stateHandler.tutorialToChat(VkId(from.toString), msg.chatEventKey)
-      case Some(from) =>
-        ChatCommand.selfCommand(msg.text) match {
-          case Some(command) => stateHandler.selfToChat(VkId(from.toString), command, msg.chatEventKey)
-          case None =>
-            (msg.quotedAuthor, ChatCommand.transferQuery(msg.text)) match {
-              case (Some(to), Some(query)) if to > 0L =>
-                stateHandler.transferFromChat(VkId(from.toString), VkId(to.toString), query, msg.chatEventKey)
-              case _ => ZIO.unit
-            }
-        }
-    }
-
-  /** События группы для конкурса активности. Их легко подделать — а за них
-    * дают дублоны, — поэтому принимаем только с секретом из настроек Callback
-    * API; пока секрет не задан, не принимаем вовсе. Прочие события — в лог,
-    * как и раньше. */
-  private def groupEvent(json: Json): Task[Unit] =
+  /** События группы для билетов за активность. Их легко подделать — а за них
+    * дают билеты, — поэтому в очередь кладём только с секретом из настроек
+    * Callback API; пока секрет не задан, не принимаем вовсе. Прочие события — в
+    * лог, как и раньше. */
+  private def acceptGroup(json: Json, source: String): Task[Unit] =
     GroupEvent.typeOf(json) match {
       case Some(tpe) if GroupEvent.Types.contains(tpe) =>
         val expected = config.vkSecret.map(_.trim).filter(_.nonEmpty)
         if (expected.isEmpty) ZIO.logWarning(s"$tpe: VK_SECRET не задан — билеты за активность не выдаются")
         else if (GroupEvent.secretOf(json) != expected) ZIO.logWarning(s"$tpe с неверным секретом — пропускаю")
-        else ZIO.foreachDiscard(GroupEvent.parse(json))(stateHandler.groupEvent)
+        else
+          ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+            .flatMap(now => inbox.accept(InboxEvent.groupKey(json), ServerLive.GroupQueue, InboxKind.Group, source, json, None, now))
+            .flatMap(first => GameMetrics.vkEvents.tagged("kind", "group").increment.when(first).unit)
       case _ => ZIO.attempt(println(json.noSpaces))
     }
 
@@ -186,11 +149,11 @@ final class ServerLive(
 object ServerLive {
   val ShutdownTimeout: FiniteDuration = 5.seconds
 
-  /** Каким путём пришло событие — метка `source` в метриках доставки. */
+  /** Каким путём пришло событие — метка `source` в метриках доставки и в очереди. */
   val Callback = "callback"
   val LongPoll = "longpoll"
 
-  /** Чья беседа: по ней пачка Long Poll делится на очереди игроков. */
-  private def peerOf(update: Json): Option[Long] =
-    update.hcursor.downField("object").downField("message").get[Long]("peer_id").toOption
+  /** Очередь событий группы в vk_inbox: одна на всех — героя они не трогают, и
+    * порядок с ходами игроков им не нужен. */
+  val GroupQueue: Long = 0L
 }

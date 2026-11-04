@@ -21,7 +21,7 @@ import pangea.dao.journal.JournalLive
 import pangea.dao.schedule.ScheduledTaskDao
 import pangea.dao.sendfailure.SendFailureDao
 import pangea.dao.user.UserDao
-import pangea.dao.vk.SeenMessageDao
+import pangea.dao.vk.VkInboxDao
 import pangea.engine.{Players, SceneContent}
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.auction.AuctionRepository
@@ -33,6 +33,8 @@ import pangea.repository.item.ItemRepository
 import pangea.repository.user.UserRepository
 import pangea.client.tbank.{TBankClient, TBankConfig}
 import pangea.service.Background
+import pangea.metrics.GameMetrics
+import pangea.service.inbox.InboxWorker
 import pangea.service.activity.ActivityContest
 import pangea.service.admin.{AdminConfig, AdminPanel, NameBackfill}
 import pangea.service.donation.Donations
@@ -47,7 +49,7 @@ import pangea.service.sender.vk.config.VkConfig
 import pangea.service.sender.vk.{VkLongPoll, VkPlayers}
 import pangea.service.state.{PlayerLock, StateHandler}
 import pangea.service.state.states.StatesMap
-import server.{MetricsServer, Server}
+import server.{MetricsServer, Server, VkInboxHandler}
 import server.model.ServerConfig
 import zio._
 import zio.logging.backend.SLF4J
@@ -67,7 +69,7 @@ object Main extends ZIOAppDefault {
 
   private type Env =
     Server with SchedulerPoller with Donations with ActivityContest with Transfers with Background with PrometheusPublisher
-      with VkConfig with VkLongPoll with SeenMessageDao
+      with VkConfig with VkLongPoll with VkInboxDao with InboxWorker
 
   /** Метрики: реестр ZIO раз в 5 секунд переписывается в текст для Prometheus
     * (его отдаёт MetricsServer); плюс метрики JVM — память, GC, потоки, CPU.
@@ -89,7 +91,9 @@ object Main extends ZIOAppDefault {
       Transactor.live,
       Api.vk,
       VkLongPoll.live,
-      SeenMessageDao.live,
+      VkInboxDao.live,
+      VkInboxHandler.live,
+      InboxWorker.live,
       // Имя героя — из игры, а нет его — из ВК (см. VkPlayers).
       ZLayer.fromFunction((api: Api, heroDao: HeroDao) => VkPlayers(api, heroDao): Players),
       HeroDao.live,
@@ -182,12 +186,19 @@ object Main extends ZIOAppDefault {
           ZIO.serviceWithZIO[Server](server => background.forkUntilShutdown(longPoll.run(server.longPoll)))))
     }
 
-  /** Отмеченные сообщения ВК (см. SeenMessageDao) старше суток — забыть:
-    * опоздание ВК — минуты, а без уборки таблица росла бы вечно. */
-  private def seenLoop(background: Background) =
-    ZIO.serviceWithZIO[SeenMessageDao] { seen =>
-      background.repeat(1.hour, "Уборка отмеченных сообщений ВК упала")(
-        now.flatMap(t => seen.forget(t - 1.day.toMillis).unit))
+  /** Очередь входящих событий ВК (см. InboxWorker): разбор — до остановки;
+    * при остановке новых событий не берём, начатые ходы дожидается фон. */
+  private def inboxLoop(background: Background) =
+    ZIO.serviceWithZIO[InboxWorker](worker => background.forkUntilShutdown(worker.run))
+
+  /** Обработанные события ВК старше недели — забыть; и сколько ждёт в очереди —
+    * в метрику. */
+  private def inboxCleanupLoop(background: Background) =
+    ZIO.serviceWithZIO[VkInboxDao] { inbox =>
+      background.repeat(1.hour, "Уборка очереди ВК упала")(
+        now.flatMap(t => inbox.forget(t - InboxWorker.Keep.toMillis).unit)) *>
+        background.repeat(5.seconds, "Очередь ВК: не посчитать ждущие")(
+          inbox.pending.flatMap(n => GameMetrics.vkInboxPending.set(n.toDouble)))
     }
 
   private val now = ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
@@ -202,7 +213,8 @@ object Main extends ZIOAppDefault {
         reconcileLoop(background) *>
         contestLoop(background) *>
         mailLoop(background) *>
-        seenLoop(background) *>
+        inboxLoop(background) *>
+        inboxCleanupLoop(background) *>
         longPollLoop(background) *>
         (ZIO.serviceWithZIO[Server](_.run()) <&> ZIO.serviceWithZIO[PrometheusPublisher](MetricsServer.run)))
         .ensuring(background.shutdown)

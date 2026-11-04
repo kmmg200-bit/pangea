@@ -12,11 +12,36 @@ import zio.{Promise, Ref, Task, ZIO, durationInt}
 
 /** Long Poll на поддельном ВК: сообщения доходят по порядку, прочие события
   * отсеиваются, устаревший ключ и потерянная часть очереди лечатся, а после
-  * обрыва связи чтение продолжается с того же места. */
+  * обрыва связи чтение продолжается с того же места. Место хранится вне
+  * процесса: после перезапуска — с него, а несохранённая пачка придёт снова. */
 object VkLongPollSpec extends ZIOSpecDefault {
 
   private val dsl = Http4sDsl[Task]
   import dsl._
+
+  /** Место в памяти — как vk_longpoll. */
+  private final class MemoryCursor(ts: Ref[Option[String]]) extends LongPollCursor {
+    def load: Task[Option[String]]               = ts.get
+    def save(next: String, now: Long): Task[Unit] = ts.set(Some(next))
+  }
+
+  private val pauses = VkLongPoll.Pauses(dropped = 10.millis, refused = 10.millis)
+
+  /** Простой ВК: ключ один, ts 10 → сообщение 1 и ts 11, дальше — пусто. */
+  private def plainVk(asked: Ref[List[String]]): Client[Task] =
+    Client.fromHttpApp(HttpApp[Task] { req =>
+      req.uri.path.renderString match {
+        case "/method/groups.getById"           => Ok("""{"response":{"groups":[{"id":42}],"profiles":[]}}""")
+        case "/method/groups.getLongPollServer" => Ok("""{"response":{"key":"k","server":"https://lp.vk.test/wh42","ts":"10"}}""")
+        case "/wh42" =>
+          val ts = req.params.getOrElse("ts", "")
+          asked.update(_ :+ ts) *> (ts match {
+            case "10" => Ok(s"""{"ts":"11","updates":[${message(1)}]}""")
+            case _    => ZIO.sleep(5.millis) *> Ok(s"""{"ts":"$ts","updates":[]}""")
+          })
+        case _ => NotFound()
+      }
+    })
 
   private def message(n: Int) =
     s"""{"type":"message_new","object":{"message":{"id":$n,"peer_id":7,"text":"m$n"}},"group_id":42}"""
@@ -60,8 +85,8 @@ object VkLongPollSpec extends ZIOSpecDefault {
         dropped  <- Ref.make(false)
         got      <- Ref.make(List.empty[Long])
         three    <- Promise.make[Nothing, Unit]
-        poll      = new VkLongPoll(fakeVk(requests, keys, dropped), VkConfig("token"),
-                      VkLongPoll.Pauses(dropped = 10.millis, refused = 10.millis))
+        saved    <- Ref.make(Option.empty[String])
+        poll      = new VkLongPoll(fakeVk(requests, keys, dropped), VkConfig("token"), new MemoryCursor(saved), pauses)
         fiber    <- poll.run(updates =>
                       got.updateAndGet(_ ++ updates.flatMap(_.hcursor.downField("object").downField("message").get[Long]("id").toOption))
                         .flatMap(ids => ZIO.when(ids.size >= 3)(three.succeed(())).unit)).fork
@@ -69,10 +94,41 @@ object VkLongPollSpec extends ZIOSpecDefault {
         _        <- fiber.interrupt
         ids      <- got.get
         asked    <- requests.get
-      } yield assertTrue(ids == List(1L, 2L, 3L)) &&
+        last     <- saved.get
+      } yield assertTrue(ids == List(1L, 2L, 3L), last == Some("21")) &&
               // ключ устарел — новый, а место прежнее; потери — с места, что назвал ВК;
               // обрыв — снова с того же места, но уже с новым ключом
               assertTrue(asked.take(6) == List("k1" -> "10", "k1" -> "11", "k2" -> "11", "k2" -> "12", "k2" -> "20", "k3" -> "20"))
+    } @@ TestAspect.withLiveClock @@ TestAspect.timeout(10.seconds),
+
+    test("после перезапуска — с сохранённого места, а не с текущего") {
+      for {
+        asked <- Ref.make(List.empty[String])
+        saved <- Ref.make(Option("11"))
+        fiber <- new VkLongPoll(plainVk(asked), VkConfig("token"), new MemoryCursor(saved), pauses)
+                   .run(_ => ZIO.unit).fork
+        _     <- asked.get.repeatUntil(_.nonEmpty)
+        _     <- fiber.interrupt
+        first <- asked.get.map(_.headOption)
+      } yield assertTrue(first == Some("11"))
+    } @@ TestAspect.withLiveClock @@ TestAspect.timeout(10.seconds),
+
+    test("пачку не сохранили — место не двигается, та же пачка приходит ещё раз") {
+      for {
+        asked <- Ref.make(List.empty[String])
+        saved <- Ref.make(Option.empty[String])
+        calls <- Ref.make(0)
+        kept  <- Promise.make[Nothing, Unit]
+        fiber <- new VkLongPoll(plainVk(asked), VkConfig("token"), new MemoryCursor(saved), pauses)
+                   .run(_ => calls.updateAndGet(_ + 1).flatMap(n =>
+                     if (n == 1) ZIO.fail(new RuntimeException("база недоступна")) else kept.succeed(()).unit)).fork
+        _     <- kept.await
+        _     <- saved.get.repeatUntil(_.nonEmpty)
+        _     <- fiber.interrupt
+        ts    <- asked.get
+        last  <- saved.get
+        n     <- calls.get
+      } yield assertTrue(ts.take(2) == List("10", "10"), n == 2, last == Some("11"))
     } @@ TestAspect.withLiveClock @@ TestAspect.timeout(10.seconds),
 
     test("id сообщества — и в новом ответе groups.getById, и в старом") {

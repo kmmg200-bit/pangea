@@ -58,6 +58,19 @@ object GameMetrics {
   val vkSendFailures: Metric.Counter[Long] =
     Metric.counter("pangea_vk_send_failures_total", "Сообщения игрокам, не ушедшие и после повторов (как send_failures)")
 
+  // ── Очередь входящих событий ВК (vk_inbox) ────────────────────────────────────
+
+  /** От записи события в очередь до начала его обработки: опрос, очередь
+    * игрока (его следующее нажатие ждёт предыдущее). */
+  val vkInboxWaitSeconds: Metric.Histogram[Double] =
+    Metric.histogram("pangea_vk_inbox_wait_seconds", "Событие ВК в очереди: от записи до начала хода", Latency)
+
+  val vkInboxPending: Metric.Gauge[Double] =
+    Metric.gauge("pangea_vk_inbox_pending", "Событий ВК в очереди: ждут и в работе")
+
+  val vkInboxFailed: Metric.Counter[Long] =
+    Metric.counter("pangea_vk_inbox_failed_total", "События ВК, не обработанные и после повторов")
+
   // ── Таймеры ──────────────────────────────────────────────────────────────────
 
   val schedulerLagSeconds: Metric.Histogram[Double] =
