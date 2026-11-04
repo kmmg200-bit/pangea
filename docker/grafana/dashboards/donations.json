@@ -64,7 +64,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT coalesce(sum(p.amount_kopecks), 0) / 100.0 AS \"₽\"\nFROM payments p\nWHERE p.granted AND p.status <> 'Refunded' AND $__timeFilter(to_timestamp(p.created_at / 1000.0))"
+          "rawSql": "SELECT coalesce(sum(p.amount_kopecks), 0) / 100.0 AS \"₽\"\nFROM payments p\nWHERE p.granted AND p.status <> 'Refunded' AND p.created_at BETWEEN $__unixEpochFrom()::bigint * 1000 AND $__unixEpochTo()::bigint * 1000"
         }
       ]
     },
@@ -117,7 +117,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT count(*) AS \"донатов\"\nFROM payments p\nWHERE p.granted AND p.status <> 'Refunded' AND $__timeFilter(to_timestamp(p.created_at / 1000.0))"
+          "rawSql": "SELECT count(*) AS \"донатов\"\nFROM payments p\nWHERE p.granted AND p.status <> 'Refunded' AND p.created_at BETWEEN $__unixEpochFrom()::bigint * 1000 AND $__unixEpochTo()::bigint * 1000"
         }
       ]
     },
@@ -170,7 +170,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT count(DISTINCT p.user_id) AS \"игроков\"\nFROM payments p\nWHERE p.granted AND p.status <> 'Refunded' AND $__timeFilter(to_timestamp(p.created_at / 1000.0))"
+          "rawSql": "SELECT count(DISTINCT p.user_id) AS \"игроков\"\nFROM payments p\nWHERE p.granted AND p.status <> 'Refunded' AND p.created_at BETWEEN $__unixEpochFrom()::bigint * 1000 AND $__unixEpochTo()::bigint * 1000"
         }
       ]
     },
@@ -282,7 +282,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "time_series",
-          "rawSql": "SELECT date_trunc('day', to_timestamp(p.created_at / 1000.0) AT TIME ZONE 'Europe/Moscow') AT TIME ZONE 'Europe/Moscow' AS time,\n       sum(p.amount_kopecks) / 100.0 AS \"₽\"\nFROM payments p\nWHERE p.granted AND p.status <> 'Refunded' AND $__timeFilter(to_timestamp(p.created_at / 1000.0))\nGROUP BY 1\nORDER BY 1"
+          "rawSql": "SELECT date_trunc('day', to_timestamp(p.created_at / 1000.0) AT TIME ZONE 'Europe/Moscow') AT TIME ZONE 'Europe/Moscow' AS time,\n       sum(p.amount_kopecks) / 100.0 AS \"₽\"\nFROM payments p\nWHERE p.granted AND p.status <> 'Refunded' AND p.created_at BETWEEN $__unixEpochFrom()::bigint * 1000 AND $__unixEpochTo()::bigint * 1000\nGROUP BY 1\nORDER BY 1"
         }
       ]
     },
@@ -337,7 +337,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "time_series",
-          "rawSql": "SELECT to_timestamp(p.created_at / 1000.0) AS time,\n       coalesce(h.name, 'vk.com/id' || u.vk_id) AS metric,\n       p.amount_kopecks / 100.0 AS \"₽\"\nFROM payments p\nLEFT JOIN users u ON u.id = p.user_id\nLEFT JOIN heroes h ON h.user_id = p.user_id\nWHERE p.granted AND p.status <> 'Refunded' AND $__timeFilter(to_timestamp(p.created_at / 1000.0))\nORDER BY 1"
+          "rawSql": "SELECT to_timestamp(p.created_at / 1000.0) AS time,\n       coalesce(h.name, 'vk.com/id' || u.vk_id) AS metric,\n       p.amount_kopecks / 100.0 AS \"₽\"\nFROM payments p\nLEFT JOIN users u ON u.id = p.user_id\nLEFT JOIN heroes h ON h.user_id = p.user_id\nWHERE p.granted AND p.status <> 'Refunded' AND p.created_at BETWEEN $__unixEpochFrom()::bigint * 1000 AND $__unixEpochTo()::bigint * 1000\nORDER BY 1"
         }
       ]
     },
@@ -401,7 +401,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT to_timestamp(p.created_at / 1000.0) AS \"Когда\",\n       coalesce(h.name, '—') AS \"Герой\",\n       'vk.com/id' || u.vk_id AS \"ВК\",\n       p.amount_kopecks / 100 AS \"₽\",\n       p.doubloons AS \"Дублоны\",\n       p.sku AS \"Пакет\"\nFROM payments p\nLEFT JOIN users u ON u.id = p.user_id\nLEFT JOIN heroes h ON h.user_id = p.user_id\nWHERE p.granted AND p.status <> 'Refunded' AND $__timeFilter(to_timestamp(p.created_at / 1000.0))\nORDER BY p.created_at DESC\nLIMIT 500"
+          "rawSql": "SELECT to_timestamp(p.created_at / 1000.0) AS \"Когда\",\n       coalesce(h.name, '—') AS \"Герой\",\n       'vk.com/id' || u.vk_id AS \"ВК\",\n       p.amount_kopecks / 100 AS \"₽\",\n       p.doubloons AS \"Дублоны\",\n       p.sku AS \"Пакет\"\nFROM payments p\nLEFT JOIN users u ON u.id = p.user_id\nLEFT JOIN heroes h ON h.user_id = p.user_id\nWHERE p.granted AND p.status <> 'Refunded' AND p.created_at BETWEEN $__unixEpochFrom()::bigint * 1000 AND $__unixEpochTo()::bigint * 1000\nORDER BY p.created_at DESC\nLIMIT 500"
         }
       ]
     }
