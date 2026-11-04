@@ -169,6 +169,10 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   // «Тот, кто уговаривает деревья».
   case object HedgeSong extends StateType // эльф поёт изгороди: встреча, три волны орков, ветвь
 
+  // «Вскрытая бочка».
+  case object BarrelThieves extends StateType // склад у причала: гоблины, что вскрыли бочку, и бой с ними
+  case object BarrelReturn  extends StateType // украденное — обратно в бочку, награда; дальше — сама бочка
+
   // Смена расы: купон из лавки Фета — история расы до пробуждения в новом теле.
   case object RaceQuest extends StateType
 

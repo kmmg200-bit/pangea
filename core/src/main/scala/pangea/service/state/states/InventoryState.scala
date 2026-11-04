@@ -27,7 +27,7 @@ import pangea.service.state.states.home.Racks
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.states.murloc.MurlocVillageState
 import pangea.service.state.states.race.RaceQuestState
-import pangea.service.state.{BeltContents, HedgeSongQuest, HerbLore, InventoryFeedback, ItemMenu, MarisaQuest, MurlocQuest, NpcQuestLog, QuestGoods,
+import pangea.service.state.{BarrelThievesQuest, BeltContents, HedgeSongQuest, HerbLore, InventoryFeedback, ItemMenu, MarisaQuest, MurlocQuest, NpcQuestLog, QuestGoods,
   QuestSupport, SlotChoice, StackMove, State,
   StrayCasketQuest, UiScene, UserAction}
 import zio.{Random, Task, ZIO}
@@ -99,6 +99,8 @@ case class InventoryState(
       // чтобы вёл к хозяину.
       "StrayFeed"         -> Target.Run { (u, ua, r) => feedStray(u, ua, r) },
       "StrayGo"           -> Target.Run { (u, _,  r) => goStray(u, r) },
+      // «Вскрытая бочка»: по следу банды, что вскрыла бочку, — только из города.
+      "BarrelTrail"       -> Target.Run { (u, _,  r) => followTrail(u, r) },
       // Трактаты Густаво: читать, пока не осилишь.
       "ReadTreatise"      -> Target.Run { (u, _,  r) => readTreatise(u, r) },
       "IdentifyFlower"    -> Target.Run { (u, _,  r) => identifyFlower(u, r) },
@@ -113,7 +115,7 @@ case class InventoryState(
   override def targetStates: Set[StateType] =
     Set(StateType.HeroStats, StateType.Backpack, StateType.Inventory, StateType.Socketing,
         StateType.MarisaHunt, StateType.MurlocVillage, StateType.RaceQuest, StateType.NameChange,
-        StateType.StrayCasket) ++ BackpackOrigins
+        StateType.StrayCasket, StateType.BarrelThieves) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.
@@ -503,9 +505,13 @@ case class InventoryState(
         // Сытый бродячий ларец: «Идти за ларцом» — он поведёт к хозяину.
         case Some(QuestItemKind.StrayCasket) if StrayCasketQuest.leads(quests) =>
           Some(content.choice("StrayGo", "strayCasket.goLabel").copy(row = Some(0)))
+        // Улика из бочки, место известно: «Идти по следу».
+        case Some(QuestItemKind.BarrelClue) if BarrelThievesQuest.onTrail(quests) =>
+          Some(content.choice("BarrelTrail", "barrelThieves.trailLabel").copy(row = Some(0)))
         case _ => None
       }
-      text    = InventoryState.questText(content, item, quests) +
+      hero   <- getHero(user)
+      text    = InventoryState.questText(content, item, quests, hero.lvl) +
                   (if (item.questItem.contains(QuestItemKind.StrayCasket) && StrayCasketQuest.hungry(quests) && feed.isEmpty)
                      "\n" + content.text("strayCasket.card.noGems") else "")
       _ <- renderer.show(user, Screen(text, use.toList ++ feed :+ exit))
@@ -566,6 +572,18 @@ case class InventoryState(
                   renderer.show(user, Screen(content.text("strayCasket.card.onlyInLabyrinth"), Nil)) *>
                     backToCard(user, renderer)
                 else ZIO.succeed(StateType.StrayCasket)
+    } yield res
+
+  /** По следу банды, что вскрыла бочку: только из города (как сюжетные карты)
+    * и только когда Ришелье назвал место. */
+  private def followTrail(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      from   <- heroDao.readReturnState(user.userId)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      res    <- if (!BarrelThievesQuest.onTrail(quests)) backToCard(user, renderer)
+                else if (!from.exists(StateType.cityStates.contains))
+                  renderer.show(user, Screen(content.text("barrelThieves.onlyInCity"), Nil)) *> backToCard(user, renderer)
+                else ZIO.succeed(StateType.BarrelThieves)
     } yield res
 
   /** Повернуть ключ стойки: магия меняет надетое местами с тем, что висит на
@@ -1473,15 +1491,16 @@ object InventoryState {
     * описывает вещи Mini App. `quests` — ход заданий героя: вскрыто ли письмо
     * Марисы, сколько съел бродячий ларец. */
   def cardText(content: SceneContent, item: Item, hero: Hero, quests: NpcQuests): String = item match {
-    case _ if item.isQuestItem => questText(content, item, quests)
+    case _ if item.isQuestItem => questText(content, item, quests, hero.lvl)
     case Brewed(kind)          => brewText(content, item, kind)
     case _                     => itemText(item, hero.equipment, Some(hero))
   }
 
-  /** Сюжетный предмет: описание, у письма, карты и бродячего ларца — ещё и
-    * сложность; к невскрытому письму — подсказка, у кого спросить; у ларца —
-    * что с ним сейчас. */
-  def questText(content: SceneContent, item: Item, quests: NpcQuests): String = {
+  /** Сюжетный предмет: описание, у письма, карты, бродячего ларца и улики из
+    * бочки — ещё и сложность (у улики — по уровню героя: банда его уровня); к
+    * невскрытому письму — подсказка, у кого спросить; у ларца и улики — что с
+    * ними сейчас. */
+  def questText(content: SceneContent, item: Item, quests: NpcQuests, heroLvl: Long): String = {
     def difficulty(n: Int) = content.format("marisa.difficulty", "difficulty" -> Difficulty.render(n))
     val letterOpened = quests.of(NpcQuest.Marisa).bonus
     item.questItem match {
@@ -1496,6 +1515,14 @@ object InventoryState {
           (if (now.isEmpty) "" else "\n\n" + now)
       case Some(QuestItemKind.HedgeBranch) =>
         s"${item.displayTitle}\n${difficulty(HedgeSongQuest.Level)}\n\n${QuestItemKind.HedgeBranch.description}"
+      case Some(QuestItemKind.BarrelClue) =>
+        val now =
+          if (BarrelThievesQuest.onTrail(quests))
+            content.format("barrelThieves.card.onTrail", "gang" -> BarrelThievesQuest.gangName(content, quests))
+          else if (BarrelThievesQuest.askAround(quests)) content.text("barrelThieves.askAround")
+          else ""
+        s"${item.displayTitle}\n${difficulty(heroLvl.toInt)}\n\n${QuestItemKind.BarrelClue.description}" +
+          (if (now.isEmpty) "" else "\n\n" + now)
       case Some(kind @ (QuestItemKind.KelvinMap | QuestItemKind.RaceCoupon | QuestItemKind.NameCoupon)) =>
         s"${item.displayTitle}\n\n${kind.description}"
       case Some(kind) if QuestItemKind.rackOf(kind).isDefined || HerbLore.isTreatise(kind) =>

@@ -107,6 +107,8 @@ object HomeAlert {
       SquadMine        -> "штольня под Серебряной жилой",
       StrayCasket      -> "бродячий ларец в лабиринте",
       HedgeSong        -> "эльф поёт изгороди",
+      BarrelThieves    -> "склад у причала: воры бочки",
+      BarrelReturn     -> "возврат украденного в бочку",
       RaceQuest        -> "квест смены расы",
       NameChange       -> "смена имени"
     )

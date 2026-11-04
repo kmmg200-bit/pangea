@@ -73,6 +73,8 @@ import pangea.model.state.StateType.{
   SquadMine,
   StrayCasket,
   HedgeSong,
+  BarrelThieves,
+  BarrelReturn,
   RaceQuest,
   NameChange,
   TreasureHunt,
@@ -139,6 +141,7 @@ import pangea.service.state.states.murloc.{MurlocElderState, MurlocVillageState}
 import pangea.service.state.states.lostsquad.SquadMineState
 import pangea.service.state.states.straycasket.StrayCasketState
 import pangea.service.state.states.hedgesong.HedgeSongState
+import pangea.service.state.states.barrelthieves.{BarrelReturnState, BarrelThievesState}
 import pangea.service.state.states.race.RaceQuestState
 import pangea.service.state.states.name.NameChangeState
 import pangea.service.state.states.merchant.MerchantState
@@ -223,7 +226,9 @@ object StatesMap {
             heroDao,
             inventoryRepo,
             barrelRepo,
-            content
+            content,
+            // Улика воров («Вскрытая бочка») — новая вещь: без хранилища вещей её не создать.
+            Some(itemRepo)
           ),
           Registration -> RegistrationState(
             players,
@@ -321,6 +326,8 @@ object StatesMap {
           SquadMine         -> SquadMineState(heroDao, inventoryRepo, itemRepo, content),
           StrayCasket       -> StrayCasketState(heroDao, inventoryRepo, itemRepo, content, artifacts),
           HedgeSong         -> HedgeSongState(heroDao, inventoryRepo, itemRepo, content),
+          BarrelThieves     -> BarrelThievesState(heroDao, content),
+          BarrelReturn      -> BarrelReturnState(heroDao, inventoryRepo, barrelRepo, content),
           RaceQuest         -> RaceQuestState(heroDao, inventoryRepo, content),
           NameChange        -> NameChangeState(heroDao, inventoryRepo, content),
           Outskirts -> OutskirtsState(

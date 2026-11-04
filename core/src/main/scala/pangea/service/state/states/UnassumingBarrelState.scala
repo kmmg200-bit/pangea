@@ -7,25 +7,36 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.barrel.Barrel
 import pangea.model.hero.Hero
-import pangea.model.item.{Item, ItemStack}
+import pangea.model.item.{Item, ItemStack, QuestItemKind}
+import pangea.model.quest.Difficulty
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.barrel.{BarrelRepoError, BarrelRepository}
 import pangea.repository.inventory.{InventoryRepoError, InventoryRepository}
+import pangea.repository.item.ItemRepository
 import pangea.service.state.ItemMenu
 import pangea.service.state.states.UnassumingBarrelState._
-import pangea.service.state.{CityExit, InventoryFeedback, StackMove, State, UserAction}
-import zio.{Task, ZIO}
+import pangea.service.state.{BarrelThievesQuest, CityExit, InventoryFeedback, NpcQuestLog, StackMove, State, UserAction}
+import zio.{Random, Task, ZIO}
+
+import java.util.concurrent.TimeUnit
 
 /** Неприметная бочка в Портовом квартале — личное хранилище игрока: до
  *  [[Barrel.MaxItems]] предметов и до [[Barrel.MaxSilver]] серебра (по 10/10 000), отдельно от
  *  инвентаря и кошелька. Текстовый ввод суммы серебра: режим (`deposit` /
- *  `withdraw`) хранится в `heroes.scene_data`, fallback Branch'а парсит число. */
+ *  `withdraw`) хранится в `heroes.scene_data`, fallback Branch'а парсит число.
+ *
+ *  «Вскрытая бочка» (BarrelThievesQuest): при открытии бочки, не чаще раза в
+ *  сутки, — жребий на кражу. Выпало — гоблины уносят всё, на дне остаётся
+ *  улика. Пока украденное не вернули, бочка вскрыта: в неё ничего не кладут,
+ *  забрать можно только улику. Без хранилища вещей (`itemRepo`) улику не
+ *  создать — тогда и жребий не бросают. */
 case class UnassumingBarrelState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
   barrelRepo:    BarrelRepository,
-  content:       SceneContent
+  content:       SceneContent,
+  itemRepo:      Option[ItemRepository] = None
 ) extends State {
 
   private val branch = new Branch(
@@ -41,6 +52,7 @@ case class UnassumingBarrelState(
       "DepositSilverAll"    -> Target.Run { (u, _, r) => depositAllSilver(u, r).as(StateType.UnassumingBarrel) },
       "WithdrawSilverMenu"  -> Target.Run { (u, _, r) => writeScene(u, BarrelScene(barrelMode = Some(ModeWithdrawSilver))) *> showWithdrawSilver(u, r).as(StateType.UnassumingBarrel) },
       "WithdrawSilverAll"   -> Target.Run { (u, _, r) => withdrawAllSilver(u, r).as(StateType.UnassumingBarrel) },
+      "BarrelTakeClue"      -> Target.Run { (u, _, r) => takeClue(u, r).as(StateType.UnassumingBarrel) },
       "LeaveBarrel"         -> Target.Goto(StateType.HarborQuarter),
       CityExit.route,
       CityExit.route
@@ -51,31 +63,99 @@ case class UnassumingBarrelState(
   override def targetStates: Set[StateType] = branch.gotoTargets
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
-    resetScene(user) *> showMenu(user, renderer)
+    resetScene(user) *> rollThieves(user).flatMap(robbedNow => showMenu(user, renderer, robbedNow))
 
+  /** Вскрытая бочка принимает только «Назад», выход в город и «Забрать улику»:
+    * любая другая кнопка — старая или про «положить» — снова показывает её. */
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
-    branch.act(user, ua, renderer)
+    getBarrel(user).flatMap { barrel =>
+      if (barrel.robbed && !parseAction(ua.payload).exists(RobbedActions.contains))
+        resetScene(user) *> showMenu(user, renderer).as(StateType.UnassumingBarrel)
+      else branch.act(user, ua, renderer)
+    }
+
+  // --- Воры («Вскрытая бочка») ---
+
+  /** Жребий на кражу при открытии бочки — не чаще раза в сутки. Выпало —
+    * гоблины уносят всё, на дне остаётся улика, задание на первом шаге.
+    * Возвращает, вскрыли ли бочку сейчас. */
+  private def rollThieves(user: User): Task[Boolean] =
+    itemRepo match {
+      case None => ZIO.succeed(false)
+      case Some(items) =>
+        for {
+          now    <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+          hero   <- getHero(user)
+          quests <- NpcQuestLog.load(heroDao, user.userId)
+          barrel <- barrelRepo.get(hero.id).mapError(asThrowable)
+          robbed <- if (!BarrelThievesQuest.canRoll(hero, quests, barrel, now)) ZIO.succeed(false)
+                    else for {
+                      roll <- Random.nextIntBounded(100)
+                      hit   = roll < BarrelThievesQuest.ChancePct
+                      _    <- if (!hit) barrelRepo.markRolled(hero.id, now).mapError(asThrowable)
+                              else for {
+                                pick <- Random.nextIntBounded(Int.MaxValue)
+                                gang  = BarrelThievesQuest.pickGang(BarrelThievesQuest.firstTime(hero),
+                                          content.list(BarrelThievesQuest.GangsKey).size, pick)
+                                clue <- items.persist(hero.id, QuestItemKind.item(QuestItemKind.BarrelClue))
+                                _    <- barrelRepo.steal(hero.id, clue, now).mapError(asThrowable)
+                                _    <- NpcQuestLog.save(heroDao, user.userId, BarrelThievesQuest.started(quests, gang, now))
+                              } yield ()
+                    } yield hit
+        } yield robbed
+    }
+
+  /** Вскрытая бочка: что случилось, сложность (по уровню героя) и куда идти;
+    * «Забрать улику», пока она ещё на дне. */
+  private def robbedScreen(barrel: Barrel, hero: Hero, robbedNow: Boolean): Screen = {
+    val clue = barrel.items.data.exists(_.questItem.contains(QuestItemKind.BarrelClue))
+    val text = content.text(if (robbedNow) "barrelThieves.robbed" else "barrelThieves.stillRobbed") + "\n\n" +
+      content.format("marisa.difficulty", "difficulty" -> Difficulty.render(hero.lvl.toInt)) + "\n\n" +
+      content.text("barrelThieves.askAround")
+    Screen(text, List(
+      Option.when(clue)(content.choice("BarrelTakeClue", "barrelThieves.takeClueLabel").copy(row = Some(0))),
+      Some(Choice("LeaveBarrel", content.text("barrel.menu.leave"), color = ChoiceColor.Negative, row = Some(1))),
+      Some(CityExit.button(content, Some(1)))).flatten)
+  }
+
+  /** Улику — со дна бочки в сумку: места сюжетное не занимает. */
+  private def takeClue(user: User, renderer: Renderer): Task[Unit] =
+    for {
+      hero   <- getHero(user)
+      barrel <- barrelRepo.get(hero.id).mapError(asThrowable)
+      _      <- ZIO.foreachDiscard(barrel.items.data.find(_.questItem.contains(QuestItemKind.BarrelClue))) { clue =>
+                  barrelRepo.withdraw(hero.id, clue.id).mapError(asThrowable)
+                    .flatMap(got => inventoryRepo.addItem(hero.id, got).mapError(asThrowable)) *>
+                    renderer.show(user, Screen(content.text("barrelThieves.clueTaken") + "\n" +
+                      content.format("marisa.questItemAdded", "item" -> QuestItemKind.BarrelClue.displayName), Nil))
+                }
+      _      <- showMenu(user, renderer)
+    } yield ()
 
   // --- Меню бочки ---
 
-  private def showMenu(user: User, renderer: Renderer): Task[Unit] =
-    for {
-      barrel <- getBarrel(user)
-      text    = content.format("barrel.menu.text",
-                  "items"     -> barrel.occupied.toString,
-                  "maxItems"  -> Barrel.MaxItems.toString,
-                  "silver"    -> barrel.silver.toString,
-                  "maxSilver" -> Barrel.MaxSilver.toString)
-      choices = List(
-        Choice("DepositItemsMenu",   content.text("barrel.menu.depositItems"),  row = Some(0)),
-        Choice("WithdrawItemsMenu",  content.text("barrel.menu.withdrawItems"), row = Some(0)),
-        Choice("DepositSilverMenu",  content.text("barrel.menu.depositSilver"),   row = Some(1)),
-        Choice("WithdrawSilverMenu", content.text("barrel.menu.withdrawSilver"),  row = Some(1)),
-        Choice("LeaveBarrel",        content.text("barrel.menu.leave"),         color = ChoiceColor.Negative, row = Some(2)),
-        CityExit.button(content, Some(2))
-      )
-      _ <- renderer.show(user, Screen(text, choices))
-    } yield ()
+  private def showMenu(user: User, renderer: Renderer, robbedNow: Boolean = false): Task[Unit] =
+    getHero(user).flatMap(hero => barrelRepo.get(hero.id).mapError(asThrowable).flatMap { barrel =>
+      if (barrel.robbed) renderer.show(user, robbedScreen(barrel, hero, robbedNow))
+      else plainMenu(user, renderer, barrel)
+    })
+
+  private def plainMenu(user: User, renderer: Renderer, barrel: Barrel): Task[Unit] = {
+    val text = content.format("barrel.menu.text",
+      "items"     -> barrel.occupied.toString,
+      "maxItems"  -> Barrel.MaxItems.toString,
+      "silver"    -> barrel.silver.toString,
+      "maxSilver" -> Barrel.MaxSilver.toString)
+    val choices = List(
+      Choice("DepositItemsMenu",   content.text("barrel.menu.depositItems"),  row = Some(0)),
+      Choice("WithdrawItemsMenu",  content.text("barrel.menu.withdrawItems"), row = Some(0)),
+      Choice("DepositSilverMenu",  content.text("barrel.menu.depositSilver"),   row = Some(1)),
+      Choice("WithdrawSilverMenu", content.text("barrel.menu.withdrawSilver"),  row = Some(1)),
+      Choice("LeaveBarrel",        content.text("barrel.menu.leave"),         color = ChoiceColor.Negative, row = Some(2)),
+      CityExit.button(content, Some(2))
+    )
+    renderer.show(user, Screen(text, choices))
+  }
 
   // --- Списки предметов ---
 
@@ -403,6 +483,9 @@ case class UnassumingBarrelState(
 }
 
 object UnassumingBarrelState {
+  /** Что принимает вскрытая бочка. */
+  val RobbedActions: Set[String] = Set("BarrelTakeClue", "LeaveBarrel", "BarrelMenu", CityExit.Action)
+
   val DepositItemPrefix  = "DepositItem_"
   val WithdrawItemPrefix = "WithdrawItem_"
   // «⏬ все N»: за префиксом — id любой вещи стопки.

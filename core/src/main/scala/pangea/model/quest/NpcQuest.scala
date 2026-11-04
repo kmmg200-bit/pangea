@@ -92,6 +92,14 @@ object NpcQuest extends Enum[NpcQuest] {
     * начинают — эльфа надо встретить снова. */
   case object HedgeSong extends NpcQuest("hedgeSong")
 
+  /** «Вскрытая бочка»: гоблины-рабы вскрыли бочку в порту (см.
+    * BarrelThievesQuest) — унесли всё, оставили улику. Шаги: 1 — бочка
+    * вскрыта, узнать в городе, чья работа (Ришелье); 2 — место известно, идти
+    * по следу. `counter` — какая банда (номер в списке банд). Задание
+    * повторяется: после возврата бочку могут вскрыть снова — тогда оно берётся
+    * заново, на первый шаг. */
+  case object BarrelThieves extends NpcQuest("barrelThieves")
+
   def byKey(key: String): Option[NpcQuest] = values.find(_.key == key)
 
   /** Сколько репутации Горн просит набрать трофеями. */

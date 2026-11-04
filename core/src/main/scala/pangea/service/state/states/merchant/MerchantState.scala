@@ -8,7 +8,7 @@ import pangea.domain.Rng
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.generator.item.ItemGenerator
 import pangea.model.hero.Hero
-import pangea.model.item.{FlaskKind, Item, ItemDetails, ItemStack, ItemType, Rarity}
+import pangea.model.item.{FlaskKind, Item, ItemDetails, ItemStack, ItemType, QuestItemKind, Rarity}
 import pangea.model.quest.NpcQuest
 import pangea.model.state.StateType
 import pangea.model.user.User
@@ -18,7 +18,8 @@ import pangea.repository.bank.BankRepository
 import pangea.service.purse.Purse
 import pangea.service.state.states.merchant.MerchantState._
 import pangea.model.quest.{DailyKind, DailyNpc, DailyRates}
-import pangea.service.state.{CharacterMenu, CityExit, DailyDialog, DailyQuestLog, InventoryFeedback, ItemMenu, NpcQuestDialog, QuestSupport, SlotChoice, StackMove, State, TakeAndEquip, UserAction}
+import pangea.service.state.{BarrelThievesQuest, CharacterMenu, CityExit, DailyDialog, DailyQuestLog, InventoryFeedback, ItemMenu,
+  NpcQuestDialog, NpcQuestLog, QuestSupport, SlotChoice, StackMove, State, TakeAndEquip, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -52,6 +53,8 @@ case class MerchantState(
       quest.questAction   -> Target.Run { (u, _, r) => questTalk(u, r) },
       quest.acceptAction  -> Target.Run { (u, _, r) => quest.accept(u, r) *> showMenu(u, r).as(StateType.Merchant) },
       quest.declineAction -> Target.Run { (u, _, r) => showMenu(u, r).as(StateType.Merchant) },
+      // «Вскрытая бочка»: улика из вскрытой бочки — Ришелье знает, чья работа.
+      "RichClue"        -> Target.Run { (u, _, r) => showClue(u, r) },
       "Buy"             -> Target.Run { (u, ua, r) => confirmBuy(u, ua, r) },
       "ConfirmBuy"      -> Target.Run { (u, ua, r) => doBuy(u, ua, r, wear = false) },
       "ConfirmBuyWear"  -> Target.Run { (u, ua, r) => doBuy(u, ua, r, wear = true) },
@@ -552,15 +555,34 @@ case class MerchantState(
 
   private def showMenu(user: User, renderer: Renderer, data: MerchantData, hero: Hero): Task[Unit] =
     for {
-      q    <- quest.load(user)
-      now  <- nowMs
+      q     <- quest.load(user)
+      now   <- nowMs
       // Уговор на сегодня: кнопка рядом с сюжетным заданием.
-      work <- daily.today(hero, now)
-      _    <- renderer.show(user, menuScreen(data, hero, quest.button(q), daily.button(work)))
+      work  <- daily.today(hero, now)
+      // Улика из вскрытой бочки при герое — Ришелье её узнает.
+      has   <- hasClue(hero)
+      clue   = Option.when(BarrelThievesQuest.askAround(q) && has)(
+                 content.choice("RichClue", "barrelThieves.richelieu.showLabel"))
+      _     <- renderer.show(user, menuScreen(data, hero, quest.button(q), daily.button(work), clue))
     } yield ()
 
+  /** Улика из бочки: Ришелье узнаёт гоблинскую работу и говорит, где сидит
+    * банда, — задание на шаге «по следу». Не тот шаг или улики нет — меню. */
+  private def showClue(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      hero   <- getHero(user)
+      quests <- quest.load(user)
+      has    <- hasClue(hero)
+      _      <- if (!BarrelThievesQuest.askAround(quests) || !has)
+                  showMenu(user, renderer)
+                else NpcQuestLog.save(heroDao, user.userId, BarrelThievesQuest.told(quests)) *>
+                  renderer.show(user, Screen(content.format("barrelThieves.richelieu.told",
+                    "gang" -> BarrelThievesQuest.gangName(content, quests)), Nil)) *>
+                  showMenu(user, renderer)
+    } yield StateType.Merchant
+
   private def menuScreen(data: MerchantData, hero: Hero, questBtn: Option[Choice],
-                         dailyBtn: Option[Choice]): Screen = {
+                         dailyBtn: Option[Choice], clueBtn: Option[Choice]): Screen = {
     val lines = data.items.zipWithIndex.map { case (mi, i) =>
       if (mi.bought) content.format("merchant.boughtLine", "n" -> (i + 1).toString, "name" -> mi.item.name)
       else saleLine(mi, i, hero)
@@ -583,9 +605,9 @@ case class MerchantState(
     val junk = List(
       content.choice("SellJunk",     "merchant.sellJunkLabel").copy(row = Some(2)),
       content.choice("JunkSettings", "merchant.junk.settingsLabel").copy(row = Some(2)))
-    // Задание и уговор — в одном ряду: сегодня их два, завтра может не быть ни
-    // одного, и остальные кнопки от этого не разъезжаются.
-    val work = (questBtn.toList ++ dailyBtn.toList).map(_.copy(row = Some(3)))
+    // Задание, уговор и улика из бочки — в одном ряду: сегодня их два, завтра
+    // может не быть ни одного, и остальные кнопки от этого не разъезжаются.
+    val work = (questBtn.toList ++ dailyBtn.toList ++ clueBtn.toList).map(_.copy(row = Some(3)))
     val rest = List(
       content.choice("OpenCharacter", "common.character").copy(row = Some(4)),
       content.choice("Back",          "merchant.backLabel").copy(row = Some(5)),
@@ -667,6 +689,11 @@ case class MerchantState(
   /** Вещи на продажу: сюжетные предметы и травы Ришелье не берёт — травы несут
     * Густаво, — а крысиное добро из канализации не берёт никто. Уникальный
     * трофей не продаётся: его место — на Стене трофеев. */
+  /** Улика из бочки в сумке: сюжетное `inventoryItems` не показывает. */
+  private def hasClue(hero: Hero): Task[Boolean] =
+    inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
+      .map(inv => QuestSupport.hasItem(inv.items.data, QuestItemKind.BarrelClue))
+
   private def inventoryItems(hero: Hero): Task[List[Item]] =
     inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       .map(_.items.data.filterNot(i =>

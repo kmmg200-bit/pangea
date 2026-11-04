@@ -47,6 +47,9 @@ object Achievement extends Enum[Achievement] {
   /** Больше десяти раз поднимал наёмников из-за стола за серебро, не дав им отдохнуть. */
   case object Overtime extends Achievement("Переработки наше всё", "+100 к HP")
 
+  /** Своё вернул: нашёл гоблинов, что вскрыли бочку в порту (см. BarrelThievesQuest). */
+  case object OwnBack extends Achievement("Своё не отдам", "+1 к ловкости")
+
   // ── Собранные наборы ────────────────────────────────────────────────────────
   // За каждый набор, надетый целиком — все двенадцать вещей разом, — своё
   // достижение: прибавка к главному стату набора, та же, что у его двойки, но
@@ -142,6 +145,9 @@ object Achievement extends Enum[Achievement] {
   val MurlocFavoriteAgiBonus: Long = 1L
   val MurlocBaneStrBonus: Long     = 1L
 
+  /** Сколько ловкости прибавляет «Своё не отдам». */
+  val OwnBackAgiBonus: Long = 1L
+
   /** По +1 за каждое из достижений за малые расовые наборы. */
   private def raceSets(hero: Hero, sets: Achievement*): Long =
     sets.count(hero.hasAchievement).toLong * AchievementRates.RaceSetStatBonus
@@ -152,7 +158,8 @@ object Achievement extends Enum[Achievement] {
 
   /** Плоская прибавка к ловкости от достижений героя. */
   def agiBonus(hero: Hero): Long =
-    (if (hero.hasAchievement(MurlocFavorite)) MurlocFavoriteAgiBonus else 0L) + raceSets(hero, TricksterSet, DesertSet)
+    (if (hero.hasAchievement(MurlocFavorite)) MurlocFavoriteAgiBonus else 0L) +
+      (if (hero.hasAchievement(OwnBack)) OwnBackAgiBonus else 0L) + raceSets(hero, TricksterSet, DesertSet)
 
   /** Плоская прибавка к силе от достижений героя. */
   def strBonus(hero: Hero): Long =
