@@ -210,20 +210,44 @@ object FlowerMeadowSpec extends ZIOSpecDefault {
               assertTrue(MaterialKind.UnopenedRose.herbRank == 2 && MaterialKind.UnopenedRose.herbModifier == 30)
     },
 
-    test("возврат из меню персонажа: созревший цветок выдаётся сразу, несозревший — таймер заново") {
+    test("возврат из меню персонажа: несозревший цветок — таймер заново, созревший — таймер на «сейчас», а сорвёт его таймер") {
       for {
         t <- meadow(hero(), LoreData.empty.learn(Knowledge.FlowersRank1, alone = false))
         (state, dao, inv, sched, r) = t
         _     <- dao.writeSceneData(userId, MeadowScene(left = 2, nextAt = 60000L).asJson)
         _     <- state.enter(testUser, r)             // ещё рано: перепланировали на 60 000
-        tasks <- sched.scheduled
+        early <- sched.scheduled
         _     <- TestClock.adjust(Duration.fromMillis(61000L))
+        _     <- state.enter(testUser, r)             // пора: таймер на «сейчас», сам вход ничего не срывает
+        ripe  <- sched.scheduled
+        kept  <- sceneOf(dao)
+        given  = inv.snapshot.size
         _     <- TestRandom.feedInts(50, 50, 1) *> TestRandom.feedLongs(120000L)
-        _     <- state.enter(testUser, r)             // пора: цветок сразу
+        res   <- state.action(testUser, tap("FlowerFind"), r)
         scene <- sceneOf(dao)
-      } yield assertTrue(tasks.exists(_.fireAt == 60000L)) &&
-              assertTrue(inv.snapshot.size == 1) &&
-              assertTrue(scene.exists(_.left == 1))
+      } yield assertTrue(early.exists(_.fireAt == 60000L)) &&
+              assertTrue(ripe.exists(t => t.kind == TaskKind.FlowerMeadow && t.fireAt == 61000L)) &&
+              assertTrue(given == 0 && kept.exists(_.left == 2)) &&
+              assertTrue(res == StateType.FlowerMeadow && inv.snapshot.size == 1 && scene.exists(_.left == 1))
+    },
+
+    test("последний цветок созрел, пока герой был в инвентаре: вход поляну не обнуляет, таймер срывает цветок и уводит в лабиринт") {
+      for {
+        t <- meadow(hero(), LoreData.empty.learn(Knowledge.FlowersRank1, alone = false))
+        (state, dao, inv, sched, r) = t
+        _     <- dao.writeSceneData(userId, MeadowScene(left = 1, nextAt = 60000L).asJson)
+        _     <- TestClock.adjust(Duration.fromMillis(61000L))
+        _     <- state.enter(testUser, r)             // вернулись из инвентаря
+        kept  <- sceneOf(dao)
+        _     <- TestRandom.feedInts(50, 50, 1)
+        res   <- state.action(testUser, tap("FlowerFind"), r)
+        after <- dao.readSceneData(userId)
+        all   <- texts(r)
+        c     <- content
+      } yield assertTrue(kept.exists(_.left == 1) && inv.snapshot.size == 1) &&
+              // герой уходит в лабиринт по действию — на обобранной поляне он не остаётся
+              assertTrue(res == StateType.Dungeon && after.contains(io.circe.Json.Null)) &&
+              assertTrue(all.contains(c.text("flowerMeadow.done")))
     },
 
     test("Белый волк (3%): цветок сорван, бой начинается сразу, первая встреча — реплика и след в знаниях; добыча вернёт на поляну") {
