@@ -19,11 +19,16 @@ trait ScheduledTaskDao {
     createdAt:     Long
   ): Task[Long]
 
-  /** Готовые к исполнению `Pending`-задачи с `fireAt <= now`, по возрастанию `fireAt`. */
-  def claimDue(now: Long, limit: Int): Task[List[ScheduledTask]]
+  /** Захватить готовые к исполнению `Pending`-задачи (`fireAt <= now`) до
+    * `until` и вернуть их по возрастанию `fireAt`. Захваченную другим ботом
+    * задачу не возьмёт никто, пока не выйдет её аренда; игрока, чья задача уже
+    * в работе, пропускаем целиком — его таймеры идут по очереди. */
+  def claimDue(now: Long, until: Long, limit: Int): Task[List[ScheduledTask]]
 
   def markDone(id: Long): Task[Unit]
   def markDead(id: Long): Task[Unit]
+
+  /** Неудачная попытка: счётчик +1, аренда снимается — повтор на следующем тике. */
   def bumpAttempts(id: Long): Task[Int]
 
   /** Отменить все `Pending`-задачи игрока данного типа (идемпотентно). */

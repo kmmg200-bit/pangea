@@ -31,15 +31,26 @@ class ScheduledTaskDaoLive(xa: Transactor[Task]) extends ScheduledTaskDao {
       .withUniqueGeneratedKeys[Long]("id")
       .transact(xa)
 
-  override def claimDue(now: Long, limit: Int): Task[List[ScheduledTask]] =
-    sql"""select id, user_id, fire_at, kind, expected_state, action, status, attempts, created_at
-          from scheduled_tasks
-          where status = $pending and fire_at <= $now
-          order by fire_at
-          limit $limit"""
+  // Захват одним запросом: SKIP LOCKED пропускает строки, которые прямо сейчас
+  // захватывает другой бот, а аренда (locked_until) — те, что уже исполняются.
+  // RETURNING порядка не обещает — сортируем сами.
+  override def claimDue(now: Long, until: Long, limit: Int): Task[List[ScheduledTask]] =
+    sql"""update scheduled_tasks set locked_until = $until
+          where id in (
+            select t.id from scheduled_tasks t
+            where t.status = $pending and t.fire_at <= $now
+              and (t.locked_until is null or t.locked_until <= $now)
+              and not exists (
+                select 1 from scheduled_tasks busy
+                where busy.user_id = t.user_id and busy.status = $pending and busy.locked_until > $now)
+            order by t.fire_at
+            limit $limit
+            for update skip locked)
+          returning id, user_id, fire_at, kind, expected_state, action, status, attempts, created_at"""
       .query[ScheduledTask]
       .to[List]
       .transact(xa)
+      .map(_.sortBy(t => (t.fireAt, t.id)))
 
   override def markDone(id: Long): Task[Unit] =
     sql"update scheduled_tasks set status = $done where id = $id"
@@ -50,7 +61,7 @@ class ScheduledTaskDaoLive(xa: Transactor[Task]) extends ScheduledTaskDao {
       .update.run.transact(xa).unit
 
   override def bumpAttempts(id: Long): Task[Int] =
-    sql"update scheduled_tasks set attempts = attempts + 1 where id = $id returning attempts"
+    sql"update scheduled_tasks set attempts = attempts + 1, locked_until = null where id = $id returning attempts"
       .query[Int].unique.transact(xa)
 
   override def cancel(userId: UserId, kind: TaskKind): Task[Int] =

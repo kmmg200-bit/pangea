@@ -15,11 +15,12 @@ class SchedulerPollerLive(dao: ScheduledTaskDao, handler: StateHandler) extends 
   override def poll: Task[Unit] =
     for {
       now <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
-      due <- dao.claimDue(now, BatchLimit)
+      due <- dao.claimDue(now, now + Lease.toMillis, BatchLimit)
       _   <- GameMetrics.schedulerDue.set(due.size.toDouble)
       // Игроки — параллельно: медленный ответ ВК одному не держит остальных.
       // Задачи одного игрока — по очереди, в порядке fire_at (claimDue уже
-      // отсортировал, groupBy порядок внутри группы сохраняет).
+      // отсортировал, groupBy порядок внутри группы сохраняет). Захват — на
+      // Lease: другой бот эти задачи не возьмёт.
       _   <- ZIO
                .foreachParDiscard(due.groupBy(_.userId).values)(ZIO.foreachDiscard(_)(process))
                .withParallelism(Parallelism)
@@ -78,4 +79,11 @@ object SchedulerPollerLive {
   val Parallelism: Int = 8
   /** Период опроса очереди. */
   val PollInterval: Duration = Duration.fromSeconds(5)
+  /** На сколько бот захватывает задачи; упал посреди задачи — через столько
+    * её подхватит другой. Пока бот один, короткой аренды хватает: следующий
+    * опрос начинается, только когда прошлый доделал свои задачи. Когда ботов
+    * станет несколько, задачу дольше аренды (повтор отправки в ВК при 900–902
+    * сам ждёт 5 с) второй бот возьмёт повторно — тогда аренду надо продлевать,
+    * пока задача идёт. */
+  val Lease: Duration = Duration.fromSeconds(5)
 }

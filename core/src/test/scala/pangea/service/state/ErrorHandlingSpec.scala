@@ -48,7 +48,7 @@ object ErrorHandlingSpec extends ZIOSpecDefault {
       extends ScheduledTaskDao {
     def insert(userId: UserId, fireAt: Long, kind: TaskKind, expectedState: StateType, action: String,
                createdAt: Long): Task[Long] = ZIO.succeed(0L)
-    def claimDue(now: Long, limit: Int): Task[List[ScheduledTask]] = ZIO.succeed(tasks)
+    def claimDue(now: Long, until: Long, limit: Int): Task[List[ScheduledTask]] = ZIO.succeed(tasks)
     def markDone(id: Long): Task[Unit]                             = done.update(_ :+ id)
     def markDead(id: Long): Task[Unit]                             = ZIO.unit
     def bumpAttempts(id: Long): Task[Int]                          = bumped.updateAndGet(_ :+ id).map(_.count(_ == id))
