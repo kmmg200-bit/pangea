@@ -1,6 +1,8 @@
 package pangea.service.state.states.parcel
 
+import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
+import pangea.model.home.{Furniture, HomeData}
 import pangea.model.hero.{Hero, HeroId}
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
@@ -31,16 +33,19 @@ object MoneyTransferSpec extends ZIOSpecDefault {
   /** Беседа целиком: отправитель в Торговом доме, у получателя свой герой.
     * Ячейка в тестах одна на всех — по ней видно, что серебро легло получателю. */
   private def chat(silver: Long = 0L, doubloons: Long = 0L, vaultCells: Int = 1,
-                   state: StateType = StateType.TradeHouse) =
+                   state: StateType = StateType.TradeHouse, vaultSilver: Long = 0L, courier: Boolean = false) =
     for {
       heroDao  <- TestHeroDao.withHero(userId,
                     TestFixtures.hero(userId, state = state).copy(silver = silver, doubloons = doubloons))
       _        <- heroDao.insertHero(TestFixtures.hero(friendUs).copy(id = friendHero))
+      // Личный посыльный — обстановка домика (см. Furniture.Courier).
+      _        <- ZIO.when(courier)(heroDao.writeHomeData(userId,
+                    HomeData(tier = 1, furniture = List(Furniture.Courier.key)).asJson))
       userRepo <- TestUserRepository.withUsers(sender, friend)
       api      <- TestApi.make
       content  <- ZIO.attempt(SceneContent.load())
       lock     <- PlayerLock.make
-      bank      = TestBankRepository.withCells(vaultCells)
+      bank      = TestBankRepository.of(cells = vaultCells, silver = vaultSilver)
       payoutDao = TestPayoutDao.empty
       payouts   = Payouts(payoutDao, heroDao, content)
       players   = new TestPlayers
@@ -172,7 +177,58 @@ object MoneyTransferSpec extends ZIOSpecDefault {
         me   <- heroOf(dao, userId)
         sent <- api.sentMessages.map(_.map(_._1).mkString("\n"))
       } yield assertTrue(me.silver == 500L && bank.silverSnapshot == 0L) &&
-              assertTrue(sent.contains("только в городе"))
+              assertTrue(sent.contains("только в городе")) &&
+              // в отказе — подсказка про посыльного
+              assertTrue(sent.contains("личный посыльный") && sent.contains("Обустройстве"))
+    },
+
+    test("посыльный: из лабиринта серебро уходит из ячейки, а то, что при себе, остаётся") {
+      for {
+        t <- chat(silver = 500L, state = StateType.Dungeon, vaultSilver = 300L, courier = true)
+        (handler, dao, bank, payoutDao, players, api) = t
+        _    <- say(handler, "Передать серебро 100", -1L)
+        me   <- heroOf(dao, userId)
+        sent <- api.sentMessages.map(_.map(_._1).mkString("\n"))
+      } yield // при себе — нетронуто; ячейка в тестах общая: −110 у отправителя, +100 получателю
+              assertTrue(me.silver == 500L && bank.silverSnapshot == 300L - 110L + 100L) &&
+              assertTrue(payoutDao.snapshot.isEmpty) &&
+              assertTrue(sent.contains("🏃 Посыльный отнёс 🪙 100 из вашей ячейки Торгового дома") &&
+                         sent.contains("Комиссия — 🪙 10")) &&
+              assertTrue(!sent.contains("только в городе")) &&
+              assertTrue(players.announced.exists(_.contains("передал 🪙 100")))
+    },
+
+    test("посыльный: в ячейке мало — отказ, ничего не снято; при себе серебро он не берёт") {
+      for {
+        t <- chat(silver = 500L, state = StateType.TreasureDig, vaultSilver = 100L, courier = true)
+        (handler, dao, bank, _, players, api) = t
+        _    <- say(handler, "Передать серебро 100", -1L)
+        me   <- heroOf(dao, userId)
+        sent <- api.sentMessages.map(_.map(_._1).mkString("\n"))
+      } yield assertTrue(me.silver == 500L && bank.silverSnapshot == 100L) &&
+              assertTrue(sent.contains("Посыльный носит серебро только из ячейки Торгового дома: нужно 🪙 110 вместе с комиссией 🪙 10, а в ячейке 🪙 100.")) &&
+              assertTrue(players.announced.isEmpty)
+    },
+
+    test("посыльный носит только серебро: вещи из лабиринта — всё так же только в городе") {
+      for {
+        t <- chat(silver = 500L, state = StateType.Dungeon, vaultSilver = 300L, courier = true)
+        (handler, _, bank, _, _, api) = t
+        _    <- say(handler, "Передать надколотый рубин", -1L)
+        sent <- api.sentMessages.map(_.map(_._1).mkString("\n"))
+      } yield assertTrue(sent.contains("только в городе") && bank.silverSnapshot == 300L)
+    },
+
+    test("посыльный в городе ничего не меняет: сперва то, что при себе, нехватка — из ячейки") {
+      for {
+        t <- chat(silver = 60L, vaultSilver = 300L, courier = true)
+        (handler, dao, bank, _, _, api) = t
+        _    <- say(handler, "Передать серебро 100", -1L)
+        me   <- heroOf(dao, userId)
+        sent <- api.sentMessages.map(_.map(_._1).mkString("\n"))
+      } yield // 60 при себе ушли целиком, 50 — из ячейки; получателю +100 в ту же ячейку
+              assertTrue(me.silver == 0L && bank.silverSnapshot == 300L - 50L + 100L) &&
+              assertTrue(sent.contains("🪙 100 отправлено игроку") && !sent.contains("Посыльный"))
     },
 
     test("в городе серебро передают с любого экрана; из «Персонажа» и посреди задания — нет") {

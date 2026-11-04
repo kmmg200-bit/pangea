@@ -5,7 +5,7 @@ import pangea.model.quest.{DailyKind, DailyNpc, DailyQuests, DailyRates, DailyTa
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.state.{DailyQuestLog, UserAction}
-import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestRenderer}
+import pangea.test.{TestBankRepository, TestFixtures, TestHeroDao, TestInventoryRepository, TestRenderer}
 import zio.ZIO
 import zio.test._
 
@@ -40,6 +40,22 @@ object MasterHornStateSpec extends ZIOSpecDefault {
       } yield assertTrue(hero.guildReputation == 95L) &&
               assertTrue(hero.silver == 95L) &&
               assertTrue(hero.masterHornBoosts.armor == 3L)
+    },
+
+    test("серебра на руках мало — Горн добирает из ячейки, а «Осталось серебра» считает её тоже") {
+      val bank = TestBankRepository.of(cells = 1, silver = 10L)
+      for {
+        heroDao  <- TestHeroDao.withHero(userId, hero(reputation = 100L, silver = 2L))
+        renderer <- TestRenderer.make
+        content  <- ZIO.attempt(SceneContent.load())
+        state     = MasterHornState(heroDao, TestInventoryRepository.accepting, content, Some(bank))
+        _        <- state.action(testUser, tap("ImproveArmor"), renderer)
+        _        <- state.action(testUser, tap("ConfirmImprove"), renderer)
+        h        <- heroDao.getHeroByUserId(userId).map(_.get)
+        screens  <- renderer.sentScreens
+      } yield assertTrue(h.silver == 0L && bank.silverSnapshot == 7L) &&
+              assertTrue(h.masterHornBoosts.armor == 3L) &&
+              assertTrue(screens.exists(_.text.contains("Осталось репутации: 95, серебра: 7.")))
     },
 
     test("не хватает репутации → отказ, ни репутация, ни серебро не списаны") {

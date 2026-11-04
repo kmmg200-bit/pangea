@@ -4,6 +4,7 @@ import io.circe.Json
 import pangea.metrics.GameMetrics
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Choice, ChoiceColor, Renderer, Screen}
+import pangea.model.home.HomeData
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.repository.hero.HeroRepository
@@ -182,9 +183,13 @@ class StateHandler(
       money     = ChatCommand.moneyQuery(query)
       // Дублоны не теряются нигде — их можно отдать хоть из лабиринта.
       anywhere  = money.exists(_._1 == ChatCommand.Money.Doubloons)
+      silver    = money.exists(_._1 == ChatCommand.Money.Silver)
+      inCity    = heroOp.exists(h => StateType.cityStates.contains(h.state))
+      // Вне города серебро передаёт личный посыльный — только из ячейки.
+      courier  <- if (silver && !inCity && heroOp.isDefined) hasCourier(sender.userId) else ZIO.succeed(false)
       tail <- (heroOp, targetOp, targetHero) match {
         case (Some(hero), Some(target), Some(theirHero)) if target.userId != sender.userId =>
-          if (!anywhere && !StateType.cityStates.contains(hero.state))
+          if (!anywhere && !inCity && !courier)
             api.sendMessage(sender, StateHandler.TransferNotInCity, List.empty, None).as(None)
           else
             for {
@@ -194,7 +199,9 @@ class StateHandler(
                           case Some((ChatCommand.Money.Doubloons, Some(amount))) =>
                             startDoubloons(sender, hero, to, amount)
                           case Some((ChatCommand.Money.Silver, Some(amount))) =>
-                            transfers.sendSilver(sender, hero, to, amount).flatMap(reply(sender, _)).as(None)
+                            (if (inCity) transfers.sendSilver(sender, hero, to, amount)
+                             else transfers.sendSilverFromVault(sender, hero, to, amount))
+                              .flatMap(reply(sender, _)).as(None)
                           // Деньги, но без суммы: спрашиваем, сколько.
                           case Some((_, None)) =>
                             api.sendMessage(sender, content.text("transfer.money.howMuch"), List.empty, None).as(None)
@@ -207,6 +214,10 @@ class StateHandler(
         case _ => ZIO.none
       }
     } yield tail
+
+  /** Есть ли дома у игрока личный посыльный (см. `Furniture.Courier`). */
+  private def hasCourier(userId: UserId): Task[Boolean] =
+    heroDao.readHomeData(userId).map(_.flatMap(_.as[HomeData].toOption).exists(_.hasCourier))
 
   /** Дублоны: с отправителя снимаем здесь, под его локом, а зачисляем хвостом —
     * под локом получателя. Не вышло зачислить — возвращаем, снова под локом
@@ -503,7 +514,8 @@ object StateHandler {
 
   /** Ответы на «Передать» из беседы: короткие и в личку, чтобы не шуметь в чате. */
   val TransferNotInCity: String =
-    "Передавать вещи и серебро можно только в городе — не из лабиринта, не посреди задания и не из меню «Персонаж». Вернитесь в город и повторите."
+    "Передавать вещи и серебро можно только в городе — не из лабиринта, не посреди задания и не из меню «Персонаж». Вернитесь в город и повторите.\n\n" +
+    "Серебро из ячейки Торгового дома передаст откуда угодно личный посыльный — его ставит в дом Юнона в «Обустройстве»."
 
   val TransferNoTarget: String =
     "Не понял, кому передавать. Ответьте на сообщение игрока (или перешлите его) и напишите «Передать …»."

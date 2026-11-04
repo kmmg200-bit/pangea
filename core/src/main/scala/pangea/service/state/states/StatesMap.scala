@@ -270,7 +270,7 @@ object StatesMap {
           Casket     -> ArtifactState(ArtifactKind.Casket, heroDao, inventoryRepo, itemRepo, artifactRepo, content),
           LivingBag  -> ArtifactState(ArtifactKind.LivingBag, heroDao, inventoryRepo, itemRepo, artifactRepo, content),
           Wardrobe   -> ArtifactState(ArtifactKind.Wardrobe, heroDao, inventoryRepo, itemRepo, artifactRepo, content),
-          TempleAzat -> TempleAzatState(heroDao, inventoryRepo, itemRepo, content, artifacts),
+          TempleAzat -> TempleAzatState(heroDao, inventoryRepo, itemRepo, content, artifacts, bank),
           HallAzat   -> HallAzatState(heroDao, content, bank, artifacts),
           Cube       -> CubeState(heroDao, inventoryRepo, itemRepo, content, bank),
           Loot -> LootState(heroDao, inventoryRepo, itemRepo, journal, content, artifacts),

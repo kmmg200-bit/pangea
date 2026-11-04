@@ -226,9 +226,11 @@ case class MasterHornState(
   // Цена списывается ОБЕИМИ валютами — репутацией и серебром — в одинаковом
   // числе (см. `cost`): прокачка стоит `price` очков репутации И `price` серебра.
   private def applyBoost(user: User, hero: Hero, stat: Stat, price: Long, renderer: Renderer): Task[Unit] = {
-    val remainingRep    = hero.guildReputation - price
-    val remainingSilver = (hero.silver - price).max(0L)
+    val remainingRep = hero.guildReputation - price
     for {
+      // Серебро — вместе с ячейкой: нехватку на руках кошель добрал из неё.
+      wallet <- purse.wallet(hero)
+      remainingSilver = (wallet.total - price).max(0L)
       _ <- writeBoost(user, hero, stat, price)
       _ <- renderer.show(user, Screen(
         content.format("guild.masterHorn.applied",

@@ -748,6 +748,8 @@ case class HomeState(
         case None => furnish(user, renderer)
         case Some(Furniture.ArtisanBench) if home.count(Furniture.ArtisanBench) > 0 =>
           say(user, content.text("home.furnish.benchHave"), renderer) *> furnish(user, renderer)
+        case Some(Furniture.Courier) if home.hasCourier =>
+          say(user, content.text("home.furnish.courierHave"), renderer) *> furnish(user, renderer)
         case Some(Furniture.Rack) if home.racks.size >= home.racksMax =>
           say(user, content.format("home.furnish.rackMax", "max" -> home.racksMax.toString), renderer) *> furnish(user, renderer)
         case Some(_) if home.slotsFree <= 0 =>

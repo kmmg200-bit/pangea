@@ -10,6 +10,7 @@ import pangea.model.quest.{NpcQuest, NpcQuests}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
+import pangea.repository.bank.BankRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.purse.Purse
@@ -31,7 +32,9 @@ case class TempleAzatState(
   itemRepo:      ItemRepository,
   content:       SceneContent,
   // Найденный камень мог сам лечь в Ларец Азата — показать можно и оттуда.
-  artifacts:     Option[ArtifactRepository] = None
+  artifacts:     Option[ArtifactRepository] = None,
+  // Ячейка Торгового дома: святую воду, как и всё в городе, добирают из неё.
+  bank:          Option[BankRepository] = None
 ) extends State {
   import TempleAzatState._
 
@@ -40,7 +43,7 @@ case class TempleAzatState(
   private val quest = NpcQuestDialog(heroDao, content, NpcQuest.Priest, "Priest")
 
   /** Кошель: святую воду Жрец берёт серебром из рук. */
-  private val purse = Purse(heroDao, None)
+  private val purse = Purse(heroDao, bank)
 
   private val branch = new Branch(
     routes = Map(
@@ -104,10 +107,11 @@ case class TempleAzatState(
 
   /** Святая вода: цена и кнопка покупки. */
   private def showHolyWater(user: User, renderer: Renderer): Task[StateType] =
-    getHero(user).flatMap { hero =>
+    getHero(user).flatMap(purse.wallet).flatMap { wallet =>
+      // «У вас» — вместе с ячейкой: из неё жрецу и доплатят.
       renderer.show(user, Screen(
         content.format("temple.holyWater.offer",
-          "price" -> HolyWaterPrice.toString, "silver" -> hero.silver.toString),
+          "price" -> HolyWaterPrice.toString, "silver" -> wallet.total.toString),
         List(
           content.choice("BuyHolyWater", "temple.holyWater.buy", "price" -> HolyWaterPrice.toString),
           content.choice("BackToPriest", "temple.back"))))

@@ -212,17 +212,49 @@ final case class Transfers(
             purse.total(hero).map(have => Transfers.Outcome.Forbidden(
               notEnough("transfer.money.notEnoughSilver", Money.Silver, cost, fee, have)))
           case Some(paid) =>
-            val refund = heroDao.updateSilver(sender.userId, paid.silver + cost)
-            for {
-              intoVault <- bank.depositSilver(target.heroId, amount).either.flatMap {
-                             case Right(_) => ZIO.succeed(true)
-                             case Left(_)  => payouts.queue(target.heroId, silver = amount).as(false)
-                           }.tapError(_ => refund)
-              _         <- tellMoney(sender, target, Transfers.moneyLine(Money.Silver, amount),
-                             if (intoVault) Transfers.Landed.Vault else Transfers.Landed.City)
-            } yield Transfers.Outcome.Sent(sentLine(Money.Silver, amount, target))
+            deliverSilver(sender, target, amount, refund = heroDao.updateSilver(sender.userId, paid.silver + cost))
+              .as(Transfers.Outcome.Sent(sentLine(Money.Silver, amount, target)))
         }
     }
+
+  /** Передать серебро вне города — с личным посыльным дома (см.
+    * `Furniture.Courier`). Он носит только из ячейки Торгового дома: серебро на
+    * руках в лабиринте остаётся при герое, как и без посыльного. Сумма и
+    * комиссия снимаются из ячейки разом; не хватает — ничего не снято. Дальше —
+    * как у [[sendSilver]]: получателю в ячейку или в город, а не вышло —
+    * снятое возвращается в ячейку. */
+  def sendSilverFromVault(sender: User, hero: Hero, target: TransferTarget, amount: Long): Task[Transfers.Outcome] =
+    tooLittle(Money.Silver, amount) match {
+      case Some(refusal) => ZIO.succeed(Transfers.Outcome.Forbidden(refusal))
+      case None =>
+        val fee  = Transfers.fee(amount)
+        val cost = amount + fee
+        bank.withdrawSilver(hero.id, cost).either.flatMap {
+          case Left(_) =>
+            bank.get(hero.id).fold(_ => 0L, _.silver).map(have => Transfers.Outcome.Forbidden(
+              notEnough("transfer.money.notEnoughVault", Money.Silver, cost, fee, have)))
+          case Right(_) =>
+            // Вернуть в ячейку; не примет — Рахадим отдаст в городе.
+            val refund = bank.depositSilver(hero.id, cost).orElse(payouts.queue(hero.id, silver = cost))
+            deliverSilver(sender, target, amount, refund).as(Transfers.Outcome.Sent(
+              content.format("transfer.money.sentByCourier",
+                "money" -> Transfers.moneyLine(Money.Silver, amount),
+                "to"    -> target.name,
+                "fee"   -> Transfers.moneyLine(Money.Silver, fee))))
+        }
+    }
+
+  /** Серебро получателю: в ячейку, а не приняла — ждёт его в городе; письмо и
+    * строка в беседу. Зачислить не вышло — `refund` возвращает снятое. */
+  private def deliverSilver(sender: User, target: TransferTarget, amount: Long, refund: Task[Unit]): Task[Unit] =
+    for {
+      intoVault <- bank.depositSilver(target.heroId, amount).either.flatMap {
+                     case Right(_) => ZIO.succeed(true)
+                     case Left(_)  => payouts.queue(target.heroId, silver = amount).as(false)
+                   }.tapError(_ => refund)
+      _         <- tellMoney(sender, target, Transfers.moneyLine(Money.Silver, amount),
+                     if (intoVault) Transfers.Landed.Vault else Transfers.Landed.City)
+    } yield ()
 
   /** Дублоны, шаг первый — под локом отправителя: снять с его рук сумму и
     * комиссию сверху (см. [[Transfers.fee]]). `Some` — отказ: меньше минимума

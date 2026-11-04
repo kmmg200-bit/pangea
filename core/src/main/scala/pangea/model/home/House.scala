@@ -93,6 +93,13 @@ object Furniture {
     * рецептов ([[HomeData.recipes]]). В доме — один: куб-то один. */
   case object ArtisanBench extends Furniture("artisan", 100L, 1)
 
+  /** Личный посыльный: серебро из ячейки Торгового дома он передаст по
+    * «Передать» откуда угодно — из лабиринта, с поисков клада, посреди задания.
+    * Серебро на руках вне города он не трогает: носит только из ячейки.
+    * Покупка разовая: второго не продают, а обстановка из дома не уходит и
+    * переезжает вместе с героем. */
+  case object Courier extends Furniture("courier", 100L, 1)
+
   /** Сундук аптекаря — у верстака травника: полки шире на
     * [[HomeRates.ApothecaryHerbs]] трав и [[HomeRates.ApothecaryBrews]] отваров. */
   case object ApothecaryChest extends Furniture("apothecary", 100L, 2)
@@ -100,7 +107,7 @@ object Furniture {
   /** Роскошный сундук ювелира — в хранилище камней: шире на [[HomeRates.JewelerGems]]. */
   case object JewelerChest extends Furniture("jeweler", 100L, 3)
 
-  val values: List[Furniture] = List(Rack, ArtisanBench, ApothecaryChest, JewelerChest)
+  val values: List[Furniture] = List(Rack, ArtisanBench, Courier, ApothecaryChest, JewelerChest)
 
   def byKey(key: String): Option[Furniture] = values.find(_.key == key)
 }
@@ -203,6 +210,9 @@ final case class HomeData(
 
   /** Сколько в доме такой обстановки. */
   def count(f: Furniture): Int = furniture.count(_ == f.key)
+
+  /** Есть ли в доме личный посыльный ([[Furniture.Courier]]). */
+  def hasCourier: Boolean = count(Furniture.Courier) > 0
 
   /** Сколько стоек можно поставить в этот дом. */
   def racksMax: Int = house.fold(0)(_.racks)

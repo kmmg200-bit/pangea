@@ -14,7 +14,7 @@ import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.state.UserAction
 import pangea.service.state.states.events.cave.MonsterCaveState
 import pangea.service.state.states.temple.TempleAzatState
-import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestRenderer, TestScheduler}
+import pangea.test.{TestBankRepository, TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestRenderer, TestScheduler}
 import zio.{Task, ZIO}
 import zio.test._
 
@@ -168,6 +168,23 @@ object HolyWaterSpec extends ZIOSpecDefault {
               assertTrue(ok._3.contains("Да хранит тебя Азат")) &&
               assertTrue(poor._2 == 100L && poor._4.isEmpty && poor._3.contains("нужно 1000 серебра")) &&
               assertTrue(full._2 == 1500L)
+    },
+
+    test("нехватку серебра на руках жрец добирает из ячейки Торгового дома") {
+      val bank = TestBankRepository.of(cells = 1, silver = 900L)
+      for {
+        dao   <- TestHeroDao.withHero(userId, TestFixtures.hero(userId).copy(silver = 300L))
+        r     <- TestRenderer.make
+        c     <- content
+        state  = TempleAzatState(dao, TestInventoryRepository.accepting, TestItemRepository.make, c, bank = Some(bank))
+        _     <- state.action(testUser, tap("HolyWater"), r)
+        offer <- r.sentScreens.map(_.last)
+        _     <- state.action(testUser, tap("BuyHolyWater"), r)
+        hand  <- dao.getHeroByUserId(userId).map(_.get.silver)
+        said  <- texts(r)
+      } yield assertTrue(offer.text.contains("У вас: 🪙 1200.")) &&
+              assertTrue(said.contains("Да хранит тебя Азат")) &&
+              assertTrue(hand == 0L && bank.silverSnapshot == 200L)
     },
 
     test("с «Некромантом» от шести вещей жрец воды не продаёт, с пятью — ещё продаёт") {
