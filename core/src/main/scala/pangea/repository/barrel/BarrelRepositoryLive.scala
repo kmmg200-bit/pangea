@@ -27,7 +27,7 @@ final class BarrelRepositoryLive(dao: BarrelDao) extends BarrelRepository {
       barrel <- get(heroId)
       item   <- ZIO.fromOption(barrel.items.data.find(_.id == itemId))
                   .orElseFail(BarrelRepoError.CantFindItemToRemove)
-      rest    = barrel.items.data.filterNot(_.id == itemId)
+      rest    = barrel.items.withoutOne(itemId)
       _      <- dao.update(barrel.withItems(rest)).orElseFail(BarrelRepoError.CantUpdateBarrel)
     } yield item
 

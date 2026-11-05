@@ -9,7 +9,7 @@ import pangea.model.item.{Gem, GemKind, Item, ItemType, MaterialKind, Rarity}
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.state.{ItemMenu, UiScene, UserAction}
-import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestRenderer}
+import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestRenderer}
 import zio.ZIO
 import zio.test._
 
@@ -46,7 +46,7 @@ object SocketingStateSpec extends ZIOSpecDefault {
       invRepo   = TestInventoryRepository.withItems(List(gemItem))
       renderer <- TestRenderer.make
       content  <- ZIO.attempt(SceneContent.load())
-    } yield (SocketingState(dao, invRepo, content), dao, invRepo, renderer)
+    } yield (SocketingState(dao, invRepo, content, TestItemRepository.make), dao, invRepo, renderer)
   }
 
   /** Сумка забита: вместимость ровно равна числу лежащих в ней предметов. */
@@ -61,7 +61,7 @@ object SocketingStateSpec extends ZIOSpecDefault {
       invRepo   = TestInventoryRepository.withItems(gemItem :: filler)
       renderer <- TestRenderer.make
       content  <- ZIO.attempt(SceneContent.load())
-    } yield (SocketingState(dao, invRepo, content), dao, invRepo, renderer)
+    } yield (SocketingState(dao, invRepo, content, TestItemRepository.make), dao, invRepo, renderer)
   }
 
   /** То же, но со всей экипировкой сразу — для проверки страниц. */
@@ -73,7 +73,7 @@ object SocketingStateSpec extends ZIOSpecDefault {
       invRepo   = TestInventoryRepository.withItems(List(gemItem))
       renderer <- TestRenderer.make
       content  <- ZIO.attempt(SceneContent.load())
-    } yield (SocketingState(dao, invRepo, content), dao, invRepo, renderer)
+    } yield (SocketingState(dao, invRepo, content, TestItemRepository.make), dao, invRepo, renderer)
   }
 
   /** Предмет нужного типа с одним свободным гнездом. */
@@ -132,7 +132,10 @@ object SocketingStateSpec extends ZIOSpecDefault {
         _       <- state.action(testUser, pickTarget(50L), renderer)
         dusts    = invRepo.snapshot.flatMap(_.material)
         screens <- renderer.sentScreens
+        ids      = invRepo.snapshot.filter(_.material.isDefined).map(_.id)
       } yield assertTrue(dusts.size == 2) &&
+              // у каждой горсти свой номер из базы: с общим −1 снятие одной убирало обе
+              assertTrue(ids.forall(_ > 0L) && ids.distinct.size == 2) &&
               assertTrue(dusts.toSet == Set[MaterialKind](MaterialKind.RubyDust, MaterialKind.SapphireDust)) &&
               assertTrue(screens.last.text.contains("Рубиновая пыль")) &&
               assertTrue(screens.last.text.contains("Сапфировая пыль"))

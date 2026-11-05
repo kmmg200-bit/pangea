@@ -53,7 +53,7 @@ object EquipmentStateSpec extends ZIOSpecDefault {
       invRepo   = TestInventoryRepository.withItems(invItems)
       renderer <- TestRenderer.make
       content  <- ZIO.attempt(SceneContent.load())
-    } yield (EquipmentState(heroDao, invRepo, content), heroDao, invRepo, renderer)
+    } yield (EquipmentState(heroDao, invRepo, content, TestItemRepository.make), heroDao, invRepo, renderer)
 
   override def spec = suite("EquipmentState")(
 
@@ -88,7 +88,9 @@ object EquipmentStateSpec extends ZIOSpecDefault {
               assertTrue(updated.equipment.weapon.id == gemSword.id) &&
               assertTrue(updated.equipment.weapon.sockets == List(None)) &&
               // безупречный изумруд — грейд 4, значит четыре горсти пыли
-              assertTrue(inv.items.data.count(_.material.contains(MaterialKind.EmeraldDust)) == 4)
+              assertTrue(inv.items.data.count(_.material.contains(MaterialKind.EmeraldDust)) == 4) &&
+              // у каждой горсти свой номер из базы: с общим −1 снятие одной убирало все
+              assertTrue(inv.items.data.map(_.id).forall(_ > 0L) && inv.items.data.map(_.id).distinct.size == 4)
     },
 
     test("enter → показывает список слотов кнопками") {
@@ -155,7 +157,7 @@ object EquipmentStateSpec extends ZIOSpecDefault {
         renderer <- TestRenderer.make
         content  <- ZIO.attempt(SceneContent.load())
         invRepo   = TestInventoryRepository.accepting
-        state     = EquipmentState(heroDao, invRepo, content, Some(TestItemRepository.make))
+        state     = EquipmentState(heroDao, invRepo, content, TestItemRepository.make)
         _        <- state.action(testUser, selectSlot(BeltSlotIdx), renderer)
         _        <- state.action(testUser, tap("Unequip"), renderer)
         hero     <- heroDao.getHeroByUserId(userId).map(_.get)
@@ -182,14 +184,14 @@ object EquipmentStateSpec extends ZIOSpecDefault {
         renderer <- TestRenderer.make
         content  <- ZIO.attempt(SceneContent.load())
         invRepo   = TestInventoryRepository.accepting
-        state     = EquipmentState(heroDao, invRepo, content, Some(TestItemRepository.make))
+        state     = EquipmentState(heroDao, invRepo, content, TestItemRepository.make)
         _        <- state.action(testUser, take, renderer)
         after    <- heroDao.getHeroByUserId(userId).map(_.get)
         said     <- renderer.sentScreens.map(_.map(_.text).mkString("\n"))
         // в сумке осталось одно место, а склянок три
         dao2     <- TestHeroDao.withHero(userId, hero)
         inv2      = TestInventoryRepository.withItems(stuff)
-        state2    = EquipmentState(dao2, inv2, content, Some(TestItemRepository.make))
+        state2    = EquipmentState(dao2, inv2, content, TestItemRepository.make)
         _        <- state2.action(testUser, take, renderer)
         kept     <- dao2.getHeroByUserId(userId).map(_.get)
       } yield assertTrue(BeltContents.slotsOf(after.equipment.belt).isEmpty) &&
@@ -236,7 +238,7 @@ object EquipmentStateSpec extends ZIOSpecDefault {
         renderer <- TestRenderer.make
         content  <- ZIO.attempt(SceneContent.load())
         invRepo   = TestInventoryRepository.full
-        state     = EquipmentState(heroDao, invRepo, content)
+        state     = EquipmentState(heroDao, invRepo, content, TestItemRepository.make)
         _        <- state.enter(testUser, renderer)
         _        <- state.action(testUser, selectSlot(WeaponSlotIdx), renderer)
         _        <- state.action(testUser, tap("Unequip"), renderer)

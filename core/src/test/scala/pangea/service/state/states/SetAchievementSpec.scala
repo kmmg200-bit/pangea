@@ -160,7 +160,7 @@ object SetAchievementSpec extends ZIOSpecDefault {
         inv    = TestInventoryRepository.withItems(List(piece(60L, ItemType.Weapon, ItemSet.Hunter)))
         r     <- TestRenderer.make
         c     <- ZIO.attempt(SceneContent.load())
-        state  = EquipmentState(dao, inv, c)
+        state  = EquipmentState(dao, inv, c, pangea.test.TestItemRepository.make)
         _     <- state.action(testUser, selectSlot(WeaponSlotIdx), r)
         _     <- state.action(testUser, wearItem(60L), r)
         said  <- r.sentScreens.map(_.map(_.text).mkString("\n"))

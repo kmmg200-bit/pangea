@@ -11,6 +11,7 @@ import pangea.model.item.{Gem, Item, ItemType}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
+import pangea.repository.item.ItemRepository
 import pangea.service.state.states.SocketingState._
 import pangea.service.state.{ItemMenu, State, UiScene, UserAction}
 import zio.{Task, ZIO}
@@ -27,9 +28,11 @@ import java.util.concurrent.TimeUnit
  *  предметов, а клавиатура ВК держит только 10 рядов — без разбивки экран просто
  *  не отправлялся бы. Текущая страница живёт в той же сцене. */
 case class SocketingState(
-  heroDao:       HeroDao,
-  inventoryRepo: InventoryRepository,
-  content:       SceneContent
+  heroDao:        HeroDao,
+  inventoryRepo:  InventoryRepository,
+  content:        SceneContent,
+  // Пыль от рассыпавшихся камней сохраняется, прежде чем лечь в сумку.
+  itemRepository: ItemRepository
 ) extends State {
 
   private val branch = new Branch(
@@ -165,9 +168,11 @@ case class SocketingState(
       _   <- inventoryRepo.removeItem(gemId, hero.id).mapError(e => new Throwable(e.toString))
       inv <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       room = inv.freeSlots >= dusts.size
+      // Каждая горсть — со своим номером из базы: без него горсти делили −1, и
+      // снятие одной (в куб, в ячейку) убирало из сумки все.
       _   <- ZIO.when(room)(ZIO.foreachDiscard(dusts)(kind =>
-               inventoryRepo.addItem(hero.id, MaterialGenerator.item(kind))
-                 .mapError(e => new Throwable(e.toString))))
+               itemRepository.persist(hero.id, MaterialGenerator.item(kind))
+                 .flatMap(d => inventoryRepo.addItem(hero.id, d).mapError(e => new Throwable(e.toString)))))
       line = if (room)
                content.format("socketing.annihilate", "dust" -> dusts.map(_.displayName).mkString(", "))
              else content.text("socketing.annihilateNoRoom")

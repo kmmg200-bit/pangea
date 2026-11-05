@@ -29,7 +29,7 @@ class TestInventoryRepository(canAdd: Boolean, private var items: List[Item] = N
     else ZIO.fail(InventoryRepoError.NoMorePlaceForItems)
 
   def removeItem(itemId: Long, heroId: HeroId): IO[InventoryRepoError, Unit] =
-    ZIO.succeed { items = items.filterNot(_.id == itemId) }
+    ZIO.succeed { items = pangea.model.inventory.Inventory.Items(items).withoutOne(itemId) }
 
   def removeItems(itemIds: Set[Long], heroId: HeroId): IO[InventoryRepoError, Unit] =
     ZIO.succeed { items = items.filterNot(i => itemIds.contains(i.id)) }

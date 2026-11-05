@@ -73,7 +73,7 @@ final class ArtifactRepositoryLive(dao: ArtifactDao) extends ArtifactRepository 
       all  <- get(heroId)
       cur   = all.of(kind)
       item <- ZIO.fromOption(cur.items.data.find(_.id == itemId)).orElseFail(ArtifactRepoError.NoSuchItem)
-      _    <- save(all.updated(kind, cur.withItems(cur.items.data.filterNot(_.id == itemId))))
+      _    <- save(all.updated(kind, cur.withItems(cur.items.withoutOne(itemId))))
     } yield item
 
   def applyMagic(heroId: HeroId, kind: ArtifactKind, items: List[Item], chargesUsed: Int): IO[ArtifactRepoError, Artifact] =

@@ -21,8 +21,9 @@ case class EquipmentState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
   content:       SceneContent,
-  // Вещи с пояса сохраняются, прежде чем лечь в сумку (см. BeltContents.persist).
-  itemRepo:      Option[ItemRepository] = None
+  // Вещи с пояса и пыль от ломки сохраняются, прежде чем лечь в сумку: у
+  // каждой свой номер из базы (см. BeltContents.persist).
+  itemRepo:      ItemRepository
 ) extends State {
 
   private val branch = new Branch(
@@ -161,7 +162,7 @@ case class EquipmentState(
                   renderer.show(user, Screen(content.text("equipment.beltTakeFull"), Nil))
                 else
                   for {
-                    saved <- BeltContents.persist(itemRepo, hero.id, back)
+                    saved <- BeltContents.persist(Some(itemRepo), hero.id, back)
                     _     <- freed
                     _     <- ZIO.foreachDiscard(saved)(it => inventoryRepo.addItem(hero.id, it).ignore)
                     _     <- renderer.show(user, Screen(content.format("equipment.beltTaken",
@@ -239,7 +240,7 @@ case class EquipmentState(
             case None =>
               heroDao.updateEquipmentAndFightStats(user.userId, done.equipment, done.fightStats) *>
                 inventoryRepo.removeItem(it.id, hero.id).mapError(e => new Throwable(e.toString)) *>
-                BeltContents.persist(itemRepo, hero.id, done.spilled).flatMap(spilled =>
+                BeltContents.persist(Some(itemRepo), hero.id, done.spilled).flatMap(spilled =>
                   ZIO.foreachDiscard(done.removed ++ spilled)(old => inventoryRepo.addItem(hero.id, old).ignore)) *>
                 ZIO.when(capDelta != 0)(inventoryRepo.increaseCapacity(hero.id, capDelta).orElse(ZIO.unit)) *>
                 renderer.show(user, Screen(
@@ -304,7 +305,7 @@ case class EquipmentState(
                      _      <- ZIO.when(capDelta != 0)(
                                  inventoryRepo.increaseCapacity(hero.id, capDelta).orElse(ZIO.unit))
                      // Пыли сверх сотни горстей не унести — у неё своя строка отказа.
-                     saved  <- BeltContents.persist(itemRepo, hero.id, contents)
+                     saved  <- BeltContents.persist(Some(itemRepo), hero.id, contents)
                      lost   <- ZIO.foreach(saved)(it => inventoryRepo.addItem(hero.id, it).either.map(it -> _))
                                  .map(_.collect { case (it, Left(_)) => InventoryFeedback.refusalLine(content, it) }.distinct)
                      stripped = if (contents.isEmpty) ""
@@ -388,9 +389,11 @@ case class EquipmentState(
                       showList(user, renderer)
                   else
                     heroDao.updateEquipmentAndFightStats(user.userId, broken.equipment, broken.fightStats) *>
-                      ZIO.foreachDiscard(1 to count)(_ =>
-                        inventoryRepo.addItem(hero.id, MaterialGenerator.item(gem.dust))
-                          .mapError(e => new Throwable(e.toString))) *>
+                      // Каждая горсть — со своим номером из базы: без него горсти
+                      // разных видов делили −1, и снятие одной убирало из сумки все.
+                      BeltContents.persist(Some(itemRepo), hero.id, List.fill(count)(MaterialGenerator.item(gem.dust)))
+                        .flatMap(ZIO.foreachDiscard(_)(d =>
+                          inventoryRepo.addItem(hero.id, d).mapError(e => new Throwable(e.toString)))) *>
                       renderer.show(user, Screen(content.format("equipment.breakGemDone",
                         "gem" -> gem.displayName, "count" -> count.toString, "dust" -> gem.dust.displayName), Nil)) *>
                       showList(user, renderer)

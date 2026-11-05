@@ -125,6 +125,25 @@ object StackMoveSpec extends ZIOSpecDefault {
               assertTrue(after.text.contains("Меч 9 забран из бочки."))
     },
 
+    test("куб: положил сапфировую пыль — рубиновая со старым номером −1 не пропадает") {
+      // Так было у игрока: пыль от «Сломать камень» лежала не сохранённой в базу,
+      // обе горсти с номером −1, и снятие одной убирало из сумки обе.
+      val sapphire = pangea.generator.item.MaterialGenerator.item(pangea.model.item.MaterialKind.SapphireDust)
+      val ruby     = pangea.generator.item.MaterialGenerator.item(pangea.model.item.MaterialKind.RubyDust)
+      for {
+        dao  <- TestHeroDao.withHero(userId, TestFixtures.hero(userId))
+        _    <- dao.writeAzatData(userId, AzatState(cube = CubeStatus.Active, cubeCharges = 5).asJson)
+        inv   = TestInventoryRepository.withItems(List(sapphire, ruby))
+        r    <- TestRenderer.make
+        c    <- content
+        state = CubeState(dao, inv, TestItemRepository.make, c)
+        _    <- state.action(testUser, tap(CubeState.DepositPrefix + "-1"), r)
+        azat <- dao.readAzatData(userId).map(_.flatMap(_.as[AzatState].toOption).get)
+      } yield assertTrue(sapphire.id == -1L && ruby.id == -1L) &&
+              assertTrue(azat.cubeItems.map(_.name) == List(sapphire.name)) &&
+              assertTrue(inv.snapshot.map(_.name) == List(ruby.name))
+    },
+
     test("куб: «⏬ Забрать всё» выгребает его в сумку одним сообщением") {
       for {
         dao  <- TestHeroDao.withHero(userId, TestFixtures.hero(userId))

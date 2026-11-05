@@ -83,7 +83,7 @@ final class InventoryRepositoryLive(inventoryDao: InventoryDao)
       inventory <- inventoryDao
         .get(heroId)
         .orElseFail(InventoryRepoError.CantFindInventory)
-      itemsWithoutOne = inventory.items.data.filter(_.id != itemId)
+      itemsWithoutOne = inventory.items.withoutOne(itemId)
       _ <- ZIO.when(itemsWithoutOne.length == inventory.items.data.length)(
         ZIO.fail(InventoryRepoError.CantFindItemToRemove)
       )

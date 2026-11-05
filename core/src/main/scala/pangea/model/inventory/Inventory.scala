@@ -40,7 +40,18 @@ object Inventory {
   /** Вместимость сумки по умолчанию (слотов). */
   val DefaultCapacity: Long = 20L
 
-  case class Items(data: List[Item])
+  case class Items(data: List[Item]) {
+
+    /** Без одной вещи с номером `id` — первой по порядку. Номер у каждой вещи
+      * свой, пока она сохранена в базу; не сохранённая (−1) могла лечь рядом с
+      * такой же, и снять тогда надо одну, а не все разом (так у игрока
+      * пропадала вся пыль, когда одну горсть клали в куб). */
+    def withoutOne(id: Long): List[Item] =
+      data.indexWhere(_.id == id) match {
+        case -1 => data
+        case i  => data.patch(i, Nil, 1)
+      }
+  }
 
   implicit val encoderForItems: Encoder[Items] = deriveEncoder[Items]
   implicit val decoderForItems: Decoder[Items] = deriveDecoder[Items]

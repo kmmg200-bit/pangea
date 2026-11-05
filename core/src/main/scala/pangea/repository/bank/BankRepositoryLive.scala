@@ -33,7 +33,7 @@ final class BankRepositoryLive(dao: BankVaultDao) extends BankRepository {
       vault <- get(heroId)
       item  <- ZIO.fromOption(vault.items.data.find(_.id == itemId))
                  .orElseFail(BankRepoError.CantFindItemToRemove)
-      rest   = vault.items.data.filterNot(_.id == itemId)
+      rest   = vault.items.withoutOne(itemId)
       _     <- dao.update(vault.withItems(rest)).orElseFail(BankRepoError.CantUpdateVault)
     } yield item
 

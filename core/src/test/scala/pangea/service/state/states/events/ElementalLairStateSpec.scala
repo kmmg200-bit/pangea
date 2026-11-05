@@ -103,7 +103,7 @@ object ElementalLairStateSpec extends ZIOSpecDefault {
         itemRepo  = TestItemRepository.make
         content  <- ZIO.attempt(SceneContent.load())
         _        <- InventoryState(dao, invRepo, itemRepo, content).enter(testUser, renderer)
-        _        <- EquipmentState(dao, invRepo, content).enter(testUser, renderer)
+        _        <- EquipmentState(dao, invRepo, content, pangea.test.TestItemRepository.make).enter(testUser, renderer)
         _        <- state.enter(testUser, renderer)
         after    <- renderer.sentScreens.map(_.last.text)
         result   <- state.action(testUser, tap("AttackElemental"), renderer)
