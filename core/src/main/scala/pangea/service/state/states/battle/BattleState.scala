@@ -3583,11 +3583,9 @@ case class BattleState(
     * на этом кончается: ни урона, ни базовой атаки. Энергия уже списана, а
     * умение уходит на перезарядку, как после удара. */
   private def ramDash(hero: Hero, battle: SoloPveBattle, slot: SkillSlotState, target: Int, nowMs: Long): Task[TurnResult] = {
-    val from    = battle.group.heroPos
     val ally    = battle.group.allyAt(target).filter(_.alive)
     val bumped  = battle.updateSlot(slot.itemId)(s => s.copy(cooldown = s.skill.cooldown, uses = s.uses + 1))
-    val swapped = ally.fold(bumped)(a => bumped.copy(group = bumped.group.updateAlly(a.position)(_.copy(position = from))))
-    val moved   = swapped.copy(group = swapped.group.copy(heroPos = target))
+    val moved   = BattleState.stepTo(bumped, target)
     val line    = ally match {
       case Some(a) => content.format("battle.group.ramDashSwap", "n" -> target.toString, "name" -> a.name)
       case None    => content.format("battle.group.ramDash", "n" -> target.toString)
@@ -3606,8 +3604,9 @@ case class BattleState(
     * обратно — базовая атака и ответ мобов идут по-прежнему. Убитый умением
     * сосед уходит в павшие сразу, Таран по живому соседу помечает место, на
     * которое герой шагнёт в конце раунда. Умения, задевающие остальных в строю
-    * (дуга Размашистого — соседей цели, Вихрь и Веерный порез — всех в
-    * досягаемости героя, см. [[strikeOthers]]), могут добить того, кто стоял в
+    * (дуга Размашистого — соседей цели, Вихрь — соседей цели, к которой герой
+    * шагнул, Веерный порез — всех в досягаемости героя, см. [[strikeOthers]]),
+    * могут добить того, кто стоял в
     * полях до подмены; тогда возвращать некого, цель остаётся в полях, а пары у
     * героя больше нет. «Отбросить» меняет строй само (см. [[knockBack]]): в
     * полях после него стоит тот, кто вышел на место отброшенного. */
@@ -3623,7 +3622,15 @@ case class BattleState(
     val leapTo =
       if (slot.skill.effect != Skill.Effect.Leap || battle0.effects.heroRooted) None
       else battle0.group.leapSpot(target, BattleState.displacement(hero), BattleState.skillReach(hero, slot.skill))
-    val battle      = leapTo.fold(battle0)(p => battle0.copy(group = battle0.group.copy(heroPos = p)))
+    // «Вихрь клинка»: сперва шаг напротив цели — союзник с того места встаёт на
+    // прежнее место героя, как при Таране, — потом вихрь уже с нового места:
+    // цель в паре, её соседи в досягаемости. Пригвождённый не шагает — кружит
+    // с места.
+    val whirlTo     = if (slot.skill.effect != Skill.Effect.Whirl) None else BattleState.whirlSpot(battle0, target)
+    val whirlAlly   = whirlTo.flatMap(battle0.group.allyAt(_).filter(_.alive))
+    val battle      = leapTo.map(p => battle0.copy(group = battle0.group.copy(heroPos = p)))
+                        .orElse(whirlTo.map(BattleState.stepTo(battle0, _)))
+                        .getOrElse(battle0)
     val home        = battle.group.activePos
     val paired      = battle.group.paired
     val damageSkill = BattleState.dealsDamage(slot.skill.effect)
@@ -3713,9 +3720,18 @@ case class BattleState(
             })
 
         case Skill.Effect.Whirl =>
-          // По цели — как удар, срезанный защитой; каждому другому в
-          // досягаемости героя — тот же бросок, срезанный уже его защитой.
-          dealSkillDamage(hero, bumped, reduced, dealt => tmpl.replace("{}", dealt.toString), next,
+          // Шаг к цели уже сделан (см. начало). По цели — как удар, срезанный
+          // защитой; каждому другому в досягаемости героя — а это теперь её
+          // соседи — тот же бросок, срезанный уже его защитой.
+          val step = whirlTo match {
+            case Some(p) =>
+              whirlAlly.fold(content.format("battle.group.whirlStep", "n" -> p.toString))(a =>
+                content.format("battle.group.whirlStepSwap", "n" -> p.toString, "name" -> a.name)) + "\n"
+            case None if battle0.effects.heroRooted && target != battle0.group.heroPos =>
+              content.text("battle.group.whirlPinned") + "\n"
+            case None => ""
+          }
+          dealSkillDamage(hero, bumped, reduced, dealt => step + tmpl.replace("{}", dealt.toString), next,
             splash = (b, _) => strikeOthers(b, around(b.group.heroPos)) { tmp =>
               val amount = (raw * (1.0 - monsterDefenceCut(hero, tmp, effWithAir(hero, tmp, nowMs), nowMs))).toLong.max(1L)
               (plainHit(tmp, amount),
@@ -6823,6 +6839,25 @@ object BattleState {
   /** На сколько мест в обе стороны рвётся Таран: и к врагу через одного, и на
     * свободное место. */
   val RamReach: Int = 2
+
+  /** Герой встаёт на место `to` своего ряда: живой союзник оттуда уступает
+    * его и встаёт на прежнее место героя, а моб напротив, если есть, — с
+    * героем в паре (см. `SoloPveBattle.moveHeroTo`). Таран на свободное место
+    * и шаг «Вихря клинка» к цели. */
+  def stepTo(battle: SoloPveBattle, to: Int): SoloPveBattle = {
+    val from    = battle.group.heroPos
+    val swapped = battle.group.allyAt(to).filter(_.alive).fold(battle)(a =>
+      battle.copy(group = battle.group.updateAlly(a.position)(_.copy(position = from))))
+    if (swapped.group.hasMonster(to)) swapped.moveHeroTo(to)
+    else swapped.copy(group = swapped.group.copy(heroPos = to))
+  }
+
+  /** Куда «Вихрь клинка» шагает перед ударом — напротив цели на месте
+    * `target`. None — кружит с места: цель и так напротив, герой пригвождён
+    * или своей стороне до того места не дотянуться (она короче чужой). */
+  def whirlSpot(battle: SoloPveBattle, target: Int): Option[Int] =
+    Some(target).filter(t => t != battle.group.heroPos && t >= 1 && t <= Formation.HeroPlaces &&
+      battle.group.hasMonster(t) && !battle.effects.heroRooted)
 
   /** Свободные места, куда герой может рвануть Тараном без удара: в его
     * досягаемости, на своей стороне строя и без врага напротив — союзник оттуда

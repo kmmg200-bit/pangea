@@ -2,11 +2,12 @@ package pangea.service.state.states.battle
 
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.model.battle.{Formation, SoloPveBattle}
+import pangea.model.battle.{BattleAlly, Formation, SoloPveBattle}
 import pangea.model.hero.Hero
 import pangea.model.item.{BeltSlot, FlaskKind, Item, ItemDetails, ItemType, Rarity => ItemRarity}
 import pangea.model.monster.{Monster, Race, Rarity}
 import pangea.model.skill.{MonsterEnergy, Skill}
+import pangea.model.squad.AllyKind
 import pangea.model.state.StateType
 import pangea.model.stats.FightStats
 import pangea.model.user.{TelegramId, User, UserId, VkId}
@@ -659,7 +660,73 @@ object GroupBattleSpec extends ZIOSpecDefault {
       } yield assertTrue(after.monsterCurrentHp < 794L) &&
               assertTrue(byPos(2).currentHp == 794L) &&
               assertTrue(byPos(3).currentHp == 1000L) &&
-              assertTrue(screens.contains("вихре стали") && screens.contains("Вихрь настигает"))
+              assertTrue(screens.contains("вихре стали") && screens.contains("Вихрь настигает")) &&
+              // цель и так напротив — шагать некуда
+              assertTrue(after.group.heroPos == 1 && !screens.contains("Вы перемещаетесь"))
+    },
+
+    test("Вихрь клинка по соседу: герой шагает напротив цели и бьёт её и обоих её соседей, дальний № 4 цел") {
+      val h = heroWithSkills(Skill.BladeWhirl, Skill.MinorHeal)
+      for {
+        t <- makeState(h, ready(groupFor(h, 1000L, 1000L, 1000L, 1000L)))
+        (state, dao, r) = t
+        // умение 206 (как выше); базовая атака по цели; ответ пары; два соседа; подкрепления нет
+        _       <- quietRound(99, 99, 99, 99) *> TestRandom.feedLongs(100L)
+        _       <- state.action(testUser, aimed("Skill_101", 2), r)
+        after   <- battleOf(dao)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+        byPos    = after.group.entries.toMap
+      } yield assertTrue(after.group.heroPos == 2 && after.group.paired && after.group.activePos == 2) &&
+              // цели — вихрь и базовая атака, её соседям — по броску вихря
+              assertTrue(after.monsterCurrentHp < 794L) &&
+              assertTrue(byPos(1).currentHp == 794L && byPos(3).currentHp == 794L) &&
+              assertTrue(byPos(4).currentHp == 1000L) &&
+              assertTrue(screens.contains("Вы перемещаетесь на место 2, напротив цели.") && screens.contains("вихре стали"))
+    },
+
+    test("Вихрь клинка: место напротив цели занято союзником — меняются местами") {
+      val h   = heroWithSkills(Skill.BladeWhirl, Skill.MinorHeal)
+      // крепкая: моб, вставший напротив неё, не выбьет её из боя в этом же раунде
+      val rat = BattleAlly(AllyKind.Rat, 2, 100000L, 0L, 0L, FightStats(1, 100000, 0, 0, 0, 1, 0), 1L)
+      val b   = ready(groupFor(h, 1000L, 1000L, 1000L))
+      for {
+        t <- makeState(h, b.copy(group = b.group.copy(allies = List(rat))))
+        (state, dao, r) = t
+        _       <- quietRound(99, 99, 99, 99, 99, 99) *> TestRandom.feedLongs(100L)
+        _       <- state.action(testUser, aimed("Skill_101", 2), r)
+        after   <- battleOf(dao)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(after.group.heroPos == 2 && after.group.paired) &&
+              assertTrue(after.group.allyAt(1).exists(_.kind == AllyKind.Rat) && after.group.allyAt(2).isEmpty) &&
+              assertTrue(screens.contains("Вы перемещаетесь на место 2,") && screens.contains("встаёт на ваше прежнее."))
+    },
+
+    test("Вихрь клинка пригвождённого: шагнуть нельзя — кружит с места, по соседям героя") {
+      val h = heroWithSkills(Skill.BladeWhirl, Skill.MinorHeal)
+      val b = ready(groupFor(h, 1000L, 1000L, 1000L))
+      for {
+        t <- makeState(h, b.copy(effects = b.effects.copy(heroRootedTurns = 2)))
+        (state, dao, r) = t
+        _       <- quietRound(99, 99, 99) *> TestRandom.feedLongs(100L)
+        _       <- state.action(testUser, aimed("Skill_101", 2), r)
+        after   <- battleOf(dao)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+        hpAt     = (after.group.entries.map { case (p, m) => p -> m.currentHp } :+ (after.group.activePos -> after.monsterCurrentHp)).toMap
+      } yield assertTrue(after.group.heroPos == 1) &&
+              assertTrue(screens.contains("Вы пригвождены — переместиться к цели не выйдет, вихрь кружит с места.")) &&
+              // цель № 2 и сосед героя № 1 задеты, № 3 вне досягаемости — цел
+              assertTrue(hpAt(1) < 1000L && hpAt(2) < 1000L && hpAt(3) == 1000L)
+    },
+
+    test("Вихрь клинка: куда шагать — только на свою сторону и не пригвождённому") {
+      val h     = heroWithSkills(Skill.BladeWhirl, Skill.MinorHeal)
+      val b     = groupFor(h, List.fill(Formation.HeroPlaces + 1)(1000L): _*)
+      val edge  = b.copy(group = b.group.copy(heroPos = Formation.HeroPlaces))
+      val stuck = b.copy(effects = b.effects.copy(heroRootedTurns = 1))
+      assertTrue(BattleState.whirlSpot(b, 2).contains(2)) &&
+      assertTrue(BattleState.whirlSpot(b, 1).isEmpty) && // цель напротив
+      assertTrue(BattleState.whirlSpot(edge, Formation.HeroPlaces + 1).isEmpty) && // своей стороне не дотянуться
+      assertTrue(BattleState.whirlSpot(stuck, 2).isEmpty)
     },
 
     test("Веерный порез: урон и кровь цели и соседу героя") {
