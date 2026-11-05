@@ -15,6 +15,8 @@ import pangea.service.state.states.SocketingState._
 import pangea.service.state.{ItemMenu, State, UiScene, UserAction}
 import zio.{Task, ZIO}
 
+import java.util.concurrent.TimeUnit
+
 /** Экран вставки камня-усилителя в гнездо. Вход из инвентаря: id выбранного камня
  *  кладётся в scene_data ([[Scene]]). Показываем надетое снаряжение со свободным
  *  гнездом; выбор предмета вставляет камень в его первое свободное гнездо, тратит
@@ -110,6 +112,7 @@ case class SocketingState(
 
   private def insert(user: User, targetId: Long, renderer: Renderer): Task[StateType] =
     for {
+      now  <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
       hero <- getHero(user)
       ctx  <- gemContext(user, hero)
       res <- ctx match {
@@ -121,12 +124,13 @@ case class SocketingState(
             // ПРОТИВОПОЛОЖНЫЙ ему обращаются в пыль. Одинаковые стихии при этом
             // спокойно стакаются — два рубина усиливают друг друга по грейдам.
             case Some(item) if isWeapon(item) && hasOpposite(item, g) =>
-              annihilate(user, hero, item, g, scene.gemId, renderer)
+              annihilate(user, hero, item, g, scene.gemId, now, renderer)
             case _ =>
               socketInto(hero.equipment, targetId, g) match {
                 case None => showTargets(user, renderer)
+                // Рубин в надетой вещи поднимает максимум здоровья — запасы держат долю.
                 case Some((newEq, item)) =>
-                  heroDao.updateEquipmentAndFightStats(user.userId, newEq, hero.fightStats) *>
+                  heroDao.updateEquipmentAndFightStats(user.userId, newEq, hero.reequip(newEq, now).fightStats) *>
                     inventoryRepo.removeItem(scene.gemId, hero.id).mapError(e => new Throwable(e.toString)) *>
                     renderer.show(user, Screen(
                       content.format("socketing.done", "gem" -> g.displayName, "item" -> item.name), Nil)) *>
@@ -149,14 +153,15 @@ case class SocketingState(
       item:     Item,
       inserted: Gem,
       gemId:    Long,
+      nowMs:    Long,
       renderer: Renderer
   ): Task[StateType] = {
     val cleaned = removeOpposite(item, inserted)
+    val after   = hero.reequip(hero.equipment.replacing(cleaned), nowMs)
     val lost    = item.socketedGems.find(isOpposite(_, inserted))
     val dusts   = (inserted :: lost.toList).map(_.dust)
     for {
-      _   <- heroDao.updateEquipmentAndFightStats(
-               user.userId, hero.equipment.replacing(cleaned), hero.fightStats)
+      _   <- heroDao.updateEquipmentAndFightStats(user.userId, after.equipment, after.fightStats)
       _   <- inventoryRepo.removeItem(gemId, hero.id).mapError(e => new Throwable(e.toString))
       inv <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       room = inv.freeSlots >= dusts.size

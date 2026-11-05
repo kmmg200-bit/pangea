@@ -63,8 +63,8 @@ object WeaponHandsSpec extends ZIOSpecDefault {
     test("одноручное встаёт в свободную руку — сперва правую, потом левую; статы рук складываются") {
       val a = weapon(1L, Grip.OneHanded, atk = 10L)
       val b = weapon(2L, Grip.OneHanded, atk = 7L)
-      val (eq1, f1, out1) = InventoryState.equip(hero, a, None)
-      val (eq2, f2, out2) = InventoryState.equip(hero.copy(equipment = eq1, fightStats = f1), b, None)
+      val (eq1, f1, out1) = InventoryState.equip(hero, a, None, 0L)
+      val (eq2, f2, out2) = InventoryState.equip(hero.copy(equipment = eq1, fightStats = f1), b, None, 0L)
       assertTrue(eq1.weapon == a && eq1.leftHand.itemType == ItemType.NoItem && out1.isEmpty) &&
       assertTrue(eq2.weapon == a && eq2.leftHand == b && out2.isEmpty) &&
       assertTrue(f2.atk == hero.fightStats.atk + 17L) &&
@@ -75,8 +75,8 @@ object WeaponHandsSpec extends ZIOSpecDefault {
       val a = weapon(1L, Grip.OneHanded)
       val b = weapon(2L, Grip.OneHanded)
       val c = weapon(3L, Grip.OneHanded)
-      val (left, _, outL)  = InventoryState.equip(armed(a, b), c, Some(2))
-      val (right, _, outR) = InventoryState.equip(armed(a, b), c, Some(1))
+      val (left, _, outL)  = InventoryState.equip(armed(a, b), c, Some(2), 0L)
+      val (right, _, outR) = InventoryState.equip(armed(a, b), c, Some(1), 0L)
       assertTrue(left.weapon == a && left.leftHand == c && outL == List(b)) &&
       assertTrue(right.weapon == c && right.leftHand == b && outR == List(a))
     },
@@ -85,7 +85,7 @@ object WeaponHandsSpec extends ZIOSpecDefault {
       val a   = weapon(1L, Grip.OneHanded, atk = 10L)
       val b   = weapon(2L, Grip.OneHanded, atk = 7L)
       val big = weapon(3L, Grip.TwoHanded, atk = 30L)
-      val (eq, f, out) = InventoryState.equip(armed(a, b), big, None)
+      val (eq, f, out) = InventoryState.equip(armed(a, b), big, None, 0L)
       assertTrue(eq.weapon == big && eq.leftHand.itemType == ItemType.NoItem && eq.leftBusy) &&
       assertTrue(out == List(a, b)) &&
       assertTrue(f.atk == hero.fightStats.atk + 30L) &&
@@ -96,8 +96,8 @@ object WeaponHandsSpec extends ZIOSpecDefault {
     test("одноручное поверх двуручного снимает двуручное — в какую руку его ни бери") {
       val big = weapon(3L, Grip.TwoHanded, atk = 30L)
       val a   = weapon(1L, Grip.OneHanded, atk = 10L)
-      val (r, fr, outR) = InventoryState.equip(armed(big), a, None)
-      val (l, _, outL)  = InventoryState.equip(armed(big), a, Some(2))
+      val (r, fr, outR) = InventoryState.equip(armed(big), a, None, 0L)
+      val (l, _, outL)  = InventoryState.equip(armed(big), a, Some(2), 0L)
       assertTrue(r.weapon == a && r.leftHand.itemType == ItemType.NoItem && outR == List(big)) &&
       assertTrue(l.weapon.itemType == ItemType.NoItem && l.leftHand == a && outL == List(big)) &&
       assertTrue(fr.atk == hero.fightStats.atk + 10L)

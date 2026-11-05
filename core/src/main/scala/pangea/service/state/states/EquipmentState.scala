@@ -15,6 +15,8 @@ import pangea.service.state.states.EquipmentState._
 import pangea.service.state.{BeltContents, InventoryFeedback, ItemMenu, QuestSupport, State, UiScene, UserAction}
 import zio.{Task, ZIO}
 
+import java.util.concurrent.TimeUnit
+
 case class EquipmentState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
@@ -216,6 +218,7 @@ case class EquipmentState(
 
   private def wearInto(user: User, slotIdx: Int, itemId: Long, renderer: Renderer): Task[StateType] =
     for {
+      now  <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
       hero <- getHero(user)
       inv  <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       slot  = slots(slotIdx)
@@ -226,7 +229,7 @@ case class EquipmentState(
           renderer.show(user, Screen(content.format("inventory.tooHighLevel",
             "required" -> it.lvl.toString, "current" -> hero.lvl.toString), Nil))
         case Some(it) =>
-          val done = InventoryState.equipWith(hero, it, slot.pairSlot)
+          val done = InventoryState.equipWith(hero, it, slot.pairSlot, now)
           // Замена, снимающая последний «Тайник», ужмёт сумку — как и при снятии;
           // двуручное поверх двух одноручных вернёт в сумку на вещь больше, пояс
           // меньше прежнего — то, что в него не поместилось.
@@ -269,6 +272,7 @@ case class EquipmentState(
   private def doUnequip(user: User, slotIdx: Int, renderer: Renderer): Task[StateType] =
     if (slotIdx < 0 || slotIdx >= slots.size) showList(user, renderer)
     else for {
+      now  <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
       hero <- getHero(user)
       inv  <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       slot  = slots(slotIdx)
@@ -294,7 +298,7 @@ case class EquipmentState(
                inventoryRepo.addItem(hero.id, bare).foldZIO(
                  _ => renderer.show(user, Screen(content.text("equipment.unequipInventoryFull"), Nil)),
                  _ => {
-                   val newFight = InventoryState.applyDelta(hero.fightStats, Item.NoItem, item)
+                   val newFight = hero.reequip(newEq, now).fightStats
                    for {
                      _      <- heroDao.updateEquipmentAndFightStats(user.userId, newEq, newFight)
                      _      <- ZIO.when(capDelta != 0)(
@@ -371,8 +375,11 @@ case class EquipmentState(
             case None => showList(user, renderer)
             case Some((emptied, gem)) =>
               for {
+                now   <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
                 inv   <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
                 count  = gem.dustYield
+                // Рубин уходит из гнезда — максимум здоровья падает, и запасы с ним.
+                broken = hero.reequip(hero.equipment.replacing(emptied), now)
                 free   = inv.freeSlots
                 res <-
                   if (free < count)
@@ -380,8 +387,7 @@ case class EquipmentState(
                       content.format("equipment.breakGemNoRoom", "count" -> count.toString), Nil)) *>
                       showList(user, renderer)
                   else
-                    heroDao.updateEquipmentAndFightStats(
-                      user.userId, hero.equipment.replacing(emptied), hero.fightStats) *>
+                    heroDao.updateEquipmentAndFightStats(user.userId, broken.equipment, broken.fightStats) *>
                       ZIO.foreachDiscard(1 to count)(_ =>
                         inventoryRepo.addItem(hero.id, MaterialGenerator.item(gem.dust))
                           .mapError(e => new Throwable(e.toString))) *>

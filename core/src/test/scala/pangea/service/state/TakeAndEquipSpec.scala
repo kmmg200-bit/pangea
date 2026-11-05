@@ -169,6 +169,17 @@ object TakeAndEquipSpec extends ZIOSpecDefault {
               assertTrue(invRepo.snapshot.map(i => i.id -> BeltContents.slotsOf(i)) == List(5L -> Nil))
     },
 
+    test("wear: броня уже была — новая вещь не доливает запас, доля от максимума та же") {
+      val worn = wearing(_.copy(helmet = item(1L, ItemType.Helmet)))
+      val half = worn.copy(fightStats = worn.fightStats.copy(armor = 1L)) // 1 из 3
+      for {
+        heroDao <- TestHeroDao.withHero(userId, half)
+        invRepo  = TestInventoryRepository.accepting
+        _       <- TakeAndEquip.wear(heroDao, invRepo, testUser, half, List(item(2L, ItemType.Boots), item(3L, ItemType.Gloves)))
+        saved   <- heroDao.getHeroByUserId(userId)
+      } yield assertTrue(saved.exists(h => h.effectiveMaxArmor(0L) == 9L && h.fightStats.armor == 3L))
+    },
+
     test("wear: снаряжение и статы сохранены, «Тайник» прибавил сумке места, в сумку ничего не легло") {
       val stash  = item(7L, ItemType.Boots, details = ItemDetails.Passive(PassiveKind.Stash))
       val helmet = item(8L, ItemType.Helmet)
@@ -180,7 +191,8 @@ object TakeAndEquipSpec extends ZIOSpecDefault {
         inv     <- invRepo.get(hero.id)
       } yield assertTrue(saved.exists(_.equipment.boots.id == 7L)) &&
               assertTrue(saved.exists(_.equipment.helmet.id == 8L)) &&
-              assertTrue(saved.exists(_.fightStats.armor == hero.fightStats.armor + 6L)) &&
+              // броня двух вещей — в максимуме; запас пуст до отдыха: брони на герое не было вовсе (см. Hero.share)
+              assertTrue(saved.exists(h => h.effectiveMaxArmor(0L) == 6L && h.fightStats.armor == 0L)) &&
               assertTrue(worn.hero.equipment == saved.map(_.equipment).getOrElse(hero.equipment)) &&
               assertTrue(worn.removed.isEmpty) &&
               assertTrue(inv.maxItems == 20L + PassiveKind.Stash.ExtraSlots) &&

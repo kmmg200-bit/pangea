@@ -1,6 +1,7 @@
 package pangea.model.hero
 
 import pangea.model.battle.SkillSlotState
+import pangea.model.item.Item
 import pangea.model.monster.Race
 import pangea.model.rune.{Rune, RuneData}
 import pangea.model.skill.Skill
@@ -201,6 +202,32 @@ case class Hero(
     copy(fightStats = fightStats.copy(hp = newHp, armor = newArmor))
   }
 
+  /** Надеть `next` вместо надетого — вещь, комплект со стойки или та же вещь с
+   *  другим камнем в гнезде. Атака, защита, уклонение и точность сдвигаются на
+   *  разницу вещей. Запасы — здоровье, броня, энергия — сохраняют свою долю от
+   *  нового максимума: 100 брони из 1000 в комплекте послабее станут 10 из 100,
+   *  а в прежнем снова 100 из 1000.
+   *
+   *  На разницу запасы двигать нельзя: в слабом комплекте броня обрезалась на
+   *  нуле, и обратная смена её накачивала, а здоровье и вовсе не менялось —
+   *  полное в комплекте «на здоровье» уходило в бой в любом другом. Ключ стойки
+   *  меняет комплект где угодно, кроме боя, так что это было бесплатное
+   *  лечение. */
+  def reequip(next: Equipment, nowMs: Long): Hero = {
+    def delta(stat: Item => Long): Long = next.allItems.map(stat).sum - equipment.allItems.map(stat).sum
+    val f     = fightStats
+    val moved = copy(equipment = next, fightStats = f.copy(
+      atk      = (f.atk + delta(_.attack)).max(0L),
+      defence  = (f.defence + delta(_.defence)).max(0L),
+      evasion  = (f.evasion + delta(_.evasion)).max(0L),
+      accuracy = (f.accuracy + delta(_.accuracy)).max(0L)))
+    moved.copy(fightStats = moved.fightStats.copy(
+      // Живой от переодевания не падает замертво: хоть одна единица остаётся.
+      hp     = Hero.share(f.hp, effectiveMaxHp(nowMs), moved.effectiveMaxHp(nowMs)).max(f.hp.min(1L)),
+      armor  = Hero.share(f.armor, effectiveMaxArmor(nowMs), moved.effectiveMaxArmor(nowMs)),
+      energy = Hero.share(f.energy, maxEnergy(nowMs), moved.maxEnergy(nowMs))))
+  }
+
   /** Боевые статы без травм — «потолок», к которому стат вернётся после снятия травм. */
   def maxFightStats: FightStats = fightStatsWith(TraumaPenalties.none)
 
@@ -383,6 +410,16 @@ object Hero {
    *  зелья, достижения и наборы ложатся сверху при подсчёте (см.
    *  effectiveBaseStats) — в самих характеристиках только старт и вложенные очки. */
   val StartBaseStats: BaseStats = BaseStats(4, 4, 4, 4)
+
+  /** Запас `current` из `was` — та же доля от `now`, с округлением вниз: туда
+   *  и обратно запас может только чуть убыть, но не прибыть. Максимум не
+   *  сдвинулся — запас как был. Был нулевой максимум (брони не было совсем) —
+   *  доля неизвестна, и запас пуст до отдыха: иначе комплект без брони на
+   *  стойке заливал бы броню доверху. */
+  def share(current: Long, was: Long, now: Long): Long =
+    if (now == was) current
+    else if (was <= 0L) 0L
+    else current.max(0L) * now.max(0L) / was
 
   /** Сколько очков герой вложил в характеристики: всё, что выше старта. */
   def spentPoints(hero: Hero): Long = {

@@ -734,6 +734,7 @@ case class InventoryState(
 
   private def equipById(user: User, itemId: Long, renderer: Renderer, pairSlot: Option[Int]): Task[StateType] =
     for {
+      now  <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
       hero <- getHero(user)
       inv  <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       // true — остаёмся на показанном экране (выбор кольца ждёт нажатия и
@@ -756,7 +757,7 @@ case class InventoryState(
           else if (pairSlot.isEmpty && SlotChoice.needed(hero.equipment, item))
             renderer.show(user, slotChoiceScreen(item, hero.equipment, itemId)).as(true)
           else {
-            val done     = InventoryState.equipWith(hero, item, pairSlot)
+            val done     = InventoryState.equipWith(hero, item, pairSlot, now)
             val capDelta = InventoryState.equipmentStashDelta(hero.equipment, done.equipment, hero.runes.brandedPassives.toSet)
             InventoryState.equipBlock(inv, capDelta, done.toBag, belt = item.itemType == ItemType.Belt) match {
               // Замена, снимающая последний «Тайник», двуручное поверх двух
@@ -1600,8 +1601,17 @@ object InventoryState {
     * кольцо 1 или 2, правая (1) или левая (2) рука; имеет смысл, когда оба
     * заняты. None — обычное правило слотов: первый свободный, а если свободных
     * нет, второй (у рук — правая). Двуручное снимает оба одноручных разом. Пояс
-    * поверх пояса забирает содержимое прежнего, а тот уходит пустым. */
-  def equipWith(hero: Hero, item: Item, pairSlot: Option[Int]): Equipped = {
+    * поверх пояса забирает содержимое прежнего, а тот уходит пустым. Статы — по
+    * [[Hero.reequip]]: запасы сохраняют долю от нового максимума. */
+  def equipWith(hero: Hero, item: Item, pairSlot: Option[Int], nowMs: Long): Equipped = {
+    val laid = lay(hero, item, pairSlot)
+    laid.copy(fightStats = hero.reequip(laid.equipment, nowMs).fightStats)
+  }
+
+  /** Куда встанет `item` и что снимется — как в [[equipWith]], но статы
+    * остаются прежними: для раскладки (на стойку, примерка нескольких вещей
+    * подряд), где статы считают потом одним шагом или не считают вовсе. */
+  def lay(hero: Hero, item: Item, pairSlot: Option[Int]): Equipped = {
     val eq = hero.equipment
     val (newEq, out, belt) = (item.itemType, pairSlot) match {
       case (ItemType.Ring, Some(1)) => (eq.copy(firstRing = item), List(eq.firstRing), None)
@@ -1615,15 +1625,13 @@ object InventoryState {
       case _ => (withSlot(eq, item), List(equippedIn(eq, item.itemType)), None)
     }
     val removed  = out.filter(_.itemType != ItemType.NoItem)
-    val newFight = removed.foldLeft(applyDelta(hero.fightStats, item, Item.NoItem))((f, old) =>
-      applyDelta(f, Item.NoItem, old))
-    Equipped(newEq, newFight, removed, belt.fold(List.empty[Item])(_.spilled), belt.exists(_.moved))
+    Equipped(newEq, hero.fightStats, removed, belt.fold(List.empty[Item])(_.spilled), belt.exists(_.moved))
   }
 
   /** То же, что [[equipWith]], одним кортежем: снаряжение, статы и всё, что
     * уходит в сумку. */
-  def equip(hero: Hero, item: Item, pairSlot: Option[Int]): (Equipment, FightStats, List[Item]) = {
-    val done = equipWith(hero, item, pairSlot)
+  def equip(hero: Hero, item: Item, pairSlot: Option[Int], nowMs: Long): (Equipment, FightStats, List[Item]) = {
+    val done = equipWith(hero, item, pairSlot, nowMs)
     (done.equipment, done.fightStats, done.toBag)
   }
 
@@ -1807,6 +1815,10 @@ object InventoryState {
     case ItemType.NoItem           => eq
   }
 
+  /** Статы вместе с вещами: запасы растут на всю броню и энергию вещи. Только
+    * для стартового снаряжения новичка (`RegistrationState`): оно приходит
+    * полным. Смена надетого — через [[Hero.reequip]], на разницу запасы не
+    * двигают. */
   def applyDelta(base: FightStats, added: Item, removed: Item): FightStats =
     base.copy(
       atk           = (base.atk + added.attack - removed.attack).max(0L),

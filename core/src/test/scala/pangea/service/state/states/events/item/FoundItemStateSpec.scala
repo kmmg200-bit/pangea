@@ -80,7 +80,8 @@ object FoundItemStateSpec extends ZIOSpecDefault {
         text   <- renderer.sentScreens.map(_.map(_.text).mkString(" | "))
       } yield assertTrue(result == StateType.Dungeon) &&
               assertTrue(hero.exists(_.equipment.helmet.id == 77L)) &&
-              assertTrue(hero.exists(_.fightStats.armor == 4L)) &&
+              // броня шлема — в максимуме; запас пуст до отдыха: брони на герое не было вовсе (см. Hero.share)
+              assertTrue(hero.exists(h => h.effectiveMaxArmor(0L) == 4L && h.fightStats.armor == 0L)) &&
               assertTrue(invRepo.snapshot.isEmpty) &&
               assertTrue(text.contains("Вы получили Найденный шлем и сразу надели."))
     },

@@ -11,6 +11,8 @@ import pangea.repository.item.ItemRepository
 import pangea.service.state.states.InventoryState
 import zio.{Task, ZIO}
 
+import java.util.concurrent.TimeUnit
+
 /** «Забрать и надеть»: только что полученная вещь сразу встаёт на героя — с
   * добычи, с находки в лабиринте, с прилавка Ришелье. Сама она в сумку не
   * заходит, так что в пустой слот её можно надеть и при полной сумке. Вместо
@@ -84,11 +86,14 @@ object TakeAndEquip {
   def wear(heroDao: HeroDao, inventoryRepo: InventoryRepository, user: User, hero: Hero,
            items: List[Item], slot: Option[Int] = None, itemRepo: Option[ItemRepository] = None): Task[Worn] =
     if (items.isEmpty) ZIO.succeed(Worn(hero, Nil))
-    else {
-      val worn = items.foldLeft(Worn(hero, Nil)) { (acc, item) =>
+    else ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS)).flatMap { now =>
+      val laid = items.foldLeft(Worn(hero, Nil)) { (acc, item) =>
         val next = put(acc.hero, item, slot)
         Worn(next.hero, acc.removed ++ next.removed, acc.spilled ++ next.spilled, acc.beltMoved || next.beltMoved)
       }
+      // Статы — одним шагом от прежнего комплекта к новому: по вещи за раз
+      // нулевой максимум брони посреди пути опустошил бы её запас.
+      val worn     = laid.copy(hero = hero.reequip(laid.hero.equipment, now))
       val capDelta = stashDelta(hero, worn.hero)
       heroDao.updateEquipmentAndFightStats(user.userId, worn.hero.equipment, worn.hero.fightStats) *>
         // Места от нового «Тайника» — до того, как снятое ляжет в сумку, а
@@ -108,9 +113,10 @@ object TakeAndEquip {
      else "\n" + content.format("common.takenOff", "old" -> worn.removed.map(_.name).mkString(", "))) +
       BeltContents.movedLine(content, worn.beltMoved, worn.spilled)
 
+  /** Вещь на героя — только раскладка: статы `wear` считает потом одним шагом. */
   private def put(hero: Hero, item: Item, slot: Option[Int]): Worn = {
-    val done = InventoryState.equipWith(hero, item, slot)
-    Worn(hero.copy(equipment = done.equipment, fightStats = done.fightStats), done.removed, done.spilled, done.beltMoved)
+    val done = InventoryState.lay(hero, item, slot)
+    Worn(hero.copy(equipment = done.equipment), done.removed, done.spilled, done.beltMoved)
   }
 
   private def stashDelta(before: Hero, after: Hero): Long =

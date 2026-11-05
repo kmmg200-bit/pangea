@@ -56,14 +56,21 @@ object RackSpec extends ZIOSpecDefault {
 
   override def spec = suite("Магическая стойка")(
 
-    test("статы после обмена — одной разницей: обрезка на нуле в середине не накачивает броню") {
-      val f = FightStats(atk = 57L, hp = 100L, armor = 10L, defence = 0L, evasion = 0L, accuracy = 0L, energy = 0L)
-      val worn = TestFixtures.emptyEquipment.copy(weapon = sword, helmet = helmet)
-      val next = TestFixtures.emptyEquipment.copy(boots = gear(12L, ItemType.Boots, armor = 30L))
-      val after = Racks.statsAfter(f, worn, next)
-      // шлем ушёл (−30), сапоги пришли (+30): текущая броня та же; меч ушёл — атака −7
-      assertTrue(after.armor == 10L && after.atk == 50L) &&
-      assertTrue(Racks.statsAfter(f, next, Equipment.empty).armor == 0L)
+    test("обмен со стойкой туда-обратно не чинит броню: запас держит долю от максимума") {
+      val heavy = gear(13L, ItemType.Helmet, armor = 1000L)
+      val light = gear(14L, ItemType.Helmet, armor = 100L)
+      val worn  = hero(TestFixtures.emptyEquipment.copy(weapon = sword, helmet = heavy))
+      val beaten = worn.copy(fightStats = worn.fightStats.copy(armor = 100L))
+      for {
+        t  <- make(beaten, withRack.copy(racks = List(TestFixtures.emptyEquipment.copy(helmet = light))))
+        (state, dao, _, r, _) = t
+        _  <- state.action(testUser, tap("HomeRackSwap", "n" -> "1"), r)
+        h1 <- heroOf(dao)
+        _  <- state.action(testUser, tap("HomeRackSwap", "n" -> "1"), r)
+        h2 <- heroOf(dao)
+      } yield assertTrue(h1.equipment.helmet.id == light.id && h1.fightStats.armor == 10L && h1.fightStats.atk == 50L) &&
+              // прежде: 100 − 900 обрезалось до нуля, и обратная смена давала 900 из 1000
+              assertTrue(h2.equipment.helmet.id == heavy.id && h2.fightStats.armor == 100L && h2.fightStats.atk == 57L)
     },
 
     test("Юнона: стойка за 100 дублонов, с ключом №1; в домик — не больше одной") {

@@ -98,11 +98,11 @@ object ShieldSpec extends ZIOSpecDefault {
 
     test("щит берут в любую руку; два щита — это без оружия; щит снимает двуручное") {
       val base = hero(Item.NoItem)
-      val (eq1, f1, _) = InventoryState.equip(base, sword(1L), None)
-      val (eq2, _, _)  = InventoryState.equip(base.copy(equipment = eq1, fightStats = f1), shield(), None)
+      val (eq1, f1, _) = InventoryState.equip(base, sword(1L), None, 0L)
+      val (eq2, _, _)  = InventoryState.equip(base.copy(equipment = eq1, fightStats = f1), shield(), None, 0L)
       val twoShields   = TestFixtures.emptyEquipment.copy(weapon = shield(301L), leftHand = shield(302L))
       val big          = sword(5L).copy(grip = Some(Grip.TwoHanded))
-      val (eq3, _, out) = InventoryState.equip(hero(big), shield(), Some(2))
+      val (eq3, _, out) = InventoryState.equip(hero(big), shield(), Some(2), 0L)
       assertTrue(eq2.weapon.id == 1L && eq2.leftHand.id == 301L && !eq2.unarmed) &&
       assertTrue(twoShields.unarmed && twoShields.handShields.size == 2) &&
       assertTrue(eq3.leftHand.id == 301L && eq3.weapon.itemType == ItemType.NoItem && out == List(big))

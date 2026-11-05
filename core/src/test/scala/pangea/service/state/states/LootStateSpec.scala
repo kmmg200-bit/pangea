@@ -283,7 +283,8 @@ object LootStateSpec extends ZIOSpecDefault {
         text   <- renderer.sentScreens.map(_.map(_.text).mkString(" | "))
       } yield assertTrue(result == StateType.Dungeon) &&
               assertTrue(hero.exists(h => h.equipment.helmet.name == "Шлем" && h.equipment.helmet.id > 0L)) &&
-              assertTrue(hero.exists(_.fightStats.armor == 7L)) && // броня шлема — в статах
+              // броня шлема — в максимуме; запас пуст до отдыха: брони на герое не было вовсе (см. Hero.share)
+              assertTrue(hero.exists(h => h.effectiveMaxArmor(0L) == 7L && h.fightStats.armor == 0L)) &&
               assertTrue(invRepo.snapshot.map(_.itemType) == List(ItemType.Trophy)) &&
               assertTrue(text.contains("Вы забираете добычу") && text.contains("✅ Надето: Шлем"))
     },

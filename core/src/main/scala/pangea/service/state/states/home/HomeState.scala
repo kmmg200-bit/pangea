@@ -528,7 +528,7 @@ case class HomeState(
               Choice("HomeRackPut", content.text("home.house.back"), color = ChoiceColor.Negative,
                 data = Map("n" -> n.toString, "p" -> page)))).as(StateType.Home)
           else {
-            val done = InventoryState.equipWith(hero.copy(equipment = set), it, slot)
+            val done = InventoryState.lay(hero.copy(equipment = set), it, slot)
             InventoryState.equipBlock(inv, 0L, done.toBag, belt = it.itemType == ItemType.Belt) match {
               case Some(key) => say(user, content.format(key, "name" -> it.name), renderer) *> rackPutList(user, ua, renderer)
               case None =>
