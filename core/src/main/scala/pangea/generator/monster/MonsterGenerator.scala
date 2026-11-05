@@ -15,6 +15,12 @@ object TowerRates {
   val HpPerLvl: Long       = 45L
 }
 
+/** Дракон глубин: каждый показатель — атака, HP, броня, защита, уклонение,
+  * меткость и энергия. */
+object DragonRates {
+  val Stat: Long = 100000L
+}
+
 object MonsterGenerator {
 
   private val N = 1.1
@@ -58,6 +64,15 @@ object MonsterGenerator {
       evasion  = 0L,
       accuracy = TowerRates.AccuracyPerLvl * l,
       energy   = 0L))
+  }
+
+  /** Дракон глубин (26–50-й уровень лабиринта): все показатели — по
+    * [[DragonRates.Stat]], на любом уровне. Сородичей не зовёт — бой с ним
+    * идёт с `noKin` (см. DungeonState). */
+  def dragon(lvl: Int): Monster = {
+    val s = DragonRates.Stat
+    Monster(0L, lvl.toLong.max(1L), Race.Dragon, Rarity.Legendary,
+      FightStats(atk = s, hp = s, armor = s, defence = s, evasion = s, accuracy = s, energy = s))
   }
 
   def generate(dungeonLevel: Int, rng: Rng): (Monster, Rng) = {

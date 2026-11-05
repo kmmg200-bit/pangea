@@ -331,12 +331,41 @@ object Race extends Enum[Race] with DoobieEnum[Race] {
                                          |Заметки путешественника Ашалдарона о расах Пангеи""".stripMargin
   }
 
+  /** Дракон — хозяин лабиринта с 26-го по 50-й уровень (см.
+   *  [[pangea.service.state.states.dungeon.DungeonState.dragonLair]]). Чешую не
+   *  пробить ни ядом, ни кровотечением, ни огнём (см. [[Race.immuneToDots]],
+   *  [[Race.immuneToBurn]]). В обычной генерации мобов не участвует. */
+  case object Dragon extends Race {
+    override def toString: String = "Дракон"
+    val genitive: String          = "Дракона"
+    val genitivePlural: String    = "драконов"
+    val plural: String            = "Драконы"
+
+    override val description: String = """Дракон:
+                                         |Старше лабиринта
+                                         |и, говорят, старше Кинэта. Чешуя
+                                         |не пропускает ни
+                                         |яда, ни клинка, ни огня — огонь он
+                                         |носит в себе сам.
+                                         |Места обитания:
+                                         |Глубины лабиринта,
+                                         |куда не заходит даже стража.
+                                         |
+                                         |Заметки путешественника Ашалдарона о расах Пангеи""".stripMargin
+  }
+
   /** Расы, на которых не действуют яд и кровотечение — им нечему течь и нечего
-   *  травить: у элементаля нет плоти, у нежити давно нет живой крови. Зверь сюда
-   *  не входит: он из плоти, и его травят и режут как всех. */
+   *  травить: у элементаля нет плоти, у нежити давно нет живой крови, дракона
+   *  не берёт сквозь чешую. Зверь сюда не входит: он из плоти, и его травят и
+   *  режут как всех. */
   def immuneToDots(race: Race): Boolean = dotImmune.contains(race)
 
-  private val dotImmune: Set[Race] = Set(Elemental, Undead)
+  private val dotImmune: Set[Race] = Set(Elemental, Undead, Dragon)
+
+  /** Кого нельзя поджечь по расе: дракон сам носит в себе огонь. Огненного
+   *  элементаля не поджечь своим правилом — у минибосса (см.
+   *  [[MiniBoss.immuneToBurn]]). */
+  def immuneToBurn(race: Race): Boolean = race == Dragon
 
   /** Кому нечем кровоточить. Сооружению вдобавок к яду с кровью не страшны и
    *  раны как таковые: течь в нём нечему. */
@@ -347,7 +376,7 @@ object Race extends Enum[Race] with DoobieEnum[Race] {
   def immovable(race: Race): Boolean = race == Construct
 
   /** Расы, которые бывают только у минибоссов и в обычной игре не встречаются. */
-  val bossRaces: Set[Race] = Set(Elemental, Undead, Animal, Construct)
+  val bossRaces: Set[Race] = Set(Elemental, Undead, Animal, Construct, Dragon)
 
   /** «Смертные» расы — всё, кроме боссовых. Именно ИЗ НИХ выбирают расу при
    *  создании персонажа, генерации обычных мобов, могил и заданий трактирщика:

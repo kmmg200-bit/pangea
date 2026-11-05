@@ -753,8 +753,10 @@ case class SoloPveBattle(
     val noDots  = if (Race.immuneToDots(race)) e.copy(monsterPoison = None, monsterBleed = None)
                   else if (Race.immuneToBleed(race)) e.copy(monsterBleed = None)
                   else e
-    // Огненного элементаля вдобавок нельзя поджечь — он и так пламя.
-    val noBurn  = if (boss.exists(_.immuneToBurn)) noDots.copy(monsterBurn = None) else noDots
+    // Огненного элементаля вдобавок нельзя поджечь — он и так пламя. Дракона —
+    // тоже: огонь он носит в себе.
+    val noBurn  = if (boss.exists(_.immuneToBurn) || Race.immuneToBurn(race)) noDots.copy(monsterBurn = None)
+                  else noDots
     copy(effects = noBurn)
   }
   def toMonster: Monster =

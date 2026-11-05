@@ -46,6 +46,8 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
       "FindEvent"     -> Target.Run { (user, _, renderer) => findEvent(user, renderer) },
       "GoDarker"      -> Target.Run { (user, _, renderer) => goDarker(user, renderer) },
       "StopTracking"  -> Target.Run { (user, _, renderer) => stopTracking(user, renderer) },
+      "DragonAttack"  -> Target.Run { (user, _, renderer) => dragonAttack(user, renderer) },
+      "DragonLeave"   -> Target.Run { (user, _, renderer) => dragonLeave(user, renderer) },
       "GoLighter"     -> Target.Run { (user, _, renderer) => goLighter(user, renderer) },
       "GoToCity"       -> Target.Goto(StateType.GlobalMap),
       "OpenCharacter"  -> Target.Run { (user, _, _) => CharacterMenu.open(heroDao, user.userId, StateType.Dungeon) },
@@ -105,10 +107,54 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
    *  выбираем и разыгрываем случайное событие. Старейшина мурлоков, которому
    *  не досталось экрана добычи после двухсотого убитого, выходит здесь. */
   private def findEvent(user: User, renderer: Renderer): Task[StateType] =
-    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
-      if (MurlocQuest.elderPending(quests)) ZIO.succeed(StateType.MurlocElder)
-      else rollEvent(user, renderer, quests)
+    getHero(user).flatMap { hero =>
+      // Логово дракона: здесь осмотр — только он, раньше любых встреч.
+      if (DungeonState.dragonLair(hero.dungeonLevel)) showDragon(user, renderer)
+      else NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+        if (MurlocQuest.elderPending(quests)) ZIO.succeed(StateType.MurlocElder)
+        else rollEvent(user, renderer, quests)
+      }
     }
+
+  /** Предупреждение стражи о драконе: «Напасть» или «Уйти». */
+  private def showDragon(user: User, renderer: Renderer): Task[StateType] =
+    renderer.show(user, Screen(content.text("dungeon.dragon.text"), List(
+      Choice("DragonAttack", content.text("dungeon.dragon.attackBtn"), color = ChoiceColor.Negative, row = Some(0)),
+      Choice("DragonLeave", content.text("dungeon.dragon.leaveBtn"), color = ChoiceColor.Positive, row = Some(0))
+    ))).as(StateType.Dungeon)
+
+  /** «Напасть»: бой с драконом этого уровня. Сородичей он не зовёт, энергия —
+    * вся его, без обычного стартового броска. Кнопка из старого сообщения вне
+    * логова — просто экран этажа. */
+  private def dragonAttack(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      now  <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+      hero <- getHero(user)
+      res  <-
+        if (!DungeonState.dragonLair(hero.dungeonLevel)) renderer.show(user, enterScreen(hero, now)).as(StateType.Dungeon)
+        else {
+          val battle = SoloPveBattle.from(MonsterGenerator.dragon(hero.dungeonLevel), hero).copy(noKin = true)
+          heroDao.writeActiveBattle(user.userId, battle.asJson) *>
+            heroDao.writeSceneData(user.userId, io.circe.Json.Null).as(StateType.Battle)
+        }
+    } yield res
+
+  /** «Уйти»: герой отступает на [[DungeonState.DragonRetreatLevel]]-й уровень.
+    * Глубже он спуститься может и потом, но в логове снова встретит дракона.
+    * Кнопка из старого сообщения вне логова — просто экран этажа. */
+  private def dragonLeave(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      now  <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+      hero <- getHero(user)
+      _    <-
+        if (!DungeonState.dragonLair(hero.dungeonLevel)) renderer.show(user, enterScreen(hero, now))
+        else {
+          val level = DungeonState.DragonRetreatLevel
+          heroDao.updateDungeonLevel(user.userId, level) *>
+            renderer.show(user, Screen(content.format("dungeon.dragon.left", "level" -> level.toString), Nil)) *>
+            renderer.show(user, enterScreen(hero.copy(dungeonLevel = level), now))
+        }
+    } yield StateType.Dungeon
 
   private def rollEvent(user: User, renderer: Renderer, quests: NpcQuests): Task[StateType] =
     for {
@@ -341,6 +387,11 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
       tracking <- readTracking(user)
       result <- (hero.canGoDarker, tracking) match {
         case (true, _)                              => descend(user, hero, now, renderer)
+        // логово дракона: выслеживать глубже — значит выйти на него. Начатое
+        // раньше выслеживание (таймер сработал) кончается тем же.
+        case (false, t) if DungeonState.dragonLair(hero.dungeonLevel) =>
+          ZIO.when(t.isDefined)(heroDao.writeSceneData(user.userId, io.circe.Json.Null) *>
+            scheduler.cancel(user.userId, TaskKind.DarknessTracking)) *> showDragon(user, renderer)
         // абсолютное дно лабиринта — выслеживать нечего, глубже пути нет
         case (false, _) if hero.dungeonLevel >= 150 => atDeepest(user, hero, now, renderer)
         case (false, None)                          => startTracking(user, now, renderer)
@@ -435,6 +486,14 @@ object DungeonState {
   /** Сколько процентов своей атаки именной вкладывает в удар из засады. Герой
     * после него остаётся жив — хотя бы на единице HP. */
   val TrapDamagePct: Long = 150L
+
+  /** Логово дракона — уровни лабиринта с 26-го по 50-й: здесь любой осмотр и
+    * выслеживание выводят на дракона. «Уйти» отводит на 25-й. */
+  val DragonFrom: Int         = 26
+  val DragonTo: Int           = 50
+  val DragonRetreatLevel: Int = 25
+
+  def dragonLair(dungeonLevel: Int): Boolean = dungeonLevel >= DragonFrom && dungeonLevel <= DragonTo
 
   // Диапазон выслеживания прохода вглубь: 2–5 минут. Игроку длительность не
   // сообщается — время определяется по стенным часам (`nowMs + rnd`).
