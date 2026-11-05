@@ -535,14 +535,41 @@ object DungeonStateSpec extends ZIOSpecDefault {
               assertTrue(screens.isEmpty)
     },
 
-    test("неизвестный ввод → остаётся в Dungeon без сообщений") {
+    test("неизвестный ввод → остаётся в Dungeon и показывает экран этажа ещё раз") {
       for {
         quad                      <- makeState()
         (state, _, renderer, _)    = quad
         result                    <- state.action(testUser, UserAction("что угодно", None), renderer)
         screens                   <- renderer.sentScreens
       } yield assertTrue(result == StateType.Dungeon) &&
-              assertTrue(screens.isEmpty)
+              assertTrue(screens.size == 1) &&
+              assertTrue(screens.head.text.contains("лабиринт")) &&
+              assertTrue(screens.head.choices.map(_.id).contains("FindEvent"))
+    },
+
+    test("старая кнопка «Продолжить» с добычи → экран этажа с его кнопками, а не тишина") {
+      for {
+        quad                      <- makeState()
+        (state, _, renderer, _)    = quad
+        result                    <- state.action(testUser, tap("Continue"), renderer)
+        screens                   <- renderer.sentScreens
+      } yield assertTrue(result == StateType.Dungeon) &&
+              assertTrue(screens.size == 1) &&
+              assertTrue(screens.head.choices.map(_.id).contains("FindEvent")) &&
+              assertTrue(!screens.head.choices.map(_.id).contains("Continue"))
+    },
+
+    test("старая кнопка во время выслеживания → снова экран выслеживания, а не этажа") {
+      for {
+        quad                         <- makeState(dungeonLevel = 5, maxDungeonLevel = 5)
+        (state, _, renderer, _)       = quad
+        _                            <- state.action(testUser, tap("GoDarker"), renderer)
+        r2                           <- TestRenderer.make
+        result                       <- state.action(testUser, tap("Continue"), r2)
+        screens                      <- r2.sentScreens
+      } yield assertTrue(result == StateType.Dungeon) &&
+              assertTrue(screens.size == 1) &&
+              assertTrue(screens.head.choices.map(_.id) == List("StopTracking"))
     }
   )
 }

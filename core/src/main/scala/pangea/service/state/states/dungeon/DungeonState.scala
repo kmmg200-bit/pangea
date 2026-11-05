@@ -53,11 +53,15 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
       "OpenCharacter"  -> Target.Run { (user, _, _) => CharacterMenu.open(heroDao, user.userId, StateType.Dungeon) },
       "Rest"           -> Target.Run { (user, _, renderer) => rest(user, renderer) }
     ),
-    fallback = Target.Goto(StateType.Dungeon)
+    // Написал текст или нажал старую кнопку (клиент ВК не сменил клавиатуру,
+    // и под рукой осталось «Продолжить» с добычи) — экран этажа ещё раз, с его
+    // кнопками. Переход в то же состояние ничего не показывает, и без этого
+    // игрок жал бы в тишину, пока не догадается прописать /home.
+    fallback = Target.Run { (user, _, renderer) => enter(user, renderer).as(StateType.Dungeon) }
   )
 
   override def targetStates: Set[StateType] =
-    branch.gotoTargets + StateType.HeroStats + StateType.MurlocElder + StateType.RottenJoe ++
+    branch.gotoTargets + StateType.Dungeon + StateType.HeroStats + StateType.MurlocElder + StateType.RottenJoe ++
       RareQuests.Encounters.map(_._2)
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
