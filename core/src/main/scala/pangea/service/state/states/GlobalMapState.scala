@@ -38,7 +38,8 @@ case class GlobalMapState(heroDao: HeroDao, content: SceneContent) extends State
                 "heroArmor" -> hero.fightStats.armor.toString,
                 "heroEnergy"    -> hero.fightStats.energy.min(hero.maxEnergy(now)).toString,
                 "heroMaxEnergy" -> hero.maxEnergy(now).toString,
-                "silver"    -> hero.silver.toString)
+                "silver"    -> hero.silver.toString,
+                "doubloons" -> hero.doubloons.toString)
       byId  = content.screen("globalMap.enter").choices.map(c => c.id -> c).toMap
       choices = List(
         byId("HarborQuarter").copy(color = ChoiceColor.Primary, row = Some(0)),

@@ -1214,7 +1214,7 @@ home:
 
 globalMap:
   enter:
-    text: "Добро пожаловать в Кинэт!\n❤ {heroHp}/{heroMax} 🧥 {heroArmor} ⚡ {heroEnergy}/{heroMaxEnergy}\n🪙 Серебро: {silver}"
+    text: "Добро пожаловать в Кинэт!\n❤ {heroHp}/{heroMax} 🧥 {heroArmor} ⚡ {heroEnergy}/{heroMaxEnergy}\n🪙 Серебро: {silver}\n🟡 Дублоны: {doubloons}"
     choices:
       HarborQuarter: "Портовый квартал"
       MarketSquare: "Торговая площадь"

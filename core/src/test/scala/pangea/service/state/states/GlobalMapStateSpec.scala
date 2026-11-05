@@ -23,11 +23,11 @@ object GlobalMapStateSpec extends ZIOSpecDefault {
 
   private val baseHero    = TestFixtures.hero(userId)
   private val fullHp      = baseHero.baseStats.vit * 24L  // 240
-  private val richHero    = baseHero.copy(silver = 500L, fightStats = baseHero.fightStats.copy(hp = fullHp))
+  private val richHero    = baseHero.copy(silver = 500L, doubloons = 37L, fightStats = baseHero.fightStats.copy(hp = fullHp))
 
   override def spec = suite("GlobalMapState")(
 
-    test("enter → показывает HP, silver, кнопки Tavern и ReturnToDungeon") {
+    test("enter → показывает HP, серебро и дублоны, кнопки Tavern и ReturnToDungeon") {
       for {
         triple              <- makeState(richHero)
         (state, _, renderer) = triple
@@ -35,6 +35,8 @@ object GlobalMapStateSpec extends ZIOSpecDefault {
         screens             <- renderer.sentScreens
       } yield assertTrue(screens.nonEmpty) &&
               assertTrue(screens.head.text.contains("Кинэт")) &&
+              // кошелёк целиком: серебро и под ним дублоны
+              assertTrue(screens.head.text.endsWith("🪙 Серебро: 500\n🟡 Дублоны: 37")) &&
               assertTrue(screens.head.choices.map(_.id).contains("Tavern")) &&
               assertTrue(screens.head.choices.map(_.id).contains("ReturnToDungeon"))
     },
