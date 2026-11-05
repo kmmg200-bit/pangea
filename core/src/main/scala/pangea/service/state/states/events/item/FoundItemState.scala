@@ -120,13 +120,17 @@ case class FoundItemState(
       raw  <- heroDao.readSceneData(user.userId)
         .flatMap(ZIO.fromOption(_))
         .orElseFail(new Throwable(s"No scene_data for user ${user.userId}"))
-      item <- ZIO.fromEither(raw.as[FoundItemData].map(_.item))
+      found <- ZIO.fromEither(raw.as[FoundItemData])
+      item   = found.item
       hero <- heroDao
         .getHeroByUserId(user.userId)
         .flatMap(ZIO.fromOption(_))
         .orElseFail(new Throwable(s"No hero found for user ${user.userId}"))
-      // Надеть уже нельзя (кнопка со старого экрана) — находка просто ложится в сумку.
-      next <- if (wear && TakeAndEquip.fits(hero, item)) wearItem(user, hero, item, None, renderer)
+      // Уже забрана (сообщение тогда не дошло) — второй раз не выдаём, просто
+      // доводим ход: дальше по лабиринту. Надеть уже нельзя (кнопка со старого
+      // экрана) — находка просто ложится в сумку.
+      next <- if (found.taken) ZIO.succeed(StateType.Dungeon)
+              else if (wear && TakeAndEquip.fits(hero, item)) wearItem(user, hero, item, None, renderer)
               else if (wear && TakeAndEquip.replaces(hero, item)) swapItem(user, ua, hero, item, renderer)
               else intoBag(user, hero, item, renderer).as(StateType.Dungeon)
     } yield next
@@ -160,6 +164,7 @@ case class FoundItemState(
       // Снятое легло в сумку — скажем, сколько в ней осталось места.
       bag  <- if (worn.removed.isEmpty) ZIO.succeed("")
               else InventoryFeedback.freeSlotsLine(inventoryRepository, content, hero.id).map("\n" + _)
+      _    <- markTaken(user, item)
       _    <- renderer.show(user, Screen(
                 content.format("foundItem.takenWorn", "name" -> item.name) + TakeAndEquip.takenOffLine(content, worn) + bag,
                 Nil))
@@ -179,11 +184,17 @@ case class FoundItemState(
               Json.obj("name" -> item.name.asJson)))
       // Ларец и Живая сумка могут перехватить находку — тогда и место считаем в них.
       where <- InventoryFeedback.intakeLine(inventoryRepository, content, hero.id, item, intake)
+      _ <- markTaken(user, item)
       _ <- if (added)
              renderer.show(user, Screen(content.format("foundItem.taken", "name" -> item.name) + "\n" + where, Nil))
            else
              renderer.show(user, Screen(where, Nil))
     } yield ()
+
+  /** Находка забрана — до показа: ВК может не принять сообщение и после
+    * повторов, и тогда повторное «Забрать» не должно выдать её ещё раз. */
+  private def markTaken(user: User, item: Item): Task[Unit] =
+    heroDao.writeSceneData(user.userId, FoundItemData(item, taken = true).asJson)
 
   private def dontTakeItem(user: User, renderer: Renderer): Task[StateType] =
     journal.append(GameEvent(user.userId, "item_left", Json.obj())) *>
@@ -194,8 +205,10 @@ case class FoundItemState(
 object FoundItemState {
 
   /** Находка на экране. `waiting` — игрок ушёл в сумку («🎒 Рюкзак») и вернётся
-    * к ней же: `enter` покажет её, а не выкатит новую. */
-  case class FoundItemData(item: Item, waiting: Boolean = false)
+    * к ней же: `enter` покажет её, а не выкатит новую. `taken` — находку уже
+    * забрали (в сумку или на героя), а сообщение об этом ВК не принял: ход
+    * оборвался, герой остался на экране находки, и второй раз её не выдаём. */
+  case class FoundItemData(item: Item, waiting: Boolean = false, taken: Boolean = false)
   object FoundItemData {
     implicit val encoder: Encoder[FoundItemData] = deriveEncoder[FoundItemData]
     // Рукописный декодер: находка лежит в scene_data, и новое поле не должно
@@ -204,6 +217,7 @@ object FoundItemState {
       for {
         item    <- c.get[Item]("item")
         waiting <- c.getOrElse[Boolean]("waiting")(false)
-      } yield FoundItemData(item, waiting)
+        taken   <- c.getOrElse[Boolean]("taken")(false)
+      } yield FoundItemData(item, waiting, taken)
   }
 }

@@ -260,6 +260,11 @@ case class LootState(
                    else "\n\n" + content.format("loot.worn", "names" -> wornItems.map(_.name).mkString(", ")) +
                      TakeAndEquip.takenOffLine(content, worn)
       full       = if (lostLines.isEmpty) "" else "\n\n" + lostLines.mkString("\n")
+      // Добыча разобрана — до показа: ВК может не принять сообщение и после
+      // повторов, ход тогда обрывается здесь, а герой остаётся на экране добычи.
+      // Повторное «Забрать» выдало бы те же вещи ещё раз; с пустой добычей оно
+      // просто доведёт ход до конца — в лабиринт, в событие или к следующему.
+      _ <- heroDao.writeSceneData(user.userId, loot.copy(items = Nil).asJson)
       _ <- renderer.show(user, Screen(taken + wornLine + full + "\n\n" + slots, Nil))
       // Двенадцатая вещь набора — за собранный набор своё достижение.
       _ <- QuestSupport.grantFullSets(heroDao, content, user, worn.hero, renderer)

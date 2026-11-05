@@ -440,5 +440,17 @@ object LootStateSpec extends ZIOSpecDefault {
       val loot = json.as[LootData].toOption
       assertTrue(loot.exists(l => l.monsterName.isEmpty && l.queue.isEmpty && l.silvers == List(3L) && !l.credited))
     }
+    ,
+    test("ВК не принял «Вы забираете добычу» — повторное «Забрать» её не задваивает и доводит ход") {
+      for {
+        t <- makeState(LootData(items = List(trophy), silvers = Nil))
+        (state, renderer, _, invRepo) = t
+        failed <- state.action(testUser, tap("Take"), TestRenderer.rejecting("Вы забираете добычу")).either
+        bagged  = invRepo.snapshot.size
+        again  <- state.action(testUser, tap("Take"), renderer)
+      } yield assertTrue(failed.isLeft && bagged == 1) &&
+              // вещь одна, как и была; ход дошёл до конца — обратно в лабиринт
+              assertTrue(invRepo.snapshot.size == 1 && again == StateType.Dungeon)
+    }
   )
 }

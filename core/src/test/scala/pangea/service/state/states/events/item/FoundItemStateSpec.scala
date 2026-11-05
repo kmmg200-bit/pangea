@@ -277,5 +277,34 @@ object FoundItemStateSpec extends ZIOSpecDefault {
       } yield assertTrue(items.nonEmpty) &&
               assertTrue(items.forall(_.id > 0L))
     }
+    ,
+    test("ВК не принял «Вы получили» — повторное «Забрать» находку не задваивает и уводит дальше") {
+      for {
+        t <- withFound(helmet())
+        (state, renderer, _, invRepo) = t
+        failed <- state.action(testUser, tap("TakeItem"), TestRenderer.rejecting("Вы получили")).either
+        bagged  = invRepo.snapshot.size
+        again  <- state.action(testUser, tap("TakeItem"), renderer)
+      } yield assertTrue(failed.isLeft && bagged == 1) &&
+              assertTrue(invRepo.snapshot.size == 1 && again == StateType.Dungeon)
+    },
+
+    test("ВК не принял «…и сразу надели» — повторное нажатие не кладёт находку ещё и в сумку") {
+      for {
+        t <- withFound(helmet())
+        (state, renderer, heroDao, invRepo) = t
+        failed <- state.action(testUser, tap("TakeWearItem"), TestRenderer.rejecting("сразу надели")).either
+        again  <- state.action(testUser, tap("TakeWearItem"), renderer)
+        hero   <- heroDao.getHeroByUserId(userId)
+        again2 <- state.action(testUser, tap("TakeItem"), renderer)
+      } yield assertTrue(failed.isLeft) &&
+              assertTrue(hero.exists(_.equipment.helmet.id == 77L)) &&
+              assertTrue(invRepo.snapshot.isEmpty && again == StateType.Dungeon && again2 == StateType.Dungeon)
+    },
+
+    test("старая запись находки без отметки «забрана» читается: не забрана") {
+      val old = FoundItemData(helmet(), waiting = true).asJson.mapObject(_.remove("taken"))
+      assertTrue(old.as[FoundItemData].toOption.contains(FoundItemData(helmet(), waiting = true, taken = false)))
+    }
   )
 }
