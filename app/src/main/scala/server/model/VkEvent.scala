@@ -40,7 +40,7 @@ object VkEvent {
 
     /** Ключ сообщения беседы для защиты от повторов (см. `ChatCommand.eventKey`). */
     def chatEventKey: Long =
-      pangea.service.chat.ChatCommand.eventKey(id, conversationMessageId)
+      pangea.service.chat.ChatCommand.eventKey(peerId, id, conversationMessageId)
 
     /** Кому адресована команда: автор процитированного или пересланного. */
     def quotedAuthor: Option[Long] =

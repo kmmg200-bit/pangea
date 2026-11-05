@@ -117,6 +117,45 @@ object AuctionSpec extends ZIOSpecDefault {
                 List("AuctionBrowse", "AuctionSell", "MyLots", "LeaveAuction", "GoToCity"))
     },
 
+    test("меню зовёт в торговый чат: строка и ссылка-приглашение") {
+      for {
+        f    <- auction()
+        _    <- f.state.enter(testUser, f.renderer)
+        menu <- f.renderer.sentScreens.map(_.last)
+      } yield assertTrue(menu.text.endsWith(
+                "🪧 Новые лоты, сделки из рук в руки и обмен — всё в торговом чате Кинэта:\n" + pangea.service.chat.Links.TradeChat))
+    },
+
+    test("купил с витрины — остаёшься на той же странице, а не в меню аукциона") {
+      val many = (1L to 12L).toList.map(lotOf(_))
+      for {
+        f      <- auction(lots = many, silver = 10000L)
+        _      <- f.state.action(testUser, tap("AuctionBrowse"), f.renderer)
+        _      <- f.state.action(testUser, tap("AuctionNext"), f.renderer)
+        second <- f.renderer.sentScreens.map(_.last)
+        lotId   = second.choices.find(_.id == "ShowLot").flatMap(_.data.get("id")).getOrElse("")
+        _      <- f.state.action(testUser, tap("ShowLot", "id" -> lotId), f.renderer)
+        _      <- f.state.action(testUser, tap("BuyLot", "id" -> lotId), f.renderer)
+        _      <- f.state.action(testUser, tap("BuyLotYes", "id" -> lotId), f.renderer)
+        after  <- f.renderer.sentScreens.map(_.takeRight(2))
+      } yield assertTrue(lotId.nonEmpty && f.lots.snapshot.size == 11) &&
+              assertTrue(after.headOption.exists(_.text.startsWith("Рахадим вносит запись в книгу"))) &&
+              // та же вторая страница: лотов на ней теперь три, а не четыре
+              assertTrue(after.lastOption.exists(s => s.text.startsWith("Лоты в продаже. Страница 2/2") &&
+                s.choices.count(_.id == "ShowLot") == 3))
+    },
+
+    test("купил лот по номеру из объявления, мимо витрины, — после покупки меню аукциона") {
+      for {
+        f     <- auction(lots = List(lotOf(7L)), silver = 1000L)
+        _     <- f.state.enter(testUser, f.renderer)
+        _     <- f.state.action(testUser, text("7"), f.renderer)
+        _     <- f.state.action(testUser, tap("BuyLotYes", "id" -> "7"), f.renderer)
+        after <- f.renderer.sentScreens.map(_.last)
+      } yield assertTrue(f.lots.snapshot.isEmpty) &&
+              assertTrue(after.choices.map(_.id) == List("AuctionBrowse", "AuctionSell", "MyLots", "LeaveAuction", "GoToCity"))
+    },
+
     test("витрина: восемь лотов на страницу, подписи в лимите кнопки") {
       val many = (1L to 12L).toList.map(lotOf(_))
       for {
@@ -186,7 +225,7 @@ object AuctionSpec extends ZIOSpecDefault {
 
     suite("Выставление")(
 
-      test("вещь уходит в лот, десятина — Рахадиму, объявление — в общий чат") {
+      test("вещь уходит в лот, десятина — Рахадиму, объявление — в торговую беседу") {
         for {
           f    <- auction(inventory = List(gear(42L, "Шлем")), silver = 1000L)
           _    <- f.state.action(testUser, tap("AuctionSell"), f.renderer)
@@ -200,7 +239,7 @@ object AuctionSpec extends ZIOSpecDefault {
                 assertTrue(lots.head.currency == AuctionCurrency.Silver && lots.head.item.id == 42L) &&
                 assertTrue(f.inv.snapshot.isEmpty) &&
                 assertTrue(hero.get.silver == 950L) &&   // сбор 10% от 500
-                assertTrue(f.players.announced.exists(m => m.contains("Выставлен лот номер 1") && m.contains("Шлем")))
+                assertTrue(f.players.announcedTrade.exists(m => m.contains("Выставлен лот номер 1") && m.contains("Шлем")))
       },
 
       test("трофеи на торги не идут: их сдают в Гильдии") {
@@ -395,7 +434,7 @@ object AuctionSpec extends ZIOSpecDefault {
           lots  = f.lots.snapshot
         } yield assertTrue(lots.map(_.id).toSet == Set(1L, 2L)) &&
                 assertTrue(lots.find(_.id == 1L).exists(_.item.name == "Шлем")) &&
-                assertTrue(f.players.announced.exists(_.contains("Выставлен лот номер 1")))
+                assertTrue(f.players.announcedTrade.exists(_.contains("Выставлен лот номер 1")))
       },
 
       test("номер снятого лота тоже освобождается, а витрина держит свежие сверху") {

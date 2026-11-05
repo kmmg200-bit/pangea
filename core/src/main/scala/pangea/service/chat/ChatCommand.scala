@@ -35,10 +35,17 @@ object ChatCommand {
     * пока игрок не нажмёт что-нибудь в личке и не собьёт счётчик. Со стороны
     * это выглядит так, будто команда работает через раз и зависит от места.
     *
-    * Номер беседы возвращается отрицательным: личные сообщения считаются
+    * У каждой беседы свой счёт `conversation_message_id`, поэтому в ключ входит
+    * и сама беседа (`peer_id`): иначе команда в торговой беседе под тем же
+    * номером, что и прошлая в общей, сошла бы за повтор и пропала.
+    *
+    * Ключ возвращается отрицательным: личные сообщения считаются
     * положительными, и два потока не должны мешать друг другу. */
-  def eventKey(id: Long, conversationMessageId: Option[Long]): Long =
-    -conversationMessageId.filter(_ > 0L).getOrElse(id)
+  def eventKey(peerId: Long, id: Long, conversationMessageId: Option[Long]): Long =
+    -((peerId - ChatPeerBase).max(0L) * ChatKeySpan + conversationMessageId.filter(_ > 0L).getOrElse(id))
+
+  /** Сколько номеров сообщений отведено на одну беседу в ключе [[eventKey]]. */
+  val ChatKeySpan: Long = 1000000000L
 
   /** С этого числа начинаются `peer_id` бесед: 2000000000 + chat_id. */
   val ChatPeerBase: Long = 2000000000L

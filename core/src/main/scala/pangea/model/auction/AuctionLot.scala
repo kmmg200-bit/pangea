@@ -62,7 +62,7 @@ object AuctionLot {
   def fresh(sellerId: HeroId, item: Item, price: Long, currency: AuctionCurrency, now: Long): AuctionLot =
     AuctionLot(0L, sellerId, item, price, currency, now, now + LifetimeMs)
 
-  /** Объявление в общий чат: номер, вещь целиком и цена. */
+  /** Объявление в торговую беседу: номер, вещь целиком и цена. */
   def announcement(lot: AuctionLot): String = {
     val stats = lot.item.statsLines
     val body  = if (stats.isEmpty) "" else "\n" + stats.mkString("\n")

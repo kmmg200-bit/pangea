@@ -112,7 +112,7 @@ final case class Transfers(
     } yield res
 
   /** Отдать вещи: из сумки отправителя — в посылки получателю, плюс строка в
-    * общий чат. Возвращает, что ушло, и доставку получателю — её запускают,
+    * торговую беседу. Возвращает, что ушло, и доставку получателю — её запускают,
     * отпустив лок отправителя (см. [[handOver]]). */
   def send(
     sender: User,
@@ -312,7 +312,7 @@ final case class Transfers(
       "to"    -> target.name,
       "fee"   -> Transfers.moneyLine(money, Transfers.fee(amount)))
 
-  /** Письмо получателю — где теперь его деньги, — и строка в общий чат. */
+  /** Письмо получателю — где теперь его деньги, — и строка в торговую беседу. */
   private def tellMoney(sender: User, target: TransferTarget, line: String, landed: Transfers.Landed): Task[Unit] =
     for {
       fromName <- players.getDisplayName(sender).orElse(ZIO.succeed(content.text("transfer.someone")))
@@ -324,18 +324,18 @@ final case class Transfers(
                   }
       _        <- ZIO.foreachDiscard(receiver)(r => players.notify(r, content.format(key,
                     "from" -> fromName, "money" -> line)).ignore)
-      _        <- players.announce(content.format("transfer.money.announce",
+      _        <- players.announceTrade(content.format("transfer.money.announce",
                     "from"  -> mention(sender.vkId.value, fromName),
                     "to"    -> receiver.map(r => mention(r.vkId.value, target.name)).getOrElse(target.name),
                     "money" -> line)).ignore
     } yield ()
 
-  /** Строка в общий чат: передача — дело публичное. Письмо получателю уходит
+  /** Строка в торговую беседу: передача — дело публичное. Письмо получателю уходит
     * с доставкой ([[handOver]]) — когда уже ясно, где вещи. */
   private def announce(sender: User, fromName: String, target: TransferTarget, items: List[Item]): Task[Unit] =
     for {
       receiver <- userRepo.getUserById(target.userId).option.map(_.flatten)
-      _        <- players.announce(content.format("transfer.announce",
+      _        <- players.announceTrade(content.format("transfer.announce",
                     "from"  -> mention(sender.vkId.value, fromName),
                     "to"    -> receiver.map(r => mention(r.vkId.value, target.name)).getOrElse(target.name),
                     "name"  -> items.head.displayTitle,

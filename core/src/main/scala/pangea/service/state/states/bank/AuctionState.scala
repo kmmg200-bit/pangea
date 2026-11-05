@@ -17,6 +17,7 @@ import pangea.repository.user.UserRepository
 import pangea.service.payout.Payouts
 import pangea.repository.item.ItemRepository
 import pangea.service.purse.Purse
+import pangea.service.chat.Links
 import pangea.service.state.states.bank.AuctionState._
 import pangea.model.quest.{DailyKind, DailyNpc}
 import pangea.service.state.{CityExit, DailyQuestLog, ItemMenu, State, UserAction}
@@ -27,7 +28,7 @@ import java.util.concurrent.TimeUnit
 /** Аукцион Торгового дома. Любую вещь, которая занимает место, можно выставить
  *  за серебро или дублоны (не дешевле [[AuctionLot.MinPrice]]), заплатив
  *  Рахадиму десятину от запрошенной цены. Лот живёт неделю, потом уходит в
- *  «непроданные» и ждёт хозяина. О каждом новом лоте бот пишет в общий чат
+ *  «непроданные» и ждёт хозяина. О каждом новом лоте бот пишет в торговую беседу
  *  Пангеи — там же виден его номер, который можно просто написать в ответ.
  *
  *  Торговать можно и без ячейки в Торговом доме: купленное и снятое с торгов
@@ -89,7 +90,7 @@ case class AuctionState(
       now   <- nowMs
       total <- auctionRepo.onSale(now).orElse(ZIO.succeed(0L))
       _     <- renderer.show(user, Screen(
-                 content.format("bank.auction.menu", "onSale" -> total.toString),
+                 content.format("bank.auction.menu", "onSale" -> total.toString, "tradeChat" -> Links.TradeChat),
                  List(
                    Choice("AuctionBrowse", content.text("bank.auction.browseLabel"), row = Some(0)),
                    Choice("AuctionSell",   content.text("bank.auction.sellLabel"),   row = Some(0)),
@@ -228,8 +229,14 @@ case class AuctionState(
         _ => payForLot(user, hero, lot).flatMap(tellSeller(lot, _)) *>
                renderer.show(user, Screen(content.format("bank.auction.bought",
                  "name" -> lot.item.displayTitle, "price" -> lot.priceLine), Nil)) *>
-               showMenu(user, renderer)
+               afterPurchase(user, renderer)
       )
+
+  /** После покупки — туда, откуда купили: на ту же страницу витрины. Лот
+    * открыли по номеру из объявления, мимо витрины, — в меню аукциона. */
+  private def afterPurchase(user: User, renderer: Renderer): Task[Unit] =
+    readScene(user).flatMap(scene =>
+      if (scene.page.isDefined) showBrowse(user, renderer) else showMenu(user, renderer))
 
   /** Покупатель платит, а выручка продавца идёт в его банковскую ячейку. Не
     * приняла (полна или монета не та) — деньги ждут его в городе. Возвращает,
@@ -369,7 +376,7 @@ case class AuctionState(
       }
     } yield ()
 
-  /** Плата за выставление, вещь из сумки — в лот, объявление в общий чат. */
+  /** Плата за выставление, вещь из сумки — в лот, объявление в торговую беседу. */
   private def listLot(user: User, renderer: Renderer): Task[Unit] =
     for {
       now    <- nowMs
@@ -399,7 +406,7 @@ case class AuctionState(
                               renderer.show(user, Screen(content.text("bank.auction.listFailed"), backRow)) *>
                               ZIO.logError(s"auction sell failed: $e")
                 },
-                lot => players.announce(AuctionLot.announcement(lot)).ignore *>
+                lot => players.announceTrade(AuctionLot.announcement(lot)).ignore *>
                          // Рахадиму нужно, чтобы торги шли, — лот идёт ему в книгу.
                          DailyQuestLog.add(heroDao, user.userId, DailyNpc.Rakhadim, DailyKind.BankLot, 1L) *>
                          resetScene(user) *>

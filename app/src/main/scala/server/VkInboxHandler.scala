@@ -35,18 +35,19 @@ final class VkInboxHandler(stateHandler: StateHandler, adminConfig: AdminConfig)
   private def message(event: InboxEvent): Task[VkEvent.Message] =
     ZIO.fromEither(event.event.as[VkEvent]).map(_.`object`.message)
 
-  /** Что умеет общая беседа: «Передать» в ответ (или пересылкой) на
-    * сообщение того, кому передают, команды о себе — «Мой профиль» и «Моё
-    * снаряжение», ответ на которые уходит в саму беседу, — и «Туториал»: ссылка
-    * на статью о том, как всё устроено в игре. Всё прочее там нас не касается. */
+  /** Что умеют беседы — общая и торговая, любая, где есть бот: «Передать» в
+    * ответ (или пересылкой) на сообщение того, кому передают, команды о себе —
+    * «Мой профиль» и «Моё снаряжение», ответ на которые уходит в ту же беседу, —
+    * и «Туториал»: ссылка на статью о том, как всё устроено в игре. Всё прочее
+    * там нас не касается. */
   private def chat(msg: VkEvent.Message): Task[Unit] =
     msg.fromId.filter(_ > 0L) match {
       case None => ZIO.unit
       case Some(from) if ChatCommand.tutorialCommand(msg.text) =>
-        stateHandler.tutorialToChat(VkId(from.toString), msg.chatEventKey)
+        stateHandler.tutorialToChat(VkId(from.toString), msg.chatEventKey, msg.peerId)
       case Some(from) =>
         ChatCommand.selfCommand(msg.text) match {
-          case Some(command) => stateHandler.selfToChat(VkId(from.toString), command, msg.chatEventKey)
+          case Some(command) => stateHandler.selfToChat(VkId(from.toString), command, msg.chatEventKey, msg.peerId)
           case None =>
             (msg.quotedAuthor, ChatCommand.transferQuery(msg.text)) match {
               case (Some(to), Some(query)) if to > 0L =>

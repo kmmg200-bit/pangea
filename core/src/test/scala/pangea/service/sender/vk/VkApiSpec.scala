@@ -8,7 +8,26 @@ object VkApiSpec extends ZIOSpecDefault {
 
   private val htmlBody = "<html><head><title>414 Request-URI Too Large</title></head></html>"
 
-  def spec = suite("VkApi.failOnBadResponse")(
+  def spec = suite("VkApi")(chatPeerSpec, failSpec)
+
+  private val chats = pangea.service.sender.vk.config.VkConfig("t", chatPeerId = Some(2000000001L),
+    tradeChatPeerId = Some(2000000002L))
+
+  private def chatPeerSpec = suite("VkApi.chatPeer")(
+    test("общая, торговая и та, откуда спросили, — каждая в свой peer_id") {
+      import pangea.service.sender.ChatTarget
+      assertTrue(VkApi.chatPeer(chats, ChatTarget.General).contains(2000000001L)) &&
+      assertTrue(VkApi.chatPeer(chats, ChatTarget.Trade).contains(2000000002L)) &&
+      assertTrue(VkApi.chatPeer(chats, ChatTarget.Peer(2000000007L)).contains(2000000007L))
+    },
+    test("торговая не настроена — объявления идут в общую; не настроено ничего — молчим") {
+      import pangea.service.sender.ChatTarget
+      assertTrue(VkApi.chatPeer(chats.copy(tradeChatPeerId = None), ChatTarget.Trade).contains(2000000001L)) &&
+      assertTrue(VkApi.chatPeer(chats.copy(chatPeerId = None, tradeChatPeerId = None), ChatTarget.Trade).isEmpty)
+    }
+  )
+
+  private def failSpec = suite("VkApi.failOnBadResponse")(
     test("2xx с обычным ответом ВК — успех") {
       VkApi.failOnBadResponse(Status.Ok, """{"response":1}""").as(assertCompletes)
     },

@@ -99,7 +99,7 @@ object MoneyTransferSpec extends ZIOSpecDefault {
               assertTrue(me.silver == 390L) &&
               assertTrue(bank.silverSnapshot == 100L && payoutDao.snapshot.isEmpty) &&
               assertTrue(sent.exists(m => m._1.contains("🪙 100 отправлено игроку") && m._1.contains("Комиссия — 🪙 10"))) &&
-              assertTrue(players.announced.exists(m => m.contains("передал 🪙 100") &&
+              assertTrue(players.announcedTrade.exists(m => m.contains("передал 🪙 100") &&
                 m.contains("[id" + sender.vkId.value) && m.contains("[id" + friend.vkId.value))) &&
               // получатель знает, где теперь его деньги
               assertTrue(players.sentLetters.exists { case (to, text) =>
@@ -160,7 +160,7 @@ object MoneyTransferSpec extends ZIOSpecDefault {
         sent <- api.sentMessages.map(_.map(_._1).mkString("\n"))
       } yield assertTrue(me.silver == 100L && me.doubloons == 50L) &&
               assertTrue(bank.silverSnapshot == 0L && payoutDao.snapshot.isEmpty) &&
-              assertTrue(players.announced.isEmpty) &&
+              assertTrue(players.announcedTrade.isEmpty) &&
               assertTrue(sent.contains("Не хватает серебра: нужно 🪙 110 вместе с комиссией 🪙 10")) &&
               assertTrue(sent.contains("Не хватает дублонов: нужно 🟡 55 вместе с комиссией 🟡 5")) &&
               assertTrue(sent.contains("Меньше 🪙 50 не передать") && sent.contains("Меньше 🟡 50 не передать")) &&
@@ -195,7 +195,7 @@ object MoneyTransferSpec extends ZIOSpecDefault {
               assertTrue(sent.contains("🏃 Посыльный отнёс 🪙 100 из вашей ячейки Торгового дома") &&
                          sent.contains("Комиссия — 🪙 10")) &&
               assertTrue(!sent.contains("только в городе")) &&
-              assertTrue(players.announced.exists(_.contains("передал 🪙 100")))
+              assertTrue(players.announcedTrade.exists(_.contains("передал 🪙 100")))
     },
 
     test("посыльный: в ячейке мало — отказ, ничего не снято; при себе серебро он не берёт") {
@@ -207,7 +207,7 @@ object MoneyTransferSpec extends ZIOSpecDefault {
         sent <- api.sentMessages.map(_.map(_._1).mkString("\n"))
       } yield assertTrue(me.silver == 500L && bank.silverSnapshot == 100L) &&
               assertTrue(sent.contains("Посыльный носит серебро только из ячейки Торгового дома: нужно 🪙 110 вместе с комиссией 🪙 10, а в ячейке 🪙 100.")) &&
-              assertTrue(players.announced.isEmpty)
+              assertTrue(players.announcedTrade.isEmpty)
     },
 
     test("посыльный носит только серебро: вещи из лабиринта — всё так же только в городе") {

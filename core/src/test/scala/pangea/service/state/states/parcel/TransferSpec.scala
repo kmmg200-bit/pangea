@@ -114,7 +114,7 @@ object TransferSpec extends ZIOSpecDefault {
         } yield assertTrue(out.isInstanceOf[Transfers.Outcome.Sent]) &&
                 // регистр не важен, ушли ровно две
                 assertTrue(parcelDao.snapshot.size == 2 && inv.snapshot.map(_.id) == List(3L)) &&
-                assertTrue(players.announced.exists(m =>
+                assertTrue(players.announcedTrade.exists(m =>
                   m.contains("[id" + testUser.vkId.value) && m.contains("[id" + friendUser.vkId.value) &&
                   m.contains("Надколотый череп")))
       },

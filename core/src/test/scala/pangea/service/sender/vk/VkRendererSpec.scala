@@ -24,7 +24,7 @@ object VkRendererSpec extends ZIOSpecDefault {
     def getName(user: User): Task[UserResponse] = ZIO.fail(new Throwable("not needed"))
     def sendMessage(user: User, message: String, attachments: List[Attachment],
                     keyboard: Option[Keyboard]): Task[Unit] = sent.set(keyboard)
-    def sendToChat(message: String): Task[Unit] = ZIO.unit
+    def sendToChat(to: pangea.service.sender.ChatTarget, message: String): Task[Unit] = ZIO.unit
     def forwardToUser(to: VkId, message: String, forwarded: Option[Long]): Task[Unit] = ZIO.unit
   }
 
@@ -33,7 +33,7 @@ object VkRendererSpec extends ZIOSpecDefault {
     def getName(user: User): Task[UserResponse] = ZIO.fail(new Throwable("not needed"))
     def sendMessage(user: User, message: String, attachments: List[Attachment],
                     keyboard: Option[Keyboard]): Task[Unit] = sent.set(attachments)
-    def sendToChat(message: String): Task[Unit] = ZIO.unit
+    def sendToChat(to: pangea.service.sender.ChatTarget, message: String): Task[Unit] = ZIO.unit
     def forwardToUser(to: VkId, message: String, forwarded: Option[Long]): Task[Unit] = ZIO.unit
   }
 

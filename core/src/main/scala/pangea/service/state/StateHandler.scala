@@ -20,7 +20,7 @@ import pangea.service.chat.{ChatCommand, ChatProfile, Links}
 import pangea.service.parcel.{Parcels, TransferTarget, Transfers}
 import pangea.service.payout.Payouts
 import pangea.service.state.states.parcel.TransferState
-import pangea.service.sender.Api
+import pangea.service.sender.{Api, ChatTarget}
 import pangea.service.sender.vk.{VkPlayers, VkRenderer}
 import pangea.service.state.states.StatesMap
 import zio.{Task, ZIO, ZLayer}
@@ -126,37 +126,38 @@ class StateHandler(
     }
   }
 
-  /** «Мой профиль» и «Моё снаряжение» из общей беседы: ответ уходит туда же,
-    * в беседу — о себе рассказывают при всех. Писал не игрок или игрок без героя —
-    * молчим: беседа не место для сообщений об ошибках. */
-  def selfToChat(senderVk: VkId, command: ChatCommand.Self, eventId: Long): Task[Unit] =
+  /** «Мой профиль» и «Моё снаряжение» из беседы: ответ уходит туда же, в беседу
+    * `chatPeerId`, откуда спросили, — о себе рассказывают при всех. Писал не игрок
+    * или игрок без героя — молчим: беседа не место для сообщений об ошибках. */
+  def selfToChat(senderVk: VkId, command: ChatCommand.Self, eventId: Long, chatPeerId: Long): Task[Unit] =
     userRepo.getUserByVkId(senderVk).flatMap {
       case None => ZIO.unit
       case Some(sender) =>
         lock.withLock(sender.userId) {
           // Ключ события беседы — как и у «Передать», уже отрицательный.
           userRepo.checkAndRecordEvent(sender.userId, eventId).flatMap { fresh =>
-            ZIO.when(fresh)(tellAboutSelf(sender, command)).unit
+            ZIO.when(fresh)(tellAboutSelf(sender, command, chatPeerId)).unit
           }
         }
     }
 
-  /** «Туториал» из общей беседы: ссылка на статью — туда же, в беседу. Отвечаем
-    * любому, кто спросил: игрок он или пока нет, статья ему не помешает. От
-    * повтора того же сообщения защищаемся, когда пишет игрок, — как у прочих
-    * команд беседы: счётчик событий есть только у игрока. */
-  def tutorialToChat(senderVk: VkId, eventId: Long): Task[Unit] = {
-    val text = content.format("chat.tutorial", "tutorial" -> Links.Tutorial)
+  /** «Туториал» из беседы: ссылка на статью — туда же, в беседу `chatPeerId`.
+    * Отвечаем любому, кто спросил: игрок он или пока нет, статья ему не
+    * помешает. От повтора того же сообщения защищаемся, когда пишет игрок, — как
+    * у прочих команд беседы: счётчик событий есть только у игрока. */
+  def tutorialToChat(senderVk: VkId, eventId: Long, chatPeerId: Long): Task[Unit] = {
+    val text  = content.format("chat.tutorial", "tutorial" -> Links.Tutorial)
+    val reply = api.sendToChat(ChatTarget.Peer(chatPeerId), text)
     userRepo.getUserByVkId(senderVk).flatMap {
-      case None => api.sendToChat(text)
+      case None => reply
       case Some(sender) =>
         lock.withLock(sender.userId) {
-          userRepo.checkAndRecordEvent(sender.userId, eventId).flatMap(fresh => ZIO.when(fresh)(api.sendToChat(text)).unit)
+          userRepo.checkAndRecordEvent(sender.userId, eventId).flatMap(fresh => ZIO.when(fresh)(reply).unit)
         }
     }
   }
 
-  private def tellAboutSelf(sender: User, command: ChatCommand.Self): Task[Unit] =
+  private def tellAboutSelf(sender: User, command: ChatCommand.Self, chatPeerId: Long): Task[Unit] =
     heroRepo.getHero(sender.userId).flatMap {
       case None => ZIO.unit
       case Some(hero) =>
@@ -169,7 +170,7 @@ class StateHandler(
                       AzatData.load(heroDao, sender.userId, now).map(azat =>
                         ChatProfile.profile(name, hero, now, azat.blessingUntil, azat.instantRests, content))
                   }
-          _    <- api.sendToChat(text)
+          _    <- api.sendToChat(ChatTarget.Peer(chatPeerId), text)
         } yield ()
     }
 

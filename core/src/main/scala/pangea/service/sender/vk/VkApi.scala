@@ -14,7 +14,7 @@ import pangea.model.vk.Attachment
 import pangea.model.vk.keyboard.Keyboard
 import pangea.model.vk.model.UserResponse
 import pangea.service.ErrorLog
-import pangea.service.sender.Api
+import pangea.service.sender.{Api, ChatTarget}
 import pangea.service.sender.vk.config.VkConfig
 import zio.interop.catz._
 import zio.{Duration, Ref, Schedule, Task, ZIO, durationInt}
@@ -73,11 +73,12 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
     } yield ()
   }
 
-  // Объявление в общую беседу: тот же messages.send, только адресат — peer_id
-  // беседы из конфига. Без настроенной беседы молчим: объявления аукциона не
-  // должны ломать ход игрока, поэтому и ошибки здесь не роняют вызов.
-  override def sendToChat(message: String): Task[Unit] =
-    config.chatPeerId match {
+  // Сообщение в беседу: тот же messages.send, только адресат — peer_id
+  // беседы (см. VkApi.chatPeer). Без настроенной беседы молчим: объявления и
+  // ответы в беседу не должны ломать ход игрока, поэтому и ошибки здесь не
+  // роняют вызов.
+  override def sendToChat(to: ChatTarget, message: String): Task[Unit] =
+    VkApi.chatPeer(config, to) match {
       case None => ZIO.unit
       case Some(peerId) =>
         val formParams = Map(
@@ -171,6 +172,14 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
 }
 
 object VkApi {
+
+  /** `peer_id` беседы `to`. Торговая не настроена — пишем в общую: объявления
+    * не должны пропадать из-за пустой настройки. */
+  def chatPeer(config: VkConfig, to: ChatTarget): Option[Long] = to match {
+    case ChatTarget.General      => config.chatPeerId
+    case ChatTarget.Trade        => config.tradeChatPeerId.orElse(config.chatPeerId)
+    case ChatTarget.Peer(peerId) => Some(peerId)
+  }
 
   /** Метод отправки — метка в метриках вызовов ВК. */
   private val SendMethod = "messages.send"

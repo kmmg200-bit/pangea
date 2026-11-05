@@ -3,7 +3,7 @@ package pangea.service.sender.vk
 import pangea.dao.hero.HeroDao
 import pangea.engine.Players
 import pangea.model.user.User
-import pangea.service.sender.Api
+import pangea.service.sender.{Api, ChatTarget}
 import zio.{Task, ZIO}
 
 class VkPlayers(api: Api, heroDao: HeroDao) extends Players {
@@ -15,7 +15,9 @@ class VkPlayers(api: Api, heroDao: HeroDao) extends Players {
       case None       => vkName(user)
     }
 
-  def announce(message: String): Task[Unit] = api.sendToChat(message)
+  def announce(message: String): Task[Unit] = api.sendToChat(ChatTarget.General, message)
+
+  def announceTrade(message: String): Task[Unit] = api.sendToChat(ChatTarget.Trade, message)
 
   def notify(user: User, message: String): Task[Unit] = api.sendMessage(user, message, Nil, None)
 
