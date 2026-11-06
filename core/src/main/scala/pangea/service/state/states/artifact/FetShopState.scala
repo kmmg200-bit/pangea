@@ -75,7 +75,8 @@ case class FetShopState(
       "FetNameCouponBuy" -> Target.Run { (u, _, r) => confirmNameCoupon(u, r).as(StateType.FetShop) },
       "FetNameCouponYes" -> Target.Run { (u, _, r) => buyNameCoupon(u, r).as(StateType.FetShop) },
       "FetRunes"    -> Target.Run { (u, _, r)  => showLottery(u, r).as(StateType.FetShop) },
-      "FetRunesBuy" -> Target.Run { (u, _, r)  => confirmLottery(u, r).as(StateType.FetShop) },
+      "FetRunesBuy" -> Target.Run { (u, _, r)  => playLottery(u, r).as(StateType.FetShop) },
+      // Кнопка «Договорились» прежнего подтверждения в старых сообщениях — то же самое.
       "FetRunesYes" -> Target.Run { (u, _, r)  => playLottery(u, r).as(StateType.FetShop) },
       "LeaveFetShop" -> Target.Goto(StateType.TradeHouse),
       CityExit.route
@@ -498,23 +499,11 @@ case class FetShopState(
       else None
     }
 
-  private def confirmLottery(user: User, renderer: Renderer): Task[Unit] =
-    if (itemRepo.isEmpty) showShop(user, renderer)
-    else getHero(user).flatMap(lotteryRefusal).flatMap {
-      case Some(why) => renderer.show(user, Screen(why, backRow))
-      case None =>
-        renderer.show(user, Screen(content.format("fet.runes.confirm",
-          "count" -> FetShopState.LotteryRunes.toString, "price" -> FetShopState.LotteryPriceDoubloons.toString), List(
-          Choice("FetRunesYes", content.text("fet.confirmYes"), color = ChoiceColor.Positive, row = Some(0)),
-          Choice("FetShop", content.text("fet.confirmNo"), color = ChoiceColor.Negative, row = Some(0))
-        ), inline = true))
-    }
-
-  /** Сыграть: дублоны — Фету, руны — в сумку, каждая со своим номером из базы
-    * (одинаковые руны без номера делили бы −1, и сумка снимала бы их разом).
-    * Узор каждой — случайный из всех, повторы бывают. Игра — в журнал, для
-    * учёта в админ-панели. Дублонов не хватает или места нет (старая кнопка) —
-    * ничего не тратим. */
+  /** Сыграть — сразу по «Тянуть за…», без подтверждения: дублоны — Фету, руны —
+    * в сумку, каждая со своим номером из базы (одинаковые руны без номера делили
+    * бы −1, и сумка снимала бы их разом). Узор каждой — случайный из всех,
+    * повторы бывают. Игра — в журнал, для учёта в админ-панели. Дублонов не
+    * хватает или места нет — отказ, ничего не тратим. */
   private def playLottery(user: User, renderer: Renderer): Task[Unit] =
     itemRepo match {
       case None => showShop(user, renderer)

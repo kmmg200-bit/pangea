@@ -74,17 +74,15 @@ object FetLotterySpec extends ZIOSpecDefault {
               assertTrue(last.choices.headOption.exists(_.label == "Тянуть за 🟡 35"))
     },
 
-    test("сыграл: −35 дублонов, три большие руны в сумке — каждая со своим номером, игра в журнале") {
+    test("«Тянуть за 🟡 35» — сразу игра, без подтверждения: −35 дублонов, три руны со своими номерами, игра в журнале") {
       for {
         f      <- shop(doubloons = 100L, bag = List(gear(500L)))
         _      <- f.state.action(testUser, tap("FetRunesBuy"), f.renderer)
-        ask    <- f.renderer.sentScreens.map(_.last)
-        _      <- f.state.action(testUser, tap("FetRunesYes"), f.renderer)
         hero   <- heroOf(f.dao)
         runes   = bigRunes(f.inv.snapshot)
         events <- f.journal.logged
         texts  <- f.renderer.sentScreens.map(_.map(_.text))
-      } yield assertTrue(ask.inline && ask.choices.map(_.id) == List("FetRunesYes", "FetShop")) &&
+      } yield assertTrue(!texts.exists(_.contains("Сыграть в беспроигрышную лотерею"))) &&
               assertTrue(hero.doubloons == 65L) &&
               assertTrue(runes.size == 3 && runes.map(_.id).distinct.size == 3 && runes.forall(_.id > 0L)) &&
               assertTrue(f.inv.snapshot.size == 4) &&
@@ -95,7 +93,7 @@ object FetLotterySpec extends ZIOSpecDefault {
                 runes.forall(r => t.contains(r.displayTitle))))
     },
 
-    test("дублонов мало — отказ ещё на подтверждении и при старой кнопке, ничего не списано и не записано") {
+    test("дублонов мало — отказ и по «Тянуть», и по старой кнопке «Договорились»: ничего не списано и не записано") {
       for {
         f      <- shop(doubloons = 34L)
         _      <- f.state.action(testUser, tap("FetRunesBuy"), f.renderer)
