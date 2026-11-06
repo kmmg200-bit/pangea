@@ -617,7 +617,7 @@ object FetShopState {
   val LotteryBatch: Int = 10
 
   /** Больше стольких игр за сутки по Москве не сыграть. */
-  val LotteryDailyLimit: Long = 30L
+  val LotteryDailyLimit: Long = 15L
 
   /** Вытянутые руны списком: одинаковые — одной строкой со счётом. */
   def runeLines(runes: List[Item]): String = {
