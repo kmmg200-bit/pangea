@@ -76,7 +76,10 @@ case class FetShopState(
       "FetNameCouponYes" -> Target.Run { (u, _, r) => buyNameCoupon(u, r).as(StateType.FetShop) },
       "FetRunes"    -> Target.Run { (u, _, r)  => showLottery(u, r).as(StateType.FetShop) },
       "FetRunesBuy" -> Target.Run { (u, _, r)  => playLottery(u, 1, r).as(StateType.FetShop) },
-      "FetRunesTen" -> Target.Run { (u, _, r)  => playLottery(u, FetShopState.LotteryBatch, r).as(StateType.FetShop) },
+      // «Купить до лимита» — все игры, что остались на сегодня. Кнопка «×10» из
+      // старых сообщений делает то же самое: лимит меньше десяти.
+      "FetRunesAll" -> Target.Run { (u, _, r)  => playLottery(u, FetShopState.LotteryDailyLimit.toInt, r).as(StateType.FetShop) },
+      "FetRunesTen" -> Target.Run { (u, _, r)  => playLottery(u, FetShopState.LotteryDailyLimit.toInt, r).as(StateType.FetShop) },
       // Кнопка «Договорились» прежнего подтверждения в старых сообщениях — одна игра.
       "FetRunesYes" -> Target.Run { (u, _, r)  => playLottery(u, 1, r).as(StateType.FetShop) },
       "LeaveFetShop" -> Target.Goto(StateType.TradeHouse),
@@ -484,7 +487,6 @@ case class FetShopState(
     if (itemRepo.isEmpty) showShop(user, renderer)
     else playsLeft(user).flatMap { left =>
       val price = FetShopState.LotteryPriceDoubloons
-      val batch = FetShopState.LotteryBatch
       renderer.show(user, Screen(
         content.format("fet.runes.pitch", "count" -> FetShopState.LotteryRunes.toString, "price" -> price.toString,
           "limit" -> FetShopState.LotteryDailyLimit.toString) + "\n\n" +
@@ -493,8 +495,7 @@ case class FetShopState(
         List(
           Choice("FetRunesBuy", Choice.fit(content.format("fet.runes.buyLabel", "price" -> price.toString)),
             color = ChoiceColor.Positive, row = Some(0)),
-          Choice("FetRunesTen", Choice.fit(content.format("fet.runes.buyTenLabel",
-            "count" -> batch.toString, "price" -> (price * batch).toString)), color = ChoiceColor.Positive, row = Some(0)),
+          Choice("FetRunesAll", content.text("fet.runes.buyAllLabel"), color = ChoiceColor.Positive, row = Some(0)),
           Choice("FetShop", content.text("fet.back"), color = ChoiceColor.Negative, row = Some(1)))))
     }
 
@@ -520,8 +521,8 @@ case class FetShopState(
       else None
     }
 
-  /** Сыграть `asked` раз (одна игра или «×10») — сразу, без подтверждения. Не
-    * больше [[FetShopState.LotteryDailyLimit]] игр за сутки по Москве: осталось
+  /** Сыграть `asked` раз (одна игра или «до лимита») — сразу, без подтверждения.
+    * Не больше [[FetShopState.LotteryDailyLimit]] игр за сутки по Москве: осталось
     * меньше, чем просили, — играем сколько осталось; не осталось — отказ. Дублоны
     * — Фету за все игры, руны — в сумку, каждая со своим номером из базы
     * (одинаковые руны без номера делили бы −1, и сумка снимала бы их разом).
@@ -549,10 +550,8 @@ case class FetShopState(
                                    ZIO.foreach(runes)(r => items.persist(hero.id, RuneStone.item(r, RuneStoneSize.Big))))
                         _     <- ZIO.foreachDiscard(saved.flatten)(inventoryRepo.addItem(hero.id, _).mapError(asThrowable))
                         _     <- ZIO.foreachDiscard(saved)(logLottery(user, _))
-                        partial = Option.when(plays < asked)(content.format("fet.runes.partial",
-                                    "plays" -> plays.toString, "limit" -> FetShopState.LotteryDailyLimit.toString))
-                        _     <- renderer.show(user, Screen((content.format("fet.runes.done",
-                                   "runes" -> FetShopState.runeLines(saved.flatten)) +: partial.toList).mkString("\n\n"), Nil))
+                        _     <- renderer.show(user, Screen(content.format("fet.runes.done",
+                                   "runes" -> FetShopState.runeLines(saved.flatten)), Nil))
                         _     <- showShop(user, renderer)
                       } yield ()
                   }
@@ -613,11 +612,8 @@ object FetShopState {
   val LotteryRunes: Int           = 3
   val LotteryPriceDoubloons: Long = 35L
 
-  /** Сколько игр за раз по кнопке «×10». */
-  val LotteryBatch: Int = 10
-
   /** Больше стольких игр за сутки по Москве не сыграть. */
-  val LotteryDailyLimit: Long = 15L
+  val LotteryDailyLimit: Long = 7L
 
   /** Вытянутые руны списком: одинаковые — одной строкой со счётом. */
   def runeLines(runes: List[Item]): String = {

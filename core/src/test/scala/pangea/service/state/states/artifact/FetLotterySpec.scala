@@ -63,7 +63,7 @@ object FetLotterySpec extends ZIOSpecDefault {
               assertTrue(rows.size <= VkRenderer.MaxRows)
     },
 
-    test("карточка: три большие руны за 🟡 35, три места на игру, до 15 в сутки; кнопки «Тянуть» и «×10»") {
+    test("карточка: три большие руны за 🟡 35, три места на игру, до 7 в сутки; кнопки «Тянуть» и «Купить до лимита»") {
       for {
         f    <- shop()
         _    <- f.state.action(testUser, tap("FetRunes"), f.renderer)
@@ -71,71 +71,78 @@ object FetLotterySpec extends ZIOSpecDefault {
       } yield assertTrue(last.text.contains("Беспроигрышная лотерея")) &&
               assertTrue(last.text.contains("3 большие руны за 🟡 35")) &&
               assertTrue(last.text.contains("На каждую игру в сумке нужно 3 свободных места")) &&
-              assertTrue(last.text.contains("Играть можно до 15 раз в сутки (по Москве)")) &&
-              assertTrue(last.text.contains("Сегодня ещё можно сыграть: 15 из 15.")) &&
-              assertTrue(last.choices.map(_.id) == List("FetRunesBuy", "FetRunesTen", "FetShop")) &&
-              assertTrue(last.choices.map(_.label).take(2) == List("Тянуть за 🟡 35", "Тянуть ×10 за 🟡 350"))
+              assertTrue(last.text.contains("Играть можно до 7 раз в сутки (по Москве)")) &&
+              assertTrue(last.text.contains("Сегодня ещё можно сыграть: 7 из 7.")) &&
+              assertTrue(last.choices.map(_.id) == List("FetRunesBuy", "FetRunesAll", "FetShop")) &&
+              assertTrue(last.choices.map(_.label).take(2) == List("Тянуть за 🟡 35", "Купить до лимита"))
     },
 
-    test("«×10»: −350 дублонов, 30 рун в сумке, 10 игр в журнале; одинаковые руны — одной строкой со счётом") {
+    test("«Купить до лимита»: все 7 игр разом — −245 дублонов, 21 руна в сумке, 7 игр в журнале, на сегодня 0") {
       for {
         f      <- shop(doubloons = 1000L)
-        _      <- f.inv.increaseCapacity(TestFixtures.hero(userId).id, 10L)   // 30 мест
-        _      <- f.state.action(testUser, tap("FetRunesTen"), f.renderer)
+        _      <- f.inv.increaseCapacity(TestFixtures.hero(userId).id, 1L)   // 21 место
+        _      <- f.state.action(testUser, tap("FetRunesAll"), f.renderer)
         hero   <- heroOf(f.dao)
         runes   = bigRunes(f.inv.snapshot)
         events <- f.journal.logged
         _      <- f.state.action(testUser, tap("FetRunes"), f.renderer)
         card   <- f.renderer.sentScreens.map(_.last)
         texts  <- f.renderer.sentScreens.map(_.map(_.text))
-      } yield assertTrue(hero.doubloons == 650L && runes.size == 30 && runes.map(_.id).distinct.size == 30) &&
-              assertTrue(events.size == 10 && events.forall(_.eventType == GameEvent.FetRuneLottery)) &&
-              assertTrue(texts.exists(t => t.contains("Я же говорил — беспроигрышная") && !t.contains("На сегодня оставалось"))) &&
-              assertTrue(card.text.contains("Сегодня ещё можно сыграть: 5 из 15."))
+      } yield assertTrue(hero.doubloons == 755L && runes.size == 21 && runes.map(_.id).distinct.size == 21) &&
+              assertTrue(events.size == 7 && events.forall(_.eventType == GameEvent.FetRuneLottery)) &&
+              assertTrue(texts.exists(_.contains("Я же говорил — беспроигрышная"))) &&
+              assertTrue(card.text.contains("Сегодня ещё можно сыграть: 0 из 7."))
     },
 
-    test("«×10» без 30 мест в сумке — отказ, ничего не списано") {
+    test("«Купить до лимита» без места на все руны — отказ, ничего не списано") {
       for {
         f      <- shop(doubloons = 1000L)
-        _      <- f.state.action(testUser, tap("FetRunesTen"), f.renderer)
+        _      <- f.state.action(testUser, tap("FetRunesAll"), f.renderer)
         last   <- f.renderer.sentScreens.map(_.last)
         hero   <- heroOf(f.dao)
         events <- f.journal.logged
-      } yield assertTrue(last.text.contains("Нужно свободных мест: 30, сейчас: 20")) &&
+      } yield assertTrue(last.text.contains("Нужно свободных мест: 21, сейчас: 20")) &&
               assertTrue(hero.doubloons == 1000L && f.inv.snapshot.isEmpty && events.isEmpty)
     },
 
-    test("«×10» без 🟡 350 — отказ, ничего не списано") {
+    test("«Купить до лимита» без дублонов на все игры — отказ, ничего не списано") {
       for {
-        f    <- shop(doubloons = 349L)
-        _    <- f.inv.increaseCapacity(TestFixtures.hero(userId).id, 10L)
-        _    <- f.state.action(testUser, tap("FetRunesTen"), f.renderer)
+        f    <- shop(doubloons = 244L)
+        _    <- f.inv.increaseCapacity(TestFixtures.hero(userId).id, 1L)
+        _    <- f.state.action(testUser, tap("FetRunesAll"), f.renderer)
         last <- f.renderer.sentScreens.map(_.last)
         hero <- heroOf(f.dao)
-      } yield assertTrue(last.text.contains("нужно 🟡 350") && hero.doubloons == 349L && f.inv.snapshot.isEmpty)
+      } yield assertTrue(last.text.contains("нужно 🟡 245") && hero.doubloons == 244L && f.inv.snapshot.isEmpty)
     },
 
-    test("лимит 15 в сутки: сыграно 10 — «×10» играет 5 раз за 🟡 175, дальше Фет отказывает") {
+    test("сыграно 4 — «Купить до лимита» берёт оставшиеся 3 за 🟡 105, дальше Фет отказывает") {
       for {
         f      <- shop(doubloons = 1000L)
-        _      <- ZIO.foreachDiscard(1 to 10)(_ => f.journal.append(GameEvent(userId, GameEvent.FetRuneLottery, Json.obj())))
-        _      <- f.state.action(testUser, tap("FetRunesTen"), f.renderer)
-        played <- f.renderer.sentScreens.map(_.map(_.text))
+        _      <- ZIO.foreachDiscard(1 to 4)(_ => f.journal.append(GameEvent(userId, GameEvent.FetRuneLottery, Json.obj())))
+        _      <- f.state.action(testUser, tap("FetRunesAll"), f.renderer)
         hero   <- heroOf(f.dao)
         _      <- f.state.action(testUser, tap("FetRunesBuy"), f.renderer)
         last   <- f.renderer.sentScreens.map(_.last)
         after  <- heroOf(f.dao)
         events <- f.journal.logged
-      } yield assertTrue(hero.doubloons == 825L && bigRunes(f.inv.snapshot).size == 15) &&
-              assertTrue(played.exists(_.contains("На сегодня оставалось 5 — столько и сыграно. Больше 15 игр в сутки Фет не даёт."))) &&
-              assertTrue(last.text.contains("«На сегодня хватит, — Фет завязывает мешок. — 15 раз за день")) &&
-              assertTrue(after.doubloons == 825L && events.size == 15)
+      } yield assertTrue(hero.doubloons == 895L && bigRunes(f.inv.snapshot).size == 9) &&
+              assertTrue(last.text.contains("«На сегодня хватит, — Фет завязывает мешок. — 7 раз за день")) &&
+              assertTrue(after.doubloons == 895L && events.size == 7)
     },
 
-    test("игры прошлых суток не считаются: после полуночи по Москве лимит снова 15") {
+    test("кнопка «×10» из старых сообщений покупает до лимита") {
+      for {
+        f    <- shop(doubloons = 1000L)
+        _    <- f.inv.increaseCapacity(TestFixtures.hero(userId).id, 1L)
+        _    <- f.state.action(testUser, tap("FetRunesTen"), f.renderer)
+        hero <- heroOf(f.dao)
+      } yield assertTrue(hero.doubloons == 755L && bigRunes(f.inv.snapshot).size == 21)
+    },
+
+    test("игры прошлых суток не считаются: после полуночи по Москве лимит снова 7") {
       for {
         f    <- shop(doubloons = 100L)
-        _    <- ZIO.foreachDiscard(1 to 15)(_ => f.journal.append(GameEvent(userId, GameEvent.FetRuneLottery, Json.obj())))
+        _    <- ZIO.foreachDiscard(1 to 7)(_ => f.journal.append(GameEvent(userId, GameEvent.FetRuneLottery, Json.obj())))
         _    <- f.state.action(testUser, tap("FetRunesBuy"), f.renderer)
         no   <- heroOf(f.dao)
         _    <- TestClock.adjust(zio.Duration.fromMillis(24L * 60L * 60L * 1000L))
