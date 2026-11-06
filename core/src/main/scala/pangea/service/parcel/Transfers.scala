@@ -121,12 +121,56 @@ final case class Transfers(
     items:  List[Item],
     now:    Long
   ): Task[Transfers.Shipment] =
+    ship(sender, target, items, now)(item =>
+      inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)))
+
+  /** Отдать вещи из хранилища Торгового дома — вне города, с личным посыльным
+    * (см. `Furniture.Courier`). Сумку он не трогает: что при герое вне города,
+    * то при нём и остаётся, как и серебро на руках. В городе вещи передают
+    * только из сумки (см. [[quickSend]]).
+    *
+    * Несёт он только то, что понятно без выбора: одну подходящую вещь или
+    * стопку одинаковых. Подходит несколько разных — экрана выбора нет: он затёр
+    * бы сцену, где сейчас герой (бой, караван, выслеживание), — и посыльный
+    * просит назвать точнее. Ответ всегда `Sent` или `Forbidden`. */
+  def courierSend(
+    sender: User,
+    hero:   Hero,
+    target: TransferTarget,
+    query:  String,
+    count:  Int,
+    now:    Long
+  ): Task[Transfers.Outcome] =
+    for {
+      vault <- bank.get(hero.id).mapError(e => new Throwable(e.toString))
+      items  = vault.items.data
+      fit    = matching(items, query)
+      res   <- trophyRefusal(items, query) match {
+                 case Some(key)           => ZIO.succeed(Transfers.Outcome.Forbidden(content.text(key)))
+                 case None if fit.isEmpty =>
+                   ZIO.succeed(Transfers.Outcome.Forbidden(content.format("transfer.courier.nothing", "query" -> query)))
+                 case None if !unambiguous(fit) =>
+                   ZIO.succeed(Transfers.Outcome.Forbidden(content.format("transfer.courier.ambiguous",
+                     "query" -> query, "items" -> Transfers.namesOf(fit))))
+                 case None =>
+                   ship(sender, target, fit.take(count.max(1)), now)(item =>
+                     bank.withdraw(hero.id, item.id).mapError(e => new Throwable(e.toString)).unit
+                   ).map { shipment =>
+                     Transfers.Outcome.Sent(content.format("transfer.courier.sent",
+                       "name"  -> shipment.items.headOption.fold("")(_.displayTitle),
+                       "count" -> shipment.items.size.toString,
+                       "to"    -> target.name), shipment.handOver)
+                   }
+               }
+    } yield res
+
+  /** Вещи — в посылки получателю: `take` убирает каждую оттуда, где она лежит
+    * (сумка или хранилище), плюс строка в торговую беседу. */
+  private def ship(sender: User, target: TransferTarget, items: List[Item], now: Long)(
+      take: Item => Task[Unit]): Task[Transfers.Shipment] =
     for {
       name <- players.getDisplayName(sender).orElse(ZIO.succeed(content.text("transfer.someone")))
-      sent <- ZIO.foreach(items) { item =>
-                inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)) *>
-                  parcels.send(target.heroId, name, item, now)
-              }
+      sent <- ZIO.foreach(items)(item => take(item) *> parcels.send(target.heroId, name, item, now))
       _    <- ZIO.when(items.nonEmpty)(announce(sender, name, target, items))
     } yield Transfers.Shipment(items, handOver(name, target, sent))
 
@@ -392,6 +436,18 @@ object Transfers {
   /** Комиссия с этой суммы, с округлением вверх: десятая часть, но не меньше —
     * с 55 это 6, а не 5. */
   def fee(amount: Long): Long = (amount * FeePct + 99L) / 100L
+
+  /** Сколько подходящих вещей посыльный перечисляет, прося назвать точнее. */
+  val NamesShown: Int = 5
+
+  /** Подходящие вещи одной строкой: названия, стопки — со счётом, не больше
+    * [[NamesShown]], остальное — «и ещё N». */
+  def namesOf(items: List[Item]): String = {
+    val groups = ItemStack.grouped(items)
+    val shown  = groups.take(NamesShown).map { case (it, n) => it.displayTitle + ItemStack.countSuffix(n) }
+    val rest   = groups.size - NamesShown
+    shown.mkString(", ") + (if (rest > 0) s" и ещё $rest" else "")
+  }
 
   /** Сумма со значком валюты: 🪙 серебро, 🟡 дублоны — как везде в игре. */
   def moneyLine(money: Money, amount: Long): String = money match {

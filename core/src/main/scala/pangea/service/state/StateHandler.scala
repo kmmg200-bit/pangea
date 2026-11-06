@@ -185,9 +185,12 @@ class StateHandler(
       // Дублоны не теряются нигде — их можно отдать хоть из лабиринта.
       anywhere  = money.exists(_._1 == ChatCommand.Money.Doubloons)
       silver    = money.exists(_._1 == ChatCommand.Money.Silver)
+      items     = money.isEmpty
       inCity    = heroOp.exists(h => StateType.cityStates.contains(h.state))
-      // Вне города серебро передаёт личный посыльный — только из ячейки.
-      courier  <- if (silver && !inCity && heroOp.isDefined) hasCourier(sender.userId) else ZIO.succeed(false)
+      // Вне города серебро и вещи передаёт личный посыльный — серебро только из
+      // ячейки, вещи только из хранилища Торгового дома.
+      courier  <- if ((silver || items) && !inCity && heroOp.isDefined) hasCourier(sender.userId)
+                  else ZIO.succeed(false)
       tail <- (heroOp, targetOp, targetHero) match {
         case (Some(hero), Some(target), Some(theirHero)) if target.userId != sender.userId =>
           if (!anywhere && !inCity && !courier)
@@ -206,14 +209,33 @@ class StateHandler(
                           // Деньги, но без суммы: спрашиваем, сколько.
                           case Some((_, None)) =>
                             api.sendMessage(sender, content.text("transfer.money.howMuch"), List.empty, None).as(None)
-                          case None =>
+                          // Вещи: в городе — из сумки; вне города (сюда без
+                          // посыльного не дойти) — посыльный из хранилища.
+                          case None if inCity =>
                             sendItems(sender, hero, target, theirHero, to, query, renderer)
+                          case None =>
+                            courierItems(sender, hero, to, query)
                         }
             } yield tail
         case (Some(_), _, _) =>
           api.sendMessage(sender, StateHandler.TransferNoTarget, List.empty, None).as(None)
         case _ => ZIO.none
       }
+    } yield tail
+
+  /** Вещи вне города — из хранилища, личным посыльным. Экрана выбора нет: он
+    * затёр бы сцену, где сейчас герой, — посыльный берёт только понятное без
+    * выбора (см. [[Transfers.courierSend]]). Ушли — хвостом доставка получателю:
+    * ей нужен его лок. */
+  private def courierItems(sender: User, hero: pangea.model.hero.Hero, to: TransferTarget,
+                           query: String): Task[Option[Task[Unit]]] =
+    for {
+      now     <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+      outcome <- transfers.courierSend(sender, hero, to, ChatCommand.itemQuery(query), ChatCommand.count(query), now)
+      tail    <- outcome match {
+                   case sent: Transfers.Outcome.Sent => reply(sender, sent).as(Some(sent.handOver))
+                   case other                        => reply(sender, other).as(None)
+                 }
     } yield tail
 
   /** Есть ли дома у игрока личный посыльный (см. `Furniture.Courier`). */
@@ -516,7 +538,7 @@ object StateHandler {
   /** Ответы на «Передать» из беседы: короткие и в личку, чтобы не шуметь в чате. */
   val TransferNotInCity: String =
     "Передавать вещи и серебро можно только в городе — не из лабиринта, не посреди задания и не из меню «Персонаж». Вернитесь в город и повторите.\n\n" +
-    "Серебро из ячейки Торгового дома передаст откуда угодно личный посыльный — его ставит в дом Юнона в «Обустройстве»."
+    "Серебро из ячейки и вещи из хранилища Торгового дома передаст откуда угодно личный посыльный — его можно нанять у Юноны в «Обустройстве»."
 
   val TransferNoTarget: String =
     "Не понял, кому передавать. Ответьте на сообщение игрока (или перешлите его) и напишите «Передать …»."

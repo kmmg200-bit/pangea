@@ -140,7 +140,9 @@ object FetLotterySpec extends ZIOSpecDefault {
     },
 
     test("в админке — сколько раз сыграли всего и за неделю") {
-      val text = AdminPanel.statsText(AdminStats.empty.copy(fetLottery = 12L, fetLottery7d = 3L))
+      // Переводы строк — как в исходнике: в рабочей копии Windows это «\r\n»,
+      // поэтому сравниваем без «\r».
+      val text = AdminPanel.statsText(AdminStats.empty.copy(fetLottery = 12L, fetLottery7d = 3L)).replace("\r", "")
       assertTrue(text.contains("🎲 Лотерея рун у Фета\n  сыграли всего: 12\n  за неделю: 3"))
     }
   )

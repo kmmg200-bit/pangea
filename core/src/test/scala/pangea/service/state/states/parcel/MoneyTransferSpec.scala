@@ -210,13 +210,14 @@ object MoneyTransferSpec extends ZIOSpecDefault {
               assertTrue(players.announcedTrade.isEmpty)
     },
 
-    test("посыльный носит только серебро: вещи из лабиринта — всё так же только в городе") {
+    test("вещь из лабиринта посыльный ищет в хранилище (см. CourierItemsSpec): нет её там — так и говорит, серебро не тронуто") {
       for {
         t <- chat(silver = 500L, state = StateType.Dungeon, vaultSilver = 300L, courier = true)
         (handler, _, bank, _, _, api) = t
         _    <- say(handler, "Передать надколотый рубин", -1L)
         sent <- api.sentMessages.map(_.map(_._1).mkString("\n"))
-      } yield assertTrue(sent.contains("только в городе") && bank.silverSnapshot == 300L)
+      } yield assertTrue(sent.contains("Посыльный носит вещи только из хранилища Торгового дома")) &&
+              assertTrue(!sent.contains("только в городе") && bank.silverSnapshot == 300L)
     },
 
     test("посыльный в городе ничего не меняет: сперва то, что при себе, нехватка — из ячейки") {
