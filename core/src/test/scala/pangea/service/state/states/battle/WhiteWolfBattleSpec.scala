@@ -103,7 +103,7 @@ object WhiteWolfBattleSpec extends ZIOSpecDefault {
       val s = wolf.stats(bossLvl)
       assertTrue(wolf.bossLvl(8L) == 2L && wolf.bossLvl(7L) == 1L && wolf.bossLvl(4L) == 1L && wolf.bossLvl(1L) == 1L) &&
       assertTrue(wolf.bossLvl(12L) == 3L && MiniBoss.bossLvl(12L) == 2L) && // у элементалей по-прежнему раз в пять
-      assertTrue(s.hp == 1000L * bossLvl && s.armor == 650L * bossLvl && s.atk == 300L * bossLvl) &&
+      assertTrue(s.hp == 1000L * bossLvl && s.armor == 650L * bossLvl && s.atk == 250L * bossLvl) &&
       assertTrue(s.energy == 200L * bossLvl && s.accuracy == 225L * bossLvl) &&
       assertTrue(s.defence == 50L * bossLvl && s.evasion == 200L * bossLvl) &&
       assertTrue(wolf.energyRegen(bossLvl) == 14L * bossLvl && wolf.expReward(bossLvl) == 150L * bossLvl) &&
@@ -154,7 +154,7 @@ object WhiteWolfBattleSpec extends ZIOSpecDefault {
       for {
         r <- strike(h, wolfBattle(h, turn = 0), seedTurn())
         (u, after, log, _) = r
-      } yield assertTrue(log.contains("Яростный укус наносит 600 урона!")) && // 600 × 0,5 × 2
+      } yield assertTrue(log.contains("Яростный укус наносит 500 урона!")) && // 500 × 0,5 × 2
               assertTrue(log.contains("критический удар")) &&
               assertTrue(after.get.bossFirstSkillSpent) &&
               assertTrue(after.get.effects.heroBleed.contains(Bleed(wolf.FangsBleedPct))) &&
@@ -162,17 +162,17 @@ object WhiteWolfBattleSpec extends ZIOSpecDefault {
               assertTrue(after.get.bossTurn == 1) &&
               // 400 − 14 + 28 упирается в потолок 400: реген 14 × BossLvL перекрывает цену умения
               assertTrue(after.get.monsterCurrentEnergy == (400L - wolf.FangsCostPerLvl * bossLvl + wolf.energyRegen(bossLvl)).min(400L)) &&
-              assertTrue(u.fightStats.hp < 500000L - 600L)
+              assertTrue(u.fightStats.hp < 500000L - 500L)
     },
 
-    test("дальше двойной урон — только по шансу 5%: когти 240 или 480 с репликой о крите") {
+    test("дальше двойной урон — только по шансу 5%: когти 200 или 400 с репликой о крите") {
       val h = hero()
       for {
         plain <- strike(h, wolfBattle(h, turn = 1, firstSpent = true), seedTurn(50))
         crit  <- strike(h, wolfBattle(h, turn = 1, firstSpent = true), seedTurn(5))
-      } yield assertTrue(plain._3.contains("разодрать вам живот. Вы получили 240 урона!")) && // 600 × 0,4
+      } yield assertTrue(plain._3.contains("разодрать вам живот. Вы получили 200 урона!")) && // 500 × 0,4
               assertTrue(!plain._3.contains("критический удар")) &&
-              assertTrue(crit._3.contains("Вы получили 480 урона!") && crit._3.contains("Белый Волк наносит критический удар!")) &&
+              assertTrue(crit._3.contains("Вы получили 400 урона!") && crit._3.contains("Белый Волк наносит критический удар!")) &&
               assertTrue(plain._2.get.effects.heroBleed.contains(Bleed(wolf.ClawsBleedPct)))
     },
 
@@ -211,8 +211,8 @@ object WhiteWolfBattleSpec extends ZIOSpecDefault {
         r <- strike(wounded, wolfBattle(wounded, turn = 4, firstSpent = true, energy = 0L),
                TestRandom.feedInts(60, 1, 50, 50) *> TestRandom.feedLongs(100L)) // крит нет, травма от приёма нет
         (u, after, log, _) = r
-      } yield assertTrue(log.contains("вгрызться в вашу шею! Вы получили 10120 урона!")) && // 40 000 × 25% + 600 × 0,2
-              assertTrue(u.fightStats.hp == maxHp - 40000L - 10120L) &&
+      } yield assertTrue(log.contains("вгрызться в вашу шею! Вы получили 10100 урона!")) && // 40 000 × 25% + 500 × 0,2
+              assertTrue(u.fightStats.hp == maxHp - 40000L - 10100L) &&
               assertTrue(after.get.bossTurn == 0) && // круг замкнулся
               assertTrue(after.get.effects.heroBleed.isEmpty) // пасть не режет
     },

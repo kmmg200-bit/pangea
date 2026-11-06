@@ -402,7 +402,7 @@ object MiniBoss extends Enum[MiniBoss] {
 
     val HpPerLvl: Long          = 1000L
     val ArmorPerLvl: Long       = 650L
-    val AtkPerLvl: Long         = 300L
+    val AtkPerLvl: Long         = 250L
     val EnergyPerLvl: Long      = 200L
     val AccuracyPerLvl: Long    = 225L
     val DefencePerLvl: Long     = 50L
