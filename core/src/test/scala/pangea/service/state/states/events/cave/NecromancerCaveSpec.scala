@@ -7,6 +7,7 @@ import pangea.model.battle.{Aura, Nature, SlainMonster, SoloPveBattle}
 import pangea.model.cave.{CaveGenerator, CaveRates, RoomKind}
 import pangea.model.item.{ItemSet, MaterialKind, Rarity => ItemRarity}
 import pangea.model.monster.{MiniBoss, Monster, Race, Rarity}
+import pangea.model.squad.{Ally, AllyKind, Squad}
 import pangea.model.stats.FightStats
 import pangea.model.user.UserId
 import pangea.test.TestFixtures
@@ -134,6 +135,28 @@ object NecromancerCaveSpec extends ZIOSpecDefault {
       assertTrue(TreasureHuntGenerator.bossIngredients.contains(MaterialKind.CursedBones)) &&
       // у каждого минибосса свой набор и свой ингредиент
       assertTrue(MiniBoss.values.flatMap(_.set).distinct.size == MiniBoss.values.size)
+    },
+
+    test("герой стоит вторым, впереди союзник: отметка босса — на самом Некроманте, а не на мертвеце в паре") {
+      // Раньше отметку вешали на бой после строя: в паре с героем вставал
+      // мертвец напротив него — он и колдовал за Некроманта под его именем, а
+      // настоящий стоял в строю простым мобом. Убили настоящего — «воскрешение»
+      // лже-Некроманта тянулось за ним и роняло ход.
+      val lvl    = necro.bossLvl(hero.lvl)
+      val lord   = Monster(0L, lvl, necro.race, Rarity.Legendary, necro.stats(lvl), customName = Some(necro.monsterName))
+      val squad  = Squad(heroPos = 2, allies = List(Ally(AllyKind.Human, 1, 1000L, 1000L, 0L)))
+      def tagged(b: SoloPveBattle): Int =
+        (if (b.bossKind.contains(necro.entryName)) 1 else 0) + b.group.others.count(_.boss.contains(necro.entryName))
+      val second = SoloPveBattle.fromGroup(List(lord, risenOrc, risenOrc, risenOrc), hero.copy(squad = squad), Nil,
+                     headBoss = Some(necro))
+      val first  = SoloPveBattle.fromGroup(List(lord, risenOrc, risenOrc), hero, Nil, headBoss = Some(necro))
+      assertTrue(second.group.heroPos == 2 && second.group.paired) &&
+      // в паре — мертвец без отметки, Некромант — в строю на первом месте, с отметкой
+      assertTrue(second.bossKind.isEmpty && second.monsterRace == Race.Orc.entryName) &&
+      assertTrue(second.group.entries.collect { case (1, s) => s.boss }.flatten == List(necro.entryName)) &&
+      assertTrue(tagged(second) == 1) &&
+      // герой первый — Некромант в паре с ним, как и раньше
+      assertTrue(first.bossKind.contains(necro.entryName) && tagged(first) == 1)
     },
 
     test("мистический шаг: встаёт сразу за спинами своих, а не в хвост схемы, и пара пустеет") {

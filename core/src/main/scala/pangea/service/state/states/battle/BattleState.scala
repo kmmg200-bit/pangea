@@ -1797,10 +1797,16 @@ case class BattleState(
     def spend(cost: Long, b: SoloPveBattle): SoloPveBattle = b.copy(monsterCurrentEnergy = energy - cost)
 
     battle.bossTurn match {
-      // 1) Воскрешение: все его павшие встают целыми и уходят из добычи.
+      // 1) Воскрешение: все его павшие встают целыми и уходят из добычи. Встают
+      // смертные — те, кого генератор умеет собрать заново (как и при
+      // «Созидании»). Павший нежитью по рождению (с расой «Нежить») лежит:
+      // мобов такой расы генератор не знает, и раньше ход падал на нём каждый
+      // раз — бой нельзя было ни продолжить, ни закончить, только /home.
       case 0 =>
         val cost  = necro.ReviveCostPerLvl * lvl
-        val fallen = battle.group.slain.filter(s => s.undead || s.race == Race.Undead.entryName)
+        def revivable(s: SlainMonster): Boolean =
+          s.undead && Race.withNameOption(s.race).exists(Race.mortals.contains)
+        val fallen = battle.group.slain.filter(revivable)
         if (energy < cost || fallen.isEmpty) ZIO.succeed((next, hero, ""))
         else {
           val raised = fallen.foldLeft(spend(cost, next)) { (b, s) =>
@@ -1812,7 +1818,7 @@ case class BattleState(
           }
           // Из добычи они уходят: поднятый второй раз платы не стоит.
           val cleared = raised.copy(group = raised.group.copy(
-            slain = raised.group.slain.filterNot(s => s.undead || s.race == Race.Undead.entryName)))
+            slain = raised.group.slain.filterNot(revivable)))
           ZIO.succeed((cleared, hero, content.format("battle.necro.revive", "n" -> fallen.size.toString)))
         }
 

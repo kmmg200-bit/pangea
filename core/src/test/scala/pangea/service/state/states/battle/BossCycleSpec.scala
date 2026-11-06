@@ -314,6 +314,25 @@ object BossCycleSpec extends ZIOSpecDefault {
               assertTrue(after.bossTurn == 1)
     },
 
+    test("Воскрешение: павший нежитью по рождению лежит, смертный мертвец встаёт — и ход не падает") {
+      // Раньше Некромант пытался поднять и того, у кого раса «Нежить», а мобов
+      // такой расы генератор не знает: ход падал на каждом нажатии игрока.
+      val h       = hero(Squad())
+      val base    = withBossInLine(h, MiniBoss.Necromancer)
+      val orc     = SlainMonster(base.monsterLvl, Race.Orc.entryName, MobRarity.Common.entryName,
+                      marked = false, name = "Орк", undead = true)
+      val unborn  = SlainMonster(base.monsterLvl, Race.Undead.entryName, MobRarity.Legendary.entryName,
+                      marked = false, name = "Некромант", undead = false, boss = Some(MiniBoss.Necromancer.entryName))
+      val b       = base.copy(group = base.group.copy(slain = List(orc, unborn)))
+      for {
+        t <- act(h, b, UserAction("", Some("""{"action":"Wait"}""")), seed = 13L)
+        (after, _, log) = t
+      } yield assertTrue(log.contains("павшая нежить встаёт снова")) &&
+              assertTrue(after.group.others.size == 2) &&
+              // поднят только орк; павший нежитью остаётся в павших — за ним и добыча
+              assertTrue(after.group.slain.map(_.name) == List("Некромант"))
+    },
+
     test("Некромант за союзником берёт свой ход один раз за раунд") {
       // Он держит позицию и колдует в тихой фазе конца раунда; если бы ход
       // доставался ему и там, и в фазе мобов вне пары, круг шёл бы по два шага.

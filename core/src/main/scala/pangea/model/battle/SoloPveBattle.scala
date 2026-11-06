@@ -874,7 +874,8 @@ object SoloPveBattle {
     * не сходят и в очередь не попадают никогда (караван без своих стрелков —
     * уже не караван). */
   def fromGroup(monsters0: List[Monster], hero: Hero, startEnergies: List[Long],
-                squad: Boolean = true, towers: Int = 0): SoloPveBattle = {
+                squad: Boolean = true, towers: Int = 0,
+                headBoss: Option[pangea.model.monster.MiniBoss] = None): SoloPveBattle = {
     // Двое именных одной расы под одним именем в бой не выходят.
     val monsters = Monster.distinctNames(monsters0)
     val energies = startEnergies.padTo(monsters.size, 0L)
@@ -891,7 +892,13 @@ object SoloPveBattle {
     // Место первого занято им самим, последние — башнями: остальным остаётся то,
     // что между.
     val (standing, waiting) = fighters.tail.splitAt(Formation.MonsterPlaces - towerCount - 1)
-    val head = from(monsters.head, hero, squad).copy(monsterCurrentEnergy = energies.head)
+    // `headBoss` — первый в списке минибосс (Некромант со своими мертвецами).
+    // Отметка — на него самого и до `settle`: герой стоит не первым — в пару
+    // встаёт тот, кто напротив, а босс уходит в строй, и отметка уезжает с ним.
+    // Повешенная на бой потом, она досталась бы тому, кто в полях, — мертвецу,
+    // а настоящий Некромант стоял бы в строю простым мобом.
+    val head = from(monsters.head, hero, squad).copy(monsterCurrentEnergy = energies.head,
+      bossKind = headBoss.map(_.entryName))
     head.copy(group = head.group.copy(
       others     = standing ++ towered,
       places     = (2 to standing.size + 1).toList ++ towerPlaces,

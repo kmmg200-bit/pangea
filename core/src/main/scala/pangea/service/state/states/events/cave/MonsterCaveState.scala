@@ -654,11 +654,11 @@ case class MonsterCaveState(
       // Сам он выходит с полной силой: аура и воскрешение стоят энергии, и без
       // неё первый его круг прошёл бы впустую.
       energies = stats.energy :: pcts.tail
-      base     = SoloPveBattle.fromGroup(boss :: guards, hero, energies)
+      base     = SoloPveBattle.fromGroup(boss :: guards, hero, energies, headBoss = Some(lord))
       // Раса пещеры едет в бою как расовая метка группы: по ней Некромант и
       // поднимает новых мертвецов (сам он числится нежитью, и его раса тут не
       // годится — мобов такой расы не бывает).
-    } yield base.copy(bossKind = Some(lord.entryName), minionLvl = mobLvl, noKin = true,
+    } yield base.copy(minionLvl = mobLvl, noKin = true,
       group = base.group.copy(originRace = Some(race.entryName)))
   }
 
