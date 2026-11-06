@@ -2,6 +2,7 @@ package pangea.dao.admin
 
 import doobie.implicits._
 import doobie.util.transactor
+import pangea.model.GameEvent
 import pangea.model.hero.Equipment
 import pangea.model.item.ItemSet
 import pangea.model.user.{UserId, VkId}
@@ -18,16 +19,20 @@ import zio.{Task, ZLayer}
   * @param doubloons   дублоны на руках
   * @param sets        кто в наборах: набор, сколько его предметов надето, сколько таких героев
   * @param levels      по каким уровням разошлись те, кто заходил за неделю
+  * @param fetLottery     сколько раз сыграли в беспроигрышную лотерею Фета — всего
+  * @param fetLottery7d   то же за неделю
   */
 final case class AdminStats(
-  heroes:      Long,
-  active24h:   Long,
-  active7d:    Long,
-  heroSilver:  Long,
-  vaultSilver: Long,
-  doubloons:   Long,
-  sets:        List[AdminStats.SetRow],
-  levels:      List[AdminStats.LevelRow]
+  heroes:       Long,
+  active24h:    Long,
+  active7d:     Long,
+  heroSilver:   Long,
+  vaultSilver:  Long,
+  doubloons:    Long,
+  sets:         List[AdminStats.SetRow],
+  levels:       List[AdminStats.LevelRow],
+  fetLottery:   Long = 0L,
+  fetLottery7d: Long = 0L
 ) {
   def silverTotal: Long = heroSilver + vaultSilver
 }
@@ -95,6 +100,11 @@ class AdminDaoLive(xa: transactor.Transactor[Task]) extends AdminDao {
                          join users u on u.id = h.user_id
                          where u.last_seen_at > now() - interval '7 days'"""
                      .query[Long].to[List].transact(xa)
+      // Лотерея Фета: каждая игра — строка журнала событий.
+      lottery   <- sql"""select count(*),
+                                count(*) filter (where occurred_at > now() - interval '7 days')
+                         from event_log where event_type = ${GameEvent.FetRuneLottery}"""
+                     .query[(Long, Long)].unique.transact(xa)
     } yield AdminStats(
       heroes      = heroes,
       active24h   = day,
@@ -103,7 +113,9 @@ class AdminDaoLive(xa: transactor.Transactor[Task]) extends AdminDao {
       vaultSilver = inVaults,
       doubloons   = money._2,
       sets        = AdminStats.setRows(equipment, AdminDao.MinWorn),
-      levels      = AdminStats.levelRows(alive, AdminDao.LevelStep, AdminDao.MaxLevel))
+      levels      = AdminStats.levelRows(alive, AdminDao.LevelStep, AdminDao.MaxLevel),
+      fetLottery   = lottery._1,
+      fetLottery7d = lottery._2)
 
   /** Сколько игроков заходило за этот срок. `interval` подставляется не
     * параметром, а строкой — но строку задаём здесь сами, снаружи она не

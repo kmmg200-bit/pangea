@@ -11,3 +11,10 @@ case class GameEvent(
   payload:   Json,
   traceId:   Option[UUID] = None
 )
+
+object GameEvent {
+
+  /** Беспроигрышная лотерея Фета: три большие руны за дублоны. По этим записям
+    * админ-панель считает, сколько раз в неё сыграли (см. `AdminDao.stats`). */
+  val FetRuneLottery: String = "fet_rune_lottery"
+}

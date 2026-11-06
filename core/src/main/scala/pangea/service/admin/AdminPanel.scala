@@ -489,6 +489,10 @@ object AdminPanel {
        |  серебро всего: ${amount(s.silverTotal)}
        |  дублоны: ${amount(s.doubloons)}
        |
+       |🎲 Лотерея рун у Фета
+       |  сыграли всего: ${s.fetLottery}
+       |  за неделю: ${s.fetLottery7d}
+       |
        |📈 Уровни тех, кто заходил за неделю
        |$levels
        |

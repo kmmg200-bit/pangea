@@ -1,19 +1,22 @@
 package pangea.service.state.states.artifact
 
-import io.circe.jawn
+import io.circe.{Json, jawn}
+import io.circe.syntax.EncoderOps
 import pangea.dao.hero.HeroDao
-import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
+import pangea.engine.{Branch, Choice, ChoiceColor, Journal, Renderer, SceneContent, Screen, Target}
+import pangea.model.GameEvent
 import pangea.model.artifact.{Artifact, ArtifactKind, HeroArtifacts}
 import pangea.model.hero.{FetPotion, Hero}
 import pangea.model.item.{Item, MaterialKind, QuestItemKind}
 import pangea.model.quest.NpcQuest
+import pangea.model.rune.{RuneStone, RuneStoneSize}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.state.{CityExit, HedgeSongQuest, NpcQuestDialog, QuestSupport, StackMove, State, StrayCasketQuest, UserAction}
-import zio.{Task, ZIO}
+import zio.{Random, Task, ZIO}
 
 /** Лавка Фета в Торговом доме: сборные артефакты Азата. Каждый стоит
  *  [[HeroArtifacts.StepPriceDoubloons]] дублонов, и за ту же цену Фет трижды
@@ -25,14 +28,20 @@ import zio.{Task, ZIO}
  *  выпивают сразу, при покупке. И два купона — каждый своей сценой: на смену
  *  расы за [[FetShopState.CouponPriceDoubloons]] (см. RaceQuestState) и на смену
  *  имени за [[FetShopState.NameCouponPriceDoubloons]] (см. NameChangeState). Оба
- *  ложатся в сумку, а в ход идут с карточки предмета. */
+ *  ложатся в сумку, а в ход идут с карточки предмета. И беспроигрышная лотерея:
+ *  [[FetShopState.LotteryRunes]] большие руны случайных узоров за
+ *  [[FetShopState.LotteryPriceDoubloons]] — каждая игра пишется в журнал, по нему
+ *  админ-панель считает, сколько раз в неё сыграли. */
 case class FetShopState(
   heroDao:       HeroDao,
   artifacts:     ArtifactRepository,
   inventoryRepo: InventoryRepository,
   content:       SceneContent,
-  // Купоны — новые предметы в сумке: без хранилища вещей их не продать.
-  itemRepo:      Option[ItemRepository] = None
+  // Купоны и руны лотереи — новые предметы в сумке: без хранилища вещей их не
+  // продать (у каждой вещи должен быть свой номер из базы).
+  itemRepo:      Option[ItemRepository] = None,
+  // Журнал событий: в нём учёт сыгранных лотерей для админ-панели.
+  journal:       Option[Journal] = None
 ) extends State {
 
   /** «Живая кожа»: кусок с Гнилого Джо — из такого Фет доращивает сумку. */
@@ -65,6 +74,9 @@ case class FetShopState(
       "FetNameCoupon"    -> Target.Run { (u, _, r) => showNameCoupon(u, r).as(StateType.FetShop) },
       "FetNameCouponBuy" -> Target.Run { (u, _, r) => confirmNameCoupon(u, r).as(StateType.FetShop) },
       "FetNameCouponYes" -> Target.Run { (u, _, r) => buyNameCoupon(u, r).as(StateType.FetShop) },
+      "FetRunes"    -> Target.Run { (u, _, r)  => showLottery(u, r).as(StateType.FetShop) },
+      "FetRunesBuy" -> Target.Run { (u, _, r)  => confirmLottery(u, r).as(StateType.FetShop) },
+      "FetRunesYes" -> Target.Run { (u, _, r)  => playLottery(u, r).as(StateType.FetShop) },
       "LeaveFetShop" -> Target.Goto(StateType.TradeHouse),
       CityExit.route
     ),
@@ -88,8 +100,13 @@ case class FetShopState(
         Choice("FetPotion", content.text(s"fet.potions.${p.key}.title"), data = Map("potion" -> p.entryName),
           row = Some(ArtifactKind.values.size + i))
       }
+      // Лотерея — своим рядом под зельями. Рядов теперь до десяти — столько,
+      // сколько держит клавиатура ВК: новому товару — в общий ряд.
+      val lotteryRow = ArtifactKind.values.size + FetPotion.values.size
+      val lottery    = if (itemRepo.isEmpty) Nil
+                       else List(Choice("FetRunes", content.text("fet.runes.title"), row = Some(lotteryRow)))
       // Оба купона — в одном ряду: у ВК не больше десяти рядов на клавиатуре.
-      val couponRow = ArtifactKind.values.size + FetPotion.values.size
+      val couponRow = lotteryRow + (if (lottery.isEmpty) 0 else 1)
       val coupons   = if (itemRepo.isEmpty) Nil
                       else List(
                         Choice("FetCoupon", content.text("fet.coupon.title"), row = Some(couponRow)),
@@ -105,7 +122,7 @@ case class FetShopState(
                         .map(_.copy(row = Some(questRow)))
       val leaveRow = questRow + (if (talk.isEmpty) 0 else 1)
       renderer.show(user, Screen(content.text("fet.counter"),
-        goods ++ potions ++ coupons ++ talk ++ List(
+        goods ++ potions ++ lottery ++ coupons ++ talk ++ List(
           Choice("LeaveFetShop", content.text("fet.leave"),
             color = ChoiceColor.Negative, row = Some(leaveRow)),
           CityExit.button(content, Some(leaveRow)))))
@@ -459,6 +476,73 @@ case class FetShopState(
         }
     }
 
+  // ── Беспроигрышная лотерея ───────────────────────────────────────────────
+
+  private def showLottery(user: User, renderer: Renderer): Task[Unit] =
+    if (itemRepo.isEmpty) showShop(user, renderer)
+    else renderer.show(user, Screen(content.format("fet.runes.pitch",
+      "count" -> FetShopState.LotteryRunes.toString, "price" -> FetShopState.LotteryPriceDoubloons.toString), List(
+      Choice("FetRunesBuy", Choice.fit(content.format("fet.runes.buyLabel",
+        "price" -> FetShopState.LotteryPriceDoubloons.toString)), color = ChoiceColor.Positive, row = Some(0)),
+      Choice("FetShop", content.text("fet.back"), color = ChoiceColor.Negative, row = Some(1)))))
+
+  /** Почему сыграть нельзя: дублонов не хватает или в сумке нет места на все
+    * руны разом (большая руна занимает место). `None` — можно. */
+  private def lotteryRefusal(hero: Hero): Task[Option[String]] =
+    inventoryRepo.get(hero.id).mapError(asThrowable).map { inv =>
+      val price = FetShopState.LotteryPriceDoubloons
+      val need  = FetShopState.LotteryRunes.toLong
+      if (hero.doubloons < price) Some(content.format("fet.notEnough", "price" -> price.toString))
+      else if (!inv.hasRoomFor(need))
+        Some(content.format("fet.runes.noRoom", "need" -> need.toString, "free" -> inv.freeSlots.toString))
+      else None
+    }
+
+  private def confirmLottery(user: User, renderer: Renderer): Task[Unit] =
+    if (itemRepo.isEmpty) showShop(user, renderer)
+    else getHero(user).flatMap(lotteryRefusal).flatMap {
+      case Some(why) => renderer.show(user, Screen(why, backRow))
+      case None =>
+        renderer.show(user, Screen(content.format("fet.runes.confirm",
+          "count" -> FetShopState.LotteryRunes.toString, "price" -> FetShopState.LotteryPriceDoubloons.toString), List(
+          Choice("FetRunesYes", content.text("fet.confirmYes"), color = ChoiceColor.Positive, row = Some(0)),
+          Choice("FetShop", content.text("fet.confirmNo"), color = ChoiceColor.Negative, row = Some(0))
+        ), inline = true))
+    }
+
+  /** Сыграть: дублоны — Фету, руны — в сумку, каждая со своим номером из базы
+    * (одинаковые руны без номера делили бы −1, и сумка снимала бы их разом).
+    * Узор каждой — случайный из всех, повторы бывают. Игра — в журнал, для
+    * учёта в админ-панели. Дублонов не хватает или места нет (старая кнопка) —
+    * ничего не тратим. */
+  private def playLottery(user: User, renderer: Renderer): Task[Unit] =
+    itemRepo match {
+      case None => showShop(user, renderer)
+      case Some(items) =>
+        getHero(user).flatMap(hero => lotteryRefusal(hero).flatMap {
+          case Some(why) => renderer.show(user, Screen(why, backRow))
+          case None =>
+            for {
+              runes <- FetShopState.drawRunes
+              _     <- heroDao.updateDoubloons(user.userId, hero.doubloons - FetShopState.LotteryPriceDoubloons)
+              saved <- ZIO.foreach(runes)(r => items.persist(hero.id, RuneStone.item(r, RuneStoneSize.Big)))
+              _     <- ZIO.foreachDiscard(saved)(inventoryRepo.addItem(hero.id, _).mapError(asThrowable))
+              _     <- logLottery(user, saved)
+              _     <- renderer.show(user, Screen(content.format("fet.runes.done",
+                         "runes" -> saved.map(r => s"• ${r.displayTitle}").mkString("\n")), Nil))
+              _     <- showShop(user, renderer)
+            } yield ()
+        })
+    }
+
+  /** Игра — в журнал событий: по нему админ-панель считает лотереи. Не
+    * записалось — покупка от этого не рушится, только в лог. */
+  private def logLottery(user: User, runes: List[Item]): Task[Unit] =
+    journal.fold(ZIO.unit)(_.append(GameEvent(user.userId, GameEvent.FetRuneLottery, Json.obj(
+      "price" -> FetShopState.LotteryPriceDoubloons.asJson,
+      "runes" -> runes.map(_.name).asJson)))
+      .catchAllCause(cause => ZIO.logErrorCause("лотерея Фета не записана в журнал", cause)))
+
   // ── Вспомогательное ────────────────────────────────────────────────────────
 
   private def backRow: List[Choice] =
@@ -500,6 +584,18 @@ object FetShopState {
 
   /** Почём купон на смену имени. */
   val NameCouponPriceDoubloons: Long = 50L
+
+  /** Беспроигрышная лотерея: столько больших рун за столько дублонов. */
+  val LotteryRunes: Int           = 3
+  val LotteryPriceDoubloons: Long = 35L
+
+  /** Руны лотереи: узор каждой — случайный из всех ([[RuneStone.all]]),
+    * независимо от прочих, поэтому повторы бывают — как и в добыче. */
+  def drawRunes: zio.UIO[List[pangea.model.rune.Rune]] = {
+    val pool = RuneStone.all.toVector
+    if (pool.isEmpty) ZIO.succeed(Nil)
+    else ZIO.foreach(List.range(0, LotteryRunes))(_ => Random.nextIntBounded(pool.size).map(pool.lift)).map(_.flatten)
+  }
 
   /** Кожа упыря — остаётся только от Гнилого Джо. */
   def ghoulSkin(item: Item): Boolean = item.material.contains(MaterialKind.GhoulSkin)
