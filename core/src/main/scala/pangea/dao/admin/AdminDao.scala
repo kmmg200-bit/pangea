@@ -5,6 +5,7 @@ import doobie.util.transactor
 import pangea.model.GameEvent
 import pangea.model.hero.Equipment
 import pangea.model.item.ItemSet
+import pangea.model.quest.DailyRates
 import pangea.model.user.{UserId, VkId}
 import zio.interop.catz._
 import zio.{Task, ZLayer}
@@ -12,7 +13,7 @@ import zio.{Task, ZLayer}
 /** Сводка по серверу для админ-панели.
   *
   * @param heroes      сколько героев заведено всего
-  * @param active24h   сколько игроков заходило за сутки (см. `users.last_seen_at`)
+  * @param activeToday сколько игроков заходило сегодня — с 00:00 по Москве (см. `users.last_seen_at`)
   * @param active7d    то же за неделю
   * @param heroSilver  серебро на руках у героев
   * @param vaultSilver серебро, лежащее в банковских ячейках
@@ -24,7 +25,7 @@ import zio.{Task, ZLayer}
   */
 final case class AdminStats(
   heroes:       Long,
-  active24h:    Long,
+  activeToday:  Long,
   active7d:     Long,
   heroSilver:   Long,
   vaultSilver:  Long,
@@ -89,7 +90,9 @@ class AdminDaoLive(xa: transactor.Transactor[Task]) extends AdminDao {
   override def stats: Task[AdminStats] =
     for {
       heroes    <- sql"select count(*) from heroes".query[Long].unique.transact(xa)
-      day       <- activeSince("24 hours")
+      now       <- zio.Clock.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS)
+      // Сегодня — календарные сутки по Москве: с полуночи, а не последние 24 часа.
+      day       <- activeFrom(DailyRates.dayOf(now) * DailyRates.DayMs - DailyRates.MoscowOffsetMs)
       week      <- activeSince("7 days")
       money     <- sql"select coalesce(sum(silver), 0), coalesce(sum(doubloons), 0) from heroes"
                      .query[(Long, Long)].unique.transact(xa)
@@ -107,7 +110,7 @@ class AdminDaoLive(xa: transactor.Transactor[Task]) extends AdminDao {
                      .query[(Long, Long)].unique.transact(xa)
     } yield AdminStats(
       heroes      = heroes,
-      active24h   = day,
+      activeToday = day,
       active7d    = week,
       heroSilver  = money._1,
       vaultSilver = inVaults,
@@ -122,6 +125,14 @@ class AdminDaoLive(xa: transactor.Transactor[Task]) extends AdminDao {
     * приходит. */
   private def activeSince(interval: String): Task[Long] =
     doobie.Fragment.const(s"select count(*) from users where last_seen_at > now() - interval '$interval'")
+      .query[Long].unique.transact(xa)
+
+  /** Сколько игроков заходило с момента `fromMs` (мс эпохи). `last_seen_at` —
+    * TIMESTAMP без зоны: now() пишет туда время в зоне сессии, поэтому и границу
+    * переводим в зону сессии — сравнение верно при любой зоне сервера базы. */
+  private def activeFrom(fromMs: Long): Task[Long] =
+    sql"""select count(*) from users
+          where last_seen_at >= (to_timestamp(${fromMs.toDouble} / 1000.0) AT TIME ZONE current_setting('TimeZone'))"""
       .query[Long].unique.transact(xa)
 
   override def level(userId: UserId): Task[Int] =

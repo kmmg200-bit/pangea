@@ -24,7 +24,7 @@ object AdminPanelSpec extends ZIOSpecDefault {
   private val Password = "проверочный-пароль"
 
   private val stubStats = AdminStats(
-    heroes = 7L, active24h = 3L, active7d = 5L,
+    heroes = 7L, activeToday = 3L, active7d = 5L,
     heroSilver = 1000L, vaultSilver = 500L, doubloons = 42L,
     sets = List(AdminStats.SetRow(ItemSet.Hunter, 6, 54L), AdminStats.SetRow(ItemSet.Ghoul, 8, 32L)),
     levels = AdminStats.levelRows(List(3L, 17L, 40L, 99L, 150L), AdminDao.LevelStep, AdminDao.MaxLevel))
@@ -305,7 +305,7 @@ object AdminPanelSpec extends ZIOSpecDefault {
         _     <- p.intercept(testUser, TestFixtures.hero(userId), tap("AdminStats"), r)
         stats <- r.sentScreens.map(_.last)
       } yield assertTrue(stats.text.contains("всего героев: 7")) &&
-              assertTrue(stats.text.contains("заходили за сутки: 3") && stats.text.contains("заходили за неделю: 5")) &&
+              assertTrue(stats.text.contains("заходили сегодня (с 00:00 МСК): 3") && stats.text.contains("заходили за неделю: 5")) &&
               assertTrue(stats.text.contains("серебро всего: 1 500") && stats.text.contains("дублоны: 42")) &&
               assertTrue(stats.text.contains("Охотник на 6: 54") && stats.text.contains("Упырь на 8: 32")) &&
               // полосы уровней по 25, включая пустые
