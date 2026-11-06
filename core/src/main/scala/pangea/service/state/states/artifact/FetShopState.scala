@@ -75,9 +75,10 @@ case class FetShopState(
       "FetNameCouponBuy" -> Target.Run { (u, _, r) => confirmNameCoupon(u, r).as(StateType.FetShop) },
       "FetNameCouponYes" -> Target.Run { (u, _, r) => buyNameCoupon(u, r).as(StateType.FetShop) },
       "FetRunes"    -> Target.Run { (u, _, r)  => showLottery(u, r).as(StateType.FetShop) },
-      "FetRunesBuy" -> Target.Run { (u, _, r)  => playLottery(u, r).as(StateType.FetShop) },
-      // Кнопка «Договорились» прежнего подтверждения в старых сообщениях — то же самое.
-      "FetRunesYes" -> Target.Run { (u, _, r)  => playLottery(u, r).as(StateType.FetShop) },
+      "FetRunesBuy" -> Target.Run { (u, _, r)  => playLottery(u, 1, r).as(StateType.FetShop) },
+      "FetRunesTen" -> Target.Run { (u, _, r)  => playLottery(u, FetShopState.LotteryBatch, r).as(StateType.FetShop) },
+      // Кнопка «Договорились» прежнего подтверждения в старых сообщениях — одна игра.
+      "FetRunesYes" -> Target.Run { (u, _, r)  => playLottery(u, 1, r).as(StateType.FetShop) },
       "LeaveFetShop" -> Target.Goto(StateType.TradeHouse),
       CityExit.route
     ),
@@ -481,50 +482,84 @@ case class FetShopState(
 
   private def showLottery(user: User, renderer: Renderer): Task[Unit] =
     if (itemRepo.isEmpty) showShop(user, renderer)
-    else renderer.show(user, Screen(content.format("fet.runes.pitch",
-      "count" -> FetShopState.LotteryRunes.toString, "price" -> FetShopState.LotteryPriceDoubloons.toString), List(
-      Choice("FetRunesBuy", Choice.fit(content.format("fet.runes.buyLabel",
-        "price" -> FetShopState.LotteryPriceDoubloons.toString)), color = ChoiceColor.Positive, row = Some(0)),
-      Choice("FetShop", content.text("fet.back"), color = ChoiceColor.Negative, row = Some(1)))))
-
-  /** Почему сыграть нельзя: дублонов не хватает или в сумке нет места на все
-    * руны разом (большая руна занимает место). `None` — можно. */
-  private def lotteryRefusal(hero: Hero): Task[Option[String]] =
-    inventoryRepo.get(hero.id).mapError(asThrowable).map { inv =>
+    else playsLeft(user).flatMap { left =>
       val price = FetShopState.LotteryPriceDoubloons
-      val need  = FetShopState.LotteryRunes.toLong
+      val batch = FetShopState.LotteryBatch
+      renderer.show(user, Screen(
+        content.format("fet.runes.pitch", "count" -> FetShopState.LotteryRunes.toString, "price" -> price.toString,
+          "limit" -> FetShopState.LotteryDailyLimit.toString) + "\n\n" +
+          content.format("fet.runes.left", "left" -> left.toString,
+            "limit" -> FetShopState.LotteryDailyLimit.toString),
+        List(
+          Choice("FetRunesBuy", Choice.fit(content.format("fet.runes.buyLabel", "price" -> price.toString)),
+            color = ChoiceColor.Positive, row = Some(0)),
+          Choice("FetRunesTen", Choice.fit(content.format("fet.runes.buyTenLabel",
+            "count" -> batch.toString, "price" -> (price * batch).toString)), color = ChoiceColor.Positive, row = Some(0)),
+          Choice("FetShop", content.text("fet.back"), color = ChoiceColor.Negative, row = Some(1)))))
+    }
+
+  /** Сколько игр у героя осталось на сегодня (сутки — по Москве). Считаем по
+    * журналу событий: каждая игра в нём — своя строка. Без журнала лимита нет. */
+  private def playsLeft(user: User): Task[Long] =
+    for {
+      now   <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
+      today <- journal.fold[Task[Long]](ZIO.succeed(0L))(_.count(user.userId, GameEvent.FetRuneLottery,
+                 pangea.service.activity.ActivityContest.dayStart(now)))
+    } yield (FetShopState.LotteryDailyLimit - today).max(0L)
+
+  /** Почему сыграть `plays` раз нельзя: дублонов не хватает на все игры или в
+    * сумке нет места на все руны разом (большая руна занимает место). `None` —
+    * можно. */
+  private def lotteryRefusal(hero: Hero, plays: Int): Task[Option[String]] =
+    inventoryRepo.get(hero.id).mapError(asThrowable).map { inv =>
+      val price = FetShopState.LotteryPriceDoubloons * plays
+      val need  = FetShopState.LotteryRunes.toLong * plays
       if (hero.doubloons < price) Some(content.format("fet.notEnough", "price" -> price.toString))
       else if (!inv.hasRoomFor(need))
         Some(content.format("fet.runes.noRoom", "need" -> need.toString, "free" -> inv.freeSlots.toString))
       else None
     }
 
-  /** Сыграть — сразу по «Тянуть за…», без подтверждения: дублоны — Фету, руны —
-    * в сумку, каждая со своим номером из базы (одинаковые руны без номера делили
-    * бы −1, и сумка снимала бы их разом). Узор каждой — случайный из всех,
-    * повторы бывают. Игра — в журнал, для учёта в админ-панели. Дублонов не
-    * хватает или места нет — отказ, ничего не тратим. */
-  private def playLottery(user: User, renderer: Renderer): Task[Unit] =
+  /** Сыграть `asked` раз (одна игра или «×10») — сразу, без подтверждения. Не
+    * больше [[FetShopState.LotteryDailyLimit]] игр за сутки по Москве: осталось
+    * меньше, чем просили, — играем сколько осталось; не осталось — отказ. Дублоны
+    * — Фету за все игры, руны — в сумку, каждая со своим номером из базы
+    * (одинаковые руны без номера делили бы −1, и сумка снимала бы их разом).
+    * Узор каждой — случайный из всех, повторы бывают. Каждая игра — своей
+    * строкой в журнал: по ним и лимит, и учёт в админ-панели. Дублонов не хватает
+    * или места нет — отказ, ничего не тратим. */
+  private def playLottery(user: User, asked: Int, renderer: Renderer): Task[Unit] =
     itemRepo match {
       case None => showShop(user, renderer)
       case Some(items) =>
-        getHero(user).flatMap(hero => lotteryRefusal(hero).flatMap {
-          case Some(why) => renderer.show(user, Screen(why, backRow))
-          case None =>
-            for {
-              runes <- FetShopState.drawRunes
-              _     <- heroDao.updateDoubloons(user.userId, hero.doubloons - FetShopState.LotteryPriceDoubloons)
-              saved <- ZIO.foreach(runes)(r => items.persist(hero.id, RuneStone.item(r, RuneStoneSize.Big)))
-              _     <- ZIO.foreachDiscard(saved)(inventoryRepo.addItem(hero.id, _).mapError(asThrowable))
-              _     <- logLottery(user, saved)
-              _     <- renderer.show(user, Screen(content.format("fet.runes.done",
-                         "runes" -> saved.map(r => s"• ${r.displayTitle}").mkString("\n")), Nil))
-              _     <- showShop(user, renderer)
-            } yield ()
-        })
+        for {
+          hero <- getHero(user)
+          left <- playsLeft(user)
+          plays = asked.toLong.min(left).toInt
+          _    <- if (plays <= 0) renderer.show(user, Screen(content.format("fet.runes.limit",
+                    "limit" -> FetShopState.LotteryDailyLimit.toString), backRow))
+                  else lotteryRefusal(hero, plays).flatMap {
+                    case Some(why) => renderer.show(user, Screen(why, backRow))
+                    case None =>
+                      for {
+                        games <- ZIO.foreach(List.fill(plays)(()))(_ => FetShopState.drawRunes)
+                        _     <- heroDao.updateDoubloons(user.userId,
+                                   hero.doubloons - FetShopState.LotteryPriceDoubloons * plays)
+                        saved <- ZIO.foreach(games)(runes =>
+                                   ZIO.foreach(runes)(r => items.persist(hero.id, RuneStone.item(r, RuneStoneSize.Big))))
+                        _     <- ZIO.foreachDiscard(saved.flatten)(inventoryRepo.addItem(hero.id, _).mapError(asThrowable))
+                        _     <- ZIO.foreachDiscard(saved)(logLottery(user, _))
+                        partial = Option.when(plays < asked)(content.format("fet.runes.partial",
+                                    "plays" -> plays.toString, "limit" -> FetShopState.LotteryDailyLimit.toString))
+                        _     <- renderer.show(user, Screen((content.format("fet.runes.done",
+                                   "runes" -> FetShopState.runeLines(saved.flatten)) +: partial.toList).mkString("\n\n"), Nil))
+                        _     <- showShop(user, renderer)
+                      } yield ()
+                  }
+        } yield ()
     }
 
-  /** Игра — в журнал событий: по нему админ-панель считает лотереи. Не
+  /** Игра — в журнал событий: по нему лимит на сутки и учёт в админ-панели. Не
     * записалось — покупка от этого не рушится, только в лог. */
   private def logLottery(user: User, runes: List[Item]): Task[Unit] =
     journal.fold(ZIO.unit)(_.append(GameEvent(user.userId, GameEvent.FetRuneLottery, Json.obj(
@@ -577,6 +612,21 @@ object FetShopState {
   /** Беспроигрышная лотерея: столько больших рун за столько дублонов. */
   val LotteryRunes: Int           = 3
   val LotteryPriceDoubloons: Long = 35L
+
+  /** Сколько игр за раз по кнопке «×10». */
+  val LotteryBatch: Int = 10
+
+  /** Больше стольких игр за сутки по Москве не сыграть. */
+  val LotteryDailyLimit: Long = 30L
+
+  /** Вытянутые руны списком: одинаковые — одной строкой со счётом. */
+  def runeLines(runes: List[Item]): String = {
+    val titles = runes.map(_.displayTitle)
+    titles.distinct.map { t =>
+      val n = titles.count(_ == t)
+      if (n > 1) s"• $t ×$n" else s"• $t"
+    }.mkString("\n")
+  }
 
   /** Руны лотереи: узор каждой — случайный из всех ([[RuneStone.all]]),
     * независимо от прочих, поэтому повторы бывают — как и в добыче. */
