@@ -77,8 +77,15 @@ case class AuctionState(
 
   override def targetStates: Set[StateType] = branch.gotoTargets
 
+  /** Вход в аукцион: приглашение в торговый чат — отдельным сообщением и без
+    * кнопок, а следом меню. Ссылку в само меню не кладём: сообщение со ссылкой
+    * (ВК рисует под ней карточку беседы) и с клавиатурой разом у игроков не
+    * обновляло кнопки — оставались прежние, и действия будто не проходили. По
+    * той же причине приглашение не повторяется при каждом «Назад» в меню. */
   override def enter(user: User, renderer: Renderer): Task[Unit] =
-    resetScene(user) *> showMenu(user, renderer)
+    resetScene(user) *>
+      renderer.show(user, Screen(content.format("bank.auction.tradeChat", "tradeChat" -> Links.TradeChat), Nil)) *>
+      showMenu(user, renderer)
 
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     branch.act(user, ua, renderer)
@@ -90,7 +97,7 @@ case class AuctionState(
       now   <- nowMs
       total <- auctionRepo.onSale(now).orElse(ZIO.succeed(0L))
       _     <- renderer.show(user, Screen(
-                 content.format("bank.auction.menu", "onSale" -> total.toString, "tradeChat" -> Links.TradeChat),
+                 content.format("bank.auction.menu", "onSale" -> total.toString),
                  List(
                    Choice("AuctionBrowse", content.text("bank.auction.browseLabel"), row = Some(0)),
                    Choice("AuctionSell",   content.text("bank.auction.sellLabel"),   row = Some(0)),

@@ -117,13 +117,36 @@ object AuctionSpec extends ZIOSpecDefault {
                 List("AuctionBrowse", "AuctionSell", "MyLots", "LeaveAuction", "GoToCity"))
     },
 
-    test("меню зовёт в торговый чат: строка и ссылка-приглашение") {
+    test("при входе зовёт в торговый чат — отдельным сообщением без кнопок, следом меню без ссылки") {
       for {
-        f    <- auction()
-        _    <- f.state.enter(testUser, f.renderer)
-        menu <- f.renderer.sentScreens.map(_.last)
-      } yield assertTrue(menu.text.endsWith(
-                "🪧 Новые лоты, сделки из рук в руки и обмен — всё в торговом чате Кинэта:\n" + pangea.service.chat.Links.TradeChat))
+        f       <- auction()
+        _       <- f.state.enter(testUser, f.renderer)
+        screens <- f.renderer.sentScreens
+      } yield assertTrue(screens.size == 2) &&
+              assertTrue(screens.head.text ==
+                "🪧 Новые лоты, сделки из рук в руки и обмен — всё в торговом чате Кинэта:\n" + pangea.service.chat.Links.TradeChat) &&
+              assertTrue(screens.head.choices.isEmpty && !screens.head.hideKeyboard) &&
+              assertTrue(screens.last.choices.nonEmpty && !screens.last.text.contains("vk.me"))
+    },
+
+    test("«Назад» в меню и меню после выставления — без приглашения в чат") {
+      for {
+        f       <- auction(inventory = List(gear(42L)), silver = 1000L)
+        _       <- f.state.enter(testUser, f.renderer)
+        before  <- f.renderer.sentScreens.map(_.size)
+        _       <- f.state.action(testUser, tap("AuctionSell"), f.renderer)
+        _       <- f.state.action(testUser, tap("Auction"), f.renderer)
+        _       <- f.state.action(testUser, tap("AuctionSell"), f.renderer)
+        _       <- f.state.action(testUser, tap("AucSell_42"), f.renderer)
+        _       <- f.state.action(testUser, tap("SellCurrency", "cur" -> "Silver"), f.renderer)
+        _       <- f.state.action(testUser, text("500"), f.renderer)
+        _       <- f.state.action(testUser, tap("SellConfirm"), f.renderer)
+        screens <- f.renderer.sentScreens.map(_.drop(before))
+      } yield assertTrue(f.lots.snapshot.size == 1) &&
+              assertTrue(screens.last.choices.map(_.id) == List("AuctionBrowse", "AuctionSell", "MyLots", "LeaveAuction", "GoToCity")) &&
+              // ни одно сообщение с кнопками не несёт ссылку
+              assertTrue(screens.forall(s => s.choices.isEmpty || !s.text.contains("http"))) &&
+              assertTrue(!screens.exists(_.text.contains("торговом чате Кинэта")))
     },
 
     test("купил с витрины — остаёшься на той же странице, а не в меню аукциона") {
