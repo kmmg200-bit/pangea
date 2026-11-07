@@ -2,11 +2,22 @@ package pangea.service.miniapp
 
 import io.circe.Encoder
 import io.circe.generic.semiauto.deriveEncoder
+import pangea.engine.SceneContent
 import pangea.model.auction.{AuctionCurrency, AuctionLot}
-import pangea.model.hero.Hero
+import pangea.model.artifact.{Artifact, HeroArtifacts}
+import pangea.model.bank.BankVault
+import pangea.model.barrel.Barrel
+import pangea.model.hero.{Achievement, AzatState, Hero, HeroCard, Knowledge, LoreData}
+import pangea.model.home.{HomeData, HomeRates, House}
 import pangea.model.inventory.Inventory
-import pangea.model.item.{Item, ItemStack, ItemType, Rarity}
+import pangea.model.item.{BeltSlot, Item, ItemDetails, ItemStack, ItemType, Rarity}
+import pangea.model.squad.AllyRates
+import pangea.service.state.QuestJournal
 import pangea.service.state.states.EquipmentState
+import pangea.service.state.states.hero.SkillsState
+import pangea.service.state.states.home.{RuneAltarState, TrophyWallState}
+import pangea.service.state.states.hero.SkillsState.SkillEntry
+import pangea.util.TimeLeft
 
 /** Что видит Mini App: те же вещи, что и бот, но данными, а не экраном.
   * Описание вещи (`text`) — тот же текст, что в карточке бота
@@ -30,8 +41,35 @@ object MiniAppView {
   )
 
   /** Слот снаряжения: что надето; `busy` — пустой, но занят (левая рука под
-    * двуручным: само оружие — в правой). */
-  final case class SlotView(name: String, item: Option[ItemView], busy: Option[String])
+    * двуручным: само оружие — в правой); `belt` — что лежит в поясе. */
+  final case class SlotView(name: String, item: Option[ItemView], busy: Option[String], belt: Option[BeltView])
+
+  /** Ячейка пояса: что в ней и сколько из скольких. Опустевшая помнит, чем
+    * была полна, — `uses` у неё ноль. */
+  final case class BeltCellView(name: String, uses: Int, max: Int)
+
+  /** Пояс: сколько ячеек всего и что в каждой. */
+  final case class BeltView(capacity: Int, cells: List[BeltCellView])
+
+  /** Хранилище вещей во вкладке «Вещи». `group` — `self` (при себе), `city`
+    * (в городе), `home` (в доме). Закрытое — `locked` с тем, как его открыть.
+    * У открытого — вещи по разделам (у стоек — по стойке на раздел) или счёт
+    * (руны на алтаре, трофеи на стене). `used` из `capacity` — занятые места,
+    * где их считают. */
+  final case class StorageView(
+    id:       String,
+    group:    String,
+    title:    String,
+    locked:   Option[String],
+    used:     Option[Long],
+    capacity: Option[Long],
+    silver:   Option[PoolView],
+    note:     Option[String],
+    sections: List[SectionView],
+    counts:   List[CountView]
+  )
+  final case class SectionView(title: Option[String], items: List[ItemView])
+  final case class CountView(label: String, value: Long)
 
   final case class HeroView(lvl: Long, silver: Long, doubloons: Long)
 
@@ -40,7 +78,8 @@ object MiniAppView {
     capacity:  Long,
     occupied:  Long,
     items:     List[ItemView],
-    equipment: List[SlotView]
+    equipment: List[SlotView],
+    storages:  List[StorageView]
   )
 
   /** Лот. `currency` — `silver` или `doubloons`; `unsold` — неделя вышла, лот
@@ -58,33 +97,232 @@ object MiniAppView {
   /** Витрина и свои лоты (свои — с непроданными). */
   final case class AuctionView(hero: HeroView, lots: List[LotView], mine: List[LotView])
 
+  /** Характеристика: сейчас — со всем, что действует, и родная — до расы, травм
+    * и зелий. В боте родная стоит первой, а текущая в скобках. */
+  final case class StatView(current: Long, native: Long)
+
+  /** Запас — здоровье, броня, энергия: сколько есть из скольких. */
+  final case class PoolView(current: Long, max: Long)
+
+  /** Травма и что она режет — как на экране травм в боте. */
+  final case class TraumaView(name: String, penalties: String)
+
+  /** «Выспались дома»: прибавка к опыту и сколько ей ещё. */
+  final case class RestedView(expPct: Long, left: String)
+
+  /** Эффект — как кнопка и её карточка на экране «Эффекты» бота. `kind`:
+    * `active` — умение, `passive` — пассивка, `set` — набор, `weapon` и
+    * `armor` — сводка камней в оружии и в доспехах. */
+  final case class EffectView(kind: String, label: String, text: String)
+
+  /** Полученное достижение и что оно даёт. */
+  final case class AchievementView(title: String, bonus: String)
+
+  /** Достижения: полученные и сколько всего. Неполученные не раскрываем — как в боте. */
+  final case class AchievementsView(total: Int, got: List[AchievementView])
+
+  /** Знание: что умеет герой и как узнал — «дошёл сам» или «по книге». */
+  final case class KnowledgeView(title: String, how: String, text: String)
+
+  /** «Персонаж» — те же числа, что в карточке бота ([[Hero.card]]). Сроки —
+    * готовым текстом, теми же словами, что в боте. `name` — имя героя; у
+    * прошедших пролог до имён его нет. */
+  final case class CharacterView(
+    hero:          HeroView,
+    name:          Option[String],
+    race:          String,
+    exp:           Long,
+    neededExp:     Long,
+    kills:         Long,
+    expFrozen:     Boolean,
+    rested:        Option[RestedView],
+    blessingLeft:  Option[String],
+    instantRests:  Int,
+    str:           StatView,
+    vit:           StatView,
+    agi:           StatView,
+    int:           StatView,
+    hp:            PoolView,
+    armor:         PoolView,
+    energy:        PoolView,
+    attack:        Long,
+    defence:       Long,
+    accuracy:      Long,
+    evasion:       Long,
+    upgradePoints: Long,
+    traumaLeft:    Option[String],
+    traumas:       List[TraumaView],
+    effects:       List[EffectView],
+    achievements:  AchievementsView,
+    knowledge:     List[KnowledgeView]
+  )
+
+  /** «Задания» — журнал бота по разделам ([[QuestJournal.Journal]]). У
+    * объявления с доски `state` — «в работе» или «готово». */
+  final case class StoryView(title: String, objectives: String)
+  final case class NpcQuestView(title: String, step: String)
+  final case class DailyView(npc: String, line: String)
+  final case class BoardView(board: String, what: String, ready: Boolean, state: String)
+  final case class QuestsView(
+    hero:    HeroView,
+    story:   Option[StoryView],
+    npcs:    List[NpcQuestView],
+    dailies: List[DailyView],
+    boards:  List[BoardView]
+  )
+
+  /** Союзник в строю — как его карточка в боте. `element` — значок стихии, у
+    * крысы — зубы. `leaves` — сколько ему ещё в отряде: наёмнику до конца
+    * найма, поднятому — пока держит тёмная сила; без срока — пусто. */
+  final case class AllyView(
+    position: Int,
+    name:     String,
+    race:     String,
+    element:  String,
+    lvl:      Long,
+    hp:       PoolView,
+    armor:    PoolView,
+    energy:   PoolView,
+    attack:   Long,
+    defence:  Long,
+    accuracy: Long,
+    evasion:  Long,
+    leaves:   Option[String]
+  )
+
+  /** «Отряд»: сколько мест в строю, где стоит герой и кто стоит рядом.
+    * `pendingRisen` — восставший ждёт у шатра, а мест нет: решают в боте. */
+  final case class SquadView(
+    hero:         HeroView,
+    positions:    Int,
+    heroPosition: Int,
+    allies:       List[AllyView],
+    pendingRisen: Option[String]
+  )
+
   implicit val itemEncoder:      Encoder[ItemView]      = deriveEncoder
+  implicit val beltCellEncoder:  Encoder[BeltCellView]  = deriveEncoder
+  implicit val beltEncoder:      Encoder[BeltView]      = deriveEncoder
   implicit val slotEncoder:      Encoder[SlotView]      = deriveEncoder
+  implicit val sectionEncoder:   Encoder[SectionView]   = deriveEncoder
+  implicit val countEncoder:     Encoder[CountView]     = deriveEncoder
+  implicit val storageEncoder:   Encoder[StorageView]   = deriveEncoder
   implicit val heroEncoder:      Encoder[HeroView]      = deriveEncoder
   implicit val inventoryEncoder: Encoder[InventoryView] = deriveEncoder
   implicit val lotEncoder:       Encoder[LotView]       = deriveEncoder
   implicit val auctionEncoder:   Encoder[AuctionView]   = deriveEncoder
+  implicit val statEncoder:      Encoder[StatView]      = deriveEncoder
+  implicit val poolEncoder:      Encoder[PoolView]      = deriveEncoder
+  implicit val traumaEncoder:    Encoder[TraumaView]    = deriveEncoder
+  implicit val restedEncoder:    Encoder[RestedView]    = deriveEncoder
+  implicit val effectEncoder:      Encoder[EffectView]       = deriveEncoder
+  implicit val achievementEncoder: Encoder[AchievementView]  = deriveEncoder
+  implicit val achievementsEncoder: Encoder[AchievementsView] = deriveEncoder
+  implicit val knowledgeEncoder:   Encoder[KnowledgeView]    = deriveEncoder
+  implicit val characterEncoder: Encoder[CharacterView] = deriveEncoder
+  implicit val storyEncoder:     Encoder[StoryView]     = deriveEncoder
+  implicit val npcQuestEncoder:  Encoder[NpcQuestView]  = deriveEncoder
+  implicit val dailyEncoder:     Encoder[DailyView]     = deriveEncoder
+  implicit val boardEncoder:     Encoder[BoardView]     = deriveEncoder
+  implicit val questsEncoder:    Encoder[QuestsView]    = deriveEncoder
+  implicit val allyEncoder:      Encoder[AllyView]      = deriveEncoder
+  implicit val squadEncoder:     Encoder[SquadView]     = deriveEncoder
 
   def hero(h: Hero): HeroView = HeroView(h.lvl, h.silver, h.doubloons)
 
-  /** Сумка — стопками, как в боте, — и всё надетое. */
-  def inventory(h: Hero, inv: Inventory, describe: Item => String): InventoryView =
+  /** Что лежит у героя по хранилищам — кроме сумки: она приходит своим полем. */
+  final case class Stores(artifacts: HeroArtifacts, barrel: Barrel, vault: BankVault, home: HomeData)
+
+  /** Сумка — стопками, как в боте, — всё надетое и остальные хранилища. */
+  def inventory(h: Hero, inv: Inventory, stores: Stores, content: SceneContent, describe: Item => String): InventoryView =
     InventoryView(
       hero      = hero(h),
       capacity  = inv.maxItems,
       occupied  = inv.occupied,
-      items     = ItemStack.grouped(inv.items.data).map { case (item, count) =>
-                    view(item, count, describe(item))
-                  },
+      items     = stacked(inv.items.data, describe),
       equipment = EquipmentState.slots.map { slot =>
                     val worn = slot.get(h.equipment)
                     SlotView(
                       name = slot.name,
                       item = Option.when(worn.itemType != ItemType.NoItem)(view(worn, 1, EquipmentState.itemStats(worn))),
-                      busy = Option.when(slot.busy(h.equipment))(EquipmentState.LeftBusyText)
+                      busy = Option.when(slot.busy(h.equipment))(EquipmentState.LeftBusyText),
+                      belt = belt(worn)
                     )
-                  }
+                  },
+      storages  = storages(stores, content, describe)
     )
+
+  private def stacked(items: List[Item], describe: Item => String): List[ItemView] =
+    ItemStack.grouped(items).map { case (item, count) => view(item, count, describe(item)) }
+
+  /** Пояс по ячейкам — те же числа, что в его карточке ([[Item.statsLines]]). */
+  private def belt(worn: Item): Option[BeltView] = worn.details match {
+    case b: ItemDetails.Belt =>
+      val cap = ItemDetails.Belt.capacityFor(worn.rarity)
+      Some(BeltView(cap, b.slots.map {
+        case f: BeltSlot.Flask => BeltCellView(f.name, f.charges.max(0), f.maxCharges)
+        case st: BeltSlot.Stack => BeltCellView(st.name, st.count.max(0), cap)
+        case r: BeltSlot.Rose  => BeltCellView(r.name, r.charges.max(0), r.maxCharges)
+      }))
+    case _ => None
+  }
+
+  /** Хранилища в том порядке, в каком они стоят во вкладке: при себе, в
+    * городе, в доме. Закрытые — тоже, с тем, как их открыть. */
+  private def storages(st: Stores, content: SceneContent, describe: Item => String): List[StorageView] = {
+    def t(id: String, key: String) = content.text(s"miniapp.storages.$id.$key")
+    def items(list: List[Item]) = List(SectionView(None, stacked(list, describe)))
+    def open(id: String, group: String, used: Option[Long], cap: Option[Long], silver: Option[PoolView] = None,
+             note: Option[String] = None, sections: List[SectionView] = Nil, counts: List[CountView] = Nil) =
+      StorageView(id, group, t(id, "title"), None, used, cap, silver, note, sections, counts)
+    def closed(id: String, group: String, why: String) =
+      StorageView(id, group, t(id, "title"), Some(why), None, None, None, None, Nil, Nil)
+
+    def artifact(id: String, a: Artifact) =
+      if (!a.owned) closed(id, "self", t(id, "locked"))
+      else open(id, "self", Some(a.occupied.toLong), Some(a.capacity.toLong), sections = items(a.items.data))
+
+    val home  = st.home
+    val tier  = home.house.fold(0)(_.tier)
+    val bench = tier >= House.Townhouse.tier
+    val isle  = home.house.contains(House.Island)
+    // Без дома замок у всех хранилищ дома — и одна причина на всех.
+    def atHome(id: String, available: Boolean)(view: => StorageView) =
+      if (!home.owns) closed(id, "home", content.text("miniapp.noHouse"))
+      else if (!available) closed(id, "home", t(id, "locked"))
+      else view
+
+    List(
+      artifact("casket", st.artifacts.casket),
+      artifact("livingBag", st.artifacts.bag),
+      artifact("wardrobe", st.artifacts.wardrobe),
+      open("barrel", "city", Some(st.barrel.occupied), Some(Barrel.MaxItems),
+        silver = Some(PoolView(st.barrel.silver, Barrel.MaxSilver)),
+        note = Option.when(st.barrel.robbed)(t("barrel", "robbed")),
+        sections = items(st.barrel.items.data)),
+      if (!st.vault.open) closed("vault", "city", t("vault", "locked"))
+      else open("vault", "city", Some(st.vault.occupied), Some(st.vault.maxItems),
+        silver = Some(PoolView(st.vault.silver, st.vault.maxSilver)), sections = items(st.vault.items.data)),
+      atHome("herbs", bench)(open("herbs", "home", Some(home.herbs.size.toLong), Some(home.herbShelves.toLong),
+        sections = items(home.herbs))),
+      atHome("brews", bench)(open("brews", "home", Some(home.brews.size.toLong), Some(home.brewShelves.toLong),
+        sections = items(home.brews))),
+      atHome("cauldron", bench)(open("cauldron", "home", Some(home.cauldron.size.toLong),
+        Some(HomeRates.CauldronSlots.toLong), sections = items(home.cauldron))),
+      atHome("gems", isle)(open("gems", "home", Some(home.gems.size.toLong), Some(home.gemShelves.toLong),
+        sections = items(home.gems))),
+      atHome("runes", available = true)(open("runes", "home", None, None,
+        counts = RuneAltarState.onAltar(home).map { case (rune, n) => CountView(rune.label, n) })),
+      atHome("wall", isle)(open("wall", "home", None, None,
+        counts = TrophyWallState.Races.map(r =>
+          CountView(TrophyWallState.raceName(content, r), TrophyWallState.hung(home, r).size.toLong)))),
+      atHome("racks", home.activeRacks > 0)(open("racks", "home", None, None,
+        sections = home.racks.take(home.activeRacks).zipWithIndex.map { case (rack, i) =>
+          SectionView(Some(content.format("miniapp.storages.racks.rack", "n" -> (i + 1).toString)),
+            rack.allItems.filter(_.itemType != ItemType.NoItem).map(it => view(it, 1, EquipmentState.itemStats(it))))
+        }))
+    )
+  }
 
   /** Витрина и свои лоты. Описание вещи в лоте — со сравнением с надетым на
     * герое, как в карточке бота. */
@@ -101,6 +339,96 @@ object MiniAppView {
         unsold    = l.unsold(now)
       )
     AuctionView(hero(h), onSale.map(lot), mine.map(lot))
+  }
+
+  /** «Персонаж». Благословение и быстрые отдыхи — из состояния храма (`azat`),
+    * знания — из `lore`, остальное — с героя: карточка, эффекты, достижения. */
+  def character(h: Hero, azat: AzatState, lore: LoreData, content: SceneContent, now: Long): CharacterView = {
+    val c = h.card(now)
+    CharacterView(
+      hero          = hero(h),
+      name          = h.name,
+      race          = c.race,
+      exp           = c.exp,
+      neededExp     = c.neededExp,
+      kills         = c.kills,
+      expFrozen     = c.expFrozen,
+      rested        = c.restedLeftMs.map(ms => RestedView(HomeRates.RestedExpPct, HeroCard.restedLeft(ms))),
+      blessingLeft  = azat.blessingUntil.filter(_ > now).map(until => TimeLeft.format(until - now)),
+      instantRests  = azat.instantRests,
+      str           = StatView(c.stats.str, c.native.str),
+      vit           = StatView(c.stats.vit, c.native.vit),
+      agi           = StatView(c.stats.agi, c.native.agi),
+      int           = StatView(c.stats.int, c.native.int),
+      hp            = PoolView(c.hp, c.maxHp),
+      armor         = PoolView(c.armor, c.maxArmor),
+      energy        = PoolView(c.energy, c.maxEnergy),
+      attack        = c.fight.atk,
+      defence       = c.fight.defence,
+      accuracy      = c.fight.accuracy,
+      evasion       = c.fight.evasion,
+      upgradePoints = c.upgradePoints,
+      traumaLeft    = c.traumaLeftMs.map(HeroCard.traumaLeft),
+      traumas       = c.traumas.map(t => TraumaView(t.name, t.penalties.shortText)),
+      effects       = SkillsState.entries(h).map(e => EffectView(effectKind(e), e.label, e.describe(h))),
+      achievements  = AchievementsView(Achievement.values.size,
+                        Achievement.values.toList.filter(h.hasAchievement).map(a => AchievementView(a.title, a.bonusLine))),
+      knowledge     = Knowledge.values.toList.filter(lore.knows).map { k =>
+                        val how = if (lore.learnedAlone(k)) "knowledge.selfTaught" else "knowledge.fromBook"
+                        KnowledgeView(k.title, content.text(how), k.description)
+                      }
+    )
+  }
+
+  private def effectKind(e: SkillEntry): String = e match {
+    case _: SkillEntry.Active  => "active"
+    case _: SkillEntry.Passive => "passive"
+    case _: SkillEntry.Set     => "set"
+    case SkillEntry.WeaponFx   => "weapon"
+    case SkillEntry.ArmorFx    => "armor"
+  }
+
+  /** «Задания» — тот же журнал, что в боте, по разделам. */
+  def quests(h: Hero, j: QuestJournal.Journal, content: SceneContent): QuestsView =
+    QuestsView(
+      hero    = hero(h),
+      story   = j.story.map(s => StoryView(s.title, s.objectives)),
+      npcs    = j.npcs.map(n => NpcQuestView(n.title, n.step)),
+      dailies = j.dailies.map(d => DailyView(d.npc, d.line)),
+      // Сделанное — коротко, на плашку; «в работе» — как в журнале бота.
+      boards  = j.boards.map(b => BoardView(b.board, b.what, b.ready,
+                  if (b.ready) content.text("miniapp.boardReady") else QuestJournal.boardState(content, b)))
+    )
+
+  /** «Отряд». Кто уже ушёл (найм кончился, кости рассыпались), бот уберёт и
+    * запишет при ближайшем визите героя туда, где отряд на виду; приложение
+    * ничего не пишет и просто их не показывает. */
+  def squad(h: Hero, content: SceneContent, now: Long): SquadView = {
+    val (staying, _) = h.squad.settleUndead(now).expire(now)
+    SquadView(
+      hero         = hero(h),
+      positions    = AllyRates.Positions,
+      heroPosition = staying.heroPos,
+      allies       = staying.inOrder.map { a =>
+                       val s = a.statsAt(h.lvl)
+                       AllyView(
+                         position = a.position,
+                         name     = a.name,
+                         race     = a.kind.race.toString,
+                         element  = a.kind.element.map(_.emoji).getOrElse(content.text("squad.noElement")),
+                         lvl      = a.lvlAt(h.lvl),
+                         hp       = PoolView(a.hp, s.hp),
+                         armor    = PoolView(a.armor, s.armor),
+                         energy   = PoolView(a.energy, s.energy),
+                         attack   = s.atk,
+                         defence  = s.defence,
+                         accuracy = s.accuracy,
+                         evasion  = s.evasion,
+                         leaves   = Option.when(a.hiredUntil > now)(TimeLeft.format(a.hiredUntil - now))
+                       )
+                     },
+      pendingRisen = staying.pendingRisen.map(_.name)
+    )
   }
 
   private def view(item: Item, count: Int, text: String): ItemView =

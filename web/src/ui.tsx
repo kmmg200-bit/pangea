@@ -1,17 +1,46 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { kindOf } from './kinds'
-import type { ItemView } from './types'
+import type { ItemView, PoolView } from './types'
+
+export const num = (n: number) => n.toLocaleString('ru-RU')
+
+/** Полоска запаса: что это, сколько из скольких и заполненность. */
+export function Meter(props: { icon: string; label: string; pool: PoolView; tone: string }) {
+  const { current, max } = props.pool
+  const pct = max > 0 ? Math.min(100, Math.max(0, (current / max) * 100)) : 0
+  return (
+    <div className="meter">
+      <div className="meter-top">
+        <span>
+          {props.icon} {props.label}
+        </span>
+        <span className="meter-num">
+          {num(current)} / {num(max)}
+        </span>
+      </div>
+      <div className="meter-track">
+        <span className={`meter-fill tone-${props.tone}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  )
+}
 
 export function Chips<T extends string>(props: {
   options: { id: T; label: ReactNode }[]
   value: T
   onChange: (id: T) => void
 }) {
+  // Выбранная кнопка не прячется за краем полосы: полоса сама к ней подъезжает.
+  const on = useRef<HTMLButtonElement | null>(null)
+  useEffect(() => {
+    on.current?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })
+  }, [props.value])
   return (
     <div className="chips" role="tablist">
       {props.options.map((o) => (
         <button
           key={o.id}
+          ref={o.id === props.value ? on : undefined}
           role="tab"
           aria-selected={o.id === props.value}
           className={o.id === props.value ? 'chip chip-on' : 'chip'}

@@ -8,6 +8,8 @@ import zio.{Task, ZLayer}
 trait BarrelDao {
   /** Гарантирует наличие записи бочки для героя и возвращает её. */
   def getOrCreate(heroId: HeroId): Task[Barrel]
+  /** Бочка героя, если её уже заводили, — без записи (для Mini App). */
+  def find(heroId: HeroId): Task[Option[Barrel]]
   def update(barrel: Barrel): Task[Unit]
 }
 

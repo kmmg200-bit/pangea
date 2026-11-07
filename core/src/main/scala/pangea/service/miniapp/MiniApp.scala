@@ -1,22 +1,29 @@
 package pangea.service.miniapp
 
+import pangea.dao.artifact.ArtifactDao
+import pangea.dao.bank.BankVaultDao
+import pangea.dao.barrel.BarrelDao
 import pangea.dao.hero.HeroDao
 import pangea.engine.SceneContent
+import pangea.model.artifact.HeroArtifacts
 import pangea.model.auction.AuctionLot
+import pangea.model.bank.BankVault
+import pangea.model.barrel.Barrel
+import pangea.model.home.HomeData
 import pangea.model.hero.Hero
 import pangea.model.item.Item
 import pangea.repository.auction.AuctionRepository
 import pangea.repository.hero.HeroRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.user.UserRepository
-import pangea.service.miniapp.MiniAppView.{AuctionView, InventoryView}
-import pangea.service.state.NpcQuestLog
+import pangea.service.miniapp.MiniAppView.{AuctionView, CharacterView, InventoryView, QuestsView, SquadView}
+import pangea.service.state.{AzatData, HerbLore, NpcQuestLog, QuestJournal}
 import pangea.service.state.states.InventoryState
 import zio.{Task, ZIO, ZLayer}
 
 import java.util.concurrent.TimeUnit
 
-/** VK Mini App: инвентарь и аукцион вне чата. Пока только просмотр — он
+/** VK Mini App: персонаж, задания, отряд, инвентарь и аукцион вне чата. Пока только просмотр — он
   * безопасен из любого места, даже из боя: сцены, лок игрока и `hero.state`
   * не трогаются, а данные только читаются. */
 trait MiniApp {
@@ -24,6 +31,12 @@ trait MiniApp {
   /** Игрок по параметрам запуска приложения. Героя здесь не заводим: игру
     * начинают в сообщениях сообщества. */
   def player(launchParams: String): Task[Either[MiniApp.Denied, Hero]]
+
+  def character(hero: Hero): Task[CharacterView]
+
+  def quests(hero: Hero): Task[QuestsView]
+
+  def squad(hero: Hero): Task[SquadView]
 
   def inventory(hero: Hero): Task[InventoryView]
 
@@ -46,8 +59,8 @@ object MiniApp {
   val MaxLots: Int = 500
 
   val live: ZLayer[MiniAppConfig with UserRepository with HeroRepository with InventoryRepository with AuctionRepository
-                     with HeroDao with SceneContent, Nothing, MiniApp] =
-    ZLayer.fromFunction(new MiniAppLive(_, _, _, _, _, _, _))
+                     with HeroDao with ArtifactDao with BarrelDao with BankVaultDao with SceneContent, Nothing, MiniApp] =
+    ZLayer.fromFunction(new MiniAppLive(_, _, _, _, _, _, _, _, _, _))
 }
 
 final class MiniAppLive(
@@ -57,6 +70,9 @@ final class MiniAppLive(
   inventories: InventoryRepository,
   lots:        AuctionRepository,
   heroDao:     HeroDao,
+  artifacts:   ArtifactDao,
+  barrels:     BarrelDao,
+  vaults:      BankVaultDao,
   content:     SceneContent
 ) extends MiniApp {
   import MiniApp.Denied
@@ -75,11 +91,36 @@ final class MiniAppLive(
         })
     }
 
+  /** Отдыхи, которые задолжало благословение, бот доначислит и запишет сам при
+    * первом же ходе ([[AzatData.load]]). Приложение ничего не пишет, поэтому
+    * считает их на голом снимке и показывает уже с ними. */
+  override def character(hero: Hero): Task[CharacterView] =
+    for {
+      ms   <- now
+      azat <- AzatData.read(heroDao, hero.userId)
+      lore <- HerbLore.readLore(heroDao, hero.userId)
+    } yield MiniAppView.character(hero, azat.withDailyRests(ms), lore, content, ms)
+
+  override def quests(hero: Hero): Task[QuestsView] =
+    for {
+      ms      <- now
+      journal <- QuestJournal.load(heroDao, content, hero, ms)
+    } yield MiniAppView.quests(hero, journal, content)
+
+  override def squad(hero: Hero): Task[SquadView] =
+    now.map(ms => MiniAppView.squad(hero, content, ms))
+
+  /** Хранилища читаются без записи: чего у героя ещё не заводили, того и нет —
+    * пустая бочка, ни одной ячейки, ни одного артефакта. */
   override def inventory(hero: Hero): Task[InventoryView] =
     for {
       inv      <- inventories.get(hero.id).mapError(e => new Throwable(e.toString))
+      arts     <- artifacts.find(hero.id).map(_.getOrElse(HeroArtifacts.empty(hero.id)))
+      barrel   <- barrels.find(hero.id).map(_.getOrElse(Barrel.empty(hero.id)))
+      vault    <- vaults.find(hero.id).map(_.getOrElse(BankVault.empty(hero.id)))
+      home     <- heroDao.readHomeData(hero.userId).map(_.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty))
       describe <- describer(hero)
-    } yield MiniAppView.inventory(hero, inv, describe)
+    } yield MiniAppView.inventory(hero, inv, MiniAppView.Stores(arts, barrel, vault, home), content, describe)
 
   override def auction(hero: Hero): Task[AuctionView] =
     for {

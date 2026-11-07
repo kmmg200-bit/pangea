@@ -179,7 +179,7 @@ case class TrophyWallState(
         "pct" -> home.wallPct.getOrElse(race.entryName, 0).toString)
     }
 
-  private def raceName(race: Race): String = content.text(s"home.wall.races.${race.entryName}")
+  private def raceName(race: Race): String = TrophyWallState.raceName(content, race)
 
   /** Стена — только на острове; нет — обратно в дом. */
   private def withWall(user: User)(f: HomeData => Task[StateType]): Task[StateType] =
@@ -207,6 +207,9 @@ case class TrophyWallState(
 }
 
 object TrophyWallState {
+
+  /** Раса во множественном числе для стены: «Орки», «Каджиты». */
+  def raceName(content: SceneContent, race: Race): String = content.text(s"home.wall.races.${race.entryName}")
 
   /** Расы именных — в порядке рас игры. */
   val Races: List[Race] = Race.values.toList.filter(Monster.legendaryNames.contains)

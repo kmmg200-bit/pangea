@@ -72,7 +72,7 @@ case class RuneAltarState(
       // Без дома и алтаря нет — обратно к Юноне.
       if (!home.owns) ZIO.succeed(StateType.Home)
       else {
-        val runes = onAltar(home)
+        val runes = RuneAltarState.onAltar(home)
         val total = home.runes.values.sum
         val (pageRunes, totalPages, cur) = ItemMenu.page(runes, p)
         val buttons = pageRunes.zipWithIndex.map { case ((rune, n), i) =>
@@ -331,10 +331,6 @@ case class RuneAltarState(
 
   // ── Вспомогательное ─────────────────────────────────────────────────────────
 
-  /** Руны на алтаре — по алфавиту, только те, где узоры есть. */
-  private def onAltar(home: HomeData): List[(Rune, Long)] =
-    home.runes.toList.collect { case (k, n) if n > 0L => Rune.byKey(k).map(_ -> n) }.flatten.sortBy(_._1.label)
-
   private def say(user: User, text: String, renderer: Renderer): Task[Unit] =
     renderer.show(user, Screen(text, Nil))
 
@@ -359,6 +355,10 @@ case class RuneAltarState(
 }
 
 object RuneAltarState {
+
+  /** Руны на алтаре — по алфавиту, только те, где узоры есть. */
+  def onAltar(home: HomeData): List[(Rune, Long)] =
+    home.runes.toList.collect { case (k, n) if n > 0L => Rune.byKey(k).map(_ -> n) }.flatten.sortBy(_._1.label)
 
   /** Что алтарь ждёт числом: вложить узоры в понимание или забрать в сумку. */
   val Deepen: String = "deepen"

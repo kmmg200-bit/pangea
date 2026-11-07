@@ -33,6 +33,8 @@ object BankRepositoryLiveSpec extends ZIOSpecDefault {
     def getOrCreate(heroId: HeroId): Task[BankVault] =
       ZIO.succeed { val read = stored; stored = meanwhile(stored); meanwhile = identity; read }
 
+    def find(heroId: HeroId): Task[Option[BankVault]] = ZIO.succeed(Some(stored))
+
     def update(vault: BankVault): Task[Unit] =
       ZIO.succeed { stored = stored.copy(cells = vault.cells, items = vault.items) }
 

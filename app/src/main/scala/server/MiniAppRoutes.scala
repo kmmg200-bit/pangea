@@ -27,6 +27,15 @@ final class MiniAppRoutes(app: MiniApp) {
   import dsl._
 
   val routes: HttpRoutes[Task] = HttpRoutes.of[Task] {
+    case req @ GET -> Root / "api" / "app" / "character" =>
+      asPlayer(req)(hero => app.character(hero).flatMap(view => Ok(view.asJson)))
+
+    case req @ GET -> Root / "api" / "app" / "quests" =>
+      asPlayer(req)(hero => app.quests(hero).flatMap(view => Ok(view.asJson)))
+
+    case req @ GET -> Root / "api" / "app" / "squad" =>
+      asPlayer(req)(hero => app.squad(hero).flatMap(view => Ok(view.asJson)))
+
     case req @ GET -> Root / "api" / "app" / "inventory" =>
       asPlayer(req)(hero => app.inventory(hero).flatMap(view => Ok(view.asJson)))
 

@@ -16,8 +16,14 @@ class BarrelDaoLive(xa: Transactor[Task]) extends BarrelDao {
   override def getOrCreate(heroId: HeroId): Task[Barrel] =
     (for {
       _ <- sql"insert into barrels(hero_id, items, silver) values($heroId, ${Items(List.empty[Item])}, 0) on conflict (hero_id) do nothing".update.run
-      b <- sql"select id, hero_id, items, silver, thieves from barrels where hero_id = $heroId".query[Barrel].unique
+      b <- select(heroId).unique
     } yield b).transact(xa)
+
+  override def find(heroId: HeroId): Task[Option[Barrel]] =
+    select(heroId).option.transact(xa)
+
+  private def select(heroId: HeroId) =
+    sql"select id, hero_id, items, silver, thieves from barrels where hero_id = $heroId".query[Barrel]
 
   /** Вещи, серебро и воры — одной записью: кража и возврат переносят добро
     * между ними неразрывно, и половина его не потеряется на полпути. */

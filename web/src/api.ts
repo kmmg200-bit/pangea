@@ -1,5 +1,5 @@
 import { launchParams } from './platform'
-import type { AuctionView, InventoryView } from './types'
+import type { AuctionView, CharacterView, InventoryView, QuestsView, SquadView } from './types'
 
 /** Где бот. Пусто — тот же адрес, что у приложения (на бою и в разработке через
   * прокси Vite); задаётся, если приложение лежит на хостинге ВК. */
@@ -27,6 +27,9 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export const api = {
+  character: () => get<CharacterView>('character'),
+  quests: () => get<QuestsView>('quests'),
+  squad: () => get<SquadView>('squad'),
   inventory: () => get<InventoryView>('inventory'),
   auction: () => get<AuctionView>('auction'),
 }

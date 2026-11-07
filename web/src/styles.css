@@ -17,6 +17,15 @@
   --r-Violet: #c03ec4;
   --r-Orange: #e0841a;
 
+  --t-exp: #9a5b1e;
+  --t-hp: #c2443a;
+  --t-armor: #6f7f91;
+  --t-energy: #d49a16;
+  --up: #2f7d43;
+  --down: #b0412f;
+  --warn-bg: #f7e9d2;
+  --warn-line: #e3c48f;
+
   color-scheme: light;
 }
 
@@ -32,6 +41,14 @@
     --accent-text: #1b1810;
     --shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
     --r-White: #e3ded3;
+    --t-exp: #d39a55;
+    --t-hp: #e0675c;
+    --t-armor: #9aabbd;
+    --t-energy: #e8b84a;
+    --up: #7fcf8f;
+    --down: #ee8c7c;
+    --warn-bg: #352a17;
+    --warn-line: #5c4726;
     color-scheme: dark;
   }
 }
@@ -47,6 +64,14 @@
   --accent-text: #1b1810;
   --shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
   --r-White: #e3ded3;
+  --t-exp: #d39a55;
+  --t-hp: #e0675c;
+  --t-armor: #9aabbd;
+  --t-energy: #e8b84a;
+  --up: #7fcf8f;
+  --down: #ee8c7c;
+  --warn-bg: #352a17;
+  --warn-line: #5c4726;
   color-scheme: dark;
 }
 
@@ -82,7 +107,6 @@ button {
   max-width: 640px;
   margin: 0 auto;
   min-height: 100vh;
-  padding-bottom: env(safe-area-inset-bottom);
 }
 
 /* ── Шапка ─────────────────────────────────────────────── */
@@ -121,32 +145,86 @@ button {
   opacity: 0.6;
 }
 
-.tabs {
-  position: sticky;
-  top: calc(56px + env(safe-area-inset-top));
-  z-index: 2;
+/* ── Нижняя панель разделов ───────────────────────────── */
+
+.nav {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 3;
+  padding: 4px 4px calc(4px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.nav-inner {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 2px 4px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.nav-icon {
+  font-size: 21px;
+  line-height: 1.1;
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+
+.nav-label {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-on {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.nav-on .nav-icon {
+  filter: none;
+  opacity: 1;
+}
+
+/* ── Переключатель внутри вкладки (Вещи: сумка и снаряжение) ── */
+
+.segment {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 4px;
-  margin: 0 16px;
+  margin-bottom: 10px;
   padding: 4px;
   border-radius: 12px;
   background: var(--surface-2);
 }
 
-.tab {
-  padding: 8px 4px;
+.segment-item {
+  padding: 7px 4px;
   border: 0;
   border-radius: 9px;
   background: transparent;
   color: var(--muted);
   font-size: 14px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.tab-on {
+.segment-on {
   background: var(--surface);
   color: var(--text);
   font-weight: 600;
@@ -154,7 +232,7 @@ button {
 }
 
 .content {
-  padding: 12px 16px 24px;
+  padding: 12px 16px calc(84px + env(safe-area-inset-bottom));
 }
 
 .summary {
@@ -313,6 +391,331 @@ button.row:active {
   padding: 32px 8px;
   color: var(--muted);
   text-align: center;
+}
+
+/* ── Персонаж ──────────────────────────────────────────── */
+
+.character {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 14px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.card-warn {
+  border-color: var(--warn-line);
+  background: var(--warn-bg);
+}
+
+.card-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  font-weight: 600;
+}
+
+.card-aside {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.char-name {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.char-sub {
+  margin-top: -6px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.char-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+}
+
+.meter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.meter-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.meter-num {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.meter-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.3s ease-out;
+}
+
+.tone-exp { background: var(--t-exp); }
+.tone-hp { background: var(--t-hp); }
+.tone-armor { background: var(--t-armor); }
+.tone-energy { background: var(--t-energy); }
+
+.trauma-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trauma-list li {
+  display: flex;
+  flex-direction: column;
+}
+
+.trauma-name {
+  font-weight: 600;
+}
+
+.trauma-pen {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.section-title {
+  margin: 8px 2px 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.stat-label {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+}
+
+.stat-up { color: var(--up); }
+.stat-down { color: var(--down); }
+
+.stat-native {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.char-points {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 14px;
+}
+
+.section-count {
+  margin-left: 6px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.muted-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.group-label {
+  margin: 0 2px 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.row-plain {
+  border-left-width: 1px;
+}
+
+.row-static {
+  cursor: default;
+}
+
+.row-chevron {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.row-hero {
+  border-color: var(--accent);
+}
+
+.pill {
+  flex: 0 0 auto;
+  max-width: 40%;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.pill-ready {
+  background: var(--up);
+  color: var(--surface);
+  font-weight: 600;
+}
+
+.quest-goals {
+  font-size: 14px;
+}
+
+.ally {
+  gap: 8px;
+}
+
+.ally-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ally-pos {
+  display: flex;
+  flex: 0 0 26px;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ally-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ally-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet-title {
+  margin: 0 40px 10px 0;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.locked {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 32px 16px;
+  text-align: center;
+}
+
+.locked-icon {
+  font-size: 34px;
+  line-height: 1;
+}
+
+.locked-title {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.storage-note {
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+
+.slot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.belt {
+  gap: 8px;
+  margin-left: 14px;
+}
+
+.belt-spent {
+  color: var(--muted);
 }
 
 /* ── Карточка вещи ─────────────────────────────────────── */

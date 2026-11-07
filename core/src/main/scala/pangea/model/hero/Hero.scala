@@ -304,12 +304,7 @@ case class Hero(
   }
 
   def traumaRemainingText(nowMs: Long): Option[String] =
-    traumaUntil.filter(_ > nowMs).map { until =>
-      val secs    = (until - nowMs) / 1000L
-      val hours   = secs / 3600
-      val minutes = (secs % 3600) / 60
-      s"${hours}ч ${minutes}мин"
-    }
+    traumaUntil.filter(_ > nowMs).map(until => HeroCard.traumaLeft(until - nowMs))
 
   /** «Родные» сила, тело, ловкость и ум — то, с чем герой останется, когда
    *  зелья выветрятся, а травмы заживут: без расовых особенностей, травм и
@@ -333,36 +328,57 @@ case class Hero(
    *  зелий. Скобки появляются только там, где числа разошлись. Остальные
    *  строки — как и были, одним числом. */
   def getInfo(nowMs: Long, blessingUntil: Option[Long] = None, instantRests: Int = 0): String = {
-    val effB     = effectiveBaseStats(nowMs)
-    val natB     = nativeBaseStats
-    val eff      = effectiveFightStats(nowMs)
-    val maxHp    = effectiveMaxHp(nowMs)
-    val maxArm   = effectiveMaxArmor(nowMs)
-    val curArm   = fightStats.armor.min(maxArm)
-    val maxEn    = maxEnergy(nowMs)
-    val curEn    = fightStats.energy.min(maxEn)
+    val c = card(nowMs)
+    val (effB, natB, eff) = (c.stats, c.native, c.fight)
     val blessingLine = blessingUntil.filter(_ > nowMs)
                          .fold("")(until => s"\n ✨ Благословение: ещё ${pangea.util.TimeLeft.format(until - nowMs)}")
-    val frozenLine   = if (expFrozen) "\n ❄ Опыт остановлен" else ""
-    val restedLine   = statBoosts.remainingMs(pangea.model.home.HomeRates.RestedBoost, nowMs).fold("") { ms =>
-      val mins = (ms / 60000L).max(1L)
-      val left = if (mins >= 60L) s"${mins / 60L} ч ${mins % 60L} мин" else s"$mins мин"
-      s"\n 🛏 Выспались дома: +${pangea.model.home.HomeRates.RestedExpPct}% опыта, ещё $left"
+    val frozenLine   = if (c.expFrozen) "\n ❄ Опыт остановлен" else ""
+    val restedLine   = c.restedLeftMs.fold("") { ms =>
+      s"\n 🛏 Выспались дома: +${pangea.model.home.HomeRates.RestedExpPct}% опыта, ещё ${HeroCard.restedLeft(ms)}"
     }
     val restsLine    = if (instantRests > 0) s"\n ⚡ Быстрых отдыхов: $instantRests" else ""
     import Hero.withNative
-    s"""$raceName, Уровень $lvl  ☠ Убито: $kills
-       | $getLvlExp/$getNeededExp опыта$frozenLine$restedLine$blessingLine$restsLine
+    s"""${c.race}, Уровень ${c.lvl}  ☠ Убито: ${c.kills}
+       | ${c.exp}/${c.neededExp} опыта$frozenLine$restedLine$blessingLine$restsLine
        |
        | 💪 СИЛ ${withNative(effB.str, natB.str)}  ТЕЛО ${withNative(effB.vit, natB.vit)}
        | 🏃 ЛОВ ${withNative(effB.agi, natB.agi)}  ИНТ ${withNative(effB.int, natB.int)}
        |
-       | ❤ ${fightStats.hp}/$maxHp  🧥 Броня $curArm/$maxArm  ⚡ Энергия $curEn/$maxEn
+       | ❤ ${c.hp}/${c.maxHp}  🧥 Броня ${c.armor}/${c.maxArmor}  ⚡ Энергия ${c.energy}/${c.maxEnergy}
        | ⚔ Атк ${eff.atk}  🛡 Защ ${eff.defence}
        | 🎯 Точн ${eff.accuracy}  👁 Укл ${eff.evasion}
        |
-       | Свободных очков: $upgradePoints
+       | Свободных очков: ${c.upgradePoints}
        |""".stripMargin
+  }
+
+  /** Карточка «Персонажа» числами (см. [[HeroCard]]): её печатает [[getInfo]] и
+   *  показывает Mini App. Здоровье — как есть, броня и энергия — не выше
+   *  потолка: травма режет потолок брони, а запас догонит его на отдыхе. */
+  def card(nowMs: Long): HeroCard = {
+    val maxArm = effectiveMaxArmor(nowMs)
+    val maxEn  = maxEnergy(nowMs)
+    HeroCard(
+      race          = raceName,
+      lvl           = lvl,
+      exp           = getLvlExp,
+      neededExp     = getNeededExp,
+      kills         = kills,
+      expFrozen     = expFrozen,
+      restedLeftMs  = statBoosts.remainingMs(pangea.model.home.HomeRates.RestedBoost, nowMs),
+      stats         = effectiveBaseStats(nowMs),
+      native        = nativeBaseStats,
+      hp            = fightStats.hp,
+      maxHp         = effectiveMaxHp(nowMs),
+      armor         = fightStats.armor.min(maxArm),
+      maxArmor      = maxArm,
+      energy        = fightStats.energy.min(maxEn),
+      maxEnergy     = maxEn,
+      fight         = effectiveFightStats(nowMs),
+      upgradePoints = upgradePoints,
+      traumas       = activeTraumas(nowMs),
+      traumaLeftMs  = traumaUntil.filter(_ > nowMs).map(_ - nowMs)
+    )
   }
 
   /** Как зовётся раса героя сейчас. С «Некромантом» (порог 10) он сам мёртв, и
