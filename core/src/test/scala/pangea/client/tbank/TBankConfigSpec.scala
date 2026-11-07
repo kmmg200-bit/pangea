@@ -46,7 +46,7 @@ object TBankConfigSpec extends ZIOSpecDefault {
         config <- ZIO.attempt(ConfigSource.file(new File(ConfigPath)).at("tbank").loadOrThrow[TBankConfig])
       } yield assertTrue(config.dailyLimit == 0L) &&
               assertTrue(config.packs.size + 2 <= pangea.service.sender.vk.VkRenderer.MaxRows) &&
-              assertTrue(config.packs.map(_.id).toSet.intersect(pangea.service.admin.RateBonus.OldRateSkus).isEmpty) &&
+              assertTrue(config.packs.map(_.id).toSet.intersect(Set("d100", "d250", "d550", "d1200", "d2500")).isEmpty) &&
               assertTrue(config.packs.map(p => p.doubloons -> p.price) == List(
                 200L -> 20000L, 500L -> 50000L, 1100L -> 100000L, 2400L -> 200000L,
                 5000L -> 400000L, 8000L -> 600000L, 15000L -> 1000000L))

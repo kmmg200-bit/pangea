@@ -87,24 +87,6 @@ class PaymentDaoLive(xa: Transactor[Task]) extends PaymentDao {
             where order_id = ${orderId.value} and not granted""".update.run,
       userId, doubloons)
 
-  override def rateBonusDue(skus: Set[String]): Task[List[Payment]] =
-    NonEmptyList.fromList(skus.toList.sorted) match {
-      case None => ZIO.succeed(Nil)
-      case Some(nel) =>
-        (fr"select" ++ columns ++
-          fr"from payments where granted and status <> 'Refunded' and" ++ Fragments.in(fr"sku", nel) ++
-          fr"""and not exists (select 1 from doubloon_rate_bonus b where b.order_id = payments.order_id)
-               order by user_id, created_at""")
-          .query[Payment].to[List].transact(xa)
-    }
-
-  override def grantRateBonus(orderId: OrderId, userId: UserId, doubloons: Long, grantedAt: Long): Task[GrantResult] =
-    markThenCredit(
-      sql"""insert into doubloon_rate_bonus(order_id, user_id, doubloons, granted_at)
-            values (${orderId.value}, ${userId.value}, $doubloons, $grantedAt)
-            on conflict (order_id) do nothing""".update.run,
-      userId, doubloons)
-
   /** Отметка «выдано» и начисление — одной транзакцией. Отметка не легла
     * (уже стоит) — значит, выдано раньше; героя нет — транзакция рвётся, и
     * отметка снимается вместе с ней. */

@@ -11,8 +11,7 @@ import zio.{Ref, Task, ZIO}
 class TestPaymentDao(
   rowsRef:  Ref[Map[String, Payment]],
   nextRef:  Ref[Long],
-  heroesRef: Ref[Map[UserId, Long]],
-  bonusRef:  Ref[Map[String, Long]]
+  heroesRef: Ref[Map[UserId, Long]]
 ) extends PaymentDao {
 
   override def insert(payment: Payment): Task[Long] =
@@ -74,30 +73,6 @@ class TestPaymentDao(
         }
     }
 
-  override def rateBonusDue(skus: Set[String]): Task[List[Payment]] =
-    bonusRef.get.flatMap(bonus =>
-      rowsRef.get.map(
-        _.values
-          .filter(p => p.granted && p.status != PaymentStatus.Refunded && skus(p.sku) && !bonus.contains(p.orderId.value))
-          .toList
-          .sortBy(p => (p.userId.value, p.createdAt))))
-
-  override def grantRateBonus(orderId: OrderId, userId: UserId, doubloons: Long, grantedAt: Long): Task[GrantResult] =
-    bonusRef.get.map(_.contains(orderId.value)).flatMap {
-      case true => ZIO.succeed(GrantResult.AlreadyGranted)
-      case false =>
-        heroesRef.get.map(_.contains(userId)).flatMap {
-          case false => ZIO.succeed(GrantResult.NoHero)
-          case true =>
-            bonusRef.update(_.updated(orderId.value, doubloons)) *>
-              heroesRef.update(m => m.updated(userId, m.getOrElse(userId, 0L) + doubloons)) *>
-              ZIO.succeed(GrantResult.Granted)
-        }
-    }
-
-  /** Какие заказы доплачены за смену курса и на сколько. */
-  def rateBonuses: Task[Map[String, Long]] = bonusRef.get
-
   /** Сколько дублонов начислено игроку через выдачу. */
   def doubloonsOf(userId: UserId): Task[Long] = heroesRef.get.map(_.getOrElse(userId, 0L))
 
@@ -118,8 +93,7 @@ object TestPaymentDao {
       rows   <- Ref.make(Map.empty[String, Payment])
       next   <- Ref.make(1L)
       heroes <- Ref.make(userIds.map(_ -> 0L).toMap)
-      bonus  <- Ref.make(Map.empty[String, Long])
-    } yield new TestPaymentDao(rows, next, heroes, bonus)
+    } yield new TestPaymentDao(rows, next, heroes)
 
   /** База без героев вовсе — для случая «оплатил и удалил персонажа». */
   def noHeroes: Task[TestPaymentDao] = withHeroes()
