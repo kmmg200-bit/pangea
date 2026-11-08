@@ -16,6 +16,7 @@ import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.state.{ItemMenu, State, UserAction}
+import pangea.service.storage.ItemStore
 import zio.{Random, Task, ZIO}
 
 /** Хранилище камней — на острове, на [[HomeData.gemShelves]] камней (с
@@ -111,12 +112,8 @@ case class GemVaultState(
         case Some(gem) =>
           for {
             hero <- getHero(user)
-            inv  <- inventoryRepo.get(hero.id).mapError(asThrowable)
-            ok   <- if (inv.freeSlots <= 0L) ZIO.succeed(false)
-                    else inventoryRepo.addItem(hero.id, gem).fold(_ => false, _ => true)
-            _    <- if (!ok) say(user, content.text("home.gems.bagFull"), renderer)
-                    else saveHome(user, home.copy(gems = without(home.gems, gem))) *>
-                           say(user, content.format("home.gems.taken", "name" -> gem.name), renderer)
+            why  <- ItemStore.move(shelf, bag, hero, gem, content.text("stack.gone"))
+            _    <- say(user, why.getOrElse(content.format("home.gems.taken", "name" -> gem.name)), renderer)
             s    <- kindScreen(user, ua, renderer)
           } yield s
       }
@@ -159,6 +156,9 @@ case class GemVaultState(
 
   // ── Вспомогательное ─────────────────────────────────────────────────────────
 
+  private val bag   = new ItemStore.Bag(inventoryRepo, _ => content.text("home.gems.bagFull"))
+  private val shelf = new ItemStore.HomeShelf(heroDao, ItemStore.HomeShelf.Gems, content)
+
   /** Хранилище камней — только на острове; нет — обратно в дом. */
   private def withVault(user: User)(f: HomeData => Task[StateType]): Task[StateType] =
     loadHome(user).flatMap(home => if (home.house.contains(House.Island)) f(home) else ZIO.succeed(StateType.Home))
@@ -168,12 +168,6 @@ case class GemVaultState(
     val counts = gems.flatMap(_.gem).groupBy(_.kind).view.mapValues(_.size).toMap
     GemKind.values.toList.flatMap(k => counts.get(k).map(k -> _))
   }
-
-  private def without(items: List[Item], it: Item): List[Item] =
-    items.indexWhere(_.id == it.id) match {
-      case -1 => items
-      case i  => items.patch(i, Nil, 1)
-    }
 
   private def kindOf(ua: UserAction): Option[GemKind] = payload(ua, "k").flatMap(GemKind.withNameOption)
 
@@ -194,6 +188,4 @@ case class GemVaultState(
   private def getHero(user: User): Task[Hero] =
     heroDao.getHeroByUserId(user.userId).flatMap(ZIO.fromOption(_))
       .orElseFail(new Throwable(s"No hero for user ${user.userId}"))
-
-  private def asThrowable(e: Any): Throwable = new Throwable(e.toString)
 }

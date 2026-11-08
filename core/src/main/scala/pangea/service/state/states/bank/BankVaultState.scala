@@ -12,10 +12,11 @@ import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.bank.{BankRepoError, BankRepository}
-import pangea.repository.inventory.{InventoryRepoError, InventoryRepository}
+import pangea.repository.inventory.InventoryRepository
 import pangea.service.state.ItemMenu
 import pangea.service.state.states.bank.BankVaultState._
 import pangea.service.state.{CityExit, InventoryFeedback, StackMove, State, UserAction}
+import pangea.service.storage.ItemStore
 import zio.{Task, ZIO}
 
 /** «Моё хранилище» в Торговом доме: ячейки, выкупленные у Рахадима. Работает
@@ -375,37 +376,17 @@ case class BankVaultState(
       }
     } yield ()
 
-  /** Вещь из сумки в ячейку: сперва в ячейку и только потом из сумки — если
-    * ячейка откажет, вещь останется при герое. `None` — легла, иначе — почему нет. */
+  private val bag   = new ItemStore.Bag(inventoryRepo, InventoryFeedback.refusalLine(content, _, storage = true))
+  private val vault = new ItemStore.Vault(bankRepo, content)
+
+  /** Вещь из сумки в ячейку (см. [[ItemStore.move]]). `None` — легла, иначе — почему нет. */
   private def depositOne(hero: Hero, item: Item): Task[Option[String]] =
-    bankRepo.deposit(hero.id, item).either.flatMap {
-      case Right(_)                             => inventoryRepo.removeItem(item.id, hero.id).mapError(asThrowable).as(None)
-      case Left(BankRepoError.VaultFull)        => ZIO.some(content.text("bank.vault.full"))
-      case Left(BankRepoError.DustLimitReached) => ZIO.some(InventoryFeedback.refusalLine(content, item, storage = true))
-      case Left(BankRepoError.NoVault)          => ZIO.some(content.text("bank.vault.none"))
-      case Left(e)                              => ZIO.fail(asThrowable(e))
-    }
+    ItemStore.move(bag, vault, hero, item, content.text("stack.gone"))
 
   /** Вещь из ячейки в сумку. Пыль и малые руны места в сумке не занимают — им
-    * мешает только свой предел. Не легла в сумку — возвращается в ячейку. */
+    * мешает только свой предел. */
   private def withdrawOne(hero: Hero, item: Item): Task[Option[String]] =
-    inventoryRepo.get(hero.id).mapError(asThrowable).flatMap { inv =>
-      val noRoom = if (item.weightless) !inv.hasRoomForHoard(item) else inv.freeSlots <= 0
-      if (noRoom) ZIO.some(InventoryFeedback.refusalLine(content, item, storage = true))
-      else
-        bankRepo.withdraw(hero.id, item.id).either.flatMap {
-          case Left(BankRepoError.CantFindItemToRemove) => ZIO.some(content.text("stack.gone"))
-          case Left(e)                                  => ZIO.fail(asThrowable(e))
-          case Right(got) =>
-            inventoryRepo.addItem(hero.id, got).either.flatMap {
-              case Right(_) => ZIO.none
-              // редкая гонка: пока проверяли — сумку успели забить. Возвращаем в ячейку.
-              case Left(InventoryRepoError.NoMorePlaceForItems | InventoryRepoError.DustLimitReached) =>
-                bankRepo.deposit(hero.id, got).mapError(asThrowable).as(Some(InventoryFeedback.refusalLine(content, got, storage = true)))
-              case Left(e) => ZIO.fail(asThrowable(e))
-            }
-        }
-    }
+    ItemStore.move(vault, bag, hero, item, content.text("stack.gone"))
 
   private def depositAllSilver(user: User, renderer: Renderer): Task[Unit] =
     for {

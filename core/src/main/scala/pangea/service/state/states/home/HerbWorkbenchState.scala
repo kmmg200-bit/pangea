@@ -17,6 +17,7 @@ import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.state.{HerbLore, ItemMenu, MarisaQuest, StackMove, State, UiScene, UserAction}
+import pangea.service.storage.ItemStore
 import zio.{Random, Task, ZIO}
 
 /** Верстак травника — со второго дома. Полки под травы (всего
@@ -135,11 +136,10 @@ case class HerbWorkbenchState(
       itemOf(home.herbs, ua) match {
         case None => menu(user, page(ua), renderer)
         case Some(it) =>
-          toBag(user, it).flatMap {
-            case false => say(user, content.text("home.workbench.bagFull"), renderer) *> herb(user, ua, renderer)
-            case true =>
-              saveHome(user, home.copy(herbs = without(home.herbs, it))) *>
-                say(user, content.format("home.workbench.toBagDone", "name" -> it.name), renderer) *>
+          toBag(user, herbShelf, it).flatMap {
+            case Some(why) => say(user, why, renderer) *> herb(user, ua, renderer)
+            case None =>
+              say(user, content.format("home.workbench.toBagDone", "name" -> it.name), renderer) *>
                 afterTake(user, ua, home.herbs, it, renderer, herb, menu)
           }
       }
@@ -263,11 +263,10 @@ case class HerbWorkbenchState(
       itemOf(home.brews, ua) match {
         case None => brews(user, page(ua), renderer)
         case Some(it) =>
-          toBag(user, it).flatMap {
-            case false => say(user, content.text("home.workbench.bagFull"), renderer) *> brew(user, ua, renderer)
-            case true =>
-              saveHome(user, home.copy(brews = without(home.brews, it))) *>
-                say(user, content.format("home.workbench.toBagDone", "name" -> it.name), renderer) *>
+          toBag(user, brewShelf, it).flatMap {
+            case Some(why) => say(user, why, renderer) *> brew(user, ua, renderer)
+            case None =>
+              say(user, content.format("home.workbench.toBagDone", "name" -> it.name), renderer) *>
                 afterTake(user, ua, home.brews, it, renderer, brew, brews)
           }
       }
@@ -463,13 +462,12 @@ case class HerbWorkbenchState(
     }
 
   /** Положить в сумку, если есть место. */
-  private def toBag(user: User, it: Item): Task[Boolean] =
-    for {
-      hero <- getHero(user)
-      inv  <- inventoryRepo.get(hero.id).mapError(asThrowable)
-      ok   <- if (inv.freeSlots <= 0L) ZIO.succeed(false)
-              else inventoryRepo.addItem(hero.id, it).fold(_ => false, _ => true)
-    } yield ok
+  private def toBag(user: User, shelf: ItemStore, it: Item): Task[Option[String]] =
+    getHero(user).flatMap(ItemStore.move(shelf, bag, _, it, content.text("stack.gone")))
+
+  private val bag       = new ItemStore.Bag(inventoryRepo, _ => content.text("home.workbench.bagFull"))
+  private val herbShelf = new ItemStore.HomeShelf(heroDao, ItemStore.HomeShelf.Herbs, content)
+  private val brewShelf = new ItemStore.HomeShelf(heroDao, ItemStore.HomeShelf.Brews, content)
 
   /** Собрать вещи из сумки, а следом из Живой сумки — не больше `room`.
     * Возвращает взятое и сколько подходящего осталось за бортом. */

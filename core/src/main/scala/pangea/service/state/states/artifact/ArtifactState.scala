@@ -11,11 +11,12 @@ import pangea.model.hero.{Achievement, Hero}
 import pangea.model.item.{BrewKind, Item, ItemStack}
 import pangea.model.state.StateType
 import pangea.model.user.User
-import pangea.repository.artifact.{ArtifactRepoError, ArtifactRepository}
-import pangea.repository.inventory.{InventoryRepoError, InventoryRepository}
+import pangea.repository.artifact.ArtifactRepository
+import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.state.states.artifact.ArtifactState._
 import pangea.service.state.{HerbLore, InventoryFeedback, ItemMenu, MarisaQuest, NpcQuestLog, StackMove, State, UiScene, UserAction}
+import pangea.service.storage.ItemStore
 import zio.{Random, Task, ZIO}
 
 /** Экран сборного артефакта: Ларца Азата или Живой сумки (вид задаётся при
@@ -212,33 +213,20 @@ case class ArtifactState(
       _    <- showMenu(user, renderer, Some(note))
     } yield ()
 
-  /** Вещь из сумки внутрь: сперва внутрь и только потом из сумки — откажет
-    * артефакт, вещь останется при герое. Справа — артефакт после, слева — почему нет. */
+  private val bag   = new ItemStore.Bag(inventoryRepo, InventoryFeedback.refusalLine(content, _))
+  private val inner = new ItemStore.Artifact(artifacts, kind, content)
+
+  /** Вещь из сумки внутрь (см. [[ItemStore.move]]). Справа — артефакт после,
+    * слева — почему нет. */
   private def putOne(hero: Hero, item: Item): Task[Either[String, Artifact]] =
-    artifacts.put(hero.id, kind, item).either.flatMap {
-      case Right(a)                         => inventoryRepo.removeItem(item.id, hero.id).mapError(asThrowable).as(Right(a))
-      case Left(ArtifactRepoError.NoRoom)   => ZIO.left(content.text(s"artifact.$key.full"))
-      case Left(e)                          => ZIO.fail(asThrowable(e))
+    ItemStore.move(bag, inner, hero, item, content.text("stack.gone")).flatMap {
+      case Some(why) => ZIO.left(why)
+      case None      => artifacts.get(hero.id).mapError(asThrowable).map(a => Right(a.of(kind)))
     }
 
-  /** Вещь изнутри в сумку. Не легла в сумку — возвращается в артефакт. */
+  /** Вещь изнутри в сумку. */
   private def takeOne(hero: Hero, item: Item): Task[Option[String]] =
-    inventoryRepo.get(hero.id).mapError(asThrowable).flatMap { inv =>
-      val noRoom = if (item.weightless) !inv.hasRoomForHoard(item) else inv.freeSlots <= 0
-      if (noRoom) ZIO.some(InventoryFeedback.refusalLine(content, item))
-      else
-        artifacts.take(hero.id, kind, item.id).either.flatMap {
-          case Left(_) => ZIO.some(content.text("stack.gone"))
-          case Right(got) =>
-            inventoryRepo.addItem(hero.id, got).either.flatMap {
-              case Right(_) => ZIO.none
-              // Сумку успели забить — возвращаем вещь артефакту.
-              case Left(InventoryRepoError.NoMorePlaceForItems | InventoryRepoError.DustLimitReached) =>
-                artifacts.put(hero.id, kind, got).mapError(asThrowable).as(Some(InventoryFeedback.refusalLine(content, got)))
-              case Left(e) => ZIO.fail(asThrowable(e))
-            }
-        }
-    }
+    ItemStore.move(inner, bag, hero, item, content.text("stack.gone"))
 
   // ── Магия Азата ────────────────────────────────────────────────────────────
 

@@ -8,18 +8,16 @@ import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Scree
 import pangea.model.barrel.Barrel
 import pangea.model.hero.Hero
 import pangea.model.item.{Item, ItemStack, QuestItemKind}
-import pangea.model.quest.Difficulty
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.barrel.{BarrelRepoError, BarrelRepository}
-import pangea.repository.inventory.{InventoryRepoError, InventoryRepository}
+import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.state.ItemMenu
 import pangea.service.state.states.UnassumingBarrelState._
-import pangea.service.state.{BarrelThievesQuest, CityExit, InventoryFeedback, NpcQuestLog, StackMove, State, UserAction}
-import zio.{Random, Task, ZIO}
-
-import java.util.concurrent.TimeUnit
+import pangea.service.state.{BarrelRobbery, CityExit, InventoryFeedback, StackMove, State, UserAction}
+import pangea.service.storage.ItemStore
+import zio.{Task, ZIO}
 
 /** Неприметная бочка в Портовом квартале — личное хранилище игрока: до
  *  [[Barrel.MaxItems]] предметов и до [[Barrel.MaxSilver]] серебра (по 10/10 000), отдельно от
@@ -81,37 +79,15 @@ case class UnassumingBarrelState(
     * Возвращает, вскрыли ли бочку сейчас. */
   private def rollThieves(user: User): Task[Boolean] =
     itemRepo match {
-      case None => ZIO.succeed(false)
-      case Some(items) =>
-        for {
-          now    <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
-          hero   <- getHero(user)
-          quests <- NpcQuestLog.load(heroDao, user.userId)
-          barrel <- barrelRepo.get(hero.id).mapError(asThrowable)
-          robbed <- if (!BarrelThievesQuest.canRoll(hero, quests, barrel, now)) ZIO.succeed(false)
-                    else for {
-                      roll <- Random.nextIntBounded(100)
-                      hit   = roll < BarrelThievesQuest.ChancePct
-                      _    <- if (!hit) barrelRepo.markRolled(hero.id, now).mapError(asThrowable)
-                              else for {
-                                pick <- Random.nextIntBounded(Int.MaxValue)
-                                gang  = BarrelThievesQuest.pickGang(BarrelThievesQuest.firstTime(hero),
-                                          content.list(BarrelThievesQuest.GangsKey).size, pick)
-                                clue <- items.persist(hero.id, QuestItemKind.item(QuestItemKind.BarrelClue))
-                                _    <- barrelRepo.steal(hero.id, clue, now).mapError(asThrowable)
-                                _    <- NpcQuestLog.save(heroDao, user.userId, BarrelThievesQuest.started(quests, gang, now))
-                              } yield ()
-                    } yield hit
-        } yield robbed
+      case None        => ZIO.succeed(false)
+      case Some(items) => getHero(user).flatMap(new BarrelRobbery(heroDao, barrelRepo, items, content).roll(user, _))
     }
 
   /** Вскрытая бочка: что случилось, сложность (по уровню героя) и куда идти;
     * «Забрать улику», пока она ещё на дне. */
   private def robbedScreen(barrel: Barrel, hero: Hero, robbedNow: Boolean): Screen = {
     val clue = barrel.items.data.exists(_.questItem.contains(QuestItemKind.BarrelClue))
-    val text = content.text(if (robbedNow) "barrelThieves.robbed" else "barrelThieves.stillRobbed") + "\n\n" +
-      content.format("marisa.difficulty", "difficulty" -> Difficulty.render(hero.lvl.toInt)) + "\n\n" +
-      content.text("barrelThieves.askAround")
+    val text = BarrelRobbery.text(content, hero, robbedNow)
     Screen(text, List(
       Option.when(clue)(content.choice("BarrelTakeClue", "barrelThieves.takeClueLabel").copy(row = Some(0))),
       Some(Choice("LeaveBarrel", content.text("barrel.menu.leave"), color = ChoiceColor.Negative, row = Some(1))),
@@ -372,37 +348,17 @@ case class UnassumingBarrelState(
       }
     } yield ()
 
-  /** Вещь из сумки в бочку: сперва в бочку и только потом из сумки — если бочка
-    * откажет, вещь останется при герое. `None` — легла, иначе — почему нет. */
+  private val bag    = new ItemStore.Bag(inventoryRepo, InventoryFeedback.refusalLine(content, _, storage = true))
+  private val barrel = new ItemStore.Barrel(barrelRepo, content)
+
+  /** Вещь из сумки в бочку (см. [[ItemStore.move]]). `None` — легла, иначе — почему нет. */
   private def depositOne(hero: Hero, item: Item): Task[Option[String]] =
-    barrelRepo.deposit(hero.id, item).either.flatMap {
-      case Right(_)                               => inventoryRepo.removeItem(item.id, hero.id).mapError(asThrowable).as(None)
-      case Left(BarrelRepoError.BarrelFull)       => ZIO.some(content.text("barrel.barrelFull"))
-      // Пыли этого вида в бочке уже сотня — горсть остаётся в сумке.
-      case Left(BarrelRepoError.DustLimitReached) => ZIO.some(InventoryFeedback.refusalLine(content, item, storage = true))
-      case Left(e)                                => ZIO.fail(asThrowable(e))
-    }
+    ItemStore.move(bag, barrel, hero, item, content.text("stack.gone"))
 
   /** Вещь из бочки в сумку. Пыль и малые руны места в сумке не занимают — им
-    * мешает только свой предел. Не легла в сумку — возвращается в бочку. */
+    * мешает только свой предел. */
   private def withdrawOne(hero: Hero, item: Item): Task[Option[String]] =
-    inventoryRepo.get(hero.id).mapError(asThrowable).flatMap { inv =>
-      val noRoom = if (item.weightless) !inv.hasRoomForHoard(item) else inv.freeSlots <= 0
-      if (noRoom) ZIO.some(InventoryFeedback.refusalLine(content, item, storage = true))
-      else
-        barrelRepo.withdraw(hero.id, item.id).either.flatMap {
-          case Left(BarrelRepoError.CantFindItemToRemove) => ZIO.some(content.text("stack.gone"))
-          case Left(e)                                    => ZIO.fail(asThrowable(e))
-          case Right(got) =>
-            inventoryRepo.addItem(hero.id, got).either.flatMap {
-              case Right(_) => ZIO.none
-              // редкая гонка: пока проверяли — кто-то заполнил. Возвращаем предмет в бочку.
-              case Left(InventoryRepoError.NoMorePlaceForItems | InventoryRepoError.DustLimitReached) =>
-                barrelRepo.deposit(hero.id, got).mapError(asThrowable).as(Some(InventoryFeedback.refusalLine(content, got, storage = true)))
-              case Left(e) => ZIO.fail(asThrowable(e))
-            }
-        }
-    }
+    ItemStore.move(barrel, bag, hero, item, content.text("stack.gone"))
 
   /** «Положить всё»: кладём максимум, что позволяют кошелёк героя и место в бочке. */
   private def depositAllSilver(user: User, renderer: Renderer): Task[Unit] =
