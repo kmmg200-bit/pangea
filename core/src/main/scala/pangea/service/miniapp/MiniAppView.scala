@@ -271,7 +271,8 @@ object MiniAppView {
                     val worn = slot.get(h.equipment)
                     SlotView(
                       name       = slot.name,
-                      item       = Option.when(worn.itemType != ItemType.NoItem)(view(worn, 1, EquipmentState.itemStats(worn))),
+                      // Описание надетой — что она даёт, без названия и без сравнения с собой.
+                      item       = Option.when(worn.itemType != ItemType.NoItem)(view(worn, 1, InventoryState.gearBody(worn, Some(h)))),
                       busy       = Option.when(slot.busy(h.equipment))(EquipmentState.LeftBusyText),
                       belt       = belt(worn),
                       candidates = candidates(h, before, slot, inv.items.data, describe, now)

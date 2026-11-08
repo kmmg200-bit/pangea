@@ -908,15 +908,8 @@ button.row:active {
   min-width: 0;
 }
 
-.link {
-  align-self: flex-start;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent);
+.equip-desc {
   font-size: 14px;
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
 .credits {

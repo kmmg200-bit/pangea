@@ -1738,6 +1738,13 @@ object InventoryState {
         if (cur.itemType == ItemType.NoItem) ""
         else s"\n$sep\n${equipped("Сейчас надет", cur)}"
     }
+    s"${item.displayTitle}\n${gearBody(item, hero)}$slotInfo"
+  }
+
+  /** Что вещь даёт сама по себе: статы и описания умения и пассивки — без
+    * названия и без сравнения с надетым. Это тело карточки вещи; его же
+    * «Снаряжение» в Mini App показывает у надетой вещи. */
+  def gearBody(item: Item, hero: Option[Hero]): String = {
     val stats    = item.statsLines
     val statsStr = if (stats.isEmpty) "Нет характеристик" else stats.mkString("\n")
     // Описание активного навыка (с подставленной стоимостью энергии от уровня героя).
@@ -1747,7 +1754,7 @@ object InventoryState {
     }
     // Описание пассивного навыка (статичный текст — без стоимости/кулдауна).
     val passiveStr = item.passive.map(k => s"\n\n${k.describe}").getOrElse("")
-    s"${item.displayTitle}\n$statsStr$skillStr$passiveStr$slotInfo"
+    s"$statsStr$skillStr$passiveStr"
   }
 
   // Возвращает предмет, который будет вытеснен в инвентарь при надевании

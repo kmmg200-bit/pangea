@@ -113,8 +113,9 @@ function Candidate(props: { c: CandidateView; onOpen: (i: ItemView) => void }) {
   )
 }
 
-/** Слот строкой: вещь, уровень, главные статы. Нажал — раскрывается: всё о
-  * вещи, содержимое пояса и что из сумки встанет сюда, с разницей к надетому. */
+/** Слот строкой: вещь, уровень, главные статы. Нажал — раскрывается: описание
+  * надетой (у пояса — его ячейки) и что из сумки встанет сюда, с разницей к
+  * надетому. */
 function SlotRow(props: {
   slot: SlotView
   open: boolean
@@ -168,22 +169,11 @@ function SlotRow(props: {
       </button>
       {open && (
         <div className="erow-body">
-          {item && (
-            <>
-              <button className="link" onClick={() => props.onOpen(item)}>
-                Описание вещи
-              </button>
-              {slot.belt && <BeltCard belt={slot.belt} />}
-            </>
-          )}
-          <div className="sub-title">
-            В сумке на этот слот{slot.candidates.length > 0 && ` · ${num(slot.candidates.length)}`}
-          </div>
-          {slot.candidates.length === 0 ? (
-            <p className="muted-note">Подходящих вещей нет.</p>
-          ) : (
-            slot.candidates.map((c) => <Candidate key={c.item.id} c={c} onOpen={props.onOpen} />)
-          )}
+          {/* У пояса описание — его ячейки; у прочих — что вещь даёт, как в боте. */}
+          {slot.belt ? <BeltCard belt={slot.belt} /> : item && <div className="item-text equip-desc">{item.text}</div>}
+          {slot.candidates.map((c) => (
+            <Candidate key={c.item.id} c={c} onOpen={props.onOpen} />
+          ))}
         </div>
       )}
     </div>
