@@ -1,8 +1,9 @@
-import { useState, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { api } from './api'
 import { Silver } from './icons'
 import { AuctionTab } from './AuctionTab'
 import { CharacterTab } from './CharacterTab'
+import { CraftTab } from './CraftTab'
 import { EquipmentTab } from './EquipmentTab'
 import { ItemsTab } from './ItemsTab'
 import { QuestsTab } from './QuestsTab'
@@ -14,12 +15,13 @@ import { ErrorView, Icon, Segment, Spinner } from './ui'
 import { useLoad, type Loaded } from './useLoad'
 
 /** Разделы: нижняя панель и топ — его кубок в шапке. */
-type Tab = 'character' | 'quests' | 'items' | 'auction' | 'top'
+type Tab = 'character' | 'quests' | 'items' | 'craft' | 'auction' | 'top'
 
 const tabs: { id: Exclude<Tab, 'top'>; icon: GameIcon; label: string }[] = [
   { id: 'character', icon: 'hooded-figure', label: 'Персонаж' },
   { id: 'quests', icon: 'scroll-quill', label: 'Задания' },
   { id: 'items', icon: 'knapsack', label: 'Вещи' },
+  { id: 'craft', icon: 'anvil', label: 'Крафт' },
   { id: 'auction', icon: 'gavel', label: 'Аукцион' },
 ]
 
@@ -59,8 +61,20 @@ function HeroBar(props: {
   topOn: boolean
   onTop: () => void
 }) {
+  // Высота шапки — в переменную: под ней закрепляется куб, а шапка с большими
+  // деньгами бывает в две строки.
+  const ref = useRef<HTMLElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const ro = new ResizeObserver(() =>
+      document.documentElement.style.setProperty('--hero-h', `${el.offsetHeight}px`),
+    )
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   return (
-    <header className="hero">
+    <header className="hero" ref={ref}>
       <span className="hero-stats">
         {props.hero ? (
           <>
@@ -120,6 +134,7 @@ export function App() {
   // Снаряжение берёт данные у «Вещей»: надетое, сумка и что из неё встанет в слот.
   const inventory = useLoad(api.inventory, seen.has('items') || seen.has('equipment'))
   const auction = useLoad(api.auction, seen.has('auction'))
+  const craft = useLoad(api.craft, seen.has('craft'))
   const tops: Record<TopKind, Loaded<TopView>> = {
     level: useLoad(topLoaders.level, seen.has('top-level')),
     depth: useLoad(topLoaders.depth, seen.has('top-depth')),
@@ -128,7 +143,7 @@ export function App() {
 
   const heroLoads = { hero: character, equipment: inventory, squad }
   const current: Loaded<{ hero: HeroView }> =
-    tab === 'character' ? heroLoads[heroPart] : tab === 'top' ? tops[topKind] : { quests, items: inventory, auction }[tab]
+    tab === 'character' ? heroLoads[heroPart] : tab === 'top' ? tops[topKind] : { quests, items: inventory, craft, auction }[tab]
   // В шапке — самые свежие уровень и деньги: с открытой вкладки, а пока она
   // грузится — с любой уже загруженной.
   const hero =
@@ -137,6 +152,7 @@ export function App() {
     quests.data?.hero ??
     squad.data?.hero ??
     inventory.data?.hero ??
+    craft.data?.hero ??
     auction.data?.hero
 
   const markSeen = (id: Seen) => setSeen((prev) => (prev.has(id) ? prev : new Set(prev).add(id)))
@@ -175,6 +191,7 @@ export function App() {
         )}
         {tab === 'quests' && <Body loaded={quests}>{(d) => <QuestsTab data={d} />}</Body>}
         {tab === 'items' && <Body loaded={inventory}>{(d) => <ItemsTab data={d} />}</Body>}
+        {tab === 'craft' && <Body loaded={craft}>{(d) => <CraftTab data={d} />}</Body>}
         {tab === 'top' && (
           <TopTab
             kind={topKind}

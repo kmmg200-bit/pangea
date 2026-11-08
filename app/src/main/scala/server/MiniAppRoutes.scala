@@ -9,7 +9,7 @@ import org.typelevel.ci.CIStringSyntax
 import pangea.model.hero.Hero
 import pangea.model.top.TopKind
 import pangea.service.miniapp.{MiniApp, VkLaunchParams}
-import pangea.service.miniapp.MiniApp.Denied
+import pangea.service.miniapp.MiniApp.{CubeAct, Denied}
 import pangea.service.miniapp.MiniAppView._
 import zio.Task
 import zio.interop.catz._
@@ -47,7 +47,27 @@ final class MiniAppRoutes(app: MiniApp) {
 
     case req @ GET -> Root / "api" / "app" / "auction" =>
       asPlayer(req)(hero => app.auction(hero).flatMap(view => Ok(view.asJson)))
+
+    case req @ GET -> Root / "api" / "app" / "craft" =>
+      asPlayer(req)(hero => app.craft(hero).flatMap(view => Ok(view.asJson)))
+
+    // Куб Азата: перенос вещи пальцем, «Забрать всё», «Активировать». Меняют игру —
+    // только POST.
+    case req @ POST -> Root / "api" / "app" / "craft" / "cube" / "deposit" :? ItemParam(id) =>
+      cubeAct(req, CubeAct.Deposit(id))
+
+    case req @ POST -> Root / "api" / "app" / "craft" / "cube" / "withdraw" :? ItemParam(id) =>
+      cubeAct(req, CubeAct.Withdraw(id))
+
+    case req @ POST -> Root / "api" / "app" / "craft" / "cube" / "take-all" =>
+      cubeAct(req, CubeAct.TakeAll)
+
+    case req @ POST -> Root / "api" / "app" / "craft" / "cube" / "activate" =>
+      cubeAct(req, CubeAct.Activate)
   }
+
+  private def cubeAct(req: Request[Task], act: CubeAct): Task[Response[Task]] =
+    asPlayer(req)(hero => app.cube(hero, act).flatMap(view => Ok(view.asJson)))
 
   private def asPlayer(req: Request[Task])(answer: Hero => Task[Response[Task]]): Task[Response[Task]] = {
     val launch = req.headers.get(ci"X-Launch-Params").map(_.head.value).getOrElse("")
@@ -63,4 +83,5 @@ final class MiniAppRoutes(app: MiniApp) {
   private def error(code: String): Json = Json.obj("error" -> Json.fromString(code))
 
   private object KindParam extends OptionalQueryParamDecoderMatcher[String]("kind")
+  private object ItemParam extends QueryParamDecoderMatcher[Long]("item")
 }

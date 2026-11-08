@@ -1,5 +1,15 @@
 import { launchParams } from './platform'
-import type { AuctionView, CharacterView, InventoryView, QuestsView, SquadView, TopKind, TopView } from './types'
+import type {
+  AuctionView,
+  CharacterView,
+  CraftActionView,
+  CraftView,
+  InventoryView,
+  QuestsView,
+  SquadView,
+  TopKind,
+  TopView,
+} from './types'
 
 /** Где бот. Пусто — тот же адрес, что у приложения (на бою и в разработке через
   * прокси Vite); задаётся, если приложение лежит на хостинге ВК. */
@@ -15,9 +25,18 @@ export class ApiError extends Error {
 }
 
 async function get<T>(path: string): Promise<T> {
+  return call<T>(path, 'GET')
+}
+
+/** Действие, которое меняет игру: бот делает его под тем же замком, что и ходы в чате. */
+async function post<T>(path: string): Promise<T> {
+  return call<T>(path, 'POST')
+}
+
+async function call<T>(path: string, method: 'GET' | 'POST'): Promise<T> {
   let res: Response
   try {
-    res = await fetch(`${origin}/api/app/${path}`, { headers: { 'X-Launch-Params': launchParams } })
+    res = await fetch(`${origin}/api/app/${path}`, { method, headers: { 'X-Launch-Params': launchParams } })
   } catch {
     throw new ApiError('offline')
   }
@@ -33,4 +52,9 @@ export const api = {
   top: (kind: TopKind) => get<TopView>(`top?kind=${kind}`),
   inventory: () => get<InventoryView>('inventory'),
   auction: () => get<AuctionView>('auction'),
+  craft: () => get<CraftView>('craft'),
+  cubeDeposit: (item: number) => post<CraftActionView>(`craft/cube/deposit?item=${item}`),
+  cubeWithdraw: (item: number) => post<CraftActionView>(`craft/cube/withdraw?item=${item}`),
+  cubeTakeAll: () => post<CraftActionView>('craft/cube/take-all'),
+  cubeActivate: () => post<CraftActionView>('craft/cube/activate'),
 }

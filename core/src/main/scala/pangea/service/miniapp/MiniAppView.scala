@@ -7,17 +7,19 @@ import pangea.model.auction.{AuctionCurrency, AuctionLot}
 import pangea.model.artifact.{Artifact, HeroArtifacts}
 import pangea.model.bank.BankVault
 import pangea.model.barrel.Barrel
-import pangea.model.hero.{Achievement, AzatState, Hero, HeroCard, Knowledge, LoreData}
+import pangea.model.hero.{Achievement, AzatState, CubeStatus, Hero, HeroCard, Knowledge, LoreData}
 import pangea.model.home.{HomeData, HomeRates, House}
 import pangea.model.inventory.Inventory
 import pangea.model.item.{BeltSlot, Item, ItemDetails, ItemStack, ItemType, Rarity}
 import pangea.model.squad.AllyRates
 import pangea.model.top.{TopBoard, TopKind}
 import pangea.service.chat.Links
+import pangea.service.cube.AzatCube
 import pangea.service.state.QuestJournal
 import pangea.service.state.states.{EquipmentState, InventoryState}
 import pangea.service.state.states.hero.SkillsState
 import pangea.service.state.states.home.{RuneAltarState, TrophyWallState}
+import pangea.service.state.states.temple.HallAzatState
 import pangea.service.state.states.hero.SkillsState.SkillEntry
 import pangea.util.TimeLeft
 
@@ -225,6 +227,27 @@ object MiniAppView {
     * которого в топе нет, `me` есть всегда. */
   final case class TopView(hero: HeroView, kind: String, total: Long, rows: List[TopEntryView], me: Option[TopEntryView])
 
+  /** Сила куба: `own` — свои заряды, `home` — энергия дома (алтарь Азата). */
+  final case class CubePowerView(kind: String, current: Long, max: Long)
+
+  /** Куб Азата.
+    *
+    * @param status   `absent` — куба нет, `found` — найден, но не ожил, `active` — работает
+    * @param locked   пока куб не работает — как его получить или оживить (тексты Зала Азата)
+    * @param home     куб переехал домой, на верстак ремесленника
+    * @param items    что в кубе — каждая вещь своей ячейкой
+    * @param bag      сумка стопками — что можно положить: сюжетное в куб не кладётся
+    * @param away     почему сейчас нельзя класть и активировать: герой не в городе
+    */
+  final case class CubeView(status: String, locked: Option[String], home: Boolean, power: CubePowerView, capacity: Int,
+                            items: List[ItemView], bag: List[ItemView], away: Option[String])
+
+  final case class CraftView(hero: HeroView, cube: CubeView)
+
+  /** Ответ на действие с кубом: куб после него, что сказать и номера вещей,
+    * что только что получились. */
+  final case class CraftActionView(craft: CraftView, note: Option[String], made: List[Long])
+
   /** «Отряд»: сколько мест в строю, где стоит герой и кто стоит рядом.
     * `pendingRisen` — восставший ждёт у шатра, а мест нет: решают в боте. */
   final case class SquadView(
@@ -267,6 +290,10 @@ object MiniAppView {
   implicit val squadEncoder:     Encoder[SquadView]     = deriveEncoder
   implicit val topEntryEncoder:  Encoder[TopEntryView]  = deriveEncoder
   implicit val topEncoder:       Encoder[TopView]       = deriveEncoder
+  implicit val cubePowerEncoder: Encoder[CubePowerView] = deriveEncoder
+  implicit val cubeEncoder:      Encoder[CubeView]      = deriveEncoder
+  implicit val craftEncoder:     Encoder[CraftView]     = deriveEncoder
+  implicit val craftActEncoder:  Encoder[CraftActionView] = deriveEncoder
 
   def hero(h: Hero): HeroView = HeroView(h.lvl, h.silver, h.doubloons, h.name, h.raceName)
 
@@ -467,6 +494,33 @@ object MiniAppView {
       TopEntryView(place, h.name.getOrElse(noName), None, h.race.toString, h.lvl, kind.valueOf(h), me = true)
     }
     TopView(hero = hero(h), kind = kind.entryName, total = board.total, rows = shown, me = mine)
+  }
+
+  /** «Крафт»: куб Азата, что в нём, и сумка, из которой в него кладут. */
+  def craft(h: Hero, azat: AzatState, home: HomeData, inv: Inventory, content: SceneContent,
+            describe: Item => String): CraftView = {
+    val (status, locked) = azat.cube match {
+      case CubeStatus.None =>
+        "absent" -> Some(content.format("hall.cube.absent", "price" -> HallAzatState.CubePrice.toString))
+      case CubeStatus.FoundInactive =>
+        "found" -> Some(content.format("hall.cube.inactive", "doubloons" -> HallAzatState.ActivateDoubloons.toString,
+          "silver" -> HallAzatState.ActivateSilver.toString))
+      case CubeStatus.Active => "active" -> None
+    }
+    val power = AzatCube.power(azat, home) match {
+      case AzatCube.Power.Home(n, max) => CubePowerView("home", n.toLong, max.toLong)
+      case AzatCube.Power.Own(n)       => CubePowerView("own", n.toLong, AzatState.MaxCharges.toLong)
+    }
+    CraftView(hero(h), CubeView(
+      status   = status,
+      locked   = locked,
+      home     = azat.cubeHome,
+      power    = power,
+      capacity = AzatState.CubeCapacity,
+      items    = azat.cubeItems.map(i => view(i, 1, describe(i))),
+      bag      = stacked(inv.items.data.filterNot(_.isQuestItem), describe),
+      away     = Option.unless(MiniApp.inCity(h))(content.text("miniapp.craft.away"))
+    ))
   }
 
   private def effectKind(e: SkillEntry): String = e match {

@@ -246,5 +246,27 @@ object MiniAppViewSpec extends ZIOSpecDefault {
         inTop.kind == "level" && inTop.total == 5L
       )
     }
+    ,
+    test("крафт: куб — по статусу, сила — заряды или энергия дома, в сумке нет сюжетного, вне города — почему нельзя") {
+      import pangea.model.hero.CubeStatus
+      import pangea.model.state.StateType
+      val c      = SceneContent.load()
+      val hero   = TestFixtures.hero(UserId(1L), state = StateType.MarketSquare)
+      val quest  = sword.copy(id = 77L, itemType = ItemType.QuestItem)
+      val bag    = inv(hero, List(ruby(5L), quest))
+      val absent = MiniAppView.craft(hero, AzatState.empty, HomeData.empty, bag, c, _ => "")
+      val active = AzatState.empty.copy(cube = CubeStatus.Active, cubeCharges = 37, cubeItems = List(ruby(9L)))
+      val inCity = MiniAppView.craft(hero, active, HomeData.empty, bag, c, _ => "")
+      val away   = MiniAppView.craft(hero.copy(state = StateType.Dungeon), active, HomeData.empty, bag, c, _ => "")
+      assertTrue(
+        absent.cube.status == "absent" && absent.cube.locked.exists(_.contains("200")),
+        inCity.cube.status == "active" && inCity.cube.locked.isEmpty,
+        inCity.cube.power == MiniAppView.CubePowerView("own", 37L, AzatState.MaxCharges.toLong),
+        inCity.cube.items.map(i => i.id -> i.count) == List(9L -> 1),
+        inCity.cube.bag.map(_.id) == List(5L),
+        inCity.cube.away.isEmpty,
+        away.cube.away.contains(c.text("miniapp.craft.away"))
+      )
+    }
   )
 }

@@ -16,3 +16,8 @@ export function initPlatform(): void {
   })
   bridge.send('VKWebAppInit').catch(() => undefined)
 }
+
+/** Лёгкий отклик вибрацией — когда вещь «взялась» пальцем. Вне ВК молчит. */
+export function tap(): void {
+  bridge.send('VKWebAppTapticImpactOccurred', { style: 'light' }).catch(() => undefined)
+}

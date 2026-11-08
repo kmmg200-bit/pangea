@@ -226,3 +226,38 @@ export interface TopView {
   rows: TopEntryView[]
   me: TopEntryView | null
 }
+
+/** Сила куба: свои заряды или энергия дома (алтарь Азата). */
+export interface CubePowerView {
+  kind: 'own' | 'home'
+  current: number
+  max: number
+}
+
+/** Куб Азата. Пока куба нет или он не ожил — `locked`: как его получить. */
+export interface CubeView {
+  status: 'absent' | 'found' | 'active'
+  locked: string | null
+  /** Куб переехал домой, на верстак ремесленника. */
+  home: boolean
+  power: CubePowerView
+  capacity: number
+  /** Что в кубе — каждая вещь своей ячейкой. */
+  items: ItemView[]
+  /** Сумка стопками — то, что можно положить (сюжетное не кладётся). */
+  bag: ItemView[]
+  /** Почему сейчас нельзя класть и активировать (герой не в городе); пусто — можно. */
+  away: string | null
+}
+
+export interface CraftView {
+  hero: HeroView
+  cube: CubeView
+}
+
+/** Ответ на действие с кубом: куб после него, что сказать и какие вещи только что получились. */
+export interface CraftActionView {
+  craft: CraftView
+  note: string | null
+  made: number[]
+}

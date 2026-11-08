@@ -5,7 +5,7 @@ import pangea.dao.bank.BankVaultDao
 import pangea.dao.barrel.BarrelDao
 import pangea.dao.hero.HeroDao
 import pangea.dao.top.TopDao
-import pangea.engine.SceneContent
+import pangea.engine.{Renderer, SceneContent, Screen}
 import pangea.model.artifact.HeroArtifacts
 import pangea.model.auction.AuctionLot
 import pangea.model.bank.BankVault
@@ -13,21 +13,28 @@ import pangea.model.barrel.Barrel
 import pangea.model.home.HomeData
 import pangea.model.hero.Hero
 import pangea.model.item.Item
+import pangea.model.state.StateType
 import pangea.model.top.{TopBoard, TopKind}
+import pangea.model.user.User
 import pangea.repository.auction.AuctionRepository
 import pangea.repository.hero.HeroRepository
 import pangea.repository.inventory.InventoryRepository
+import pangea.repository.item.ItemRepository
 import pangea.repository.user.UserRepository
-import pangea.service.miniapp.MiniAppView.{AuctionView, CharacterView, InventoryView, QuestsView, SquadView, TopView}
-import pangea.service.state.{AzatData, HerbLore, NpcQuestLog, QuestJournal}
+import pangea.service.cube.AzatCube
+import pangea.service.miniapp.MiniAppView.{AuctionView, CharacterView, CraftActionView, CraftView, InventoryView, QuestsView,
+  SquadView, TopView}
+import pangea.service.state.{AzatData, HerbLore, NpcQuestLog, PlayerLock, QuestJournal}
 import pangea.service.state.states.InventoryState
 import zio.{Ref, Task, ZIO, ZLayer}
 
 import java.util.concurrent.TimeUnit
 
-/** VK Mini App: персонаж, задания, отряд, инвентарь, топ и аукцион вне чата. Пока только просмотр — он
-  * безопасен из любого места, даже из боя: сцены, лок игрока и `hero.state`
-  * не трогаются, а данные только читаются. */
+/** VK Mini App: персонаж, задания, отряд, инвентарь, крафт, топ и аукцион вне
+  * чата. Просмотр безопасен из любого места, даже из боя: сцены, лок игрока и
+  * `hero.state` не трогаются, а данные только читаются. Что меняет игру (куб
+  * Азата), идёт под локом игрока — тем же, что и ходы в чате, — и только когда
+  * герой в городе. */
 trait MiniApp {
 
   /** Игрок по параметрам запуска приложения. Героя здесь не заводим: игру
@@ -46,6 +53,12 @@ trait MiniApp {
 
   /** Топ: первые [[MiniApp.TopSize]] и место самого героя. */
   def top(hero: Hero, kind: TopKind): Task[TopView]
+
+  /** «Крафт»: куб Азата и сумка, из которой в него кладут. */
+  def craft(hero: Hero): Task[CraftView]
+
+  /** Действие с кубом и куб после него. */
+  def cube(hero: Hero, act: MiniApp.CubeAct): Task[CraftActionView]
 }
 
 object MiniApp {
@@ -73,9 +86,32 @@ object MiniApp {
   /** Снимок топа, снятый в `at`. */
   final case class CachedTop(at: Long, board: TopBoard)
 
+  /** Что делают с кубом из приложения: переносят вещь пальцем туда или
+    * обратно, забирают всё, активируют. */
+  sealed trait CubeAct
+  object CubeAct {
+    final case class Deposit(itemId: Long)  extends CubeAct
+    final case class Withdraw(itemId: Long) extends CubeAct
+    case object TakeAll                     extends CubeAct
+    case object Activate                    extends CubeAct
+  }
+
+  /** Чем кончилось действие: что сказать и номера вещей, что получились. */
+  private[miniapp] final case class Outcome(note: Option[String], made: List[Long])
+
+  /** Строки, которые куб показал бы в чате (итог активации, достижение), —
+    * в ответ приложению, а не в беседу: там свой экран со своими кнопками. */
+  private[miniapp] final class Collect(lines: zio.Ref[Vector[String]]) extends Renderer {
+    def show(user: User, screen: Screen): Task[Unit] = lines.update(_ :+ screen.text)
+  }
+
+  /** Герой в городе — только тогда из приложения можно работать с кубом, как и
+    * передавать вещи. */
+  def inCity(hero: Hero): Boolean = StateType.cityStates.contains(hero.state)
+
   val live: ZLayer[MiniAppConfig with UserRepository with HeroRepository with InventoryRepository with AuctionRepository
                      with HeroDao with ArtifactDao with BarrelDao with BankVaultDao with TopDao
-                     with SceneContent, Nothing, MiniApp] =
+                     with ItemRepository with PlayerLock with SceneContent, Nothing, MiniApp] =
     ZLayer {
       for {
         config      <- ZIO.service[MiniAppConfig]
@@ -88,10 +124,12 @@ object MiniApp {
         barrels     <- ZIO.service[BarrelDao]
         vaults      <- ZIO.service[BankVaultDao]
         tops        <- ZIO.service[TopDao]
+        items       <- ZIO.service[ItemRepository]
+        lock        <- ZIO.service[PlayerLock]
         content     <- ZIO.service[SceneContent]
         topCache    <- Ref.make(Map.empty[TopKind, CachedTop])
       } yield new MiniAppLive(config, users, heroes, inventories, lots, heroDao, artifacts, barrels, vaults, content,
-        tops, topCache)
+        tops, topCache, new AzatCube(heroDao, inventories, items, content), lock)
     }
 }
 
@@ -107,9 +145,11 @@ final class MiniAppLive(
   vaults:      BankVaultDao,
   content:     SceneContent,
   tops:        TopDao,
-  topCache:    Ref[Map[TopKind, MiniApp.CachedTop]]
+  topCache:    Ref[Map[TopKind, MiniApp.CachedTop]],
+  azatCube:    AzatCube,
+  lock:        PlayerLock
 ) extends MiniApp {
-  import MiniApp.Denied
+  import MiniApp.{CubeAct, Denied, Outcome}
 
   override def player(launchParams: String): Task[Either[Denied, Hero]] =
     config.vkSecret.map(_.trim).filter(_.nonEmpty) match {
@@ -181,6 +221,61 @@ final class MiniAppLive(
       case None =>
         tops.board(kind, MiniApp.TopSize).tap(board => topCache.update(_ + (kind -> MiniApp.CachedTop(ms, board))))
     }
+
+  /** Куб читается без записи, как и всё в просмотре: отдыхи благословения
+    * бот доначислит сам. */
+  override def craft(hero: Hero): Task[CraftView] =
+    for {
+      ms       <- now
+      azat     <- AzatData.read(heroDao, hero.userId).map(_.withDailyRests(ms))
+      home     <- azatCube.loadHome(hero.userId)
+      inv      <- inventories.get(hero.id).mapError(e => new Throwable(e.toString))
+      describe <- describer(hero)
+    } yield MiniAppView.craft(hero, azat, home, inv, content, describe)
+
+  /** Под локом игрока: героя перечитываем уже под ним — пока запрос ждал,
+    * ход в чате мог его поменять. Куб не ожил или герой не в городе — ничего
+    * не трогаем, говорим почему. */
+  override def cube(hero: Hero, act: CubeAct): Task[CraftActionView] =
+    lock.withLock(hero.userId) {
+      for {
+        fresh   <- heroes.getHero(hero.userId).someOrFail(new Throwable(s"Нет героя у игрока ${hero.userId.value}"))
+        azat    <- azatCube.loadAzat(fresh.userId)
+        outcome <- if (!azat.hasCube) ZIO.succeed(Outcome(Some(content.text("miniapp.craft.noCube")), Nil))
+                   else if (!MiniApp.inCity(fresh)) ZIO.succeed(Outcome(Some(content.text("miniapp.craft.away")), Nil))
+                   else cubeAct(fresh, azat.cubeItems, act)
+      } yield fresh -> outcome
+    }.flatMap { case (fresh, outcome) =>
+      heroes.getHero(fresh.userId).map(_.getOrElse(fresh)).flatMap(craft)
+        .map(CraftActionView(_, outcome.note, outcome.made))
+    }
+
+  private def cubeAct(hero: Hero, inCube: List[Item], act: CubeAct): Task[Outcome] = {
+    val gone = Outcome(Some(content.text("stack.gone")), Nil)
+    act match {
+      case CubeAct.Deposit(id) =>
+        inventories.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
+          inv.items.data.find(i => i.id == id && !i.isQuestItem) match {
+            case None       => ZIO.succeed(gone)
+            case Some(item) => azatCube.deposit(hero, item).map(Outcome(_, Nil))
+          }
+        }
+      case CubeAct.Withdraw(id) =>
+        inCube.find(_.id == id) match {
+          case None       => ZIO.succeed(gone)
+          case Some(item) => azatCube.withdraw(hero, item).map(Outcome(_, Nil))
+        }
+      case CubeAct.TakeAll =>
+        azatCube.withdrawEverything(hero).map(note => Outcome(Some(note), Nil))
+      case CubeAct.Activate =>
+        for {
+          user  <- users.getUserById(hero.userId).someOrFail(new Throwable(s"Нет игрока ${hero.userId.value}"))
+          lines <- zio.Ref.make(Vector.empty[String])
+          made  <- azatCube.activate(user, hero, new MiniApp.Collect(lines))
+          said  <- lines.get
+        } yield Outcome(Option.when(said.nonEmpty)(said.mkString("\n\n")), made.map(_.id))
+    }
+  }
 
   /** Описание вещи — как в карточке бота. Что сказать на карточке сюжетного
     * предмета (вскрыто ли письмо Марисы, сыт ли бродячий ларец), знает журнал
