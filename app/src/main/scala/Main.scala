@@ -3,6 +3,7 @@ package app
 import cats.syntax.semigroupk._
 import org.http4s.HttpRoutes
 import pangea.dao.activity.ActivityDao
+import pangea.dao.quest.QuestOutcomeDao
 import pangea.dao.arena.ArenaDao
 import pangea.dao.Transactor
 import pangea.dao.config.PostgresConfig
@@ -117,6 +118,7 @@ object Main extends ZIOAppDefault {
       ArtifactDao.live,
       PayoutDao.live,
       ActivityDao.live,
+      QuestOutcomeDao.live,
       ReferralDao.live,
       PromoDao.live,
       PaymentDao.live,

@@ -3,6 +3,7 @@ package pangea.service.state.states.marisa
 import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder, HCursor, Json}
 import pangea.dao.hero.HeroDao
+import pangea.dao.quest.QuestOutcomeDao
 import pangea.domain.Rng
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.generator.item.ItemGenerator
@@ -10,6 +11,7 @@ import pangea.generator.monster.MonsterGenerator
 import pangea.model.battle.SoloPveBattle
 import pangea.model.hero.{Achievement, Hero}
 import pangea.model.item.{QuestItemKind, Rarity}
+import pangea.model.quest.QuestOutcome
 import pangea.model.schedule.TaskKind
 import pangea.model.skill.MonsterEnergy
 import pangea.model.state.StateType
@@ -20,7 +22,7 @@ import pangea.repository.bank.BankRepository
 import pangea.service.purse.Purse
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState._
-import pangea.service.state.{MarisaQuest, QuestSupport, State, UserAction}
+import pangea.service.state.{MarisaQuest, QuestOutcomeLog, QuestSupport, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -33,13 +35,15 @@ import java.util.concurrent.TimeUnit
   * без опыта и добычи, кроме 500 серебра и 10 дублонов; смерть в нём разбирает
   * DeathState. Если герой взял с собой Марису, после боя она просит отдать ей
   * долг — «Спаситель Марисы» или «Мерзавец». Так или иначе — в город, письмо и
-  * карта уходят, задание закрыто. */
+  * карта уходят, задание закрыто, исход записан (`outcomes`, см.
+  * [[QuestOutcome]]). */
 case class MarisaHuntState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
   scheduler:     Scheduler,
   content:       SceneContent,
-  bank:          Option[BankRepository] = None
+  bank:          Option[BankRepository] = None,
+  outcomes:      Option[QuestOutcomeDao] = None
 ) extends State {
 
   /** Кошель: своё серебро, а следом — то, что лежит в ячейке Торгового дома. */
@@ -148,7 +152,8 @@ case class MarisaHuntState(
                 paid <- MarisaQuest.payDebt(purse, user.userId, hero)
                 _    <- renderer.show(user, Screen(content.text("marisa.hunt.debtPaid"), Nil))
                 _    <- ZIO.when(p.withMarisa)(MarisaQuest.grant(heroDao, content, user, paid, Achievement.MarisaSavior, renderer))
-                _    <- close(user, paid, renderer)
+                _    <- close(user, paid, renderer,
+                          if (p.withMarisa) QuestOutcome.MarisaSaved else QuestOutcome.MarisaPaidAlone)
               } yield StateType.GlobalMap
     } yield res
 
@@ -173,7 +178,8 @@ case class MarisaHuntState(
   /** После победы: без Марисы — в город; с Марисой — она просит долг себе. */
   private def afterFight(user: User, renderer: Renderer, p: Progress): Task[Unit] =
     if (!p.withMarisa)
-      getHero(user).flatMap(hero => renderer.show(user, Screen(content.text("marisa.hunt.collectorDown"), Nil)) *> close(user, hero, renderer))
+      getHero(user).flatMap(hero => renderer.show(user, Screen(content.text("marisa.hunt.collectorDown"), Nil)) *>
+        close(user, hero, renderer, QuestOutcome.MarisaKilledAlone))
     else
       getHero(user).flatMap(hero => canPay(hero).flatMap { canGive =>
         renderer.show(user, Screen(
@@ -191,7 +197,7 @@ case class MarisaHuntState(
               else for {
                 paid <- MarisaQuest.payDebt(purse, user.userId, hero)
                 _    <- MarisaQuest.grant(heroDao, content, user, paid, Achievement.MarisaSavior, renderer)
-                _    <- close(user, paid, renderer)
+                _    <- close(user, paid, renderer, QuestOutcome.MarisaSaved)
               } yield StateType.GlobalMap
     } yield res
 
@@ -200,13 +206,14 @@ case class MarisaHuntState(
       hero <- getHero(user)
       _    <- renderer.show(user, Screen(content.text("marisa.hunt.keptSilver"), Nil))
       _    <- MarisaQuest.grant(heroDao, content, user, hero, Achievement.Scoundrel, renderer)
-      _    <- close(user, hero, renderer)
+      _    <- close(user, hero, renderer, QuestOutcome.MarisaAbandoned)
     } yield StateType.GlobalMap
 
-  /** Закрыть задание: письмо и карта уходят, сцена чистится, в город. */
-  private def close(user: User, hero: Hero, renderer: Renderer): Task[Unit] =
+  /** Закрыть задание: письмо и карта уходят, исход записан, сцена чистится, в город. */
+  private def close(user: User, hero: Hero, renderer: Renderer, outcome: QuestOutcome): Task[Unit] =
     for {
       line <- MarisaQuest.finish(heroDao, inventoryRepo, content, user.userId, hero)
+      _    <- QuestOutcomeLog.record(outcomes, hero, outcome)
       _    <- heroDao.writeSceneData(user.userId, Json.Null)
       _    <- renderer.show(user, Screen(line, Nil))
     } yield ()

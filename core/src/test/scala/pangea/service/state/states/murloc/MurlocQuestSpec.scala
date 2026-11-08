@@ -7,7 +7,7 @@ import pangea.model.battle.{Formation, SoloPveBattle}
 import pangea.model.hero.{Achievement, Hero}
 import pangea.model.item.{Grip, Item, ItemDetails, ItemType, QuestItemKind, Rarity}
 import pangea.model.monster.{Monster, Race, Rarity => MobRarity}
-import pangea.model.quest.{NpcQuest, NpcQuestProgress, NpcQuests}
+import pangea.model.quest.{NpcQuest, NpcQuestProgress, NpcQuests, QuestOutcome}
 import pangea.model.skill.Skill
 import pangea.model.squad.{Ally, AllyKind, Squad}
 import pangea.model.state.StateType
@@ -61,7 +61,8 @@ object MurlocQuestSpec extends ZIOSpecDefault {
     h.copy(fightStats = FightStats(atk = 100000L, hp = 500000L, armor = 0, defence = 0, evasion = 0, accuracy = 9999, energy = 0))
 
   /** Деревня с картой на руках (задание на втором шаге, `handed` сдано). */
-  private def village(h: Hero, items: List[Item], handed: Long = 0L, inv: Option[TestInventoryRepository] = None) =
+  private def village(h: Hero, items: List[Item], handed: Long = 0L, inv: Option[TestInventoryRepository] = None,
+                      outcomes: Option[TestQuestOutcomeDao] = None) =
     for {
       dao <- TestHeroDao.withHero(userId, h)
       _   <- seed(dao, NpcQuestProgress(step = 2, counter = handed))
@@ -69,7 +70,7 @@ object MurlocQuestSpec extends ZIOSpecDefault {
       repo = inv.getOrElse(TestInventoryRepository.withItems(map() :: items))
       r   <- TestRenderer.make
       c   <- content
-    } yield (MurlocVillageState(dao, repo, TestItemRepository.make, c), dao, repo, r)
+    } yield (MurlocVillageState(dao, repo, TestItemRepository.make, c, outcomes), dao, repo, r)
 
   override def spec = suite("Деревня Мурлоков")(
 
@@ -287,7 +288,8 @@ object MurlocQuestSpec extends ZIOSpecDefault {
       },
       test("после победы: деревня пуста, карта уходит, «Гроза Мурлоков» и +1 к силе, кнопка в город") {
         for {
-          t <- village(hero, Nil)
+          o <- TestQuestOutcomeDao.make
+          t <- village(hero, Nil, outcomes = Some(o))
           (state, dao, inv, r) = t
           _     <- dao.writeSceneData(userId, Progress(Step.AfterRaid).asJson)
           _     <- state.enter(testUser, r)
@@ -296,11 +298,26 @@ object MurlocQuestSpec extends ZIOSpecDefault {
           after <- heroOf(dao)
           q     <- quests(dao)
           res   <- state.action(testUser, tap("ToCity"), r)
+          end   <- o.of(after.id, NpcQuest.Murloc)
         } yield assertTrue(all.contains("Тростник затих") && all.contains("Квест «Деревня Мурлоков» завершён")) &&
+                assertTrue(end.contains(QuestOutcome.MurlocRaided)) &&
                 assertTrue(all.contains("«Гроза Мурлоков». +1 к силе")) &&
                 assertTrue(after.hasAchievement(Achievement.MurlocBane) && after.effectiveBaseStats(0L).str == hero.effectiveBaseStats(0L).str + 1L) &&
                 assertTrue(!inv.snapshot.exists(_.questItem.contains(QuestItemKind.MurlocVillageMap)) && q.isDone(NpcQuest.Murloc)) &&
                 assertTrue(last.choices.map(_.id) == List("ToCity") && res == StateType.GlobalMap)
+      },
+      test("налёт после сданного снаряжения — исход «сначала помогали, потом вырезали»") {
+        for {
+          o <- TestQuestOutcomeDao.make
+          t <- village(hero, Nil, handed = 5L, outcomes = Some(o))
+          (state, dao, _, r) = t
+          _     <- dao.writeSceneData(userId, Progress(Step.AfterRaid).asJson)
+          _     <- state.enter(testUser, r)
+          after <- heroOf(dao)
+          q     <- quests(dao)
+          end   <- o.of(after.id, NpcQuest.Murloc)
+        } yield assertTrue(q.isDone(NpcQuest.Murloc) && after.hasAchievement(Achievement.MurlocBane)) &&
+                assertTrue(end.contains(QuestOutcome.MurlocBetrayed))
       }
     ),
 
@@ -349,14 +366,17 @@ object MurlocQuestSpec extends ZIOSpecDefault {
       },
       test("двадцатая вещь: клинок старого мурлока (легендарный, уровня героя), карта уходит, «Любимец Мурлоков» и +1 к ловкости") {
         for {
-          t <- village(hero, List(gear(1L)), handed = 19L)
+          o <- TestQuestOutcomeDao.make
+          t <- village(hero, List(gear(1L)), handed = 19L, outcomes = Some(o))
           (state, dao, inv, r) = t
           res   <- state.action(testUser, tap("GiveAll"), r)
           all   <- texts(r)
           after <- heroOf(dao)
           q     <- quests(dao)
+          end   <- o.of(after.id, NpcQuest.Murloc)
           blade  = inv.snapshot.find(i => bladeNames.contains(i.name))
         } yield assertTrue(res == StateType.GlobalMap) &&
+                assertTrue(end.contains(QuestOutcome.MurlocHelped)) &&
                 assertTrue(all.contains("Он твой, сухой") && blade.exists(b => all.contains(s"Вы получили «${b.name}»")) && all.contains("завершён")) &&
                 assertTrue(blade.exists(b => b.rarity == Rarity.Orange && b.itemType == ItemType.Weapon && b.lvl == 7L)) &&
                 assertTrue(!inv.snapshot.exists(_.questItem.contains(QuestItemKind.MurlocVillageMap)) && q.isDone(NpcQuest.Murloc)) &&

@@ -3,13 +3,14 @@ package pangea.service.state.states.murloc
 import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder, HCursor, Json}
 import pangea.dao.hero.HeroDao
+import pangea.dao.quest.QuestOutcomeDao
 import pangea.domain.Rng
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.battle.{BattleEffects, MonsterSlot, SoloPveBattle}
 import pangea.model.hero.{Achievement, Hero}
 import pangea.model.item.Item
 import pangea.model.monster.Monster
-import pangea.model.quest.NpcQuest
+import pangea.model.quest.{NpcQuest, NpcQuests, QuestOutcome}
 import pangea.model.skill.MonsterEnergy
 import pangea.model.squad.AllyKind
 import pangea.model.state.StateType
@@ -18,7 +19,7 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.murloc.MurlocVillageState._
-import pangea.service.state.{MurlocQuest, NpcQuestLog, QuestSupport, State, UserAction}
+import pangea.service.state.{MurlocQuest, NpcQuestLog, QuestOutcomeLog, QuestSupport, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -35,12 +36,16 @@ import java.util.concurrent.TimeUnit
   *
   * Помощь — сдать старейшине оружие и нагрудники из сумки пачками по цвету; двадцатая
   * вещь — «Клинок старого мурлока», карта уходит, «Любимец Мурлоков». Не влез в
-  * сумку — ждёт в деревне (третий шаг задания), кнопка «Забрать клинок». */
+  * сумку — ждёт в деревне (третий шаг задания), кнопка «Забрать клинок».
+  *
+  * Исход записан (`outcomes`, см. [[QuestOutcome]]): помогли, вырезали — или
+  * сначала носили снаряжение, а потом вырезали. */
 case class MurlocVillageState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
   itemRepo:      ItemRepository,
-  content:       SceneContent
+  content:       SceneContent,
+  outcomes:      Option[QuestOutcomeDao] = None
 ) extends State {
 
   private val branch = new Branch(
@@ -66,7 +71,7 @@ case class MurlocVillageState(
       hero     <- getHero(user)
       progress <- heroDao.readSceneData(user.userId).map(_.flatMap(_.as[Progress].toOption))
       quests   <- NpcQuestLog.load(heroDao, user.userId)
-      _        <- if (progress.exists(_.step == Step.AfterRaid)) afterRaid(user, hero, renderer)
+      _        <- if (progress.exists(_.step == Step.AfterRaid)) afterRaid(user, hero, quests, renderer)
                   else if (MurlocQuest.mapOnHands(quests)) renderer.show(user, routeScreen)
                   else renderer.show(user, Screen(content.text("murlocVillage.questDone"), List(content.choice("ToCity", "murlocVillage.toCity"))))
     } yield ()
@@ -122,13 +127,16 @@ case class MurlocVillageState(
     MonsterSlot(m.lvl, m.race.entryName, m.rarity.entryName, m.fightStats, m.fightStats.hp, m.fightStats.armor,
       m.marked, energy, BattleEffects.empty)
 
-  /** Деревня вырезана: карта уходит, «Гроза Мурлоков», в город. */
-  private def afterRaid(user: User, hero: Hero, renderer: Renderer): Task[Unit] =
+  /** Деревня вырезана: карта уходит, «Гроза Мурлоков», в город. Сдавал до
+    * налёта снаряжение — исход «сначала помогали, потом вырезали». */
+  private def afterRaid(user: User, hero: Hero, quests: NpcQuests, renderer: Renderer): Task[Unit] =
     for {
       _    <- renderer.show(user, Screen(
                 content.text("murlocVillage.raid.victory") +
                   (if (MurlocQuest.isKin(hero)) "\n\n" + content.text("murlocVillage.raid.victoryKin") else ""), Nil))
       line <- MurlocQuest.finish(heroDao, inventoryRepo, content, user.userId, hero)
+      _    <- QuestOutcomeLog.record(outcomes, hero,
+                if (MurlocQuest.handed(quests) > 0L) QuestOutcome.MurlocBetrayed else QuestOutcome.MurlocRaided)
       _    <- renderer.show(user, Screen(line, Nil))
       _    <- QuestSupport.grant(heroDao, content, user, hero, Achievement.MurlocBane, renderer)
       _    <- heroDao.writeSceneData(user.userId, Json.Null)
@@ -218,6 +226,7 @@ case class MurlocVillageState(
                       content.text("murlocVillage.village." + MurlocQuest.key(hero, "reward")) + "\n\n" +
                         content.format("murlocVillage.village.bladeGiven", "name" -> blade.name), Nil))
             line <- MurlocQuest.finish(heroDao, inventoryRepo, content, user.userId, hero)
+            _    <- QuestOutcomeLog.record(outcomes, hero, QuestOutcome.MurlocHelped)
             _    <- renderer.show(user, Screen(line, Nil))
             _    <- QuestSupport.grant(heroDao, content, user, hero, Achievement.MurlocFavorite, renderer)
           } yield StateType.GlobalMap

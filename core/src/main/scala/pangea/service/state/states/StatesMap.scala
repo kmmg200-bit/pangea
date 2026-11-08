@@ -94,6 +94,7 @@ import pangea.model.state.StateType.{
   Transfer,
   Mail
 }
+import pangea.dao.quest.QuestOutcomeDao
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.auction.AuctionRepository
 import pangea.repository.bank.BankRepository
@@ -188,7 +189,8 @@ object StatesMap {
       with SceneContent
       with Scheduler
       with Referrals
-      with Background,
+      with Background
+      with QuestOutcomeDao,
     Throwable,
     StatesMap
   ] =
@@ -213,10 +215,13 @@ object StatesMap {
         arenaDao      <- ZIO.service[ArenaDao]
         referrals     <- ZIO.service[Referrals]
         background    <- ZIO.service[Background]
+        outcomeDao    <- ZIO.service[QuestOutcomeDao]
         // Кошель героя: своё серебро, а следом — ячейка в Торговом доме.
         bank           = Some(bankRepo)
         // Ларец Азата и Живая сумка ловят добычу до того, как она попадёт в сумку.
         artifacts      = Some(artifactRepo)
+        // Чем закончены задания с развилкой — для подсчёта «как и вы».
+        outcomes       = Some(outcomeDao)
         states = Map[StateType, State](
           GlobalMap     -> GlobalMapState(heroDao, content),
           HarborQuarter -> HarborQuarterState(content),
@@ -251,7 +256,7 @@ object StatesMap {
             artifacts
           ),
           Battle -> BattleState(heroDao, inventoryRepo, itemRepo, content, scheduler, Some(arenaDao), bank),
-          Death  -> DeathState(heroDao, inventoryRepo, content, artifacts),
+          Death  -> DeathState(heroDao, inventoryRepo, content, artifacts, outcomes),
           Rest   -> RestState(heroDao, scheduler, content),
           Inventory -> InventoryState(
             heroDao,
@@ -320,10 +325,10 @@ object StatesMap {
           RaceRevenge       -> RaceRevengeState(heroDao, content),
           Caravan           -> CaravanState(heroDao, inventoryRepo, itemRepo, content),
           MarisaSearch      -> MarisaSearchState(heroDao, inventoryRepo, itemRepo, content),
-          MarisaHunt        -> MarisaHuntState(heroDao, inventoryRepo, scheduler, content, bank),
+          MarisaHunt        -> MarisaHuntState(heroDao, inventoryRepo, scheduler, content, bank, outcomes),
           MurlocElder       -> MurlocElderState(heroDao, inventoryRepo, itemRepo, content),
-          MurlocVillage     -> MurlocVillageState(heroDao, inventoryRepo, itemRepo, content),
-          SquadMine         -> SquadMineState(heroDao, inventoryRepo, itemRepo, content),
+          MurlocVillage     -> MurlocVillageState(heroDao, inventoryRepo, itemRepo, content, outcomes),
+          SquadMine         -> SquadMineState(heroDao, inventoryRepo, itemRepo, content, outcomes),
           StrayCasket       -> StrayCasketState(heroDao, inventoryRepo, itemRepo, content, artifacts),
           HedgeSong         -> HedgeSongState(heroDao, inventoryRepo, itemRepo, content),
           BarrelThieves     -> BarrelThievesState(heroDao, content),
@@ -337,7 +342,7 @@ object StatesMap {
             content
           ),
           TreasureHunt -> TreasureHuntState(heroDao, scheduler, content, inventoryRepo, itemRepo),
-          Construction -> ConstructionState(heroDao, scheduler, content, Some(inventoryRepo)),
+          Construction -> ConstructionState(heroDao, scheduler, content, Some(inventoryRepo), outcomes),
           Guild        -> GuildState(heroDao, content),
           TrophyExchange -> TrophyExchangeState(
             heroDao,

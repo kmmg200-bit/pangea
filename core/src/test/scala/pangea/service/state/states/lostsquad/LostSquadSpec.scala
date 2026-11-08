@@ -7,7 +7,7 @@ import pangea.model.battle.SoloPveBattle
 import pangea.model.hero.{Achievement, Hero}
 import pangea.model.item.{Item, ItemType, MaterialKind, QuestItemKind, Rarity => ItemRarity}
 import pangea.model.monster.{Race, Rarity}
-import pangea.model.quest.{NpcQuest, NpcQuests}
+import pangea.model.quest.{NpcQuest, NpcQuests, QuestOutcome}
 import pangea.model.squad.{AllyKind, Squad}
 import pangea.model.state.StateType
 import pangea.model.stats.FightStats
@@ -170,14 +170,17 @@ object LostSquadSpec extends ZIOSpecDefault {
         inv  = TestInventoryRepository.withItems(List(lantern))
         r   <- TestRenderer.make
         c   <- ZIO.attempt(SceneContent.load())
-        state = SquadMineState(d, inv, TestItemRepository.make, c)
+        o   <- TestQuestOutcomeDao.make
+        state = SquadMineState(d, inv, TestItemRepository.make, c, Some(o))
         _    <- state.enter(testUser, r)
         thanks <- r.sentScreens.map(_.last)
         out  <- state.action(testUser, tap("MineGifts"), r)
         loot <- lootOf(d)
         q    <- questOf(d)
         h    <- heroOf(d)
+        end  <- o.of(h.id, NpcQuest.LostSquad)
       } yield assertTrue(thanks.text.contains("Двенадцатый фонарь") && thanks.choices.map(_.id) == List("MineGifts")) &&
+              assertTrue(end.contains(QuestOutcome.SquadLedOut)) &&
               assertTrue(out == StateType.Loot && q.isDone(NpcQuest.LostSquad)) &&
               assertTrue(loot.exists(l => l.items.size == 1 + LostSquadQuest.GiftCount && l.returnState.contains(StateType.Dungeon))) &&
               assertTrue(loot.exists(_.items.headOption.exists(i => i.itemType == ItemType.Helmet && i.rarity == ItemRarity.Violet &&
@@ -234,7 +237,8 @@ object LostSquadSpec extends ZIOSpecDefault {
         q   <- questOf(d)
         h   <- heroOf(d)
         said <- texts(r)
-        site = ConstructionState(d, sch, c, Some(inv))
+        o    <- TestQuestOutcomeDao.make
+        site = ConstructionState(d, sch, c, Some(inv), Some(o))
         _    <- site.enter(testUser, r)
         menu <- r.sentScreens.map(_.last)
         _      <- site.action(testUser, tap("Foreman"), r)
@@ -244,7 +248,9 @@ object LostSquadSpec extends ZIOSpecDefault {
         q2   <- questOf(d)
         loot <- lootOf(d)
         end  <- texts(r)
+        fin  <- o.of(h2.id, NpcQuest.LostSquad)
       } yield assertTrue(out == StateType.Dungeon && LostSquadQuest.crateOnHands(q) && LostSquadQuest.squadAbandoned(q)) &&
+              assertTrue(fin.contains(QuestOutcome.SquadLooted)) &&
               assertTrue(bag.exists(_.questItem.contains(QuestItemKind.SquadCrate))) &&
               assertTrue(!h.squad.has(AllyKind.Gnome) && said.contains("исчезает во вспышке свитка")) &&
               // ушёл по свитку — сейчас его за столом нет, а вернётся — вдвое дороже

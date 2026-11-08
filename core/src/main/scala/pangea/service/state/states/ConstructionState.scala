@@ -3,17 +3,18 @@ package pangea.service.state.states
 import io.circe.Json
 import io.circe.syntax.EncoderOps
 import pangea.dao.hero.HeroDao
+import pangea.dao.quest.QuestOutcomeDao
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.generator.item.MaterialGenerator
 import pangea.model.hero.{Achievement, Hero}
-import pangea.model.quest.NpcQuest
+import pangea.model.quest.{NpcQuest, QuestOutcome}
 import pangea.repository.inventory.InventoryRepository
 import pangea.service.state.states.LootState.LootData
 import pangea.model.schedule.TaskKind
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.service.schedule.Scheduler
-import pangea.service.state.{CityExit, LostSquadQuest, NpcQuestLog, QuestSupport, State, UserAction}
+import pangea.service.state.{CityExit, LostSquadQuest, NpcQuestLog, QuestOutcomeLog, QuestSupport, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -35,7 +36,9 @@ case class ConstructionState(
   scheduler: Scheduler,
   content: SceneContent,
   // Сумка — чтобы забрать ящик «Пропавшей дружины», когда его отдают Гуннару.
-  inventoryRepo: Option[InventoryRepository] = None
+  inventoryRepo: Option[InventoryRepository] = None,
+  // Ящик отдан — исход «Пропавшей дружины» (см. QuestOutcome).
+  outcomes: Option[QuestOutcomeDao] = None
 ) extends State {
   import ConstructionState._
 
@@ -152,6 +155,7 @@ case class ConstructionState(
                   line <- inventoryRepo.fold(
                             NpcQuestLog.modify(heroDao, user.userId)(_.finish(NpcQuest.LostSquad)).as(content.text("lostSquad.questDone")))(
                             repo => LostSquadQuest.finish(heroDao, repo, content, user.userId, hero))
+                  _    <- QuestOutcomeLog.record(outcomes, hero, QuestOutcome.SquadLooted)
                   _    <- renderer.show(user, Screen(line, Nil))
                   _    <- QuestSupport.grant(heroDao, content, user, hero, Achievement.MineLooter, renderer)
                   _    <- heroDao.writeSceneData(user.userId, LootData(items = List(MaterialGenerator.item(LostSquadQuest.CrateBonus)),

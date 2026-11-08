@@ -3,11 +3,13 @@ package pangea.service.state.states.lostsquad
 import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder, HCursor, Json}
 import pangea.dao.hero.HeroDao
+import pangea.dao.quest.QuestOutcomeDao
 import pangea.domain.Rng
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.model.battle.{BattleEffects, MonsterSlot, SoloPveBattle}
 import pangea.model.hero.{Achievement, Hero}
 import pangea.model.monster.Monster
+import pangea.model.quest.QuestOutcome
 import pangea.model.skill.MonsterEnergy
 import pangea.model.squad.AllyKind
 import pangea.model.state.StateType
@@ -16,7 +18,7 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.lostsquad.SquadMineState._
-import pangea.service.state.{LostSquadQuest, NpcQuestLog, QuestSupport, State, UserAction}
+import pangea.service.state.{LostSquadQuest, NpcQuestLog, QuestOutcomeLog, QuestSupport, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -38,12 +40,15 @@ import java.util.concurrent.TimeUnit
   * Гуннара на Стройке.
   *
   * Погиб в бою — дружина снова за завалом: спуститься можно через любую жилу.
-  * Ушёл, не приняв даров, — дружина ждёт у выхода из штольни, вход тот же. */
+  * Ушёл, не приняв даров, — дружина ждёт у выхода из штольни, вход тот же.
+  * Дары приняты — задание закрыто, исход «вывели дружину» записан (`outcomes`,
+  * см. [[QuestOutcome]]); с ящиком задание закрывает Гуннар (ConstructionState). */
 case class SquadMineState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
   itemRepo:      ItemRepository,
-  content:       SceneContent
+  content:       SceneContent,
+  outcomes:      Option[QuestOutcomeDao] = None
 ) extends State {
 
   private val branch = new Branch(
@@ -155,6 +160,7 @@ case class SquadMineState(
                   helmet     = LostSquadQuest.helmet(hero, Rng(seed))
                   (gifts, _) = LostSquadQuest.gifts(Rng(seed + 1L))
                   line      <- LostSquadQuest.finish(heroDao, inventoryRepo, content, user.userId, hero)
+                  _         <- QuestOutcomeLog.record(outcomes, hero, QuestOutcome.SquadLedOut)
                   _         <- renderer.show(user, Screen(line, Nil))
                   _         <- QuestSupport.grant(heroDao, content, user, hero, Achievement.SquadFriend, renderer)
                   _         <- heroDao.writeSceneData(user.userId, LootData(items = helmet :: gifts, silvers = Nil,

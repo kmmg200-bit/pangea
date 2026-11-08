@@ -7,7 +7,7 @@ import pangea.model.hero.{Achievement, Hero}
 import pangea.model.inventory.Inventory
 import pangea.model.item.{Item, ItemType, QuestItemKind, Rarity}
 import pangea.model.monster.{Monster, Race, Rarity => MobRarity}
-import pangea.model.quest.{NpcQuest, NpcQuestProgress, NpcQuests}
+import pangea.model.quest.{NpcQuest, NpcQuestProgress, NpcQuests, QuestOutcome}
 import pangea.model.schedule.TaskKind
 import pangea.model.state.StateType
 import pangea.model.stats.FightStats
@@ -261,14 +261,17 @@ object MarisaQuestSpec extends ZIOSpecDefault {
           sched <- TestScheduler.make
           r   <- TestRenderer.make
           c   <- content
-          state = MarisaHuntState(dao, inv, sched, c)
+          o   <- TestQuestOutcomeDao.make
+          state = MarisaHuntState(dao, inv, sched, c, outcomes = Some(o))
           _   <- state.enter(testUser, r)
           screen <- r.sentScreens.map(_.last)
           res <- state.action(testUser, tap("PayCollector"), r)
           h   <- heroOf(dao)
           q   <- quests(dao)
           all <- texts(r)
+          end <- o.of(h.id, NpcQuest.Marisa)
         } yield assertTrue(screen.text.contains("А вот и тайник, Мариса") && screen.text.contains("Отдай ему эти деньги")) &&
+                assertTrue(end.contains(QuestOutcome.MarisaSaved)) &&
                 assertTrue(screen.choices.map(_.id) == List("PayCollector", "FightCollector")) &&
                 assertTrue(res == StateType.GlobalMap) &&
                 assertTrue(h.silver == 20000L - 14644L && h.doubloons == 150L - 105L) &&
@@ -276,6 +279,26 @@ object MarisaQuestSpec extends ZIOSpecDefault {
                 assertTrue(inv.snapshot.map(_.id) == List(1L)) &&
                 assertTrue(q.isDone(NpcQuest.Marisa)) &&
                 assertTrue(all.contains("долг Кельвина уплачен") && all.contains("Спаситель Марисы") && all.contains("завершён"))
+      },
+      test("коллектор без Марисы: откупиться — задание закрыто без достижения, исход «без Марисы откупились»") {
+        val rich = hero.copy(silver = 20000L, doubloons = 150L)
+        for {
+          dao <- TestHeroDao.withHero(userId, rich)
+          _   <- seed(dao, NpcQuestProgress(step = 2, bonus = true))
+          _   <- dao.writeSceneData(userId, Progress(Step.Collector, withMarisa = false).asJson)
+          inv  = TestInventoryRepository.withItems(List(letter(), map()))
+          sched <- TestScheduler.make
+          r   <- TestRenderer.make
+          c   <- content
+          o   <- TestQuestOutcomeDao.make
+          state = MarisaHuntState(dao, inv, sched, c, outcomes = Some(o))
+          res <- state.action(testUser, tap("PayCollector"), r)
+          h   <- heroOf(dao)
+          q   <- quests(dao)
+          end <- o.of(h.id, NpcQuest.Marisa)
+        } yield assertTrue(res == StateType.GlobalMap && q.isDone(NpcQuest.Marisa)) &&
+                assertTrue(!h.hasAchievement(Achievement.MarisaSavior) && !h.hasAchievement(Achievement.Scoundrel)) &&
+                assertTrue(end.contains(QuestOutcome.MarisaPaidAlone))
       },
       test("бой: Коллектор — человек-вор второго уровня с +75 HP и +100 брони; победа — 500 серебра и 10 дублонов без опыта") {
         val h = strong.copy(silver = 20000L, doubloons = 150L)
@@ -285,8 +308,9 @@ object MarisaQuestSpec extends ZIOSpecDefault {
           sched <- TestScheduler.make
           r   <- TestRenderer.make
           c   <- content
+          o   <- TestQuestOutcomeDao.make
           inv  = TestInventoryRepository.withItems(List(letter(), map()))
-          state = MarisaHuntState(dao, inv, sched, c)
+          state = MarisaHuntState(dao, inv, sched, c, outcomes = Some(o))
           _   <- TestRandom.feedLongs(50L)
           res <- state.action(testUser, tap("FightCollector"), r)
           battle <- dao.readActiveBattle(userId).map(_.flatMap(_.as[SoloPveBattle].toOption).get)
@@ -304,7 +328,9 @@ object MarisaQuestSpec extends ZIOSpecDefault {
           _   <- state.enter(testUser, r)
           q   <- quests(dao)
           end <- texts(r)
+          fin <- o.of(after.id, NpcQuest.Marisa)
         } yield assertTrue(res == StateType.Battle) &&
+                assertTrue(fin.contains(QuestOutcome.MarisaKilledAlone)) &&
                 assertTrue(battle.monsterName == "Коллектор" && battle.story.contains("collector")) &&
                 assertTrue(battle.monsterLvl == 2L && battle.monsterRace == Race.Human.entryName && battle.monsterRarity == MobRarity.Uncommon.entryName) &&
                 assertTrue(battle.monsterStats.hp == base.fightStats.hp + 75L && battle.monsterStats.armor == base.fightStats.armor + 100L) &&
@@ -323,17 +349,20 @@ object MarisaQuestSpec extends ZIOSpecDefault {
             sched <- TestScheduler.make
             r   <- TestRenderer.make
             c   <- content
-            state = MarisaHuntState(dao, TestInventoryRepository.withItems(List(letter(), map())), sched, c)
+            o   <- TestQuestOutcomeDao.make
+            state = MarisaHuntState(dao, TestInventoryRepository.withItems(List(letter(), map())), sched, c, outcomes = Some(o))
             _   <- state.enter(testUser, r)
             ask <- r.sentScreens.map(_.last)
             res <- state.action(testUser, tap(action), r)
             h   <- heroOf(dao)
             all <- texts(r)
-          } yield (ask, res, h, all)
+            end <- o.of(h.id, NpcQuest.Marisa)
+          } yield (ask, res, h, all, end)
         for {
           gave <- run("GiveMarisa")
           kept <- run("KeepSilver")
         } yield assertTrue(gave._1.text.contains("Мариса недовольна") && gave._1.choices.map(_.id) == List("GiveMarisa", "KeepSilver")) &&
+                assertTrue(gave._5.contains(QuestOutcome.MarisaSaved) && kept._5.contains(QuestOutcome.MarisaAbandoned)) &&
                 assertTrue(gave._2 == StateType.GlobalMap && gave._3.silver == 20000L - 14644L && gave._3.hasAchievement(Achievement.MarisaSavior)) &&
                 assertTrue(kept._2 == StateType.GlobalMap && kept._3.silver == 20000L && kept._3.hasAchievement(Achievement.Scoundrel)) &&
                 assertTrue(kept._4.contains("стыдно") && kept._4.contains("Мерзавец"))
@@ -350,8 +379,10 @@ object MarisaQuestSpec extends ZIOSpecDefault {
           r   <- TestRenderer.make
           c   <- content
           _   <- TestRandom.feedInts(1)
-          _   <- DeathState(dao, inv, c).enter(testUser, r)
+          o   <- TestQuestOutcomeDao.make
+          _   <- DeathState(dao, inv, c, outcomes = Some(o)).enter(testUser, r)
           dead <- heroOf(dao)
+          fell <- o.of(dead.id, NpcQuest.Marisa)
           q   <- quests(dao)
           sched <- TestScheduler.make
           rest = RestState(dao, sched, c)
@@ -361,6 +392,7 @@ object MarisaQuestSpec extends ZIOSpecDefault {
           woke <- rest.action(testUser, UserAction("", None), r)
           all <- texts(r)
         } yield assertTrue(dead.silver == 5000L && dead.doubloons == 45L) &&     // 20 000 − max(10 000, 15 000)
+                assertTrue(fell.contains(QuestOutcome.MarisaFell)) &&
                 assertTrue(inv.snapshot.isEmpty && q.isDone(NpcQuest.Marisa)) &&
                 assertTrue(scene.exists(_.hcursor.get[String]("wakeTo").toOption.contains("GlobalMap"))) &&
                 assertTrue(woke == StateType.GlobalMap) &&

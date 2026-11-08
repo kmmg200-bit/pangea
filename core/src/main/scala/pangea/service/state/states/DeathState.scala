@@ -3,10 +3,12 @@ package pangea.service.state.states
 import io.circe.Json
 import io.circe.syntax.EncoderOps
 import pangea.dao.hero.HeroDao
+import pangea.dao.quest.QuestOutcomeDao
 import pangea.engine.{Renderer, SceneContent, Screen}
 import pangea.model.battle.SoloPveBattle
 import pangea.model.hero.AzatState
 import pangea.model.item.ItemStack
+import pangea.model.quest.QuestOutcome
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.model.artifact.ArtifactKind
@@ -15,8 +17,8 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
-import pangea.service.state.{AzatData, BarrelThievesQuest, HedgeSongQuest, LostSquadQuest, MarisaQuest, MurlocQuest, State, StrayCasketQuest,
-  UserAction}
+import pangea.service.state.{AzatData, BarrelThievesQuest, HedgeSongQuest, LostSquadQuest, MarisaQuest, MurlocQuest, QuestOutcomeLog, State,
+  StrayCasketQuest, UserAction}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
 
@@ -24,7 +26,9 @@ case class DeathState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
   content:       SceneContent,
-  artifacts:     Option[ArtifactRepository] = None
+  artifacts:     Option[ArtifactRepository] = None,
+  // Пал от коллектора — исход «Письма Марисе» (см. QuestOutcome).
+  outcomes:      Option[QuestOutcomeDao] = None
 ) extends State {
 
   override def targetStates: Set[StateType] = Set(StateType.Rest)
@@ -108,7 +112,8 @@ case class DeathState(
       deathRestMs      = (deathRestMinutes * 60000.0 * hero.sets.deathRestMult).toLong
       // Коллектор: задание закрыто здесь же, а что сказать и куда идти —
       // RestState прочитает при пробуждении.
-      _            <- ZIO.when(collector)(MarisaQuest.finish(heroDao, inventoryRepo, content, user.userId, hero))
+      _            <- ZIO.when(collector)(MarisaQuest.finish(heroDao, inventoryRepo, content, user.userId, hero) *>
+                        QuestOutcomeLog.record(outcomes, hero, QuestOutcome.MarisaFell))
       wake          = if (collector) Json.obj(
                         "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
                         "wakeLines" -> List(
