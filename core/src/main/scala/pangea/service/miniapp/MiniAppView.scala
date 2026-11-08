@@ -13,7 +13,7 @@ import pangea.model.inventory.Inventory
 import pangea.model.item.{BeltSlot, Item, ItemDetails, ItemStack, ItemType, Rarity}
 import pangea.model.squad.AllyRates
 import pangea.service.state.QuestJournal
-import pangea.service.state.states.EquipmentState
+import pangea.service.state.states.{EquipmentState, InventoryState}
 import pangea.service.state.states.hero.SkillsState
 import pangea.service.state.states.home.{RuneAltarState, TrophyWallState}
 import pangea.service.state.states.hero.SkillsState.SkillEntry
@@ -37,12 +37,32 @@ object MiniAppView {
     rarityRank: Int,
     lvl:        Long,
     count:      Int,
-    text:       String
+    text:       String,
+    stats:      List[ItemStatView],
+    skill:      Option[String],
+    passive:    Option[String],
+    sockets:    Int,
+    gems:       Int,
+    set:        Option[String],
+    variant:    Option[String]
   )
+
+  /** Прибавка вещи или разница при замене: `key` — `attack`, `defence`,
+    * `armor`, `hp`, `evasion`, `accuracy`, `energy`. Нулевые не присылаем. */
+  final case class ItemStatView(key: String, value: Long)
+
+  /** Вещь из сумки на этот слот: что изменится у героя, если её надеть (`deltas`,
+    * со всем — наборами, камнями, двуручным поверх двух одноручных), и как
+    * сдвинется её набор (`set`). */
+  final case class CandidateView(item: ItemView, deltas: List[ItemStatView], set: Option[SetChangeView])
+
+  /** Набор вещи-кандидата: сколько его надето сейчас, сколько станет и из скольких. */
+  final case class SetChangeView(name: String, before: Int, after: Int, max: Int)
 
   /** Слот снаряжения: что надето; `busy` — пустой, но занят (левая рука под
     * двуручным: само оружие — в правой); `belt` — что лежит в поясе. */
-  final case class SlotView(name: String, item: Option[ItemView], busy: Option[String], belt: Option[BeltView])
+  final case class SlotView(name: String, item: Option[ItemView], busy: Option[String], belt: Option[BeltView],
+                            candidates: List[CandidateView])
 
   /** Ячейка пояса: что в ней и сколько из скольких. Опустевшая помнит, чем
     * была полна, — `uses` у неё ноль. */
@@ -71,7 +91,9 @@ object MiniAppView {
   final case class SectionView(title: Option[String], items: List[ItemView])
   final case class CountView(label: String, value: Long)
 
-  final case class HeroView(lvl: Long, silver: Long, doubloons: Long)
+  /** Шапка героя: уровень и деньги — во всех ответах; имя (у прошедших пролог
+    * до имён его нет) и раса — для подписи над куклой снаряжения. */
+  final case class HeroView(lvl: Long, silver: Long, doubloons: Long, name: Option[String], race: String)
 
   final case class InventoryView(
     hero:      HeroView,
@@ -200,7 +222,10 @@ object MiniAppView {
     pendingRisen: Option[String]
   )
 
+  implicit val itemStatEncoder:  Encoder[ItemStatView]  = deriveEncoder
   implicit val itemEncoder:      Encoder[ItemView]      = deriveEncoder
+  implicit val setChangeEncoder: Encoder[SetChangeView] = deriveEncoder
+  implicit val candidateEncoder: Encoder[CandidateView] = deriveEncoder
   implicit val beltCellEncoder:  Encoder[BeltCellView]  = deriveEncoder
   implicit val beltEncoder:      Encoder[BeltView]      = deriveEncoder
   implicit val slotEncoder:      Encoder[SlotView]      = deriveEncoder
@@ -228,13 +253,15 @@ object MiniAppView {
   implicit val allyEncoder:      Encoder[AllyView]      = deriveEncoder
   implicit val squadEncoder:     Encoder[SquadView]     = deriveEncoder
 
-  def hero(h: Hero): HeroView = HeroView(h.lvl, h.silver, h.doubloons)
+  def hero(h: Hero): HeroView = HeroView(h.lvl, h.silver, h.doubloons, h.name, h.raceName)
 
   /** Что лежит у героя по хранилищам — кроме сумки: она приходит своим полем. */
   final case class Stores(artifacts: HeroArtifacts, barrel: Barrel, vault: BankVault, home: HomeData)
 
   /** Сумка — стопками, как в боте, — всё надетое и остальные хранилища. */
-  def inventory(h: Hero, inv: Inventory, stores: Stores, content: SceneContent, describe: Item => String): InventoryView =
+  def inventory(h: Hero, inv: Inventory, stores: Stores, content: SceneContent, describe: Item => String,
+                now: Long): InventoryView = {
+    val before = h.card(now)
     InventoryView(
       hero      = hero(h),
       capacity  = inv.maxItems,
@@ -243,14 +270,44 @@ object MiniAppView {
       equipment = EquipmentState.slots.map { slot =>
                     val worn = slot.get(h.equipment)
                     SlotView(
-                      name = slot.name,
-                      item = Option.when(worn.itemType != ItemType.NoItem)(view(worn, 1, EquipmentState.itemStats(worn))),
-                      busy = Option.when(slot.busy(h.equipment))(EquipmentState.LeftBusyText),
-                      belt = belt(worn)
+                      name       = slot.name,
+                      item       = Option.when(worn.itemType != ItemType.NoItem)(view(worn, 1, EquipmentState.itemStats(worn))),
+                      busy       = Option.when(slot.busy(h.equipment))(EquipmentState.LeftBusyText),
+                      belt       = belt(worn),
+                      candidates = candidates(h, before, slot, inv.items.data, describe, now)
                     )
                   },
       storages  = storages(stores, content, describe)
     )
+  }
+
+  /** Что из сумки встанет в слот ([[EquipmentState.fitting]]) и что изменится,
+    * если надеть: вещь примеряется так же, как её надевает бот
+    * ([[InventoryState.equipWith]]), и сравниваются карточки героя до и после.
+    * Одинаковые вещи — одной строкой со счётчиком. */
+  private def candidates(h: Hero, before: HeroCard, slot: EquipmentState.Slot, items: List[Item],
+                         describe: Item => String, now: Long): List[CandidateView] =
+    ItemStack.grouped(EquipmentState.fitting(h, slot, items)).map { case (it, count) =>
+      val done  = InventoryState.equipWith(h, it, slot.pairSlot, now)
+      val worn  = h.copy(equipment = done.equipment, fightStats = done.fightStats)
+      val after = worn.card(now)
+      CandidateView(
+        item   = view(it, count, describe(it)),
+        deltas = statList(
+          "attack"   -> (after.fight.atk - before.fight.atk),
+          "defence"  -> (after.fight.defence - before.fight.defence),
+          "armor"    -> (after.maxArmor - before.maxArmor),
+          "hp"       -> (after.maxHp - before.maxHp),
+          "evasion"  -> (after.fight.evasion - before.fight.evasion),
+          "accuracy" -> (after.fight.accuracy - before.fight.accuracy),
+          "energy"   -> (after.maxEnergy - before.maxEnergy)),
+        set    = it.set.map(st => SetChangeView(st.label, h.sets.shownPieces(st), worn.sets.shownPieces(st),
+                   worn.sets.thresholds(st).maxOption.getOrElse(worn.sets.shownPieces(st))))
+      )
+    }
+
+  private def statList(pairs: (String, Long)*): List[ItemStatView] =
+    pairs.toList.collect { case (k, v) if v != 0L => ItemStatView(k, v) }
 
   private def stacked(items: List[Item], describe: Item => String): List[ItemView] =
     ItemStack.grouped(items).map { case (item, count) => view(item, count, describe(item)) }
@@ -440,8 +497,25 @@ object MiniAppView {
       rarityRank = Rarity.order(item.rarity),
       lvl        = item.lvl,
       count      = count,
-      text       = text
+      text       = text,
+      stats      = statList("attack" -> item.attack, "defence" -> item.defence, "armor" -> item.armor,
+                     "hp" -> item.hp, "evasion" -> item.evasion, "accuracy" -> item.accuracy, "energy" -> item.energy),
+      skill      = item.activeSkill.map(_.label),
+      passive    = item.passive.map(_.label),
+      sockets    = item.sockets.size,
+      gems       = item.sockets.count(_.isDefined),
+      set        = item.set.map(_.label),
+      variant    = variant(item)
     )
+
+  /** Чем вещь отличается внутри своего типа — для значка: лук и арбалет среди
+    * оружия, трава и пыль среди материалов. */
+  private def variant(item: Item): Option[String] = item.details match {
+    case _ if item.itemType == ItemType.Weapon && item.ranged => Some("ranged")
+    case ItemDetails.Material(k) if k.isHerb                  => Some("herb")
+    case ItemDetails.Material(k) if k.gem.isDefined           => Some("dust")
+    case _                                                    => None
+  }
 
   private def currency(c: AuctionCurrency): String = c match {
     case AuctionCurrency.Silver    => "silver"

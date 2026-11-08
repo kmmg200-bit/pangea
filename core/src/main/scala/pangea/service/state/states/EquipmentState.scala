@@ -179,11 +179,7 @@ case class EquipmentState(
     * старшие по уровню: там обычно и прибавка больше. */
   private def fittingItems(hero: Hero, slot: Slot): Task[List[Item]] =
     inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
-      .map(_.items.data
-        // Розы, выкованные до переезда в пояс, лежат в сумке вещами доп. слота —
-        // примерять их больше некуда, место цветка теперь в ячейке.
-        .filter(i => slot.accepts.contains(i.itemType) && i.rose.isEmpty && i.lvl <= hero.lvl)
-        .sortBy(i => (-i.lvl, i.name)))
+      .map(inv => EquipmentState.fitting(hero, slot, inv.items.data))
 
   /** Ряд навигации карточки: «Назад» и страницы подбора, если их больше одной. */
   private def pickNav(page: Int, totalPages: Int): List[Choice] = {
@@ -509,6 +505,15 @@ object EquipmentState {
     pairSlot: Option[Int]          = None,
     busy:     Equipment => Boolean = _ => false
   )
+
+  /** Что из `items` встанет в этот слот: тип подходит, уровень по плечу. Сверху
+    * — старшие по уровню: там обычно и прибавка больше. Розы, выкованные до
+    * переезда в пояс, лежат в сумке вещами доп. слота — примерять их больше
+    * некуда, место цветка теперь в ячейке. Общее для карточки слота в боте и
+    * для «Снаряжения» в Mini App. */
+  def fitting(hero: Hero, slot: Slot, items: List[Item]): List[Item] =
+    items.filter(i => slot.accepts.contains(i.itemType) && i.rose.isEmpty && i.lvl <= hero.lvl)
+      .sortBy(i => (-i.lvl, i.name))
 
   val slots: List[Slot] = List(
     Slot("Шлем",        _.helmet,       _.copy(helmet       = Item.NoItem), Set(ItemType.Helmet)),

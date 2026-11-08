@@ -14,6 +14,30 @@ export interface ItemView {
   count: number
   /** Описание — тот же текст, что в карточке бота. */
   text: string
+  /** Прибавки вещи, без нулевых. */
+  stats: StatChange[]
+  /** Активное умение и пассивка вещи. */
+  skill: string | null
+  passive: string | null
+  /** Гнёзд всего и сколько из них с камнем. */
+  sockets: number
+  gems: number
+  set: string | null
+  /** Подвид для значка: `ranged` — лук или арбалет, `herb` — трава, `dust` — пыль. */
+  variant: string | null
+}
+
+/** Прибавка или разница: attack, defence, armor, hp, evasion, accuracy, energy. */
+export interface StatChange {
+  key: string
+  value: number
+}
+
+/** Вещь из сумки на слот: что изменится у героя, если её надеть, и её набор. */
+export interface CandidateView {
+  item: ItemView
+  deltas: StatChange[]
+  set: { name: string; before: number; after: number; max: number } | null
 }
 
 export interface SlotView {
@@ -23,6 +47,8 @@ export interface SlotView {
   busy: string | null
   /** Что лежит в поясе — только у слота пояса. */
   belt: BeltView | null
+  /** Что из сумки встанет в этот слот. */
+  candidates: CandidateView[]
 }
 
 /** Пояс: сколько ячеек всего и что в каждой. Опустевшая ячейка помнит, чем
@@ -36,6 +62,9 @@ export interface HeroView {
   lvl: number
   silver: number
   doubloons: number
+  /** Имя героя; у прошедших пролог до имён его нет. */
+  name: string | null
+  race: string
 }
 
 export interface InventoryView {

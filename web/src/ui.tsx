@@ -1,6 +1,57 @@
 import { useEffect, useRef, type ReactNode } from 'react'
-import { kindOf } from './kinds'
+import { gameIcons, type GameIcon } from './gameIcons'
+import { iconOf, kindOf } from './kinds'
 import type { ItemView, PoolView } from './types'
+
+/** Иконка game-icons.net. Цвет — от текста (currentColor). Разметка — из
+  * своего файла gameIcons.ts, не из ответа бота. */
+export function Icon(props: { name: GameIcon; size?: number; className?: string }) {
+  return (
+    <svg
+      className={props.className ? `gi ${props.className}` : 'gi'}
+      viewBox="0 0 512 512"
+      width={props.size ?? 22}
+      height={props.size ?? 22}
+      aria-hidden
+      dangerouslySetInnerHTML={{ __html: gameIcons[props.name] }}
+    />
+  )
+}
+
+/** Переключатель частей вкладки: «Герой | Снаряжение», «При себе | В городе | Дом». */
+export function Segment<T extends string>(props: {
+  options: { id: T; label: string }[]
+  value: T
+  onChange: (id: T) => void
+}) {
+  return (
+    <div className="segment" role="tablist">
+      {props.options.map((o) => (
+        <button
+          key={o.id}
+          role="tab"
+          aria-selected={o.id === props.value}
+          className={o.id === props.value ? 'segment-item segment-on' : 'segment-item'}
+          onClick={() => props.onChange(o.id)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** Плитка вещи: тёмный квадрат, иконка цветом редкости. Без вещи — серая иконка
+  * того, что сюда надевается. */
+export function Tile(props: { icon: GameIcon; rarity?: string }) {
+  return (
+    <span className={props.rarity ? `tile rarity-${props.rarity}` : 'tile tile-empty'} aria-hidden>
+      <Icon name={props.icon} />
+    </span>
+  )
+}
+
+export const ItemTile = (props: { item: ItemView }) => <Tile icon={iconOf(props.item)} rarity={props.item.rarity} />
 
 export const num = (n: number) => n.toLocaleString('ru-RU')
 
@@ -85,9 +136,7 @@ export function ItemRow(props: { item: ItemView; aside?: ReactNode; note?: React
   const kind = kindOf(props.item)
   return (
     <button className={`row rarity-${props.item.rarity}`} onClick={props.onOpen}>
-      <span className="row-icon" aria-hidden>
-        {kind.icon}
-      </span>
+      <ItemTile item={props.item} />
       <span className="row-body">
         <span className="row-title">{props.item.title}</span>
         <span className="row-sub">

@@ -1,9 +1,8 @@
 import { useMemo, useState } from 'react'
 import { BagTab } from './BagTab'
-import { EquipmentTab } from './EquipmentTab'
 import { Silver } from './icons'
 import type { InventoryView, ItemView, StorageView } from './types'
-import { Chips, Empty, ItemRow, ItemText, num, Sheet } from './ui'
+import { Chips, Empty, ItemRow, ItemText, num, Segment, Sheet } from './ui'
 
 type Group = StorageView['group']
 
@@ -13,19 +12,19 @@ const groups: { id: Group; label: string }[] = [
   { id: 'home', label: 'Дом' },
 ]
 
-/** Сумка и снаряжение — свои экраны; остальные хранилища приходят списком. */
+/** Сумка — свой экран; остальные хранилища приходят списком. Снаряжение — во
+  * вкладке «Персонаж». */
 const BAG = 'bag'
-const EQUIPMENT = 'equipment'
 
 function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void }) {
   const s = props.storage
   if (s.locked)
     return (
-      <div className="locked">
-        <div className="locked-icon" aria-hidden>
+      <div className="storage-locked">
+        <div className="storage-locked-icon" aria-hidden>
           🔒
         </div>
-        <div className="locked-title">{s.title}</div>
+        <div className="storage-locked-title">{s.title}</div>
         <p className="muted-note">{s.locked}</p>
       </div>
     )
@@ -87,12 +86,7 @@ export function ItemsTab(props: { data: InventoryView }) {
 
   const inGroup = useMemo(() => props.data.storages.filter((s) => s.group === group), [props.data.storages, group])
   const options = [
-    ...(group === 'self'
-      ? [
-          { id: BAG, label: 'Сумка' },
-          { id: EQUIPMENT, label: 'Снаряжение' },
-        ]
-      : []),
+    ...(group === 'self' ? [{ id: BAG, label: 'Сумка' }] : []),
     ...inGroup.map((s) => ({ id: s.id, label: s.locked ? `🔒 ${s.title}` : s.title })),
   ]
   // Первое открытое хранилище группы, пока игрок ничего не выбрал.
@@ -102,24 +96,10 @@ export function ItemsTab(props: { data: InventoryView }) {
 
   return (
     <>
-      <div className="segment" role="tablist">
-        {groups.map((g) => (
-          <button
-            key={g.id}
-            role="tab"
-            aria-selected={g.id === group}
-            className={g.id === group ? 'segment-item segment-on' : 'segment-item'}
-            onClick={() => setGroup(g.id)}
-          >
-            {g.label}
-          </button>
-        ))}
-      </div>
+      <Segment options={groups} value={group} onChange={setGroup} />
       <Chips options={options} value={current} onChange={(id) => setPicked({ ...picked, [group]: id })} />
       {current === BAG && group === 'self' ? (
         <BagTab data={props.data} />
-      ) : current === EQUIPMENT && group === 'self' ? (
-        <EquipmentTab data={props.data} />
       ) : storage ? (
         <Storage storage={storage} onOpen={setOpen} />
       ) : null}

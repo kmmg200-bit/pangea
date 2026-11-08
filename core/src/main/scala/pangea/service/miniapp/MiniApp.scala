@@ -120,7 +120,8 @@ final class MiniAppLive(
       vault    <- vaults.find(hero.id).map(_.getOrElse(BankVault.empty(hero.id)))
       home     <- heroDao.readHomeData(hero.userId).map(_.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty))
       describe <- describer(hero)
-    } yield MiniAppView.inventory(hero, inv, MiniAppView.Stores(arts, barrel, vault, home), content, describe)
+      ms       <- now
+    } yield MiniAppView.inventory(hero, inv, MiniAppView.Stores(arts, barrel, vault, home), content, describe, ms)
 
   override def auction(hero: Hero): Task[AuctionView] =
     for {

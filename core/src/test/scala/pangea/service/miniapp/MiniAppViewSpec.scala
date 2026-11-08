@@ -48,7 +48,7 @@ object MiniAppViewSpec extends ZIOSpecDefault {
 
     test("одинаковые камни — одной стопкой со счётчиком, оружие — само по себе") {
       val hero = TestFixtures.hero(UserId(1L))
-      val view = MiniAppView.inventory(hero, inv(hero, List(ruby(1L), sword, ruby(2L))), nothing(hero), content, _.name)
+      val view = MiniAppView.inventory(hero, inv(hero, List(ruby(1L), sword, ruby(2L))), nothing(hero), content, _.name, 0L)
       assertTrue(
         view.items.map(i => i.kind -> i.count) == List("Gem" -> 2, "Weapon" -> 1),
         view.items.lastOption.exists(i => i.id == 10L && i.rarity == "Blue" && i.text.contains("Меч")),
@@ -60,7 +60,7 @@ object MiniAppViewSpec extends ZIOSpecDefault {
     test("снаряжение — все слоты; левая рука под двуручным занята им") {
       val hero = TestFixtures.hero(UserId(1L)).copy(id = HeroId(7L),
         equipment = TestFixtures.emptyEquipment.copy(weapon = greatsword))
-      val view  = MiniAppView.inventory(hero, inv(hero, Nil), nothing(hero), content, _.name)
+      val view  = MiniAppView.inventory(hero, inv(hero, Nil), nothing(hero), content, _.name, 0L)
       val right = view.equipment.find(_.name == EquipmentState.RightHandName)
       val left  = view.equipment.find(_.name == EquipmentState.LeftHandName)
       assertTrue(
@@ -165,7 +165,7 @@ object MiniAppViewSpec extends ZIOSpecDefault {
 
     test("хранилища: некупленные артефакты и дом без дома — с замком и тем, как открыть; бочка открыта всегда") {
       val hero = TestFixtures.hero(UserId(1L))
-      val view = MiniAppView.inventory(hero, inv(hero, Nil), nothing(hero), content, _.name)
+      val view = MiniAppView.inventory(hero, inv(hero, Nil), nothing(hero), content, _.name, 0L)
       def of(id: String) = view.storages.find(_.id == id)
       assertTrue(
         view.storages.map(_.id) == List("casket", "livingBag", "wardrobe", "barrel", "vault",
@@ -182,7 +182,7 @@ object MiniAppViewSpec extends ZIOSpecDefault {
       val hero = TestFixtures.hero(UserId(1L))
       val home = HomeData.empty.copy(tier = House.Townhouse.tier, herbs = List(ruby(5L)),
                    runes = Map(pangea.model.rune.Rune.Passive(pangea.model.item.PassiveKind.values.head).key -> 7L))
-      val view = MiniAppView.inventory(hero, inv(hero, Nil), nothing(hero, home), content, _.name)
+      val view = MiniAppView.inventory(hero, inv(hero, Nil), nothing(hero, home), content, _.name, 0L)
       def of(id: String) = view.storages.find(_.id == id)
       assertTrue(
         of("herbs").exists(h => h.locked.isEmpty && h.used.contains(1L) && h.sections.flatMap(_.items).size == 1),
@@ -200,12 +200,30 @@ object MiniAppViewSpec extends ZIOSpecDefault {
           BeltSlot.Flask(FlaskKind.Healer, Rarity.Blue, 0),
           BeltSlot.Brew(BrewKind.LivingWater, 2))))
       val hero = TestFixtures.hero(UserId(1L)).copy(equipment = TestFixtures.emptyEquipment.copy(belt = belt))
-      val view = MiniAppView.inventory(hero, inv(hero, Nil), nothing(hero), content, _.name)
+      val view = MiniAppView.inventory(hero, inv(hero, Nil), nothing(hero), content, _.name, 0L)
       val cells = view.equipment.flatMap(_.belt).flatMap(_.cells)
       assertTrue(
         view.equipment.flatMap(_.belt).map(_.capacity) == List(ItemDetails.Belt.capacityFor(Rarity.Blue)),
         cells.map(c => c.name -> c.uses) == List(FlaskKind.Healer.label -> 0, BrewKind.LivingWater.label -> 2),
         cells.lastOption.exists(_.max == ItemDetails.Belt.capacityFor(Rarity.Blue))
+      )
+    },
+
+    test("снаряжение: в слот — только подходящее по типу и уровню; разница — как после надевания") {
+      val better = sword.copy(id = 11L, name = "Меч получше", attack = 30, lvl = 1L)
+      val tooHigh = sword.copy(id = 12L, name = "Меч не по силам", attack = 99, lvl = 50L)
+      val hero = TestFixtures.hero(UserId(1L)).copy(equipment = TestFixtures.emptyEquipment.copy(weapon = sword.copy(lvl = 1L)))
+      val view = MiniAppView.inventory(hero, inv(hero, List(better, tooHigh, ruby(1L))), nothing(hero), content, _.name, 0L)
+      val right = view.equipment.find(_.name == EquipmentState.RightHandName)
+      val cands = right.toList.flatMap(_.candidates)
+      // Как надевает бот: статы сдвигаются на разницу вещей (Hero.reequip).
+      val after = hero.reequip(hero.equipment.copy(weapon = better), 0L).card(0L)
+      val atk   = after.fight.atk - hero.card(0L).fight.atk
+      assertTrue(
+        cands.map(_.item.id) == List(11L),
+        cands.flatMap(_.deltas).find(_.key == "attack").exists(d => d.value == atk && d.value == 18L),
+        right.flatMap(_.item).exists(_.stats.exists(st => st.key == "attack" && st.value == 12L)),
+        view.equipment.find(_.name == "Шлем").exists(_.candidates.isEmpty)
       )
     }
   )
