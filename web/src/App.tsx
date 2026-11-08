@@ -13,13 +13,13 @@ import type { GameIcon } from './gameIcons'
 import { ErrorView, Icon, Segment, Spinner } from './ui'
 import { useLoad, type Loaded } from './useLoad'
 
-type Tab = 'character' | 'quests' | 'items' | 'top' | 'auction'
+/** Разделы: нижняя панель и топ — его кубок в шапке. */
+type Tab = 'character' | 'quests' | 'items' | 'auction' | 'top'
 
-const tabs: { id: Tab; icon: GameIcon; label: string }[] = [
+const tabs: { id: Exclude<Tab, 'top'>; icon: GameIcon; label: string }[] = [
   { id: 'character', icon: 'hooded-figure', label: 'Персонаж' },
   { id: 'quests', icon: 'scroll-quill', label: 'Задания' },
   { id: 'items', icon: 'knapsack', label: 'Вещи' },
-  { id: 'top', icon: 'podium', label: 'Топ' },
   { id: 'auction', icon: 'gavel', label: 'Аукцион' },
 ]
 
@@ -32,12 +32,14 @@ const heroParts: { id: HeroPart; label: string }[] = [
   { id: 'squad', label: 'Отряд' },
 ]
 
-/** Вкладка из адреса (`#top`, `#equipment`, `#squad`): так приложение можно открыть сразу на нужной. */
+/** Раздел из адреса (`#top`, `#equipment`, `#squad`): так приложение можно открыть сразу на нужном. */
 const hash = window.location.hash.replace(/^#/, '')
 const hashPart = heroParts.find((p) => p.id === hash)?.id
 
 function initialTab(): Tab {
-  return hashPart ? 'character' : (tabs.find((t) => t.id === hash)?.id ?? 'character')
+  if (hashPart) return 'character'
+  if (hash === 'top') return 'top'
+  return tabs.find((t) => t.id === hash)?.id ?? 'character'
 }
 
 /** Загрузка каждого топа — одна на всё время работы, чтобы `useLoad` не грузил заново. */
@@ -50,7 +52,13 @@ const topLoaders: Record<TopKind, () => Promise<TopView>> = {
 /** Что уже открывали: вкладку, часть «Персонажа» или топ (`top-level`). */
 type Seen = Tab | HeroPart | `top-${TopKind}`
 
-function HeroBar(props: { hero: HeroView | undefined; loading: boolean; onReload: () => void }) {
+function HeroBar(props: {
+  hero: HeroView | undefined
+  loading: boolean
+  onReload: () => void
+  topOn: boolean
+  onTop: () => void
+}) {
   return (
     <header className="hero">
       <span className="hero-stats">
@@ -66,14 +74,24 @@ function HeroBar(props: { hero: HeroView | undefined; loading: boolean; onReload
           <span>Клеймо Пангеи</span>
         )}
       </span>
-      <button
-        className={props.loading ? 'reload reload-on' : 'reload'}
-        onClick={props.onReload}
-        aria-label="Обновить"
-        disabled={props.loading}
-      >
-        ⟳
-      </button>
+      <span className="hero-actions">
+        <button
+          className={props.topOn ? 'top-button top-button-on' : 'top-button'}
+          onClick={props.onTop}
+          aria-current={props.topOn ? 'page' : undefined}
+        >
+          <Icon name="trophy-cup" size={20} />
+          <span>Топ</span>
+        </button>
+        <button
+          className={props.loading ? 'reload reload-on' : 'reload'}
+          onClick={props.onReload}
+          aria-label="Обновить"
+          disabled={props.loading}
+        >
+          ⟳
+        </button>
+      </span>
     </header>
   )
 }
@@ -132,7 +150,13 @@ export function App() {
 
   return (
     <div className="app">
-      <HeroBar hero={hero} loading={current.loading} onReload={current.reload} />
+      <HeroBar
+        hero={hero}
+        loading={current.loading}
+        onReload={current.reload}
+        topOn={tab === 'top'}
+        onTop={() => open('top')}
+      />
       <main className="content">
         {tab === 'character' && (
           <>
