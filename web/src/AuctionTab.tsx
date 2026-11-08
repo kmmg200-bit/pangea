@@ -129,6 +129,9 @@ export function AuctionTab(props: { data: AuctionView; onChange: (v: AuctionView
   const [view, setView] = useState<'all' | 'mine'>('all')
   const [group, setGroup] = useState<Group | 'all'>('all')
   const [currency, setCurrency] = useState<Currency | 'any'>('any')
+  // «По уровню» — только то, что герой может надеть: вещь не выше его уровня, как в боте.
+  const [level, setLevel] = useState<'any' | 'mine'>('any')
+  const heroLvl = props.data.hero.lvl
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('new')
   const [open, setOpen] = useState<LotView | null>(null)
@@ -138,10 +141,15 @@ export function AuctionTab(props: { data: AuctionView; onChange: (v: AuctionView
   const shown = useMemo(
     () =>
       sortLots(
-        lots.filter((l) => matches(l.item, group, query) && (currency === 'any' || l.currency === currency)),
+        lots.filter(
+          (l) =>
+            matches(l.item, group, query) &&
+            (currency === 'any' || l.currency === currency) &&
+            (level === 'any' || l.item.lvl <= heroLvl),
+        ),
         sort,
       ),
-    [lots, group, query, currency, sort],
+    [lots, group, query, currency, level, heroLvl, sort],
   )
 
   return (
@@ -170,6 +178,14 @@ export function AuctionTab(props: { data: AuctionView; onChange: (v: AuctionView
             ]}
             value={currency}
             onChange={setCurrency}
+          />
+          <Chips
+            options={[
+              { id: 'any' as const, label: 'Любой уровень' },
+              { id: 'mine' as const, label: `По моему уровню · до ${heroLvl}` },
+            ]}
+            value={level}
+            onChange={setLevel}
           />
           {groups.length > 1 && (
             <Chips
