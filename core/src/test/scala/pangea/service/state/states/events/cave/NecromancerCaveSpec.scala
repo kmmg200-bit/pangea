@@ -113,7 +113,7 @@ object NecromancerCaveSpec extends ZIOSpecDefault {
       val chisels = mats.count(_ == MaterialKind.RuneChisel)
       assertTrue(mats.toSet == Set[MaterialKind](MaterialKind.CursedBones, MaterialKind.RuneChisel)) &&
       assertTrue(gear.nonEmpty && gear.forall(_.set.contains(ItemSet.Necromancer))) &&
-      // синяя и фиолетовая — основа, оранжевая попадается на полпроцента роллов
+      // синяя — основа, фиолетовая — 5% вещей набора, оранжевая — полпроцента
       assertTrue(gear.map(_.rarity).toSet.subsetOf(
         Set[ItemRarity](ItemRarity.Purple, ItemRarity.Blue, ItemRarity.Orange))) &&
       assertTrue(gear.exists(_.rarity == ItemRarity.Purple) && gear.exists(_.rarity == ItemRarity.Blue)) &&

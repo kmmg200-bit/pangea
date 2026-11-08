@@ -234,7 +234,7 @@ object RatKingBattleSpec extends ZIOSpecDefault {
       assertTrue(runes.size > worms * 3 / 2 && runes.size < worms * 5 / 2) &&
       // вещи у него только своего набора, 32 билета: чуть больше, чем червей
       assertTrue(gear.nonEmpty && gear.forall(_.set.contains(ItemSet.Rat))) &&
-      // синяя и фиолетовая — основа, оранжевая попадается на полпроцента роллов
+      // синяя — основа, фиолетовая — 5% вещей набора, оранжевая — полпроцента
       assertTrue(gear.map(_.rarity).toSet.subsetOf(
         Set[ItemRarity](ItemRarity.Purple, ItemRarity.Blue, ItemRarity.Orange))) &&
       assertTrue(gear.exists(_.rarity == ItemRarity.Purple) && gear.exists(_.rarity == ItemRarity.Blue)) &&

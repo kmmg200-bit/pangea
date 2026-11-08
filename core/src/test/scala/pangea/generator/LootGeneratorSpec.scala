@@ -226,7 +226,7 @@ object LootGeneratorSpec extends ZIOSpecDefault {
       assertTrue(materials.forall(m => m.material.contains(pangea.model.item.MaterialKind.EverburningIron) ||
                                        m.material.contains(pangea.model.item.MaterialKind.RuneChisel))) &&
       // 40% роллов — ингредиент, 10% — руна, 10% — резец, остальное вещь набора: синяя почти
-      // всегда, фиолетовая на 5% роллов, оранжевая на полпроцента
+      // всегда, фиолетовая — 5% вещей набора, оранжевая — полпроцента
       assertTrue(gear.forall(g => g.rarity == pangea.model.item.Rarity.Purple || g.rarity == pangea.model.item.Rarity.Blue ||
                                   g.rarity == pangea.model.item.Rarity.Orange)) &&
       assertTrue(gear.exists(_.rarity == pangea.model.item.Rarity.Purple)) &&
@@ -262,28 +262,42 @@ object LootGeneratorSpec extends ZIOSpecDefault {
       assertTrue(LootGenerator.rarityCap(MobRarity.Legendary) == pangea.model.item.Rarity.Orange)
     },
 
-    test("редкости вещей минибосса: 5% роллов фиолетовая, полпроцента оранжевая, остальное синее") {
-      // Доли считаются от ВСЕЙ добычи босса, а не от вещевой её части: у
-      // элементаля вещей половина роллов, у Джо четверть — фиолетовых всё равно
-      // 5%, оранжевых полпроцента.
-      def shares(boss: pangea.model.monster.MiniBoss): (Double, Double, Double) = {
-        val drops = (1L to 4000L).toList.flatMap(s => LootGenerator.rollMiniBoss(boss, 2L, 40L, Rng(s))._1)
-        val gear  = drops.flatMap(_.itemOpt)
-        def pct(r: pangea.model.item.Rarity): Double =
-          gear.count(_.rarity == r).toDouble * 100.0 / drops.size
-        (pct(pangea.model.item.Rarity.Purple), pct(pangea.model.item.Rarity.Orange),
-         pct(pangea.model.item.Rarity.Blue))
+    test("редкость вещи набора с минибосса: 5% фиолетовых, 0,5% легендарных, остальное синее — и после ингредиента не больше") {
+      import pangea.model.item.{Rarity => IR}
+      import pangea.model.monster.MiniBoss
+      def share(items: List[Item], r: IR): Double = items.count(_.rarity == r).toDouble * 100.0 / items.size
+      // Первый бросок с босса всегда идёт по полной шкале: среди вещей набора с
+      // него фиолетовых 5% и легендарных 0,5% — и у элементаля, где вещи берут
+      // 40% бросков, и у Джо, где 15%.
+      def firstGear(boss: MiniBoss): List[Item] =
+        (1L to 6000L).toList.flatMap(s => LootGenerator.rollMiniBoss(boss, 2L, 40L, Rng(s))._1.headOption)
+          .flatMap(_.itemOpt).filter(_.set.isDefined)
+      val fireFirst = firstGear(MiniBoss.FireElemental)
+      val joeFirst  = firstGear(MiniBoss.RottenJoe)
+      // На бросок добычи за весь бой — и после выпавшего ингредиента: фиолетовая
+      // и легендарная выпадают с шансом 5% и 0,5% от вещевой доли ПОЛНОЙ шкалы.
+      // На BossLvL 10 бросков десять-одиннадцать, и почти все — уже без
+      // ингредиента: выросли бы доли после него — выросло бы и это.
+      def perRoll(boss: MiniBoss): (Double, Double) = {
+        val drops = (1L to 3000L).toList.flatMap(s => LootGenerator.rollMiniBoss(boss, 10L, 40L, Rng(s))._1)
+        val gear  = drops.flatMap(_.itemOpt).filter(_.set.isDefined)
+        (gear.count(_.rarity == IR.Purple).toDouble * 100.0 / drops.size,
+         gear.count(_.rarity == IR.Orange).toDouble * 100.0 / drops.size)
       }
-      val (firePurple, fireOrange, fireBlue)   = shares(pangea.model.monster.MiniBoss.FireElemental)
-      val (joePurple,  joeOrange,  joeBlue)    = shares(pangea.model.monster.MiniBoss.RottenJoe)
-      assertTrue(LootGenerator.BossPurplePerMille == 50L && LootGenerator.BossOrangePerMille == 5L) &&
-      assertTrue(firePurple > 3.5 && firePurple < 6.5) &&
-      assertTrue(joePurple > 3.5 && joePurple < 6.5) &&
-      assertTrue(fireOrange > 0.1 && fireOrange < 1.2) &&
-      assertTrue(joeOrange > 0.1 && joeOrange < 1.2) &&
-      // синих заметно больше — им ушла вся остальная вещевая доля (у Джо вещам
-      // осталось 15% роллов: синих 9,5 против 5 фиолетовых)
-      assertTrue(fireBlue > firePurple * 5) && assertTrue(joeBlue > joePurple)
+      val (firePurple, fireOrange) = perRoll(MiniBoss.FireElemental) // 2% и 0,2%: вещи — 40 из 100
+      val (joePurple,  joeOrange)  = perRoll(MiniBoss.RottenJoe)     // 0,75% и 0,075%: вещи — 15 из 100
+      assertTrue(LootGenerator.BossPurpleOfGearPerMille == 50L && LootGenerator.BossOrangeOfGearPerMille == 5L) &&
+      assertTrue(share(fireFirst, IR.Purple) > 3.8 && share(fireFirst, IR.Purple) < 6.2) &&
+      assertTrue(share(joeFirst, IR.Purple) > 3.0 && share(joeFirst, IR.Purple) < 7.0) &&
+      // легендарных — полпроцента вещей: у Джо их больше не 3%, как было
+      assertTrue(share(fireFirst, IR.Orange) < 1.0 && share(joeFirst, IR.Orange) < 1.5) &&
+      // всё, что не фиолетовое и не легендарное, — синее
+      assertTrue(share(fireFirst, IR.Blue) > 91.0 && share(joeFirst, IR.Blue) > 90.0) &&
+      assertTrue((fireFirst ++ joeFirst).forall(g => g.rarity == IR.Purple || g.rarity == IR.Blue || g.rarity == IR.Orange)) &&
+      assertTrue(firePurple > 1.7 && firePurple < 2.3) &&
+      assertTrue(joePurple > 0.6 && joePurple < 0.9) &&
+      assertTrue(fireOrange > 0.12 && fireOrange < 0.28) &&
+      assertTrue(joeOrange > 0.03 && joeOrange < 0.13)
     },
 
     test("у Гнилого Джо вещь набора тоже бывает и фиолетовой, и синей") {
@@ -297,7 +311,7 @@ object LootGeneratorSpec extends ZIOSpecDefault {
       assertTrue(gear.forall(g => g.rarity == pangea.model.item.Rarity.Purple || g.rarity == pangea.model.item.Rarity.Blue ||
                                   g.rarity == pangea.model.item.Rarity.Orange)) &&
       assertTrue(purple > 0.0) && assertTrue(blue > 0.0) &&
-      // синих много больше: фиолетовой достаётся 5% роллов, остальное ей
+      // синих много больше: фиолетовых — 5% вещей набора, остальное синим
       assertTrue(blue > purple * 2)
     },
 
@@ -354,8 +368,30 @@ object LootGeneratorSpec extends ZIOSpecDefault {
                                   g.rarity == pangea.model.item.Rarity.Orange)) &&
       assertTrue(gear.forall(_.name.endsWith(pangea.model.item.ItemSet.Hunter.title))) &&
       // с одного волка шкура — не больше одной, но со следующего может выпасть снова
-      assertTrue(rolls.forall(_.count(LootGenerator.isHide) <= 1)) &&
-      assertTrue(rolls.count(_.exists(LootGenerator.isHide)) > 1)
+      assertTrue(rolls.forall(_.count(LootGenerator.isIngredient(MiniBoss.WhiteWolf, _)) <= 1)) &&
+      assertTrue(rolls.count(_.exists(LootGenerator.isIngredient(MiniBoss.WhiteWolf, _))) > 1)
+    },
+
+    test("свой ингредиент с любого минибосса — не больше одного за бой, со следующего — снова") {
+      import pangea.model.monster.MiniBoss
+      // BossLvL 10: бросков с босса десять-одиннадцать (у короля и Некроманта —
+      // пять), и без предела ингредиент падал бы с одного босса по нескольку.
+      val counts = MiniBoss.values.toList.map { boss =>
+        boss -> (1L to 300L).toList.map(s =>
+          LootGenerator.rollMiniBoss(boss, 10L, 40L, Rng(s), floorLvl = 20L)._1.count(LootGenerator.isIngredient(boss, _)))
+      }
+      assertTrue(counts.forall { case (_, ns) => ns.forall(_ <= 1) }) &&
+      // и падает он с большинства: его доля в первых бросках прежняя
+      assertTrue(counts.forall { case (_, ns) => ns.count(_ == 1) > ns.size / 2 })
+    },
+
+    test("выпавший ингредиент отдаёт свою долю прочей добыче: вещей набора с элементаля больше 40% бросков") {
+      // Первый бросок идёт по полной шкале, а после ингредиента вещи набора
+      // берут уже 40 долей из 60.
+      val drops = (1L to 400L).toList.flatMap(s =>
+        LootGenerator.rollMiniBoss(pangea.model.monster.MiniBoss.FireElemental, 10L, 40L, Rng(s))._1)
+      val gearShare = drops.flatMap(_.itemOpt).count(_.set.isDefined).toDouble / drops.size
+      assertTrue(gearShare > 0.55 && gearShare < 0.70)
     },
 
     test("с каменного падают его магические камни и вещи «Каменного стража»") {
@@ -385,8 +421,10 @@ object LootGeneratorSpec extends ZIOSpecDefault {
     },
 
     test("ингредиент забирает 40% роллов элементаля, вещи набора — 40%, руна и резец рунописца — по десятой части") {
-      val items = (1L to 600L).iterator
-        .flatMap(s => LootGenerator.rollMiniBoss(pangea.model.monster.MiniBoss.FireElemental, 2L, 40L, Rng(s))._1)
+      // Смотрим первый бросок с каждого: он всегда идёт по полной шкале. Дальше
+      // выпавший ингредиент из шкалы выбывает (см. тест выше).
+      val items = (1L to 1500L).iterator
+        .flatMap(s => LootGenerator.rollMiniBoss(pangea.model.monster.MiniBoss.FireElemental, 2L, 40L, Rng(s))._1.headOption)
         .flatMap(_.itemOpt).toList
       def share(p: pangea.model.item.Item => Boolean): Double = items.count(p).toDouble / items.size
       val ingredientShare = share(_.material.contains(pangea.model.item.MaterialKind.EverburningIron))
