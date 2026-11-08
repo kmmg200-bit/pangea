@@ -82,7 +82,7 @@ docker compose logs -f collector  # приём событий ВК
 |---|---|
 | Игра, бот — почти всегда | `scripts/deploy-bot.sh` |
 | Приём событий ВК: `VkIngest`, `VkLongPoll`, `Role`, `entrypoint.sh`, настройки `collector` | бот, затем сборщик (см. ниже) |
-| VK Mini App (`web/`) | caddy с пересборкой |
+| VK Mini App (`web/`) | `scripts/deploy-app.sh` |
 | `docker/caddy/Caddyfile` | `docker compose restart caddy` |
 | `docker/prometheus/prometheus.yml` | `docker compose restart prometheus` |
 | Дашборд Grafana | ничего: Grafana сама перечитывает папку раз в 10 с |
@@ -192,12 +192,15 @@ docker compose up -d --no-deps collector
 
 ### VK Mini App и caddy
 
-Новая версия приложения (`web/`) — пересборка caddy:
+Новая версия приложения (`web/`) — пересборка caddy, и только его:
 
 ```bash
-git pull --ff-only
-docker compose up -d --build --no-deps caddy
+scripts/deploy-app.sh
 ```
+
+Внутри — `git pull --ff-only` и `docker compose up -d --build --no-deps caddy`.
+`scripts/deploy-bot.sh` приложение не обновляет: оно собирается в образе caddy.
+Приложение зовёт новые запросы бота — сначала бот, потом приложение.
 
 Только Caddyfile — `git pull --ff-only` и `docker compose restart caddy`
 (перезапуск, а не `caddy reload`: файл смонтирован в контейнер по одному, и
