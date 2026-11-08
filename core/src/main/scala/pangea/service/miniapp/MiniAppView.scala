@@ -270,14 +270,20 @@ object MiniAppView {
   final case class CraftActionView(craft: CraftView, note: Option[String], made: List[Long])
 
   /** «Отряд»: сколько мест в строю, где стоит герой и кто стоит рядом.
-    * `pendingRisen` — восставший ждёт у шатра, а мест нет: решают в боте. */
+    * `pendingRisen` — восставший ждёт у шатра, а мест нет: надо решить, кем за
+    * него пожертвовать. `locked` — почему строй сейчас не перестроить: герой в
+    * бою. */
   final case class SquadView(
     hero:         HeroView,
     positions:    Int,
     heroPosition: Int,
     allies:       List[AllyView],
-    pendingRisen: Option[String]
+    pendingRisen: Option[String],
+    locked:       Option[String]
   )
+
+  /** Ответ на приказ отряду: строй после него и что сказать. */
+  final case class SquadActionView(squad: SquadView, note: Option[String])
 
   implicit val itemStatEncoder:  Encoder[ItemStatView]  = deriveEncoder
   implicit val itemEncoder:      Encoder[ItemView]      = deriveEncoder
@@ -311,6 +317,7 @@ object MiniAppView {
   implicit val questsEncoder:    Encoder[QuestsView]    = deriveEncoder
   implicit val allyEncoder:      Encoder[AllyView]      = deriveEncoder
   implicit val squadEncoder:     Encoder[SquadView]     = deriveEncoder
+  implicit val squadActionEncoder: Encoder[SquadActionView] = deriveEncoder
   implicit val topEntryEncoder:  Encoder[TopEntryView]  = deriveEncoder
   implicit val topEncoder:       Encoder[TopView]       = deriveEncoder
   implicit val cubePowerEncoder: Encoder[CubePowerView] = deriveEncoder
@@ -596,7 +603,8 @@ object MiniAppView {
                          leaves   = Option.when(a.hiredUntil > now)(TimeLeft.format(a.hiredUntil - now))
                        )
                      },
-      pendingRisen = staying.pendingRisen.map(_.name)
+      pendingRisen = staying.pendingRisen.map(_.name),
+      locked       = Option.when(MiniApp.inBattle(h))(content.text("miniapp.squad.inBattle"))
     )
   }
 

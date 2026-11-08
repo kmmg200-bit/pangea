@@ -223,7 +223,16 @@ export interface SquadView {
   positions: number
   heroPosition: number
   allies: AllyView[]
+  /** Восставший ждёт у шатра, а мест нет: кем за него пожертвовать. */
   pendingRisen: string | null
+  /** Почему строй сейчас не перестроить: герой в бою. */
+  locked: string | null
+}
+
+/** Ответ на приказ отряду: строй после него и что сказать. */
+export interface SquadActionView {
+  squad: SquadView
+  note: string | null
 }
 
 /** Строка топа. `me` — сам герой. */

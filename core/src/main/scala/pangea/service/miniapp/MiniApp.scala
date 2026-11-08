@@ -26,9 +26,10 @@ import pangea.service.auction.AuctionPurchase
 import pangea.service.cube.AzatCube
 import pangea.service.equipment.Outfit
 import pangea.service.miniapp.MiniAppView.{AuctionActionView, AuctionView, CharacterView, CraftActionView, CraftView,
-  GearActionView, InventoryView, QuestsView, SquadView, TopView}
+  GearActionView, InventoryView, QuestsView, SquadActionView, SquadView, TopView}
 import pangea.service.payout.Payouts
-import pangea.service.state.{AzatData, HerbLore, NpcQuestLog, PlayerLock, QuestJournal}
+import pangea.service.squad.SquadOrders
+import pangea.service.state.{AzatData, HerbLore, NpcQuestLog, PlayerLock, QuestJournal, SquadDuty}
 import pangea.service.state.states.{EquipmentState, InventoryState}
 import zio.{Ref, Task, ZIO, ZLayer}
 
@@ -38,7 +39,8 @@ import java.util.concurrent.TimeUnit
   * чата. Просмотр безопасен из любого места, даже из боя: сцены, лок игрока и
   * `hero.state` не трогаются, а данные только читаются. Что меняет игру, идёт
   * под локом игрока — тем же, что и ходы в чате: куб Азата и покупка на
-  * аукционе — только когда герой в городе, снаряжение — когда он не в бою. */
+  * аукционе — только когда герой в городе, снаряжение и отряд — когда он не
+  * в бою. */
 trait MiniApp {
 
   /** Игрок по параметрам запуска приложения. Героя здесь не заводим: игру
@@ -50,6 +52,10 @@ trait MiniApp {
   def quests(hero: Hero): Task[QuestsView]
 
   def squad(hero: Hero): Task[SquadView]
+
+  /** Приказ отряду — как в «Отряде» в боте. Ответ — строй после него и что
+    * сказать. */
+  def squadOrder(hero: Hero, act: MiniApp.SquadAct): Task[SquadActionView]
 
   def inventory(hero: Hero): Task[InventoryView]
 
@@ -116,6 +122,18 @@ object MiniApp {
     final case class TakeOff(slot: Int)            extends GearAct
   }
 
+  /** Приказы отряду: переставить союзника (с места на место) или героя,
+    * выгнать союзника, решить про восставшего — занять им место союзника или
+    * отпустить. */
+  sealed trait SquadAct
+  object SquadAct {
+    final case class Move(from: Int, to: Int) extends SquadAct
+    final case class MoveHero(to: Int)        extends SquadAct
+    final case class Dismiss(at: Int)         extends SquadAct
+    final case class TakeRisen(at: Int)       extends SquadAct
+    case object DismissRisen                  extends SquadAct
+  }
+
   /** Чем кончилось действие: что сказать и номера вещей, что получились. */
   private[miniapp] final case class Outcome(note: Option[String], made: List[Long])
 
@@ -129,9 +147,9 @@ object MiniApp {
     * покупать на аукционе, как и передавать вещи. */
   def inCity(hero: Hero): Boolean = StateType.cityStates.contains(hero.state)
 
-  /** Герой в бою — тогда снаряжение из приложения не меняют: ход боя уже
-    * посчитан на надетом. Любой бой — в лабиринте, сюжетный, на арене — это
-    * [[StateType.Battle]]. */
+  /** Герой в бою — тогда снаряжение и строй из приложения не меняют: ход боя
+    * считается на надетом и на том, кто где стоит. Любой бой — в лабиринте,
+    * сюжетный, на арене — это [[StateType.Battle]]. */
   def inBattle(hero: Hero): Boolean = hero.state == StateType.Battle
 
   val live: ZLayer[MiniAppConfig with UserRepository with HeroRepository with InventoryRepository with AuctionRepository
@@ -160,7 +178,7 @@ object MiniApp {
       } yield new MiniAppLive(config, users, heroes, inventories, lots, heroDao, artifacts, barrels, vaults, content,
         tops, topCache, new AzatCube(heroDao, inventories, items, content),
         new AuctionPurchase(heroDao, inventories, lots, users, bank, payouts, players, content),
-        new Outfit(heroDao, inventories, items, content), lock)
+        new Outfit(heroDao, inventories, items, content), new SquadOrders(heroDao, content), lock)
     }
 }
 
@@ -180,9 +198,10 @@ final class MiniAppLive(
   azatCube:    AzatCube,
   purchase:    AuctionPurchase,
   outfit:      Outfit,
+  orders:      SquadOrders,
   lock:        PlayerLock
 ) extends MiniApp {
-  import MiniApp.{CubeAct, Denied, GearAct, Outcome}
+  import MiniApp.{CubeAct, Denied, GearAct, Outcome, SquadAct}
 
   override def player(launchParams: String): Task[Either[Denied, Hero]] =
     config.vkSecret.map(_.trim).filter(_.nonEmpty) match {
@@ -216,6 +235,39 @@ final class MiniAppLive(
 
   override def squad(hero: Hero): Task[SquadView] =
     now.map(ms => MiniAppView.squad(hero, content, ms))
+
+  /** Под локом игрока, героя перечитываем уже под ним. В бою — ничего не
+    * трогаем, говорим почему. Сначала ушедшие уходят по-настоящему
+    * ([[SquadDuty.settle]]): приложение уже показывало строй без них, и
+    * приказ должен лечь на тот же строй. */
+  override def squadOrder(hero: Hero, act: SquadAct): Task[SquadActionView] =
+    lock.withLock(hero.userId) {
+      for {
+        fresh <- heroes.getHero(hero.userId).someOrFail(new Throwable(s"Нет героя у игрока ${hero.userId.value}"))
+        note  <- if (MiniApp.inBattle(fresh)) ZIO.succeed(content.text("miniapp.squad.inBattle"))
+                 else order(fresh, act)
+      } yield fresh -> note
+    }.flatMap { case (fresh, note) =>
+      heroes.getHero(fresh.userId).map(_.getOrElse(fresh)).flatMap(squad)
+        .map(SquadActionView(_, Option.when(note.nonEmpty)(note)))
+    }
+
+  private def order(hero: Hero, act: SquadAct): Task[String] =
+    for {
+      user    <- users.getUserById(hero.userId).someOrFail(new Throwable(s"Нет игрока ${hero.userId.value}"))
+      lines   <- Ref.make(Vector.empty[String])
+      say      = new MiniApp.Collect(lines)
+      ms      <- now
+      settled <- SquadDuty.settle(heroDao, content, user, hero, ms, say)
+      _       <- act match {
+                   case SquadAct.Move(from, to) => orders.move(user, settled, from, to, say)
+                   case SquadAct.MoveHero(to)   => orders.moveHero(user, settled, to, say)
+                   case SquadAct.Dismiss(at)    => orders.dismiss(user, settled, at, say)
+                   case SquadAct.TakeRisen(at)  => orders.takeRisenPlace(user, settled, at, say)
+                   case SquadAct.DismissRisen   => orders.dismissRisen(user, settled, say)
+                 }
+      said    <- lines.get
+    } yield said.mkString("\n\n")
 
   /** Хранилища читаются без записи: чего у героя ещё не заводили, того и нет —
     * пустая бочка, ни одной ячейки, ни одного артефакта. */

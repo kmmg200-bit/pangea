@@ -683,6 +683,104 @@ button.row:active {
   gap: 10px;
 }
 
+/* Отряд: союзник и герой раскрываются приказами по нажатию. */
+.ally-tap {
+  cursor: pointer;
+}
+
+.ally-head .erow-chev {
+  margin-left: auto;
+}
+
+.ally-head .row-body {
+  flex: 1;
+}
+
+.squad-orders {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  cursor: default;
+}
+
+.squad-places {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.squad-place {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  min-width: 0;
+  padding: 6px 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.squad-place-n {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.squad-place-who {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.squad-place:disabled {
+  opacity: 0.45;
+}
+
+.squad-risen {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.squad-danger {
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--down);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.squad-danger:disabled {
+  opacity: 0.45;
+}
+
+/* Что сказал бот — над нижней панелью; нажал — спряталось. */
+.toast {
+  position: fixed;
+  right: 16px;
+  bottom: calc(76px + env(safe-area-inset-bottom));
+  left: 16px;
+  z-index: 4;
+  max-width: 608px;
+  margin: 0 auto;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--text);
+  box-shadow: var(--shadow);
+  color: var(--bg);
+  font-size: 14px;
+  white-space: pre-wrap;
+}
+
 .ally-pos {
   display: flex;
   flex: 0 0 26px;

@@ -9,7 +9,7 @@ import org.typelevel.ci.CIStringSyntax
 import pangea.model.hero.Hero
 import pangea.model.top.TopKind
 import pangea.service.miniapp.{MiniApp, VkLaunchParams}
-import pangea.service.miniapp.MiniApp.{CubeAct, Denied, GearAct}
+import pangea.service.miniapp.MiniApp.{CubeAct, Denied, GearAct, SquadAct}
 import pangea.service.miniapp.MiniAppView._
 import zio.Task
 import zio.interop.catz._
@@ -56,6 +56,23 @@ final class MiniAppRoutes(app: MiniApp) {
     case req @ POST -> Root / "api" / "app" / "equipment" / "take-off" :? SlotParam(slot) =>
       asPlayer(req)(hero => app.gear(hero, GearAct.TakeOff(slot)).flatMap(view => Ok(view.asJson)))
 
+    // Отряд: переставить союзника или героя, выгнать, решить про восставшего.
+    // Меняют игру — только POST.
+    case req @ POST -> Root / "api" / "app" / "squad" / "move" :? FromParam(from) +& ToParam(to) =>
+      squadOrder(req, SquadAct.Move(from, to))
+
+    case req @ POST -> Root / "api" / "app" / "squad" / "hero" :? ToParam(to) =>
+      squadOrder(req, SquadAct.MoveHero(to))
+
+    case req @ POST -> Root / "api" / "app" / "squad" / "dismiss" :? AtParam(at) =>
+      squadOrder(req, SquadAct.Dismiss(at))
+
+    case req @ POST -> Root / "api" / "app" / "squad" / "risen" / "take" :? AtParam(at) =>
+      squadOrder(req, SquadAct.TakeRisen(at))
+
+    case req @ POST -> Root / "api" / "app" / "squad" / "risen" / "dismiss" =>
+      squadOrder(req, SquadAct.DismissRisen)
+
     // Покупка лота: меняет игру — только POST.
     case req @ POST -> Root / "api" / "app" / "auction" / "buy" :? LotParam(id) =>
       asPlayer(req)(hero => app.buy(hero, id).flatMap(view => Ok(view.asJson)))
@@ -81,6 +98,9 @@ final class MiniAppRoutes(app: MiniApp) {
   private def cubeAct(req: Request[Task], act: CubeAct): Task[Response[Task]] =
     asPlayer(req)(hero => app.cube(hero, act).flatMap(view => Ok(view.asJson)))
 
+  private def squadOrder(req: Request[Task], act: SquadAct): Task[Response[Task]] =
+    asPlayer(req)(hero => app.squadOrder(hero, act).flatMap(view => Ok(view.asJson)))
+
   private def asPlayer(req: Request[Task])(answer: Hero => Task[Response[Task]]): Task[Response[Task]] = {
     val launch = req.headers.get(ci"X-Launch-Params").map(_.head.value).getOrElse("")
     app.player(launch).flatMap {
@@ -98,4 +118,7 @@ final class MiniAppRoutes(app: MiniApp) {
   private object ItemParam extends QueryParamDecoderMatcher[Long]("item")
   private object LotParam  extends QueryParamDecoderMatcher[Long]("lot")
   private object SlotParam extends QueryParamDecoderMatcher[Int]("slot")
+  private object FromParam extends QueryParamDecoderMatcher[Int]("from")
+  private object ToParam   extends QueryParamDecoderMatcher[Int]("to")
+  private object AtParam   extends QueryParamDecoderMatcher[Int]("at")
 }

@@ -201,7 +201,7 @@ export function App() {
                 )}
               </Body>
             )}
-            {heroPart === 'squad' && <Body loaded={squad}>{(d) => <SquadTab data={d} />}</Body>}
+            {heroPart === 'squad' && <Body loaded={squad}>{(d) => <SquadTab data={d} onChange={squad.set} />}</Body>}
           </>
         )}
         {tab === 'quests' && <Body loaded={quests}>{(d) => <QuestsTab data={d} />}</Body>}

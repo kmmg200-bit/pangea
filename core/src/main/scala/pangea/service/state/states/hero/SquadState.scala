@@ -6,6 +6,7 @@ import pangea.model.hero.Hero
 import pangea.model.squad.{Ally, AllyRates}
 import pangea.model.state.StateType
 import pangea.model.user.User
+import pangea.service.squad.SquadOrders
 import pangea.service.state.{SquadDuty, State, UserAction}
 import zio.{Task, ZIO}
 
@@ -15,6 +16,9 @@ import zio.{Task, ZIO}
   * съезжает к месту 1, а промежутки между бойцами остаются (см.
   * Squad.frontShift). */
 case class SquadState(heroDao: HeroDao, content: SceneContent) extends State {
+
+  /** Приказы отряду — общие с Mini App. */
+  private val orders = new SquadOrders(heroDao, content)
 
   private val branch = new Branch(
     routes = Map(
@@ -64,28 +68,16 @@ case class SquadState(heroDao: HeroDao, content: SceneContent) extends State {
 
   /** Ждущий занимает место названного союзника — тот покидает отряд. */
   private def takeRisenPlace(user: User, pos: Int, renderer: Renderer): Task[Unit] =
-    for {
-      now  <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
-      hero <- getHero(user)
-      _    <- hero.squad.pendingRisen match {
-                case None       => showLines(user, hero, renderer)
-                case Some(form) =>
-                  val gone  = hero.squad.allyAt(pos).map(_.name).getOrElse("")
-                  val squad = hero.squad.takeRisenPlace(pos, hero.lvl, now)
-                  heroDao.updateSquad(user.userId, squad) *>
-                    renderer.show(user, Screen(content.format("squad.risenTook",
-                      "name" -> form.name, "gone" -> gone), Nil)) *>
-                    showLines(user, hero.copy(squad = squad), renderer)
-              }
-    } yield ()
+    getHero(user).flatMap { hero =>
+      orders.takeRisenPlace(user, hero, pos, renderer)
+        .flatMap(squad => showLines(user, hero.copy(squad = squad.getOrElse(hero.squad)), renderer))
+    }
 
   /** Ждущего отпускают: тело оседает прахом. */
   private def dismissRisen(user: User, renderer: Renderer): Task[Unit] =
     getHero(user).flatMap { hero =>
-      val squad = hero.squad.dismissRisen
-      heroDao.updateSquad(user.userId, squad) *>
-        renderer.show(user, Screen(content.text("squad.risenDust"), Nil)) *>
-        showLines(user, hero.copy(squad = squad), renderer)
+      orders.dismissRisen(user, hero, renderer)
+        .flatMap(squad => showLines(user, hero.copy(squad = squad.getOrElse(hero.squad)), renderer))
     }
 
   private def showLines(user: User, hero: Hero, renderer: Renderer): Task[Unit] = {
@@ -163,27 +155,15 @@ case class SquadState(heroDao: HeroDao, content: SceneContent) extends State {
     payloadField(ua, "to").flatMap(_.toIntOption) match {
       case None => showList(user, renderer)
       case Some(to) =>
-        getHero(user).flatMap { hero =>
-          val moved = hero.squad.moveHero(to)
-          if (moved == hero.squad) showHero(user, renderer)
-          else heroDao.updateSquad(user.userId, moved) *>
-            renderer.show(user, Screen(content.format("squad.heroMoved", "n" -> to.toString), Nil)) *>
-            showHero(user, renderer)
-        }
+        getHero(user).flatMap(orders.moveHero(user, _, to, renderer)) *> showHero(user, renderer)
     }
 
   private def move(user: User, ua: UserAction, renderer: Renderer): Task[Unit] =
     (parseAlly(ua), payloadField(ua, "to").flatMap(_.toIntOption)) match {
       case (Some(from), Some(to)) =>
-        getHero(user).flatMap { hero =>
-          hero.squad.allyAt(from) match {
-            case None => showList(user, renderer)
-            case Some(a) =>
-              val moved = hero.squad.moveAt(from, to)
-              heroDao.updateSquad(user.userId, moved) *>
-                renderer.show(user, Screen(content.format("squad.moved", "name" -> a.name, "n" -> to.toString), Nil)) *>
-                showAlly(user, to, renderer)
-          }
+        getHero(user).flatMap(orders.move(user, _, from, to, renderer)).flatMap {
+          case None    => showList(user, renderer)
+          case Some(_) => showAlly(user, to, renderer)
         }
       case _ => showList(user, renderer)
     }
@@ -196,13 +176,7 @@ case class SquadState(heroDao: HeroDao, content: SceneContent) extends State {
     }
 
   private def dismiss(user: User, at: Int, renderer: Renderer): Task[Unit] =
-    withAllyAt(user, at, renderer) { a =>
-      getHero(user).flatMap { hero =>
-        heroDao.updateSquad(user.userId, hero.squad.dismissAt(at)) *>
-          renderer.show(user, Screen(content.format("squad.dismissed", "name" -> a.name), Nil)) *>
-          showList(user, renderer)
-      }
-    }
+    getHero(user).flatMap(orders.dismiss(user, _, at, renderer)) *> showList(user, renderer)
 
   private def withAllyAt(user: User, at: Int, renderer: Renderer)(f: Ally => Task[Unit]): Task[Unit] =
     getHero(user).flatMap(_.squad.allyAt(at).fold(showList(user, renderer))(f))
