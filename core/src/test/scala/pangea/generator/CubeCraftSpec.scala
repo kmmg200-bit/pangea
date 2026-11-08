@@ -335,13 +335,13 @@ object CubeCraftSpec extends ZIOSpecDefault {
       import pangea.model.home.HomeData
       import pangea.model.rune.Rune
       import pangea.model.skill.Skill
-      import pangea.service.state.states.temple.CubeState
+      import pangea.service.cube.AzatCube
       def gear(id: Long, name: String, itemType: ItemType, set: Option[ItemSet] = None,
                details: ItemDetails = ItemDetails.Plain): Item =
         Item(id, name, 10L, Rarity.Blue, itemType, attack = 1, accuracy = 0, energy = 0,
           armor = 0, defence = 0, evasion = 0, details = details, set = set)
       def lines(items: List[Item]): List[String] =
-        CubeCraft.craft(items, charges = 50, rng).applied.map(CubeState.note).map(_.line)
+        CubeCraft.craft(items, charges = 50, rng).applied.map(AzatCube.note).map(_.line)
       val skin     = MaterialGenerator.item(MaterialKind.GhoulSkin)
       val salvage  = lines(List(gear(1L, "Шлем Упыря", ItemType.Helmet, Some(ItemSet.Ghoul)),
                        gear(2L, "Сапоги Упыря", ItemType.Boots, Some(ItemSet.Ghoul)),
@@ -356,7 +356,7 @@ object CubeCraftSpec extends ZIOSpecDefault {
       val divine   = lines(gear(27L, "Меч Дворянина", ItemType.Weapon) ::
                        (List.fill(4)(gem(GemKind.Ruby, 3)) ++ List.fill(4)(gem(GemKind.Skull, 4))))
       val book     = HomeData.empty.noted(CubeCraft.craft(List(gear(4L, "Топор Дворянина", ItemType.Weapon), skin.copy(id = 5L),
-                       gear(6L, "Шлем Странника", ItemType.Helmet), skin.copy(id = 7L)), charges = 50, rng).applied.map(CubeState.note))
+                       gear(6L, "Шлем Странника", ItemType.Helmet), skin.copy(id = 7L)), charges = 50, rng).applied.map(AzatCube.note))
       assertTrue(salvage == List("Вещь из набора «Упырь» ×3 → Кожа упыря")) &&
         assertTrue(infused == List.fill(2)("Экипировка + Кожа упыря → Экипировка из набора «Упырь»")) &&
         assertTrue(book.recipes.size == 1) &&

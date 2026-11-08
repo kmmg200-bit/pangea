@@ -4,23 +4,22 @@ import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder, Json, jawn}
 import pangea.dao.hero.HeroDao
-import pangea.domain.Rng
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
-import pangea.generator.item.CubeCraft
-import pangea.model.hero.{Achievement, AzatState, Hero}
-import pangea.model.home.{HomeData, RecipeNote}
-import pangea.model.item.{BrewKind, Item, ItemStack}
+import pangea.model.hero.{AzatState, Hero}
+import pangea.model.home.HomeData
+import pangea.model.item.ItemStack
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.bank.BankRepository
-import pangea.repository.inventory.{InventoryRepoError, InventoryRepository}
+import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
+import pangea.service.cube.AzatCube
+import pangea.service.cube.AzatCube.Power
 import pangea.service.purse.Purse
 import pangea.service.state.ItemMenu
 import pangea.service.state.states.temple.CubeState._
-import pangea.service.state.{AzatData, HerbLore, InventoryFeedback, MarisaQuest, StackMove, State, UserAction}
-import java.util.concurrent.TimeUnit
-import zio.{Random, Task, ZIO}
+import pangea.service.state.{StackMove, State, UserAction}
+import zio.{Task, ZIO}
 
 /** Крафт в кубе Азата: по образцу «Неприметной бочки» игрок кладёт в куб до
  *  [[AzatState.CubeCapacity]] предметов и забирает их. Кнопка «Активировать»
@@ -42,6 +41,9 @@ case class CubeState(
 
   /** Кошель: своё серебро, а следом — ячейка в Торговом доме. */
   private val purse = Purse(heroDao, bank)
+
+  /** Сам куб — положить, забрать, активировать; то же зовёт и Mini App. */
+  private val cube = new AzatCube(heroDao, inventoryRepo, itemRepository, content)
 
   private val branch = new Branch(
     routes = Map(
@@ -78,7 +80,7 @@ case class CubeState(
     for {
       azat <- loadAzat(user)
       home <- loadHome(user)
-      power = CubeState.power(azat, home)
+      power = AzatCube.power(azat, home)
       text  = power match {
                 case Power.Home(n, max) => content.format("cube.menu.textHome",
                   "items" -> azat.cubeItems.length.toString, "capacity" -> AzatState.CubeCapacity.toString,
@@ -112,7 +114,7 @@ case class CubeState(
       azat   <- loadAzat(user)
       home   <- loadHome(user)
       wallet <- purse.wallet(hero)
-      _ <- if (!azat.cubeHome || !CubeState.power(azat, home).isInstanceOf[Power.Own]) ZIO.unit
+      _ <- if (!azat.cubeHome || !AzatCube.power(azat, home).isInstanceOf[Power.Own]) ZIO.unit
            else if (azat.cubeCharges >= AzatState.MaxCharges)
              renderer.show(user, Screen(content.text("cube.refillFull"), Nil))
            else if (!wallet.canAfford(cost))
@@ -228,7 +230,7 @@ case class CubeState(
       _ <- inv.items.data.find(i => i.id == itemId && !i.isQuestItem) match {
         case None => showDeposit(user, renderer)
         case Some(item) =>
-          depositOne(user, hero, item).flatMap {
+          cube.deposit(hero, item).flatMap {
             case None         => showDeposit(user, renderer,
                                    Some(content.format("cube.deposited", "name" -> item.name)), StackMove.hotOf(item))
             case Some(reason) => showDeposit(user, renderer, Some(reason))
@@ -243,7 +245,7 @@ case class CubeState(
       _ <- azat.cubeItems.find(_.id == itemId) match {
         case None => showWithdraw(user, renderer)
         case Some(item) =>
-          withdrawOne(user, hero, item).flatMap {
+          cube.withdraw(hero, item).flatMap {
             case None         => showWithdraw(user, renderer,
                                    Some(content.format("cube.withdrawn", "name" -> item.name)), StackMove.hotOf(item))
             case Some(reason) => showWithdraw(user, renderer, Some(reason))
@@ -260,7 +262,7 @@ case class CubeState(
       _ <- items.find(_.id == itemId) match {
         case None => showDeposit(user, renderer)
         case Some(item) =>
-          StackMove.run(StackMove.stack(items, item))(depositOne(user, hero, _)).flatMap(moved =>
+          StackMove.run(StackMove.stack(items, item))(cube.deposit(hero, _)).flatMap(moved =>
             showDeposit(user, renderer, Some(StackMove.summary(content, moved, "cube.depositedAll"))))
       }
     } yield ()
@@ -273,113 +275,27 @@ case class CubeState(
       _ <- azat.cubeItems.find(_.id == itemId) match {
         case None => showWithdraw(user, renderer)
         case Some(item) =>
-          StackMove.run(StackMove.stack(azat.cubeItems, item))(withdrawOne(user, hero, _)).flatMap(moved =>
+          StackMove.run(StackMove.stack(azat.cubeItems, item))(cube.withdraw(hero, _)).flatMap(moved =>
             showWithdraw(user, renderer, Some(StackMove.summary(content, moved, "cube.withdrawnAll"))))
       }
     } yield ()
 
-  /** «⏬ Забрать всё»: куб целиком — в сумку, сколько влезет. Не влезла одна
-    * вещь — пробуем следующую: пыли и рунам сумкино место не нужно. */
+  /** «⏬ Забрать всё»: куб целиком — в сумку, сколько влезет. */
   private def withdrawEverything(user: User, renderer: Renderer): Task[Unit] =
-    for {
-      hero  <- getHero(user)
-      azat  <- loadAzat(user)
-      note  <- if (azat.cubeItems.isEmpty) ZIO.succeed(content.text("cube.emptyCube"))
-               else StackMove.run(azat.cubeItems, stopAtFirst = false)(withdrawOne(user, hero, _))
-                      .map(StackMove.summary(content, _, "cube.withdrawnAll"))
-      _     <- showMenu(user, renderer, Some(note))
-    } yield ()
-
-  /** Вещь из сумки в куб. `None` — легла, иначе — почему нет. */
-  private def depositOne(user: User, hero: Hero, item: Item): Task[Option[String]] =
-    loadAzat(user).flatMap { azat =>
-      if (azat.cubeItems.length >= AzatState.CubeCapacity) ZIO.some(content.text("cube.full"))
-      else
-        inventoryRepo.removeItem(item.id, hero.id).mapError(asThrowable) *>
-          saveAzat(user, azat.copy(cubeItems = azat.cubeItems :+ item)).as(None)
-    }
-
-  /** Вещь из куба в сумку. Пыль и малые руны места не занимают — им мешает
-    * только свой предел. */
-  private def withdrawOne(user: User, hero: Hero, item: Item): Task[Option[String]] =
-    for {
-      inv  <- inventoryRepo.get(hero.id).mapError(asThrowable)
-      azat <- loadAzat(user)
-      res  <- if (!azat.cubeItems.exists(_.id == item.id)) ZIO.some(content.text("stack.gone"))
-              else if (if (item.weightless) !inv.hasRoomForHoard(item) else inv.freeSlots <= 0)
-                ZIO.some(if (item.weightless) InventoryFeedback.refusalLine(content, item, storage = true)
-                         else content.text("cube.inventoryFull"))
-              else
-                inventoryRepo.addItem(hero.id, item).either.flatMap {
-                  case Right(_) => saveAzat(user, azat.copy(cubeItems = removeFirst(azat.cubeItems, item.id))).as(None)
-                  case Left(InventoryRepoError.NoMorePlaceForItems | InventoryRepoError.DustLimitReached) =>
-                    ZIO.some(InventoryFeedback.refusalLine(content, item, storage = true))
-                  case Left(e) => ZIO.fail(asThrowable(e))
-                }
-    } yield res
+    getHero(user).flatMap(cube.withdrawEverything).flatMap(note => showMenu(user, renderer, Some(note)))
 
   // --- Активация: просчёт рецептов ---
 
   private def activate(user: User, renderer: Renderer): Task[Unit] =
-    for {
-      hero <- getHero(user)
-      azat <- loadAzat(user)
-      home <- loadHome(user)
-      power = CubeState.power(azat, home)
-      seed <- Random.nextLong
-      result = CubeCraft.craft(azat.cubeItems, power.charges, Rng(seed))
-      // Результаты рецептов (id <= 0) персистим — им нужен id для инвентаря.
-      persisted <- ZIO.foreach(result.items) { it =>
-        if (it.id > 0L) ZIO.succeed(it)
-        else itemRepository.persist(hero.id, it)
-      }
-      // Сила уходит оттуда же, откуда взята: энергия дома или заряды куба.
-      _ <- power match {
-             case Power.Home(n, _) =>
-               saveAzat(user, azat.copy(cubeItems = persisted)) *>
-                 saveHome(user, home.copy(charges = n - result.chargesUsed))
-             case Power.Own(n) =>
-               saveAzat(user, azat.copy(cubeItems = persisted, cubeCharges = n - result.chargesUsed))
-           }
-      // Дома всё, что получилось, — в книгу рецептов (пишется и без библиотеки).
-      _ <- ZIO.when(azat.cubeHome && result.applied.nonEmpty)(
-             loadHome(user).flatMap(h => saveHome(user, h.noted(result.applied.map(CubeState.note)))))
-      msgKey = if (result.anyApplied) "cube.activated" else "cube.nothing"
-      _ <- renderer.show(user, Screen(content.text(msgKey), Nil))
-      // Сваренные отвары идут в счёт «Зельевара I»: по одному каждого — достижение.
-      brewedNow = result.items.filter(_.id <= 0L).flatMap(_.brew).map(_.entryName)
-      _ <- ZIO.when(brewedNow.nonEmpty) {
-             for {
-               lore   <- HerbLore.readLore(heroDao, user.userId)
-               updated = lore.brewedAlso(brewedNow)
-               _      <- HerbLore.writeLore(heroDao, user.userId, updated)
-               _      <- ZIO.when(BrewKind.rank1.forall(k => updated.brewed.contains(k.entryName)))(
-                           MarisaQuest.grant(heroDao, content, user, hero, Achievement.Brewer1, renderer))
-             } yield ()
-           }
-      _ <- showMenu(user, renderer)
-    } yield ()
+    getHero(user).flatMap(cube.activate(user, _, renderer)) *> showMenu(user, renderer)
 
   // --- Вспомогательное ---
 
-  private def removeFirst(items: List[Item], itemId: Long): List[Item] =
-    items.indexWhere(_.id == itemId) match {
-      case -1 => items
-      case i  => items.patch(i, Nil, 1)
-    }
+  private def loadAzat(user: User): Task[AzatState] = cube.loadAzat(user.userId)
 
-  private def loadAzat(user: User): Task[AzatState] =
-    ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
-      .flatMap(now => AzatData.load(heroDao, user.userId, now))
+  private def saveAzat(user: User, azat: AzatState): Task[Unit] = cube.saveAzat(user.userId, azat)
 
-  private def saveAzat(user: User, azat: AzatState): Task[Unit] =
-    heroDao.writeAzatData(user.userId, azat.asJson)
-
-  private def loadHome(user: User): Task[HomeData] =
-    heroDao.readHomeData(user.userId).map(_.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty))
-
-  private def saveHome(user: User, home: HomeData): Task[Unit] =
-    heroDao.writeHomeData(user.userId, home.asJson)
+  private def loadHome(user: User): Task[HomeData] = cube.loadHome(user.userId)
 
   private def readScene(user: User): Task[CubeScene] =
     heroDao.readSceneData(user.userId).map(_.flatMap(_.as[CubeScene].toOption).getOrElse(CubeScene()))
@@ -406,21 +322,6 @@ object CubeState {
   // «⏬ все N»: за префиксом — id любой вещи стопки.
   val DepositAllPrefix  = "CubeDepositAll_"
   val WithdrawAllPrefix = "CubeWithdrawAll_"
-
-  /** Откуда куб берёт силу. */
-  sealed trait Power { def charges: Int }
-  object Power {
-    /** Свои заряды куба — в Храме и в доме без святилища. */
-    final case class Own(charges: Int) extends Power
-    /** Энергия дома — куб дома, и в доме есть алтарь Азата. */
-    final case class Home(charges: Int, max: Int) extends Power
-  }
-
-  def power(azat: AzatState, home: HomeData): Power =
-    if (azat.cubeHome && home.altarMax > 0) Power.Home(home.charges, home.altarMax) else Power.Own(azat.cubeCharges)
-
-  /** Запись в книгу рецептов: названия того, что ушло, и что вышло. */
-  def note(a: CubeCraft.Applied): RecipeNote = RecipeNote(a.ingredients, a.made, a.count)
 
   case class CubeScene(depositPage: Option[Int] = None, withdrawPage: Option[Int] = None)
   object CubeScene {
