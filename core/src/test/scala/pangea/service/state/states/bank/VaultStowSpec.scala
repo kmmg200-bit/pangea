@@ -163,6 +163,25 @@ object VaultStowSpec extends ZIOSpecDefault {
               assertTrue(said.contains("Положено вещей: 2") && said.contains("травы 1") && said.contains("трофеи 1"))
     },
 
+    test("стопка уходит с переключателем того, что в ней, и в отчёте считается тем, что в ней") {
+      import pangea.model.item.Bundling
+      val rubies = Bundling.pack((101L to 105L).toList.map(gem)).get.copy(id = 50L)
+      val herbs  = Bundling.pack((111L to 115L).toList.map(herb)).get.copy(id = 51L)
+      for {
+        t <- vaultState(
+               items = List(rubies, herbs, dust(6)),
+               settings = Some(only(StowGroup.Gems, StowGroup.Dust)))
+        (state, _, inv, bank, r) = t
+        _    <- state.action(testUser, tap("VaultStowAll"), r)
+        said <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(StowSettings.default.groupOf(rubies).contains(StowGroup.Gems)) &&
+              assertTrue(StowSettings.default.groupOf(herbs).contains(StowGroup.Herbs)) &&
+              assertTrue(bank.itemsSnapshot.map(_.id).sorted == List(6L, 50L)) &&
+              // травы выключены — стопка трав осталась при герое
+              assertTrue(inv.snapshot.map(_.id) == List(51L)) &&
+              assertTrue(said.contains("Положено вещей: 6") && said.contains("камни 5") && said.contains("пыль 1"))
+    },
+
     test("серебро уходит только с включённым переключателем — и не больше, чем влезает") {
       def run(withSilver: Boolean) =
         for {

@@ -34,6 +34,11 @@ class TestInventoryRepository(canAdd: Boolean, private var items: List[Item] = N
   def removeItems(itemIds: Set[Long], heroId: HeroId): IO[InventoryRepoError, Unit] =
     ZIO.succeed { items = items.filterNot(i => itemIds.contains(i.id)) }
 
+  // Как в проде: места и предел невесомого — по Inventory.swapped, а не по canAdd.
+  def swap(heroId: HeroId, remove: List[Item], add: List[Item]): IO[InventoryRepoError, Unit] =
+    get(heroId).flatMap(inv => ZIO.fromEither(inv.swapped(remove, add)).mapError(InventoryRepoError.of))
+      .map(next => items = next.items.data)
+
   def refillFlasks(heroId: HeroId): IO[InventoryRepoError, Unit] =
     ZIO.succeed {
       items = items.map(item =>

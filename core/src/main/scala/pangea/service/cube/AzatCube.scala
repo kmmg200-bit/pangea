@@ -27,7 +27,8 @@ final class AzatCube(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemR
   /** Вещь из сумки в куб. `None` — легла, иначе — почему нет. */
   def deposit(hero: Hero, item: Item): Task[Option[String]] =
     loadAzat(hero.userId).flatMap { azat =>
-      if (azat.cubeItems.length >= AzatState.CubeCapacity) ZIO.some(content.text("cube.full"))
+      if (item.isBundle) ZIO.some(content.text("cube.bundle"))
+      else if (azat.cubeItems.length >= AzatState.CubeCapacity) ZIO.some(content.text("cube.full"))
       else
         inventoryRepo.removeItem(item.id, hero.id).mapError(asThrowable) *>
           saveAzat(hero.userId, azat.copy(cubeItems = azat.cubeItems :+ item)).as(None)
@@ -119,6 +120,10 @@ final class AzatCube(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemR
 }
 
 object AzatCube {
+
+  /** Что из сумки предлагают положить в куб: всё, кроме сюжетного и стопок —
+    * рецептов со стопками нет, её сперва распаковывают (см. `Bundling`). */
+  def accepts(item: Item): Boolean = !item.isQuestItem && !item.isBundle
 
   /** Откуда куб берёт силу. */
   sealed trait Power { def charges: Int }

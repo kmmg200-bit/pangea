@@ -119,6 +119,14 @@ case class Item(
   /** Вещь, которая не занимает места ни в сумке, ни в бочке. */
   def weightless: Boolean = hoardKey.isDefined
 
+  /** Стопка (см. [[Bundling]]), если это она. */
+  def bundle: Option[ItemDetails.Bundle] = details match {
+    case b: ItemDetails.Bundle => Some(b)
+    case _                     => None
+  }
+
+  def isBundle: Boolean = bundle.isDefined
+
   def brew: Option[BrewKind] = details match {
     case ItemDetails.Brew(k) => Some(k)
     case _                   => None
@@ -174,9 +182,11 @@ case class Item(
    *  поэтому его вырезаем и ставим перед уровнем. У предметов без кружка в имени
    *  (трофеи, тестовые предметы) остаётся «[Ур.N] <имя>».
    *
-   *  У карт клада, камней-усилителей и материалов уровня нет — только имя. */
+   *  У карт клада, камней-усилителей и материалов уровня нет — только имя.
+   *  У стопки — значок, что в ней и сколько: «📦 Мифрил ×5». */
   def displayTitle: String =
-    if (isQuestItem) s"${Item.QuestMark} $name" // сюжетный предмет: звёздочка вместо редкости и уровня
+    if (isBundle) bundleTitle
+    else if (isQuestItem) s"${Item.QuestMark} $name" // сюжетный предмет: звёздочка вместо редкости и уровня
     else if (isNamedTrophy) s"${Item.NamedTrophyMark} $name" // уникальный трофей: кубок вместо уровня
     else if (isTreasureMap || itemType == ItemType.Gem || itemType == ItemType.Material ||
         itemType == ItemType.Flask || itemType == ItemType.Brew || itemType == ItemType.RuneStone ||
@@ -186,6 +196,11 @@ case class Item(
       if (name.startsWith(prefix)) s"${rarity.emoji} [Ур.$lvl] ${name.stripPrefix(prefix)}"
       else s"[Ур.$lvl] $name"
     }
+
+  private def bundleTitle: String = bundle.map(_.items) match {
+    case Some(inside @ (first :: _)) => s"${Item.BundleMark} ${first.displayTitle} ×${inside.size}"
+    case _                           => s"${Item.BundleMark} $name"
+  }
 
   /** Текст-описание карты (для целой — описание зоны, для половинки — заглушка).
    *  None у любого предмета, не являющегося картой. */
@@ -253,6 +268,8 @@ case class Item(
       // Рунный камень: узор, ощущение от него и что даст сама руна.
       case ItemDetails.RuneStone(key, size) =>
         pangea.model.rune.Rune.byKey(key).map(pangea.model.rune.RuneStone.describe(_, size)).getOrElse(Nil)
+      // Стопка: строки того, что в ней лежит, — вещи в ней одинаковые.
+      case ItemDetails.Bundle(inside)    => inside.headOption.toList.flatMap(_.statsLines)
       case _                             => Nil
     }
     numeric ++ setLine ++ rangedLine ++ extra ++ socketLines
@@ -297,6 +314,9 @@ object Item {
 
   /** Значок уникального трофея именного моба. */
   val NamedTrophyMark: String = "🏆"
+
+  /** Значок стопки (см. [[Bundling]]) — в списке сумки и на карточке. */
+  val BundleMark: String = "📦"
 
   def NoItem: Item =
     Item(0, "Пусто", 0, Rarity.Gray, ItemType.NoItem, 0, 0, 0, 0, 0, 0, 0, ItemDetails.Plain)

@@ -14,6 +14,9 @@ trait InventoryRepository {
     * той же самой, — например когда из её гнезда выламывают камень. */
   def updateItem(heroId: HeroId, item: Item): IO[InventoryRepoError, Unit]
   def removeItems(itemIds: Set[Long], heroId: HeroId): IO[InventoryRepoError, Unit]
+  /** Убрать `remove` и положить `add` одной записью (см. `Inventory.swapped`):
+    * стопку собирают и распаковывают целиком или никак. */
+  def swap(heroId: HeroId, remove: List[Item], add: List[Item]): IO[InventoryRepoError, Unit]
   def refillFlasks(heroId: HeroId): IO[InventoryRepoError, Unit]
   def increaseCapacity(heroId: HeroId, delta: Long): IO[InventoryRepoError, Unit]
 }

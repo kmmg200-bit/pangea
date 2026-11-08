@@ -154,6 +154,18 @@ object TransferSpec extends ZIOSpecDefault {
                 assertTrue(parcelDao.snapshot.isEmpty && inv.snapshot.size == 1)
       },
 
+      test("стопку передают целиком: «стопка» — стопку, точное название — саму вещь") {
+        val bundle = pangea.model.item.Bundling.pack((11L to 15L).toList.map(skull)).get.copy(id = 7L)
+        for {
+          f   <- fixture(List(bundle, skull(1L)))
+          (transfers, hero, inv, parcelDao, _) = f
+          one <- transfers.quickSend(testUser, hero, target, "надколотый череп", 1, 0L)
+          two <- transfers.quickSend(testUser, hero, target, "стопка", 1, 0L)
+        } yield assertTrue(one.isInstanceOf[Transfers.Outcome.Sent] && two.isInstanceOf[Transfers.Outcome.Sent]) &&
+                assertTrue(parcelDao.snapshot.map(_.item.id).toSet == Set(1L, 7L) && inv.snapshot.isEmpty) &&
+                assertTrue(parcelDao.snapshot.exists(_.item == bundle))
+      },
+
       test("в сумке ничего похожего — так и говорим") {
         for {
           f <- fixture(List(sword(1L)))

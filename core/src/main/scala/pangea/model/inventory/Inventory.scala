@@ -34,11 +34,41 @@ case class Inventory(
 
   /** Влезет ли ещё `count` обычных предметов. */
   def hasRoomFor(count: Long): Boolean = occupied + count <= maxItems
+
+  /** Убрать `remove` (каждую вещь — один раз, по полному совпадению) и положить
+    * `add` — одним изменением: так стопку собирают и распаковывают целиком или
+    * никак (см. [[pangea.model.item.Bundling]]). Место проверяется только на
+    * прирост: обмен, после которого занято не больше прежнего, пройдёт и в
+    * переполненной сумке. Невесомое добро, которое кладём, не должно перевалить
+    * за свой предел. */
+  def swapped(remove: List[Item], add: List[Item]): Either[Inventory.SwapRefusal, Inventory] =
+    remove.foldLeft(Option(items.data)) { (left, r) =>
+      left.flatMap(data => Option(data.indexOf(r)).filter(_ >= 0).map(i => data.patch(i, Nil, 1)))
+    } match {
+      case None => Left(Inventory.SwapRefusal.Missing)
+      case Some(rest) =>
+        val next = withItems(rest ++ add)
+        if (next.occupied > maxItems && next.occupied > occupied) Left(Inventory.SwapRefusal.NoRoom)
+        else if (add.flatMap(_.hoardKey).exists(k => next.hoardCount(k) > Item.HoardLimit))
+          Left(Inventory.SwapRefusal.HoardFull)
+        else Right(next)
+    }
 }
 
 object Inventory {
   /** Вместимость сумки по умолчанию (слотов). */
   val DefaultCapacity: Long = 20L
+
+  /** Почему обмен вещей ([[Inventory.swapped]]) не прошёл. */
+  sealed trait SwapRefusal
+  object SwapRefusal {
+    /** Того, что убираем, в сумке уже нет. */
+    case object Missing   extends SwapRefusal
+    /** Сумке не хватает мест. */
+    case object NoRoom    extends SwapRefusal
+    /** Невесомого добра одного вида стало бы больше предела. */
+    case object HoardFull extends SwapRefusal
+  }
 
   case class Items(data: List[Item]) {
 

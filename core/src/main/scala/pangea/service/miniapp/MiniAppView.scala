@@ -10,7 +10,7 @@ import pangea.model.barrel.Barrel
 import pangea.model.hero.{Achievement, AzatState, CubeStatus, Hero, HeroCard, Knowledge, LoreData}
 import pangea.model.home.{HomeData, HomeRates, House}
 import pangea.model.inventory.Inventory
-import pangea.model.item.{BeltSlot, Item, ItemDetails, ItemStack, ItemType, Rarity}
+import pangea.model.item.{BeltSlot, Bundling, Item, ItemDetails, ItemStack, ItemType, Rarity}
 import pangea.model.squad.AllyRates
 import pangea.model.top.{TopBoard, TopKind}
 import pangea.service.chat.Links
@@ -551,7 +551,7 @@ object MiniAppView {
       power    = power,
       capacity = AzatState.CubeCapacity,
       items    = azat.cubeItems.map(i => view(i, 1, describe(i))),
-      bag      = stacked(inv.items.data.filterNot(_.isQuestItem), describe),
+      bag      = stacked(inv.items.data.filter(AzatCube.accepts), describe),
       away     = Option.unless(MiniApp.inCity(h))(content.text("miniapp.craft.away"))
     ))
   }
@@ -608,11 +608,14 @@ object MiniAppView {
     )
   }
 
-  private def view(item: Item, count: Int, text: String): ItemView =
+  /** Стопку приложение показывает видом того, что в ней лежит: значок и фильтр
+    * — от содержимого, а что это стопка, видно по названию («📦 Мифрил ×5»). */
+  private def view(item: Item, count: Int, text: String): ItemView = {
+    val shape = Bundling.contents(item).headOption.getOrElse(item)
     ItemView(
       id         = item.id,
       title      = item.displayTitle,
-      kind       = item.itemType.entryName,
+      kind       = shape.itemType.entryName,
       rarity     = item.rarity.entryName,
       rarityRank = Rarity.order(item.rarity),
       lvl        = item.lvl,
@@ -625,8 +628,9 @@ object MiniAppView {
       sockets    = item.sockets.size,
       gems       = item.sockets.count(_.isDefined),
       set        = item.set.map(_.label),
-      variant    = variant(item)
+      variant    = variant(shape)
     )
+  }
 
   /** Чем вещь отличается внутри своего типа — для значка: лук и арбалет среди
     * оружия, трава и пыль среди материалов. */

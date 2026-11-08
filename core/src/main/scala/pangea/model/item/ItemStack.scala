@@ -21,6 +21,9 @@ object ItemStack {
     // Рунные камни одного узора и размера неразличимы между собой — как камни
     // одного вида и грейда. Уровня у них нет, поэтому в ключе его и нет.
     case r: ItemDetails.RuneStone       => Some(s"rune:${r.runeKey}:${r.size.entryName}")
+    // Стопки одного и того же добра неразличимы, как и само добро. Собрать их
+    // в стопку побольше нельзя: это решает [[Bundling.packable]], а не ключ.
+    case ItemDetails.Bundle(inside)     => inside.headOption.flatMap(key).map(k => s"bundle:${inside.size}:$k")
     case _                              => None
   }
 

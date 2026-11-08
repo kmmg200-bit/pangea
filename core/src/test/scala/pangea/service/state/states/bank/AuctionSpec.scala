@@ -326,6 +326,39 @@ object AuctionSpec extends ZIOSpecDefault {
                 assertTrue(!screens.last.choices.map(_.id).contains("AucSell_5"))
       },
 
+      test("стопка выставляется целиком, даже из пыли; в объявлении — что внутри и сколько") {
+        import pangea.generator.item.MaterialGenerator
+        import pangea.model.item.{Bundling, MaterialKind}
+        val dust   = (101L to 105L).toList.map(i => MaterialGenerator.item(MaterialKind.RubyDust).copy(id = i))
+        val bundle = Bundling.pack(dust).get.copy(id = 7L)
+        for {
+          f    <- auction(inventory = List(bundle), silver = 1000L)
+          _    <- f.state.action(testUser, tap("AuctionSell"), f.renderer)
+          list <- f.renderer.sentScreens.map(_.last)
+          _    <- f.state.action(testUser, tap("AucSell_7"), f.renderer)
+          _    <- f.state.action(testUser, tap("SellCurrency", "cur" -> "Silver"), f.renderer)
+          _    <- f.state.action(testUser, text("500"), f.renderer)
+          _    <- f.state.action(testUser, tap("SellConfirm"), f.renderer)
+          lots  = f.lots.snapshot
+        } yield assertTrue(list.choices.exists(c => c.id == "AucSell_7" && c.label == "📦 Рубиновая пыль ×5")) &&
+                assertTrue(lots.size == 1 && lots.head.item == bundle && f.inv.snapshot.isEmpty) &&
+                assertTrue(f.players.announcedTrade.exists(_.contains("📦 Рубиновая пыль ×5")))
+      },
+
+      test("купленная стопка ложится в сумку целиком — одной вещью, как была") {
+        import pangea.generator.item.GemGenerator
+        import pangea.model.item.{Bundling, GemKind}
+        val gems   = (101L to 105L).toList.map(i => GemGenerator.item(GemKind.Ruby, 1).copy(id = i))
+        val bundle = Bundling.pack(gems).get.copy(id = 60L)
+        val lot    = AuctionLot(1L, seller, bundle, 300L, AuctionCurrency.Silver, 0L, AuctionLot.LifetimeMs)
+        for {
+          f <- auction(lots = List(lot), silver = 1000L)
+          _ <- f.state.action(testUser, tap("BuyLotYes", "id" -> "1"), f.renderer)
+        } yield assertTrue(f.inv.snapshot.map(Bundling.contents) == List(gems) && f.lots.snapshot.isEmpty) &&
+                // номер у купленной вещи новый — как у любой покупки с аукциона
+                assertTrue(f.inv.snapshot.map(_.copy(id = 0L)) == List(bundle.copy(id = 0L)))
+      },
+
       test("нечем заплатить сбор — лота не будет") {
         for {
           f       <- auction(inventory = List(gear(42L)), silver = 10L)

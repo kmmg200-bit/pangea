@@ -686,18 +686,20 @@ case class MerchantState(
   private def doubloonPrice(item: Item): Long =
     item.material.map(_.doubloonPrice).getOrElse(0L)
 
-  /** Вещи на продажу: сюжетные предметы и травы Ришелье не берёт — травы несут
-    * Густаво, — а крысиное добро из канализации не берёт никто. Уникальный
-    * трофей не продаётся: его место — на Стене трофеев. */
   /** Улика из бочки в сумке: сюжетное `inventoryItems` не показывает. */
   private def hasClue(hero: Hero): Task[Boolean] =
     inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       .map(inv => QuestSupport.hasItem(inv.items.data, QuestItemKind.BarrelClue))
 
+  /** Вещи на продажу: сюжетные предметы и травы Ришелье не берёт — травы несут
+    * Густаво, — а крысиное добро из канализации не берёт никто. Уникальный
+    * трофей не продаётся: его место — на Стене трофеев. Стопку тоже не берёт —
+    * ни поштучно, ни хламом: её сперва распаковывают (см. `Bundling`). */
   private def inventoryItems(hero: Hero): Task[List[Item]] =
     inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       .map(_.items.data.filterNot(i =>
-        i.isQuestItem || i.isNamedTrophy || i.material.exists(m => m.isHerb || m.worthless) || i.itemType == ItemType.Brew))
+        i.isQuestItem || i.isNamedTrophy || i.material.exists(m => m.isHerb || m.worthless) || i.itemType == ItemType.Brew ||
+          i.isBundle))
 
   private def currentSellPage(user: User): Task[Int] = currentSellScene(user).map(_.page)
 

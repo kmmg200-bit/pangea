@@ -59,6 +59,19 @@ object MiniAppViewSpec extends ZIOSpecDefault {
       )
     },
 
+    test("стопка — значком и фильтром того, что внутри, с «📦» и «×5» в названии; в куб её не предлагают") {
+      val hero   = TestFixtures.hero(UserId(1L))
+      val bundle = pangea.model.item.Bundling.pack((101L to 105L).toList.map(ruby)).get.copy(id = 50L)
+      val view   = MiniAppView.inventory(hero, inv(hero, List(bundle, ruby(1L))), nothing(hero), content, _.name, 0L)
+      val craft  = MiniAppView.craft(hero, AzatState.empty, HomeData.empty, inv(hero, List(bundle, ruby(1L))), content, _ => "")
+      assertTrue(
+        view.items.map(i => i.id -> i.kind) == List(50L -> "Gem", 1L -> "Gem"),
+        view.items.headOption.exists(_.title == "📦 Надколотый рубин ×5"),
+        view.occupied == 2L,
+        craft.cube.bag.map(_.id) == List(1L)
+      )
+    },
+
     test("снаряжение — все слоты; левая рука под двуручным занята им") {
       val hero = TestFixtures.hero(UserId(1L)).copy(id = HeroId(7L),
         equipment = TestFixtures.emptyEquipment.copy(weapon = greatsword))

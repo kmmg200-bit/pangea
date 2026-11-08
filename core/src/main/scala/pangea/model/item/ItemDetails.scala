@@ -134,6 +134,10 @@ object ItemDetails {
    *  плиты. Ключ, а не сама руна, — чтобы `model.item` не зависел от `model.rune`. */
   case class RuneStone(runeKey: String, size: pangea.model.rune.RuneStoneSize) extends ItemDetails
 
+  /** Стопка (см. [[Bundling]]): сами вещи, как были, — с номерами и всем
+   *  остальным. Распаковка кладёт в сумку их, а не новые. */
+  case class Bundle(items: List[Item]) extends ItemDetails
+
   /** Божественное оружие (см. [[DivineKind]]): вид и сколько ударов ещё держит.
    *  Носится в доп. слоте наравне с обычными вещами этого слота; заряды игроку
    *  не показываются — оружие рассыпается без предупреждения. */
@@ -191,6 +195,11 @@ object ItemDetails {
   private val roseDec:    Decoder[Rose]              = deriveDecoder
   private val runeEnc:    Encoder[RuneStone]         = deriveEncoder
   private val runeDec:    Decoder[RuneStone]         = deriveDecoder
+  // Вещи в стопке — те же `Item`, чей кодек сам держит этот. Кодек вещи берём
+  // при каждом вызове, а не при создании объекта: иначе Item и ItemDetails
+  // ждали бы друг друга при инициализации.
+  private val bundleEnc:  Encoder[Bundle]            = (b: Bundle) => Json.obj("items" -> b.items.asJson)
+  private val bundleDec:  Decoder[Bundle]            = (c: HCursor) => c.get[List[Item]]("items").map(Bundle(_))
 
   private def tagged(tpe: String, body: Json): Json =
     body.deepMerge(Json.obj("type" -> tpe.asJson))
@@ -213,6 +222,7 @@ object ItemDetails {
     case d: Divine      => tagged("Divine", divineEnc(d))
     case r: Rose        => tagged("Rose", roseEnc(r))
     case r: RuneStone   => tagged("RuneStone", runeEnc(r))
+    case b: Bundle      => tagged("Bundle", bundleEnc(b))
   }
 
   implicit val decoder: Decoder[ItemDetails] = Decoder.instance { c =>
@@ -234,6 +244,7 @@ object ItemDetails {
       case "Divine"      => divineDec(c)
       case "Rose"        => roseDec(c)
       case "RuneStone"   => runeDec(c)
+      case "Bundle"      => bundleDec(c)
       case other         => Left(DecodingFailure(s"Unknown ItemDetails type: $other", c.history))
     }
   }

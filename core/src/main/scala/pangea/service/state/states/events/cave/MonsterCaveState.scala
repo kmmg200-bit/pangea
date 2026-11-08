@@ -157,7 +157,8 @@ case class MonsterCaveState(
     for {
       hero  <- getHero(user)
       inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
-      all    = CaveSupply.beltSupplies(hero.equipment.belt) ++ inv.items.data.map(Supply.Carried)
+      // Стопку в дело не пускают: вещи из неё идут в дело только после распаковки.
+      all    = CaveSupply.beltSupplies(hero.equipment.belt) ++ inv.items.data.filterNot(_.isBundle).map(Supply.Carried)
       _ <- if (all.isEmpty)
              renderer.show(user, Screen(content.text("cave.supply.empty"), List(backToGate)))
            else {
@@ -196,7 +197,7 @@ case class MonsterCaveState(
     for {
       hero  <- getHero(user)
       inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
-      chosen = inv.items.data.find(_.id == itemId)
+      chosen = inv.items.data.find(i => i.id == itemId && !i.isBundle)
       res <- chosen match {
         case None                       => showSupplies(user, scene, renderer).as(StateType.MonsterCave)
         case Some(item) if item.isQuestItem =>

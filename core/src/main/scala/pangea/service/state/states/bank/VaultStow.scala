@@ -5,7 +5,7 @@ import pangea.dao.hero.HeroDao
 import pangea.model.artifact.ArtifactKind
 import pangea.model.bank.{StowGroup, StowSettings}
 import pangea.model.hero.Hero
-import pangea.model.item.Item
+import pangea.model.item.{Bundling, Item}
 import pangea.model.user.UserId
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.bank.{BankRepoError, BankRepository}
@@ -14,7 +14,8 @@ import zio.{Task, ZIO}
 
 /** Что легло в ячейку за одну «Положить всё»: сколько вещей какого рода, что
   * пришло из других хранилищ и сколько ушло серебра. `full` — место в ячейке
-  * кончилось раньше, чем вещи. */
+  * кончилось раньше, чем вещи. Стопка считается тем, что в ней лежит: стопка
+  * из пяти камней — это «камни 5». */
 final case class StowReport(
   byGroup:      Map[StowGroup, Int]    = Map.empty,
   fromArtifact: Map[ArtifactKind, Int] = Map.empty,
@@ -24,8 +25,15 @@ final case class StowReport(
   def items: Int = byGroup.values.sum + fromArtifact.values.sum
   def empty: Boolean = items == 0 && silver == 0L
 
-  def plus(g: StowGroup): StowReport         = copy(byGroup = byGroup.updated(g, byGroup.getOrElse(g, 0) + 1))
-  def plus(k: ArtifactKind): StowReport      = copy(fromArtifact = fromArtifact.updated(k, fromArtifact.getOrElse(k, 0) + 1))
+  def plus(g: StowGroup, item: Item): StowReport =
+    copy(byGroup = byGroup.updated(g, byGroup.getOrElse(g, 0) + StowReport.count(item)))
+  def plus(k: ArtifactKind, item: Item): StowReport =
+    copy(fromArtifact = fromArtifact.updated(k, fromArtifact.getOrElse(k, 0) + StowReport.count(item)))
+}
+
+object StowReport {
+  /** Сколько вещей за этой: у стопки — сколько в ней лежит, у прочих — одна. */
+  def count(item: Item): Int = Bundling.contents(item).size.max(1)
 }
 
 /** «Положить всё»: разом сгружает в ячейку то, что герой отметил в настройке.
@@ -92,7 +100,7 @@ object VaultStow {
     bankRepo.deposit(hero.id, item).either.flatMap {
       case Right(_) =>
         inventoryRepo.removeItem(item.id, hero.id).mapError(asThrowable)
-          .as(settings.groupOf(item).fold(report)(report.plus))
+          .as(settings.groupOf(item).fold(report)(report.plus(_, item)))
       // Горстей этого вида в ячейке уже предел — вещь остаётся, но укладка идёт дальше.
       case Left(BankRepoError.DustLimitReached) => ZIO.succeed(report)
       case Left(BankRepoError.VaultFull)        => ZIO.succeed(report.copy(full = true))
@@ -119,7 +127,7 @@ object VaultStow {
                 case Left(_) => ZIO.succeed(acc)
                 case Right(taken) =>
                   bankRepo.deposit(hero.id, taken).either.flatMap {
-                    case Right(_) => ZIO.succeed(acc.plus(kind))
+                    case Right(_) => ZIO.succeed(acc.plus(kind, taken))
                     // Не влезло — кладём обратно туда, откуда взяли.
                     case Left(e) =>
                       repo.put(hero.id, kind, taken).either

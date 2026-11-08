@@ -10,4 +10,11 @@ object InventoryRepoError {
   case object CantFindInventory    extends InventoryRepoError
   case object CantUpdateInventory  extends InventoryRepoError
   case object CantFindItemToRemove extends InventoryRepoError
+
+  /** Почему не прошёл обмен вещей в сумке (см. `Inventory.swapped`). */
+  def of(refusal: pangea.model.inventory.Inventory.SwapRefusal): InventoryRepoError = refusal match {
+    case pangea.model.inventory.Inventory.SwapRefusal.Missing   => CantFindItemToRemove
+    case pangea.model.inventory.Inventory.SwapRefusal.NoRoom    => NoMorePlaceForItems
+    case pangea.model.inventory.Inventory.SwapRefusal.HoardFull => DustLimitReached
+  }
 }

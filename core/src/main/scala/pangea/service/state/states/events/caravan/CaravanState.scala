@@ -178,7 +178,8 @@ case class CaravanState(
   private def carried(hero: Hero, items: List[Item]): List[Item] = {
     val blade = hero.equipment.additionalWeapon
     val divine = Option.when(blade.id > 0L && blade.divine.isDefined)(blade)
-    items ++ divine.toList
+    // Стопку в дело не пускают: вещи из неё идут в дело только после распаковки.
+    items.filterNot(_.isBundle) ++ divine.toList
   }
 
   /** Список вещей — тот же, что у входа в пещеру: сперва пояс (дымную флягу

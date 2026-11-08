@@ -3,7 +3,7 @@ package pangea.model.bank
 import enumeratum._
 import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder, HCursor, Json}
-import pangea.model.item.{Item, ItemType}
+import pangea.model.item.{Bundling, Item, ItemType}
 import pangea.model.rune.RuneStoneSize
 
 /** Что именно уходит в ячейку по кнопке «Положить всё». Устроено как настройка
@@ -96,9 +96,11 @@ final case class StowSettings(
   }
 
   /** К какой группе относится вещь. Порядок проверок важен: пыль и руны —
-    * тоже материалы и камни на вид, но у них свои переключатели. */
+    * тоже материалы и камни на вид, но у них свои переключатели. Стопка — в
+    * группе того, что в ней лежит: стопка камней уходит вместе с камнями. */
   def groupOf(item: Item): Option[StowGroup] =
     if (item.isQuestItem) None
+    else if (item.isBundle) Bundling.contents(item).headOption.flatMap(groupOf)
     else if (item.isDust) Some(StowGroup.Dust)
     else if (item.isSmallRune) Some(StowGroup.SmallRunes)
     else if (item.runeStone.exists(_.size == RuneStoneSize.Big)) Some(StowGroup.BigRunes)

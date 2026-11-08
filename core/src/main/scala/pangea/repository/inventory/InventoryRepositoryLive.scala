@@ -58,6 +58,17 @@ final class InventoryRepositoryLive(inventoryDao: InventoryDao)
           .orElseFail(InventoryRepoError.CantUpdateInventory)
       } yield ()
 
+  def swap(heroId: HeroId, remove: List[Item], add: List[Item]): IO[InventoryRepoError, Unit] =
+    for {
+      inventory <- inventoryDao
+        .get(heroId)
+        .orElseFail(InventoryRepoError.CantFindInventory)
+      next      <- ZIO.fromEither(inventory.swapped(remove, add)).mapError(InventoryRepoError.of)
+      _         <- inventoryDao
+        .update(next)
+        .orElseFail(InventoryRepoError.CantUpdateInventory)
+    } yield ()
+
   def refillFlasks(heroId: HeroId): IO[InventoryRepoError, Unit] =
     for {
       inventory <- inventoryDao.get(heroId).orElseFail(InventoryRepoError.CantFindInventory)

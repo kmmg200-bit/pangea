@@ -12,7 +12,7 @@ import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Scree
 import pangea.generator.item.{MaterialGenerator, TreasureMapGenerator}
 import pangea.model.hero.{Equipment, Hero, WeaponCoat, WeaponDust}
 import pangea.model.inventory.Inventory
-import pangea.model.item.{BeltSlot, Chisel, Gem, GemBreaking, Item, ItemDetails, ItemStack, ItemType, MaterialKind, QuestItemKind, RefillSource, TrophyKind}
+import pangea.model.item.{BeltSlot, Bundling, Chisel, Gem, GemBreaking, Item, ItemDetails, ItemStack, ItemType, MaterialKind, QuestItemKind, RefillSource, TrophyKind}
 import pangea.model.monster.Race
 import pangea.model.quest.{Difficulty, NpcQuest, NpcQuests}
 import pangea.model.rune.{Rune, RuneStone, RuneStoneSize}
@@ -66,6 +66,9 @@ case class InventoryState(
       // Стопка одинаковых — выбросить разом, но сперва спросить.
       "DropAll"           -> Target.Run { (u, _, r) => offerDropAll(u, r) },
       "DropAllYes"        -> Target.Run { (u, ua, r) => dropAll(u, ua, r) },
+      // Стопка: пять одинаковых — в одну вещь на одном месте, и обратно.
+      "Pack"              -> Target.Run { (u, _, r) => packSelected(u, r) },
+      "Unpack"            -> Target.Run { (u, _, r) => unpackSelected(u, r) },
       "CombineMap"        -> Target.Run { (u, _, r) => combineSelected(u, r) },
       "CombineRune"       -> Target.Run { (u, _, r) => combineRuneSelected(u, r) },
       "SocketInsert"      -> Target.Run { (u, _, r) => startSocketing(u, r) },
@@ -198,6 +201,8 @@ case class InventoryState(
           writeScene(user, scene.copy(selectedId = Some(item.id))) *> showQuestItem(user, item, renderer)
         case Some(item @ InventoryState.Brewed(kind)) =>
           writeScene(user, scene.copy(selectedId = Some(item.id))) *> showBrew(user, item, kind, inv.items.data, renderer, note)
+        case Some(item) if item.isBundle =>
+          writeScene(user, scene.copy(selectedId = Some(item.id))) *> showBundle(user, item, hero, inv.items.data, renderer, note)
         case Some(item) =>
           // Сколько таких же лежит в сумке — счётчик над описанием; кнопки при
           // этом трогают ровно один предмет из стопки.
@@ -238,6 +243,7 @@ case class InventoryState(
             Option.when(BeltSlot.of(item).isDefined)(
               content.choice("BeltPut", "inventory.beltPut").copy(color = ChoiceColor.Positive, row = Some(0))),
             Some(content.choice("Drop", "inventory.drop").copy(color = ChoiceColor.Negative, row = Some(0))),
+            packChoice(item, count),
             dropAllChoice(count),
             Some(content.choice("InventoryList", "inventory.exit").copy(row = Some(1), color = ChoiceColor.Negative))
           ).flatten
@@ -271,11 +277,98 @@ case class InventoryState(
         Option.when(coats)(content.choice("CoatWeapon", "brew.coat").copy(color = ChoiceColor.Positive, row = Some(0))),
         Option.when(flaskFits)(content.choice("RefillByBrew", "brew.refill").copy(color = ChoiceColor.Positive, row = Some(0))),
         Some(content.choice("Drop", "inventory.drop").copy(color = ChoiceColor.Negative, row = Some(0))),
+        packChoice(item, count),
         dropAllChoice(count),
         Some(content.choice("InventoryList", "inventory.exit").copy(row = Some(1), color = ChoiceColor.Negative))
       ).flatten
       renderer.show(user, Screen(text, choices)).as(StateType.Inventory)
     }
+
+  // ── Стопки ─────────────────────────────────────────────────────────────────
+
+  /** «📦 В стопку» — когда таких вещей в сумке хватает на стопку. Ряд — с
+    * «Выбросить все» и «Выйти»: первый на карточке камня и так полон. */
+  private def packChoice(item: Item, count: Int): Option[Choice] =
+    Option.when(Bundling.packable(item) && count >= Bundling.Size)(
+      content.choice("Pack", "inventory.bundle.pack").copy(row = Some(1)))
+
+  /** Карточка стопки: что в ней — и «Распаковать». */
+  private def showBundle(user: User, item: Item, hero: Hero, all: List[Item], renderer: Renderer,
+                         note: Option[String]): Task[StateType] = {
+    val count   = ItemStack.countOf(all, item)
+    val text    = StackMove.withNote(note, InventoryState.bundleText(content, item, hero) + stackLine(count))
+    val choices = List(
+      Some(content.choice("Unpack", "inventory.bundle.unpack").copy(row = Some(0))),
+      Some(content.choice("Drop", "inventory.drop").copy(color = ChoiceColor.Negative, row = Some(0))),
+      dropAllChoice(count),
+      Some(content.choice("InventoryList", "inventory.exit").copy(row = Some(1), color = ChoiceColor.Negative))
+    ).flatten
+    renderer.show(user, Screen(text, choices)).as(StateType.Inventory)
+  }
+
+  /** Собрать стопку: пять одинаковых — с конца, как и всё на карточке (см.
+    * [[withSelected]]), — в одну вещь на одном месте. Показанная вещь остаётся в
+    * сумке, пока таких больше пяти, и игрок возвращается на её карточку.
+    * Собирают где угодно, и в лабиринте. Места стопка не просит, а освобождает —
+    * кроме пыли: та места не занимала, а стопке оно нужно. */
+  private def packSelected(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      scene <- readScene(user)
+      hero  <- getHero(user)
+      inv   <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
+      res   <- scene.selectedId.flatMap(id => inv.items.data.find(_.id == id)) match {
+                 case None => showList(user, renderer)
+                 case Some(item) =>
+                   val taken = stackOf(inv.items.data, item).takeRight(Bundling.Size)
+                   Bundling.pack(taken) match {
+                     // Таких уже меньше пяти (или вещь не собирается) — карточка скажет, что есть.
+                     case None => backToCard(user, renderer)
+                     case Some(draft) if inv.swapped(taken, List(draft)).isLeft =>
+                       backToCard(user, renderer, Some(content.text("inventory.bundle.noRoom")))
+                     case Some(draft) =>
+                       for {
+                         bundle <- itemRepository.persist(hero.id, draft)
+                         _      <- inventoryRepo.swap(hero.id, taken, List(bundle)).mapError(e => new Throwable(e.toString))
+                         r      <- backToCard(user, renderer, Some(content.format("inventory.bundle.packed",
+                                     "name" -> item.displayTitle, "n" -> Bundling.contents(bundle).size.toString)))
+                       } yield r
+                   }
+               }
+    } yield res
+
+  /** Распаковать стопку: вещи ложатся в сумку, как были. Вместо одного места
+    * они займут пять — нужно ещё четыре свободных; пыли место не нужно, но
+    * сверх своего предела она не ляжет. */
+  private def unpackSelected(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      scene <- readScene(user)
+      hero  <- getHero(user)
+      inv   <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
+      res   <- scene.selectedId.flatMap(id => inv.items.data.find(_.id == id))
+                 .map(i => stackOf(inv.items.data, i).lastOption.getOrElse(i)) match {
+                 case None => showList(user, renderer)
+                 case Some(item) =>
+                   val inside = Bundling.contents(item)
+                   inside match {
+                     case Nil => backToCard(user, renderer)
+                     case first :: _ =>
+                       inv.swapped(List(item), inside) match {
+                         case Left(Inventory.SwapRefusal.HoardFull) =>
+                           backToCard(user, renderer, Some(content.format("inventory.bundle.hoardFull",
+                             "name" -> first.displayTitle, "limit" -> Item.HoardLimit.toString)))
+                         case Left(_) =>
+                           // Сколько мест не хватает: стопка своё место отдаст, а вещи займут свои.
+                           val short = inv.occupied - 1L + inside.count(!_.weightless).toLong - inv.maxItems
+                           backToCard(user, renderer, Some(content.format("inventory.bundle.unpackNoRoom",
+                             "count" -> short.max(1L).toString)))
+                         case Right(_) =>
+                           inventoryRepo.swap(hero.id, List(item), inside).mapError(e => new Throwable(e.toString)) *>
+                             backToCard(user, renderer, Some(content.format("inventory.bundle.unpacked",
+                               "name" -> first.displayTitle, "n" -> inside.size.toString)))
+                       }
+                   }
+               }
+    } yield res
 
   /** Заправить флягу отваром: только флягу своего толка и только неполную.
     * Какую — выбирает игрок: таких на поясе может быть несколько (живая вода
@@ -1479,8 +1572,20 @@ object InventoryState {
     * Марисы, сколько съел бродячий ларец. */
   def cardText(content: SceneContent, item: Item, hero: Hero, quests: NpcQuests): String = item match {
     case _ if item.isQuestItem => questText(content, item, quests, hero.lvl)
+    case _ if item.isBundle    => bundleText(content, item, hero)
     case Brewed(kind)          => brewText(content, item, kind)
     case _                     => itemText(item, hero.equipment, Some(hero))
+  }
+
+  /** Стопка: значок и сколько внутри, а под ними — карточка того, что в ней
+    * лежит: вещи в стопке одинаковые, и одной карточки на всех хватает. */
+  def bundleText(content: SceneContent, item: Item, hero: Hero): String = {
+    val inside = Bundling.contents(item)
+    val head   = s"${item.displayTitle}\n${content.format("inventory.bundle.about", "n" -> inside.size.toString)}"
+    inside.headOption.fold(head) {
+      case first @ Brewed(kind) => s"$head\n\n${brewText(content, first, kind)}"
+      case first                => s"$head\n\n${itemText(first, hero.equipment, Some(hero))}"
+    }
   }
 
   /** Сюжетный предмет: описание, у письма, карты, бродячего ларца и улики из
@@ -1773,6 +1878,7 @@ object InventoryState {
     case ItemType.Brew             => Item.NoItem // отвар не экипируется
     case ItemType.Rose             => Item.NoItem // роза ложится в ячейку пояса
     case ItemType.RuneStone        => Item.NoItem // рунный камень не экипируется
+    case ItemType.Bundle           => Item.NoItem // стопка не экипируется
     case ItemType.NoItem           => Item.NoItem
   }
 
@@ -1805,6 +1911,7 @@ object InventoryState {
     case ItemType.Brew             => eq // отвар не экипируется
     case ItemType.Rose             => eq // роза ложится в ячейку пояса
     case ItemType.RuneStone        => eq // рунный камень не экипируется
+    case ItemType.Bundle           => eq // стопка не экипируется
     case ItemType.NoItem           => eq
   }
 

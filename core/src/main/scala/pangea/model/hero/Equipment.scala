@@ -171,6 +171,7 @@ case class Equipment(
     case ItemType.Brew             => Nil
     case ItemType.Rose             => Nil
     case ItemType.RuneStone        => Nil
+    case ItemType.Bundle           => Nil
     case ItemType.NoItem           => Nil
   }
 }
