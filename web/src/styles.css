@@ -130,6 +130,12 @@ button {
   font-weight: 600;
 }
 
+/* Внутри приложения ВК на телефоне правый верхний угол занят капсулой «⋯ ✕»:
+   над шапкой — пустая полоса под неё, сама шапка та же. */
+:root[data-capsule='on'] .hero {
+  padding-top: calc(var(--capsule-band, 52px) + env(safe-area-inset-top));
+}
+
 .hero-actions {
   display: flex;
   flex: 0 0 auto;

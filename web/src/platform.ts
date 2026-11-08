@@ -4,8 +4,15 @@ import bridge from '@vkontakte/vk-bridge'
   * по ним бот узнаёт игрока (см. VkLaunchParams на стороне бота). */
 export const launchParams = window.location.search.replace(/^\?/, '')
 
+/** Приложение ВК на телефоне: поверх правого верхнего угла оно рисует свою
+  * капсулу «⋯ ✕» — там ничего своего держать нельзя. В мобильном браузере и на
+  * компьютере капсулы поверх приложения нет. */
+const platform = new URLSearchParams(launchParams).get('vk_platform') ?? ''
+export const vkCapsule = platform.startsWith('mobile_') && platform !== 'mobile_web'
+
 /** Тема — как в клиенте ВК; вне ВК остаётся системная (prefers-color-scheme). */
 export function initPlatform(): void {
+  if (vkCapsule) document.documentElement.dataset.capsule = 'on'
   bridge.subscribe((event) => {
     if (event.detail.type !== 'VKWebAppUpdateConfig') return
     const data = event.detail.data as { appearance?: string; scheme?: string }
