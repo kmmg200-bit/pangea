@@ -167,16 +167,17 @@ object GroupStateSpec extends ZIOSpecDefault {
       assertTrue(secondFell.placesInOrder.map(_._2.map(_.currentHp)) == List(Some(100L), None, Some(300L), Some(400L))) &&
       assertTrue(secondFell.group.slain.map(_.name).size == 1) &&
       assertTrue(secondFell.group.pendingMove.contains(3)) &&     // цель на своём месте
-      assertTrue(targetFell.group.pendingMove.isEmpty) &&          // цель пала — Таран сгорел
+      // цель пала — Таран не сгорает: герой шагнёт на опустевшее место в конце раунда
+      assertTrue(targetFell.group.pendingMove.contains(2)) &&
       assertTrue(leftFell.group.heroPos == 3 && leftFell.monsterCurrentHp == 300L && !leftFell.group.occupied(1)) &&
       assertTrue(!secondFell.group.inReach(2) && secondFell.group.neighbourPositions.isEmpty) &&
       assertTrue(four.sideFallen(9) == four)
     },
 
-    test("смена пары после гибели активного гасит отложенный Таран") {
+    test("смена пары после гибели активного отложенный Таран не гасит: шаг всё равно будет") {
       val b = SoloPveBattle.fromGroup(trio, hero, Nil).copy(monsterCurrentHp = 0L)
       val aimed = b.copy(group = b.group.copy(pendingMove = Some(2)))
-      assertTrue(aimed.promoteNext.get.group.pendingMove.isEmpty)
+      assertTrue(aimed.promoteNext.map(_.group.pendingMove).contains(Some(2)))
     },
 
     test("подкрепление встаёт на первое свободное место за строем") {

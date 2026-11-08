@@ -2,7 +2,7 @@ package pangea.service.state.states.battle
 
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.model.battle.{BattleAlly, Formation, SoloPveBattle}
+import pangea.model.battle.{BattleAlly, Formation, GroupState, SoloPveBattle}
 import pangea.model.hero.Hero
 import pangea.model.item.{BeltSlot, FlaskKind, Item, ItemDetails, ItemType, Rarity => ItemRarity}
 import pangea.model.monster.{Monster, Race, Rarity}
@@ -295,15 +295,41 @@ object GroupBattleSpec extends ZIOSpecDefault {
               assertTrue(after.group.places.max == Formation.MonsterPlaces)
     },
 
-    test("герой ходит по своей стороне: за одиннадцатое место шагу нет, сколько бы врагов ни стояло глубже") {
+    test("герой ходит и в хвост чужого строя — до пятнадцатого места, но не за край строя") {
       val full = group(List.fill(Formation.MonsterPlaces)(1000L): _*)
       val deep = full.copy(group = full.group.copy(heroPos = Formation.HeroPlaces))
+      val tail = full.copy(group = full.group.copy(heroPos = Formation.WalkPlaces))
       val mid  = full.copy(group = full.group.copy(heroPos = 5))
-      // враги стоят до пятнадцатого, но хвост строя — не сторона отряда
+      val trio = group(1000L, 1000L, 1000L)
+      val end  = trio.copy(group = trio.group.copy(heroPos = 3))
+      // враги стоят до пятнадцатого — герой доходит и туда, как союзники
       assertTrue(deep.group.rows == Formation.MonsterPlaces) &&
-      assertTrue(BattleState.stepTargets(deep) == List(Formation.HeroPlaces - 1)) &&
+      assertTrue(BattleState.stepTargets(deep) == List(Formation.HeroPlaces - 1, Formation.HeroPlaces + 1)) &&
+      assertTrue(BattleState.stepTargets(tail) == List(Formation.WalkPlaces - 1)) &&
       assertTrue(BattleState.stepTargets(mid) == List(4, 6)) &&
-      assertTrue(BattleState.stepTargets(full) == List(2))
+      assertTrue(BattleState.stepTargets(full) == List(2)) &&
+      // за краем строя никого нет — туда шагу нет
+      assertTrue(BattleState.stepTargets(end) == List(2))
+    },
+
+    test("мерцающий настой: места до пятнадцатого, но кнопок не больше десяти — ближайшие к герою") {
+      val full = group(List.fill(Formation.MonsterPlaces)(1000L): _*)
+      val at8  = full.copy(group = full.group.copy(heroPos = 8))
+      val at1  = full.copy(group = full.group.copy(heroPos = 1))
+      assertTrue(at8.group.freeHeroPlaces.size == Formation.WalkPlaces - 1) &&
+      assertTrue(BattleState.shiftChoices(at8) == List(3, 4, 5, 6, 7, 9, 10, 11, 12, 13)) &&
+      assertTrue(BattleState.shiftChoices(at1) == (2 to 11).toList) &&
+      assertTrue(BattleState.shiftChoices(at8).size == BattleState.InlineButtons)
+    },
+
+    test("после боя: кто кончил его в хвосте чужого строя, встаёт на свободное место отряда у края") {
+      val hero = BattleState.HeroKey
+      // герой на 14-м, союзники на 1-м и 11-м: 11-е занято — герою 10-е
+      assertTrue(BattleState.homePlaces(Map(hero -> 14, 1 -> 1, 2 -> 11)) == Map(hero -> 10, 1 -> 1, 2 -> 11)) &&
+      // двое в хвосте: дальний — к самому краю
+      assertTrue(BattleState.homePlaces(Map(hero -> 14, 3 -> 13, 1 -> 1)) == Map(hero -> 11, 3 -> 10, 1 -> 1)) &&
+      // на своей стороне — как стояли
+      assertTrue(BattleState.homePlaces(Map(hero -> 4, 1 -> 1)) == Map(hero -> 4, 1 -> 1))
     },
 
     test("после Тарана герой стоит между двумя мобами — бьют сбоку оба, а не только сосед справа") {
@@ -322,8 +348,8 @@ object GroupBattleSpec extends ZIOSpecDefault {
               assertTrue(screens.contains("2. 🟢 Вы VS 🔴"))
     },
 
-    test("каждый четвёртый раунд ряды перемешиваются — никто не пропадает и не двоится") {
-      // Три раунда без перемен, на четвёртом — перемешивание. Три моба с разным
+    test("каждый восьмой раунд ряды перемешиваются — никто не пропадает и не двоится") {
+      // Семь раундов без перемен, на восьмом — перемешивание. Три моба с разным
       // запасом HP: по нему видно, что после перемешивания это те же трое.
       // Раненый сосед (броня 18 из 100) должен остаться ровно одним и с той же
       // раной — из-за этого и пропал следопыт у игрока.
@@ -331,7 +357,7 @@ object GroupBattleSpec extends ZIOSpecDefault {
       // проверить и случай, когда в пару встал не первый.
       val trio    = group(1000L, 2000L, 3000L)
       val wounded = trio.group.others.head.copy(currentArmor = 18L, currentHp = 1940L)
-      val b = trio.copy(group = trio.group.copy(others = wounded :: trio.group.others.tail, round = 3))
+      val b = trio.copy(group = trio.group.copy(others = wounded :: trio.group.others.tail, round = 7))
       def run(seed: Long) =
         for {
           t <- makeState(hero(), b)
@@ -346,7 +372,7 @@ object GroupBattleSpec extends ZIOSpecDefault {
           byMax    = lineUp.map(m => m.stats.hp -> m).toMap
           // жребий иногда возвращает строй к тому же виду — тогда и сообщать не о чем
           moved    = lineUp.map(_.stats.hp) != List(1000L, 2000L, 3000L)
-        } yield assertTrue(after.group.round == 4) &&
+        } yield assertTrue(after.group.round == GroupState.ShufflePeriod) &&
                 assertTrue(screens.contains("Ряды смешались") == moved) &&
                 assertTrue(lineUp.map(_.stats.hp).sorted == List(1000L, 2000L, 3000L)) &&
                 assertTrue(byMax(1000L).currentHp < 1000L) &&
@@ -392,7 +418,8 @@ object GroupBattleSpec extends ZIOSpecDefault {
       // отменяла перемешивание целиком — в караване ряды не смешивались никогда.
       val mobs    = List(monster(1000L), monster(2000L), monster(3000L), towerMob(9000L))
       val caravan = SoloPveBattle.fromGroup(mobs, hero(), Nil, towers = 1)
-      val b       = caravan.copy(noKin = true, group = caravan.group.copy(round = 3))
+      // раунд перед перемешиванием (каждый GroupState.ShufflePeriod-й)
+      val b       = caravan.copy(noKin = true, group = caravan.group.copy(round = GroupState.ShufflePeriod - 1))
       def run(seed: Long) =
         for {
           t <- makeState(hero(), b)
@@ -718,14 +745,16 @@ object GroupBattleSpec extends ZIOSpecDefault {
               assertTrue(hpAt(1) < 1000L && hpAt(2) < 1000L && hpAt(3) == 1000L)
     },
 
-    test("Вихрь клинка: куда шагать — только на свою сторону и не пригвождённому") {
+    test("Вихрь клинка: куда шагать — до хвоста чужого строя и не пригвождённому") {
       val h     = heroWithSkills(Skill.BladeWhirl, Skill.MinorHeal)
-      val b     = groupFor(h, List.fill(Formation.HeroPlaces + 1)(1000L): _*)
+      val b     = groupFor(h, List.fill(Formation.MonsterPlaces)(1000L): _*)
       val edge  = b.copy(group = b.group.copy(heroPos = Formation.HeroPlaces))
       val stuck = b.copy(effects = b.effects.copy(heroRootedTurns = 1))
       assertTrue(BattleState.whirlSpot(b, 2).contains(2)) &&
       assertTrue(BattleState.whirlSpot(b, 1).isEmpty) && // цель напротив
-      assertTrue(BattleState.whirlSpot(edge, Formation.HeroPlaces + 1).isEmpty) && // своей стороне не дотянуться
+      // в хвост чужого строя — можно, дальше пятнадцатого мест нет
+      assertTrue(BattleState.whirlSpot(edge, Formation.HeroPlaces + 1).contains(Formation.HeroPlaces + 1)) &&
+      assertTrue(BattleState.whirlSpot(edge, Formation.WalkPlaces + 1).isEmpty) &&
       assertTrue(BattleState.whirlSpot(stuck, 2).isEmpty)
     },
 
@@ -924,6 +953,67 @@ object GroupBattleSpec extends ZIOSpecDefault {
               assertTrue(screens.contains("Таран сработал: вы шагнули на место 3"))
     },
 
+    test("Таран добил соседа — в конце раунда герой всё равно шагает на опустевшее место") {
+      val h = heroWithSkills(Skill.SweepingStrike, Skill.Ram)
+      for {
+        t <- makeState(h, groupFor(h, 1000L, 1L))
+        (state, dao, r) = t
+        _       <- quietRound(99, 99) *> TestRandom.feedLongs(100L)
+        _       <- state.action(testUser, aimed("Skill_202", 2), r)
+        after   <- battleOf(dao)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(after.group.slain.size == 1) &&
+              assertTrue(after.group.heroPos == 2 && after.group.pendingMove.isEmpty) &&
+              assertTrue(screens.contains("🛡 Таран сработал: вы шагнули на место 2."))
+    },
+
+    test("Таран добил того, с кем герой не в паре, — шаг на его место, а бой идёт с оставшимся") {
+      val h   = heroWithSkills(Skill.SweepingStrike, Skill.Ram)
+      val b0  = groupFor(h, 1L, 2000L, 3000L)
+      // место 2 пустеет, и герой стоит на нём: напротив пусто, активный — на 1
+      val gap = b0.sideFallen(b0.group.idxOf(2))
+      val b   = gap.copy(group = gap.group.copy(heroPos = 2))
+      for {
+        t <- makeState(h, b)
+        (state, dao, r) = t
+        _       <- quietRound(99, 99, 99) *> TestRandom.feedLongs(100L, 100L)
+        _       <- state.action(testUser, aimed("Skill_202", 1), r)
+        after   <- battleOf(dao)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(after.group.heroPos == 1 && after.group.pendingMove.isEmpty) &&
+              assertTrue(after.monsterStats.hp == 3000L) &&
+              assertTrue(screens.contains("🛡 Таран сработал: вы шагнули на место 1."))
+    },
+
+    test("пригвождённый добивает Тараном, но с места не сходит — и знает почему") {
+      val h = heroWithSkills(Skill.SweepingStrike, Skill.Ram)
+      val b = groupFor(h, 1000L, 1L)
+      for {
+        t <- makeState(h, b.copy(effects = b.effects.copy(heroRootedTurns = 3)))
+        (state, dao, r) = t
+        _       <- quietRound(99, 99) *> TestRandom.feedLongs(100L)
+        _       <- state.action(testUser, aimed("Skill_202", 2), r)
+        after   <- battleOf(dao)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(after.group.slain.size == 1 && after.group.heroPos == 1) &&
+              assertTrue(screens.contains("📌 Вы пригвождены — Таран не сдвинул вас с места."))
+    },
+
+    test("Таран по врагу в хвосте чужого строя: герой шагает и туда") {
+      val h    = heroWithSkills(Skill.SweepingStrike, Skill.Ram)
+      val full = groupFor(h, List.fill(Formation.MonsterPlaces)(1000L): _*)
+      val deep = full.moveHeroTo(Formation.HeroPlaces)
+      for {
+        t <- makeState(h, deep)
+        (state, dao, r) = t
+        _       <- quietRound(99, 99, 99, 99) *> TestRandom.feedLongs(100L, 100L)
+        _       <- state.action(testUser, aimed("Skill_202", Formation.HeroPlaces + 2), r)
+        after   <- battleOf(dao)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(after.group.heroPos == Formation.HeroPlaces + 2 && after.group.pendingMove.isEmpty) &&
+              assertTrue(screens.contains(s"🛡 Таран сработал: вы шагнули на место ${Formation.HeroPlaces + 2}, против вас"))
+    },
+
     test("Таран на свободное место: рывок без удара — герой встаёт туда сразу, мобы целы, умение на перезарядке") {
       val h  = heroWithSkills(Skill.SweepingStrike, Skill.Ram)
       val b0 = groupFor(h, 1000L, 2000L, 3000L)
@@ -960,17 +1050,20 @@ object GroupBattleSpec extends ZIOSpecDefault {
               assertTrue(after.monsterCurrentHp < 1000L && after.group.heroPos == 1)
     },
 
-    test("куда рвётся Таран: свободные места своей стороны в двух шагах; без строя и пригвождённому — некуда") {
+    test("куда рвётся Таран: свободные места своего ряда в двух шагах, до пятнадцатого; без строя и пригвождённому — некуда") {
       val h    = heroWithSkills(Skill.SweepingStrike, Skill.Ram)
       val b0   = groupFor(h, 1000L, 1000L, 1000L)
       val gap  = b0.sideFallen(b0.group.idxOf(2))
       val edge = gap.copy(group = gap.group.copy(heroPos = Formation.HeroPlaces))
+      val tail = gap.copy(group = gap.group.copy(heroPos = Formation.WalkPlaces))
       assertTrue(BattleState.skillReach(h, Skill.Ram) == 2 && BattleState.skillReach(h, Skill.Shove) == 1) &&
       assertTrue(BattleState.ramSpots(groupFor(h, 1000L)).isEmpty) &&
       // мобы на 1 и 3: свободно только второе
       assertTrue(BattleState.ramSpots(gap) == List(2)) &&
-      // за край своей стороны не рвануть
-      assertTrue(BattleState.ramSpots(edge) == List(Formation.HeroPlaces - 2, Formation.HeroPlaces - 1)) &&
+      // и в хвост чужого строя можно, но не дальше пятнадцатого
+      assertTrue(BattleState.ramSpots(edge) ==
+        List(Formation.HeroPlaces - 2, Formation.HeroPlaces - 1, Formation.HeroPlaces + 1, Formation.HeroPlaces + 2)) &&
+      assertTrue(BattleState.ramSpots(tail) == List(Formation.WalkPlaces - 2, Formation.WalkPlaces - 1)) &&
       assertTrue(BattleState.ramSpots(gap.copy(effects = gap.effects.copy(heroRootedTurns = 1))).isEmpty)
     },
 

@@ -232,8 +232,9 @@ object SlainMonster {
   *  - `queue` — кому не хватило места в строю (их всего [[Formation.MonsterPlaces]]):
   *    ждут за спинами и входят, как только место освободится;
   *  - `slain`   — павшие, в порядке гибели, для выдачи добычи после победы;
-  *  - `round`   — сколько раундов прошло (каждый четвёртый — перемешивание);
-  *  - `pendingMove` — Таран: место, на которое герой шагнёт в конце раунда;
+  *  - `round`   — сколько раундов прошло (каждый восьмой — перемешивание);
+  *  - `pendingMove` — Таран: место, на которое герой шагнёт в конце раунда —
+  *    и тогда, когда того, кого таранили, там уже нет;
   *  - `pendingShift` — мерцающий настой: свободное место своей стороны, куда
   *    герой встанет в конце раунда (перемешивание его не сбрасывает — оно про
   *    чужой строй);
@@ -293,9 +294,9 @@ final case class GroupState(
   def alliesWithin(reach: Int): List[BattleAlly] =
     allies.filter(a => a.alive && math.abs(a.position - heroPos) <= reach).sortBy(_.position)
 
-  /** Свободные места СВОЕЙ стороны: ни герой, ни союзник их не занимают. Мест у
-    * отряда [[Formation.HeroPlaces]] — глубже, в хвосте чужого строя, стоять
-    * некому. */
+  /** Свободные места отряда: ни герой, ни союзник их не занимают. Мест у
+    * отряда [[Formation.HeroPlaces]]: в хвост чужого строя в бою доходят, но
+    * встают — те, кто выскочил у героя из-под ног, — здесь. */
   def freeAllyPlaces: List[Int] =
     (1 to Formation.HeroPlaces).toList.filterNot(p => p == heroPos || allyAt(p).isDefined)
 
@@ -304,12 +305,17 @@ final case class GroupState(
   def nearestFreeAllyPlace: Option[Int] =
     freeAllyPlaces.sortBy(p => (math.abs(p - heroPos), -p)).headOption
 
+  /** Свободные места своего ряда, куда может встать сам герой: он ходит дальше
+    * мест отряда — до хвоста чужого строя ([[Formation.WalkPlaces]]). */
+  def freeHeroPlaces: List[Int] =
+    (1 to Formation.WalkPlaces).toList.filterNot(p => p == heroPos || allyAt(p).isDefined)
+
   /** Куда встанет мерцающий герой, просивший место `want`: оно само, если ещё
     * свободно; заняли — ближайшее к нему свободное (при равном расстоянии —
     * правее). Место, где герой стоит сейчас, тоже считается: ближе свободного
     * нет — он остаётся где был. */
   def shiftSpot(want: Int): Int =
-    (heroPos :: freeAllyPlaces).minBy(p => (math.abs(p - want), -p))
+    (heroPos :: freeHeroPlaces).minBy(p => (math.abs(p - want), -p))
 
   /** Куда отпрыгнет герой («Отскок»): по своему ряду не дальше чем на `dist`
     * мест — на место, где нет союзника и напротив пусто, и так, чтобы цель на
@@ -318,7 +324,7 @@ final case class GroupState(
   def leapSpot(target: Int, dist: Int, reach: Int): Option[Int] =
     (1 to dist).toList
       .flatMap(d => List(heroPos - d, heroPos + d))
-      .filter(p => p >= 1 && p <= Formation.HeroPlaces && freeAt(p) && !hasMonster(p) &&
+      .filter(p => p >= 1 && p <= Formation.WalkPlaces && freeAt(p) && !hasMonster(p) &&
                    math.abs(p - target) <= reach)
       .sortBy(p => (List(p - 1, p + 1).count(hasMonster), -math.abs(p - heroPos), -math.abs(p - target)))
       .headOption
@@ -382,26 +388,22 @@ final case class GroupState(
   /** Мобы с их местами, список в список. */
   def entries: List[(Int, MonsterSlot)] = places.zip(others)
 
-  /** Моб `others(idx)` пал: из строя — в павшие, его место пустеет. Таран в него
-    * сгорает. Чужой индекс — ничего. */
   /** Убрать слот, НЕ записывая его в павшие: эту крысу не убили — её съели, и
     * добычи за неё герою не причитается (см. Крысиный король, «Объединение»). */
   def devour(idx: Int): GroupState =
     others.lift(idx) match {
       case None    => this
-      case Some(_) =>
-        val pos = posOf(idx)
-        copy(others = others.patch(idx, Nil, 1), places = places.patch(idx, Nil, 1),
-             pendingMove = pendingMove.filter(_ != pos))
+      case Some(_) => copy(others = others.patch(idx, Nil, 1), places = places.patch(idx, Nil, 1))
     }
 
+  /** Моб `others(idx)` пал: из строя — в павшие, его место пустеет. Таран в
+    * него не сгорает: герой всё равно шагнёт на это место в конце раунда.
+    * Чужой индекс — ничего. */
   def withoutSlot(idx: Int): GroupState =
     others.lift(idx) match {
       case None       => this
       case Some(slot) =>
-        val pos = posOf(idx)
-        copy(others = others.patch(idx, Nil, 1), places = places.patch(idx, Nil, 1),
-             slain = slain :+ slot.slain, pendingMove = pendingMove.filter(_ != pos))
+        copy(others = others.patch(idx, Nil, 1), places = places.patch(idx, Nil, 1), slain = slain :+ slot.slain)
     }
 }
 
@@ -413,7 +415,7 @@ object GroupState {
   val MaxMonsters: Int = Formation.MonsterPlaces
 
   /** Каждый такой раунд пары рвутся и собираются заново. */
-  val ShufflePeriod: Int = 4
+  val ShufflePeriod: Int = 8
 
   /** Радиус: с места n достают до мест n−1, n, n+1. Герой бьёт соседей своего
     * места, и только они бьют его сбоку. */

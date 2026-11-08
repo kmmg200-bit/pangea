@@ -231,7 +231,7 @@ case class BattleState(
       risen   = joeRises(guarded)
       // Группа: павший в паре уступает место следующему, мобы вне пары ходят
       // (сбоку бьёт только сосед), в конце раунда — подкрепление, перемешивание
-      // каждый четвёртый раунд и отложенный Таран. Ход, который не был ходом
+      // каждый восьмой раунд и отложенный Таран. Ход, который не был ходом
       // (навык не готов и т.п.), группу не двигает.
       promoted = promoteAfterKill(risen)
       // Союзники бьют после ответа активного моба; добили активного — снова
@@ -3664,7 +3664,8 @@ case class BattleState(
                     battle.group.inReachOf(target, BattleState.skillReach(hero, slot.skill))
     val aimed   = if (aimSide) battle.engage(target) else battle
     val skip    = Set(slot.itemId)
-    // Таран по мобу не из пары помечает место, куда герой шагнёт в конце раунда.
+    // Таран по мобу не из пары помечает место, куда герой шагнёт в конце раунда, —
+    // и тогда, когда удар его добил: шаг на опустевшее место тоже шаг.
     def ramMark(b: SoloPveBattle): SoloPveBattle =
       if (slot.skill == Skill.Ram && target != b.group.heroPos) b.copy(group = b.group.copy(pendingMove = Some(target))) else b
     // Что делать после урона. В паре: победа или базовая атака по паре (по
@@ -3678,7 +3679,7 @@ case class BattleState(
       // Отброшенного базовая атака достаёт в этом же раунде, как бы далеко он ни
       // улетел: выстрел и удар — одно движение. Дальше — по обычной дальности.
       if (!aimSide) {
-        if (dead) ZIO.succeed(victoryByHero(h, b, lines, nowMs, skip))
+        if (dead) ZIO.succeed(victoryByHero(h, ramMark(b), lines, nowMs, skip))
         else if (paired) playerStrike(h, b, nowMs, lines, skip)
         else if (damageSkill) playerStrike(h, ramMark(b), nowMs, lines, skip)
         else followUp(h, b, nowMs, lines, skip)
@@ -3689,9 +3690,9 @@ case class BattleState(
         // пары у героя нет.
         val homeGone = back.group.activePos != home
         if (dead) {
-          if (homeGone) ZIO.succeed(victoryByHero(h, back, lines, nowMs, skip))
+          if (homeGone) ZIO.succeed(victoryByHero(h, ramMark(back), lines, nowMs, skip))
           else {
-            val fallen = back.sideFallen(back.group.idxOf(at))
+            val fallen = ramMark(back.sideFallen(back.group.idxOf(at)))
             val slain  = lines :+ content.format("battle.group.sideSlain", "monster" -> b.monsterName)
             if (paired) playerStrike(h, fallen, nowMs, slain, skip) else followUp(h, fallen, nowMs, slain, skip)
           }
@@ -4364,10 +4365,11 @@ case class BattleState(
               "charges" -> f.charges.toString, "max" -> f.maxCharges.toString), i.toString)
           },
           1)
-      // Места — все свободные своей стороны, по номеру.
+      // Места — свободные своей стороны, по номеру: не больше, чем держит
+      // встроенная клавиатура ВК, ближайшие к герою (см. shiftChoices).
       case BrewEffect.Shift =>
         (content.text("battle.belt.wherePlace"),
-          battle.group.freeAllyPlaces.map(p => (content.format("battle.belt.placePick", "n" -> p.toString), p.toString)),
+          BattleState.shiftChoices(battle).map(p => (content.format("battle.belt.placePick", "n" -> p.toString), p.toString)),
           BattleState.PlacesPerRow)
       case _ => (content.text("battle.belt.gone"), Nil, 1)
     }
@@ -4483,7 +4485,7 @@ case class BattleState(
       // Место могли занять, пока игрок думал, — тогда герой встанет рядом;
       // годится любое место своей стороны.
       case BrewEffect.Shift =>
-        pick.flatMap(_.toIntOption).exists(p => p >= 1 && p <= Formation.HeroPlaces)
+        pick.flatMap(_.toIntOption).exists(p => p >= 1 && p <= Formation.WalkPlaces)
       case _ => true
     }
 
@@ -4507,7 +4509,7 @@ case class BattleState(
         Some(content.text("battle.belt.noFormation"))
       case BrewEffect.Shift if battle.effects.heroRooted =>
         Some(content.text("battle.belt.shimmerPinned"))
-      case BrewEffect.Shift if battle.group.freeAllyPlaces.isEmpty =>
+      case BrewEffect.Shift if battle.group.freeHeroPlaces.isEmpty =>
         Some(content.text("battle.belt.noPlace"))
       case _ => None
     }
@@ -5268,8 +5270,13 @@ case class BattleState(
     // В бою строй съезжал к месту 1 (Squad.frontShift) — в отряд все
     // возвращаются на столько же мест дальше: выбранная расстановка не сбивается.
     // Позиции могли поменяться за бой (Таран, «Переместиться») — вместе с героем;
-    // за край строя при этом не выходим.
-    val battleEnd = (battle.group.heroPos :: fromSquad.map(_.toAlly.position)).max
+    // за край строя при этом не выходим. Кто кончил бой в хвосте чужого строя
+    // (ходят до Formation.WalkPlaces), сперва встаёт на свободное место отряда
+    // (см. BattleState.homePlaces).
+    val placed    = BattleState.homePlaces(
+                      fromSquad.map(a => a.home -> a.toAlly.position).toMap + (BattleState.HeroKey -> battle.group.heroPos))
+    val heroAt    = placed.getOrElse(BattleState.HeroKey, battle.group.heroPos)
+    val battleEnd = placed.values.max
     val back      = hero.squad.frontShift.min(pangea.model.squad.AllyRates.Positions - battleEnd).max(0)
     val byHome    = fromSquad.map(a => a.home -> a).toMap
     // Отряда в бою не было — сюжетный бой один на один (девушка, охота Марисы):
@@ -5279,11 +5286,11 @@ case class BattleState(
     val synced0 =
       if (!fought) left
       else left.copy(
-        heroPos = battle.group.heroPos + back,
+        heroPos = heroAt + back,
         allies  = left.allies.map { old =>
           byHome.get(old.position).fold(old) { a =>
             val after = a.toAlly
-            after.copy(position = after.position + back, hiredUntil = old.hiredUntil)
+            after.copy(position = placed.getOrElse(a.home, after.position) + back, hiredUntil = old.hiredUntil)
           }
         })
     // Выжившие, пришедшие не из отряда, — в отряд: крыса на сутки, восставший
@@ -5661,7 +5668,7 @@ case class BattleState(
         // и так видна по строю
         (b1, _) = if (b1q.arena.isDefined) (b1q, Nil) else b1q.closeIn
         log1 = log1a ++ log1b ++ entered.map(m => content.format("battle.group.fromQueue", "monster" -> m.name)).toVector
-        // перемешивание: каждый четвёртый раунд, если есть кого мешать. Жребий
+        // перемешивание: каждый восьмой раунд, если есть кого мешать. Жребий
         // тянут только подвижные — сооружения стоят где стояли. Группу берём у
         // УЖЕ перемешанного боя — иначе новый активный встанет поверх старого
         // строя, один моб пропадёт, а другой задвоится. Строй не изменился —
@@ -5678,22 +5685,31 @@ case class BattleState(
             (b, line)
           }
         (b2, log2) = shuffled
-        // Таран: в пару встаёт тот, кого таранили
-        // Таран: герой шагает на место, куда таранил; мобы остаются где стояли
+        // Таран: герой шагает на место, куда таранил; мобы остаются где стояли.
+        // Того, кого таранили, там может уже не быть — добил ударом или он пал
+        // позже: место опустело, но шаг всё равно делается, если ничего не
+        // мешает. Мешает пригвождённость: в хвост чужого строя (до
+        // Formation.WalkPlaces) герой ходит, как и союзники.
         rammed = b2.group.pendingMove match {
-          case Some(pos) if b2.group.hasMonster(pos) && !b2.effects.heroRooted =>
-            val moved = b2.moveHeroTo(pos)
-            // Таран бьёт только мобов; союзник, стоявший напротив таранённого,
-            // уступает позицию герою и встаёт на его прежнюю.
-            val b = moved.copy(group = moved.group.copy(allies = moved.group.allies.map(a =>
-              if (a.position == pos) a.copy(position = b2.group.heroPos) else a)))
-            (b.copy(group = b.group.copy(pendingMove = None)),
-             Vector(content.format("battle.group.ram", "pos" -> pos.toString, "monster" -> b.monsterName)))
+          case Some(pos) if pos == b2.group.heroPos =>
+            (b2.copy(group = b2.group.copy(pendingMove = None)), Vector.empty[String])
           // Пригвождённый (так бывает на арене) Тараном бьёт, но с места не
           // сходит — и должен знать почему.
-          case Some(pos) if b2.group.hasMonster(pos) =>
+          case Some(_) if b2.effects.heroRooted =>
             (b2.copy(group = b2.group.copy(pendingMove = None)), Vector(content.text("battle.group.ramPinned")))
-          case _ => (b2.copy(group = b2.group.copy(pendingMove = None)), Vector.empty[String])
+          case Some(pos) =>
+            val moved =
+              if (b2.group.hasMonster(pos)) b2.moveHeroTo(pos)
+              else b2.copy(group = b2.group.copy(heroPos = pos))
+            // Таран бьёт только мобов; союзник, стоявший на том месте, уступает
+            // его герою и встаёт на его прежнее.
+            val b = moved.copy(group = moved.group.copy(allies = moved.group.allies.map(a =>
+              if (a.position == pos) a.copy(position = b2.group.heroPos) else a)))
+            val line =
+              if (b.group.hasMonster(pos)) content.format("battle.group.ram", "pos" -> pos.toString, "monster" -> b.monsterName)
+              else content.format("battle.group.ramEmpty", "pos" -> pos.toString)
+            (b.copy(group = b.group.copy(pendingMove = None)), Vector(line))
+          case None => (b2, Vector.empty[String])
         }
         (b3, log3) = rammed
         // Мерцающий настой: герой встаёт на выбранное место своей стороны — уже
@@ -6689,16 +6705,15 @@ object BattleState {
 
   /** Куда герой может шагнуть: ровно одно место влево или вправо, и только в
     * пределах строя — за его край, туда, где никого нет и не будет, ходить
-    * незачем. Дальше своей стороны ему тоже нельзя: мест у отряда
-    * [[Formation.HeroPlaces]], а хвост чужого строя — не его сторона, даже когда
-    * враги стоят глубже. Место может быть занято союзником (тогда поменяются)
-    * или пустым. */
+    * незачем. В хвост чужого строя — можно, как и союзникам: дальше
+    * [[Formation.WalkPlaces]] мест нет ни у кого. Место может быть занято
+    * союзником (тогда поменяются) или пустым. */
   def stepTargets(battle: SoloPveBattle): List[Int] =
     // Пригвождённый с места не сходит.
     if (battle.effects.heroRooted) Nil
     else {
       val here  = battle.group.heroPos
-      val edge  = battle.group.rows.min(Formation.HeroPlaces)
+      val edge  = battle.group.rows.min(Formation.WalkPlaces)
       List(here - 1, here + 1).filter(p => p >= 1 && p <= edge)
     }
 
@@ -6850,6 +6865,34 @@ object BattleState {
   /** Сколько мест в ряд, когда мерцающий настой спрашивает, куда встать. */
   val PlacesPerRow: Int = 4
 
+  /** Ключ героя в [[homePlaces]]: у союзников из отряда ключ — их место в
+    * отряде (`home`), а оно с единицы. */
+  val HeroKey: Int = 0
+
+  /** Места после боя. В бою ходят до хвоста чужого строя
+    * ([[Formation.WalkPlaces]]), а мест у отряда [[Formation.HeroPlaces]]: кто
+    * кончил бой на своей стороне, стоит где стоял, а кто дальше — встаёт на
+    * свободное место отряда, ближайшее к краю (самый дальний — к самому краю).
+    * Ключи — `home` союзников и [[HeroKey]] героя, значения — места в бою. */
+  def homePlaces(at: Map[Int, Int]): Map[Int, Int] = {
+    val (inside, outside) = at.partition(_._2 <= Formation.HeroPlaces)
+    outside.toList.sortBy { case (_, p) => -p }.foldLeft(inside) { case (acc, (key, p)) =>
+      val taken = acc.values.toSet
+      acc.updated(key, (Formation.HeroPlaces to 1 by -1).find(q => !taken.contains(q)).getOrElse(p.min(Formation.HeroPlaces)))
+    }
+  }
+
+  /** Сколько кнопок держит встроенная клавиатура ВК — «До 10 кнопок» (dev.vk.com,
+    * «Клавиатура»): больше — и ВК не примет сообщение целиком. */
+  val InlineButtons: Int = 10
+
+  /** Куда мерцающий настой предлагает встать: свободные места своего ряда до
+    * хвоста чужого строя ([[Formation.WalkPlaces]]). Их бывает больше, чем
+    * держит встроенная клавиатура, — тогда [[InlineButtons]] ближайших к герою;
+    * на кнопках — по номеру. */
+  def shiftChoices(battle: SoloPveBattle): List[Int] =
+    battle.group.freeHeroPlaces.sortBy(p => (math.abs(p - battle.group.heroPos), p)).take(InlineButtons).sorted
+
   /** Бонус благословения Азата (в %): к опыту, серебру и редкости добычи. */
   val BlessingBonusPct: Long = AzatState.BlessingBonusPct
   /** Шанс (в %) дополнительной экипировки после боя при благословении. */
@@ -6939,13 +6982,13 @@ object BattleState {
 
   /** Куда «Вихрь клинка» шагает перед ударом — напротив цели на месте
     * `target`. None — кружит с места: цель и так напротив, герой пригвождён
-    * или своей стороне до того места не дотянуться (она короче чужой). */
+    * или до того места не дотянуться (дальше [[Formation.WalkPlaces]] мест нет). */
   def whirlSpot(battle: SoloPveBattle, target: Int): Option[Int] =
-    Some(target).filter(t => t != battle.group.heroPos && t >= 1 && t <= Formation.HeroPlaces &&
+    Some(target).filter(t => t != battle.group.heroPos && t >= 1 && t <= Formation.WalkPlaces &&
       battle.group.hasMonster(t) && !battle.effects.heroRooted)
 
   /** Свободные места, куда герой может рвануть Тараном без удара: в его
-    * досягаемости, на своей стороне строя и без врага напротив — союзник оттуда
+    * досягаемости, в пределах [[Formation.WalkPlaces]] и без врага напротив — союзник оттуда
     * уступит место. Только там, где места что-то значат и строй виден: в
     * группе, с отрядом, на арене. Пригвождённому — никуда. */
   def ramSpots(battle: SoloPveBattle): List[Int] =
@@ -6953,7 +6996,7 @@ object BattleState {
     else {
       val here = battle.group.heroPos
       (1 to RamReach).toList.flatMap(d => List(here - d, here + d))
-        .filter(p => p >= 1 && p <= Formation.HeroPlaces && !battle.group.hasMonster(p)).sorted
+        .filter(p => p >= 1 && p <= Formation.WalkPlaces && !battle.group.hasMonster(p)).sorted
     }
 
   /** Крыса из-под ног героя (набор «Крыса»): обычная на пороге 6, чумная на
@@ -7022,7 +7065,7 @@ object BattleState {
     else {
       val here = battle.group.heroPos
       (1 to maxPlaces).toList.flatMap(d => List(here - d, here + d))
-        .filter(p => p >= 1 && p <= Formation.HeroPlaces && battle.group.freeAt(p)).sorted
+        .filter(p => p >= 1 && p <= Formation.WalkPlaces && battle.group.freeAt(p)).sorted
     }
 
   /** «×2,5» — во сколько раз сильнее выстрел после `holds` продлений по `pct`%. */

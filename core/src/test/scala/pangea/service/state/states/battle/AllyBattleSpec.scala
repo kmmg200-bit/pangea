@@ -692,6 +692,24 @@ object AllyBattleSpec extends ZIOSpecDefault {
               assertTrue(updated.squad.allies.size == 1)
     },
 
+    test("герой кончил бой в хвосте чужого строя — в отряде он на свободном месте у края, а не за ним") {
+      val h  = hero(heroPos = 10, allies = List(ally(pos = 6)))
+      val b0 = group(h, 1000L, 1000L)
+      // ушёл на 14-е: в бою так можно, а мест у отряда — одиннадцать
+      val b  = b0.copy(group = b0.group.copy(heroPos = 14))
+      for {
+        t <- makeState(h, b)
+        (state, dao, r) = t
+        _       <- TestRandom.feedInts(99, 99, 99) *> TestRandom.feedLongs(100L, 100L)
+        fled    <- state.action(testUser, tap("ConfirmFlee"), r)
+        updated <- dao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(fled == StateType.Dungeon) &&
+              assertTrue(updated.squad.heroPos == pangea.model.battle.Formation.HeroPlaces) &&
+              assertTrue(updated.squad.allies.size == 1) &&
+              assertTrue(updated.squad.allies.forall(a => a.position != updated.squad.heroPos &&
+                a.position <= pangea.model.battle.Formation.HeroPlaces))
+    },
+
     test("бой без отряда (девушка, Мариса) строй не трогает: герой за союзником так и стоит на 2-м, союзник на 1-м") {
       val h = hero(atk = 100000L, heroPos = 2, allies = List(ally(pos = 1)))
       for {

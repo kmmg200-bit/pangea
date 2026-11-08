@@ -356,7 +356,8 @@ case class SoloPveBattle(
     * сбоку.
     *
     * Герой с места не сходит: у отряда позиции свои. Мобов больше нет — None,
-    * это победа. Отложенный Таран сгорает. */
+    * это победа. Отложенный Таран остаётся: герой шагнёт туда, куда таранил,
+    * даже если того, кого таранил, там уже нет (см. `BattleState.endRound`). */
   def promoteNext: Option[SoloPveBattle] = nextInPair(fell = true)
 
   /** Активный ушёл с поля живым — приговорённый удрал: замена та же, что после
@@ -372,8 +373,7 @@ case class SoloPveBattle(
         others      = group.others.patch(idx, Nil, 1),
         places      = group.places.patch(idx, Nil, 1),
         slain       = if (fell) group.slain :+ slainActive else group.slain,
-        activePos   = group.places(idx),
-        pendingMove = None)))
+        activePos   = group.places(idx))))
     }
 
   /** Кто сам дошёл до места напротив героя, тот и встаёт с ним в пару: это не
