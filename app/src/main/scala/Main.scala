@@ -7,6 +7,7 @@ import pangea.dao.arena.ArenaDao
 import pangea.dao.Transactor
 import pangea.dao.config.PostgresConfig
 import pangea.dao.admin.AdminDao
+import pangea.dao.top.TopDao
 import pangea.dao.artifact.ArtifactDao
 import pangea.dao.parcel.ParcelDao
 import pangea.dao.auction.AuctionDao
@@ -122,6 +123,7 @@ object Main extends ZIOAppDefault {
       ParcelDao.live,
       ItemDao.live,
       AdminDao.live,
+      TopDao.live,
       AdminConfig.live,
       AdminPanel.live,
       NameBackfill.live,

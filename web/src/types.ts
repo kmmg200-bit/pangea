@@ -202,3 +202,27 @@ export interface SquadView {
   allies: AllyView[]
   pendingRisen: string | null
 }
+
+/** Строка топа. `me` — сам герой. */
+export interface TopEntryView {
+  place: number
+  /** Имя героя. */
+  name: string
+  /** Страница игрока в ВК; на себя ссылки нет. */
+  profile: string | null
+  race: string
+  lvl: number
+  value: number
+  me: boolean
+}
+
+export type TopKind = 'level' | 'depth' | 'kills'
+
+/** Топ: первые герои; `me` — строка героя, если он не попал в показанных. */
+export interface TopView {
+  hero: HeroView
+  kind: TopKind
+  total: number
+  rows: TopEntryView[]
+  me: TopEntryView | null
+}

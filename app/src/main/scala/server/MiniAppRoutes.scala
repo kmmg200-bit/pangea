@@ -7,6 +7,7 @@ import org.http4s.dsl.Http4sDsl
 import org.http4s.{HttpRoutes, Request, Response}
 import org.typelevel.ci.CIStringSyntax
 import pangea.model.hero.Hero
+import pangea.model.top.TopKind
 import pangea.service.miniapp.{MiniApp, VkLaunchParams}
 import pangea.service.miniapp.MiniApp.Denied
 import pangea.service.miniapp.MiniAppView._
@@ -36,6 +37,11 @@ final class MiniAppRoutes(app: MiniApp) {
     case req @ GET -> Root / "api" / "app" / "squad" =>
       asPlayer(req)(hero => app.squad(hero).flatMap(view => Ok(view.asJson)))
 
+    case req @ GET -> Root / "api" / "app" / "top" :? KindParam(kind) =>
+      // Незнакомый вид топа — топ по уровню: приложение старее бота не ломается.
+      val k = kind.flatMap(TopKind.withNameOption).getOrElse(TopKind.Level)
+      asPlayer(req)(hero => app.top(hero, k).flatMap(view => Ok(view.asJson)))
+
     case req @ GET -> Root / "api" / "app" / "inventory" =>
       asPlayer(req)(hero => app.inventory(hero).flatMap(view => Ok(view.asJson)))
 
@@ -55,4 +61,6 @@ final class MiniAppRoutes(app: MiniApp) {
   }
 
   private def error(code: String): Json = Json.obj("error" -> Json.fromString(code))
+
+  private object KindParam extends OptionalQueryParamDecoderMatcher[String]("kind")
 }

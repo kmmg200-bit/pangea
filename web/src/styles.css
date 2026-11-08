@@ -1032,3 +1032,107 @@ button.row:active {
     animation: none !important;
   }
 }
+
+/* ── Топ ───────────────────────────────────────────────── */
+
+.top-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 8px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.top-place {
+  flex: 0 0 34px;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Первые трое — золото, серебро и бронза. */
+.top-place-1,
+.top-place-2,
+.top-place-3 {
+  flex-basis: 30px;
+  height: 30px;
+  margin: 0 2px;
+  border-radius: 50%;
+  color: #fff;
+  line-height: 30px;
+}
+
+.top-place-1 {
+  background: #c99a1b;
+}
+
+.top-place-2 {
+  background: #8f969e;
+}
+
+.top-place-3 {
+  background: #a3653a;
+}
+
+.top-name {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.top-name:active {
+  color: var(--accent);
+}
+
+.top-you {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: 1px;
+}
+
+.top-value {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  white-space: nowrap;
+}
+
+.top-value b {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.top-value span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.top-me {
+  border-color: var(--accent);
+  background: var(--warn-bg);
+}
+
+.top-gap {
+  margin: 4px 0;
+  color: var(--muted);
+  text-align: center;
+  letter-spacing: 2px;
+}
+
+/* Своё место вне сотни видно, пока листаешь топ: держится над нижней панелью. */
+.top-pinned {
+  position: sticky;
+  bottom: calc(64px + env(safe-area-inset-bottom));
+  z-index: 2;
+  box-shadow: 0 -4px 14px rgba(40, 30, 15, 0.12);
+}

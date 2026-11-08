@@ -12,6 +12,8 @@ import pangea.model.home.{HomeData, HomeRates, House}
 import pangea.model.inventory.Inventory
 import pangea.model.item.{BeltSlot, Item, ItemDetails, ItemStack, ItemType, Rarity}
 import pangea.model.squad.AllyRates
+import pangea.model.top.{TopBoard, TopKind}
+import pangea.service.chat.Links
 import pangea.service.state.QuestJournal
 import pangea.service.state.states.{EquipmentState, InventoryState}
 import pangea.service.state.states.hero.SkillsState
@@ -212,6 +214,17 @@ object MiniAppView {
     leaves:   Option[String]
   )
 
+  /** Строка топа: место, имя героя, раса, уровень и то, по чему топ
+    * считается; `profile` — страница игрока в ВК (на себя ссылки нет);
+    * `me` — это сам герой. */
+  final case class TopEntryView(place: Long, name: String, profile: Option[String], race: String, lvl: Long,
+                                value: Long, me: Boolean)
+
+  /** Топ: первые герои и сколько их в топе всего. `me` — строка героя, если
+    * он не попал в показанных; попал — его строка помечена в `rows`. У админа,
+    * которого в топе нет, `me` есть всегда. */
+  final case class TopView(hero: HeroView, kind: String, total: Long, rows: List[TopEntryView], me: Option[TopEntryView])
+
   /** «Отряд»: сколько мест в строю, где стоит герой и кто стоит рядом.
     * `pendingRisen` — восставший ждёт у шатра, а мест нет: решают в боте. */
   final case class SquadView(
@@ -252,6 +265,8 @@ object MiniAppView {
   implicit val questsEncoder:    Encoder[QuestsView]    = deriveEncoder
   implicit val allyEncoder:      Encoder[AllyView]      = deriveEncoder
   implicit val squadEncoder:     Encoder[SquadView]     = deriveEncoder
+  implicit val topEntryEncoder:  Encoder[TopEntryView]  = deriveEncoder
+  implicit val topEncoder:       Encoder[TopView]       = deriveEncoder
 
   def hero(h: Hero): HeroView = HeroView(h.lvl, h.silver, h.doubloons, h.name, h.raceName)
 
@@ -436,6 +451,22 @@ object MiniAppView {
                         KnowledgeView(k.title, content.text(how), k.description)
                       }
     )
+  }
+
+  /** Топ из снимка: первые герои и место самого героя. Не попал в первых —
+    * его строка отдельно: место из снимка, остальное — с самого героя. Героя
+    * без имени (прошёл пролог до имён, а из ВК имени не подобрали)
+    * подписываем `noName`. */
+  def top(h: Hero, kind: TopKind, board: TopBoard, noName: String): TopView = {
+    val shown = board.rows.zipWithIndex.map { case (row, i) =>
+      val me = row.heroId == h.id
+      TopEntryView(i + 1L, row.name.getOrElse(noName), Option.unless(me)(Links.profile(row.vkId.value)),
+        row.race.toString, row.lvl, row.value, me)
+    }
+    val mine = Option.unless(shown.exists(_.me))(board.places.get(h.id)).flatten.map { place =>
+      TopEntryView(place, h.name.getOrElse(noName), None, h.race.toString, h.lvl, kind.valueOf(h), me = true)
+    }
+    TopView(hero = hero(h), kind = kind.entryName, total = board.total, rows = shown, me = mine)
   }
 
   private def effectKind(e: SkillEntry): String = e match {

@@ -4,6 +4,7 @@ import pangea.dao.artifact.ArtifactDao
 import pangea.dao.bank.BankVaultDao
 import pangea.dao.barrel.BarrelDao
 import pangea.dao.hero.HeroDao
+import pangea.dao.top.TopDao
 import pangea.engine.SceneContent
 import pangea.model.artifact.HeroArtifacts
 import pangea.model.auction.AuctionLot
@@ -12,18 +13,19 @@ import pangea.model.barrel.Barrel
 import pangea.model.home.HomeData
 import pangea.model.hero.Hero
 import pangea.model.item.Item
+import pangea.model.top.{TopBoard, TopKind}
 import pangea.repository.auction.AuctionRepository
 import pangea.repository.hero.HeroRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.user.UserRepository
-import pangea.service.miniapp.MiniAppView.{AuctionView, CharacterView, InventoryView, QuestsView, SquadView}
+import pangea.service.miniapp.MiniAppView.{AuctionView, CharacterView, InventoryView, QuestsView, SquadView, TopView}
 import pangea.service.state.{AzatData, HerbLore, NpcQuestLog, QuestJournal}
 import pangea.service.state.states.InventoryState
-import zio.{Task, ZIO, ZLayer}
+import zio.{Ref, Task, ZIO, ZLayer}
 
 import java.util.concurrent.TimeUnit
 
-/** VK Mini App: персонаж, задания, отряд, инвентарь и аукцион вне чата. Пока только просмотр — он
+/** VK Mini App: персонаж, задания, отряд, инвентарь, топ и аукцион вне чата. Пока только просмотр — он
   * безопасен из любого места, даже из боя: сцены, лок игрока и `hero.state`
   * не трогаются, а данные только читаются. */
 trait MiniApp {
@@ -41,6 +43,9 @@ trait MiniApp {
   def inventory(hero: Hero): Task[InventoryView]
 
   def auction(hero: Hero): Task[AuctionView]
+
+  /** Топ: первые [[MiniApp.TopSize]] и место самого героя. */
+  def top(hero: Hero, kind: TopKind): Task[TopView]
 }
 
 object MiniApp {
@@ -58,9 +63,36 @@ object MiniApp {
     * само, а больше игрок и не пролистает. */
   val MaxLots: Int = 500
 
+  /** Сколько героев показывает топ. */
+  val TopSize: Int = 100
+
+  /** Сколько снимок топа живёт в памяти: сколько бы игроков его ни открыли,
+    * база считает его раз в столько. */
+  val TopTtlMs: Long = 60L * 1000L
+
+  /** Снимок топа, снятый в `at`. */
+  final case class CachedTop(at: Long, board: TopBoard)
+
   val live: ZLayer[MiniAppConfig with UserRepository with HeroRepository with InventoryRepository with AuctionRepository
-                     with HeroDao with ArtifactDao with BarrelDao with BankVaultDao with SceneContent, Nothing, MiniApp] =
-    ZLayer.fromFunction(new MiniAppLive(_, _, _, _, _, _, _, _, _, _))
+                     with HeroDao with ArtifactDao with BarrelDao with BankVaultDao with TopDao
+                     with SceneContent, Nothing, MiniApp] =
+    ZLayer {
+      for {
+        config      <- ZIO.service[MiniAppConfig]
+        users       <- ZIO.service[UserRepository]
+        heroes      <- ZIO.service[HeroRepository]
+        inventories <- ZIO.service[InventoryRepository]
+        lots        <- ZIO.service[AuctionRepository]
+        heroDao     <- ZIO.service[HeroDao]
+        artifacts   <- ZIO.service[ArtifactDao]
+        barrels     <- ZIO.service[BarrelDao]
+        vaults      <- ZIO.service[BankVaultDao]
+        tops        <- ZIO.service[TopDao]
+        content     <- ZIO.service[SceneContent]
+        topCache    <- Ref.make(Map.empty[TopKind, CachedTop])
+      } yield new MiniAppLive(config, users, heroes, inventories, lots, heroDao, artifacts, barrels, vaults, content,
+        tops, topCache)
+    }
 }
 
 final class MiniAppLive(
@@ -73,7 +105,9 @@ final class MiniAppLive(
   artifacts:   ArtifactDao,
   barrels:     BarrelDao,
   vaults:      BankVaultDao,
-  content:     SceneContent
+  content:     SceneContent,
+  tops:        TopDao,
+  topCache:    Ref[Map[TopKind, MiniApp.CachedTop]]
 ) extends MiniApp {
   import MiniApp.Denied
 
@@ -131,6 +165,22 @@ final class MiniAppLive(
       mine   <- lots.mine(hero.id, AuctionLot.MaxLots.toLong).mapError(e => new Throwable(e.toString))
       describe <- describer(hero)
     } yield MiniAppView.auction(hero, onSale, mine, ms, describe)
+
+  /** Список и место героя — из одного снимка в памяти: база на открытие топа
+    * не ходит. */
+  override def top(hero: Hero, kind: TopKind): Task[TopView] =
+    now.flatMap(cachedTop(kind, _)).map { board =>
+      MiniAppView.top(hero, kind, board, content.text("miniapp.top.noName"))
+    }
+
+  /** Снимок из памяти, а устарел — заново из базы. Двое, попавшие на
+    * устаревший разом, снимут его оба: это дешевле, чем держать замок. */
+  private def cachedTop(kind: TopKind, ms: Long): Task[TopBoard] =
+    topCache.get.map(_.get(kind).filter(c => ms - c.at < MiniApp.TopTtlMs)).flatMap {
+      case Some(fresh) => ZIO.succeed(fresh.board)
+      case None =>
+        tops.board(kind, MiniApp.TopSize).tap(board => topCache.update(_ + (kind -> MiniApp.CachedTop(ms, board))))
+    }
 
   /** Описание вещи — как в карточке бота. Что сказать на карточке сюжетного
     * предмета (вскрыто ли письмо Марисы, сыт ли бродячий ларец), знает журнал

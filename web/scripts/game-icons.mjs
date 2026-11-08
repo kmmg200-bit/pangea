@@ -11,7 +11,7 @@ const names = [
   'plain-dagger', 'checked-shield', 'fangs', 'crowned-skull', 'treasure-map', 'folded-paper', 'emerald',
   'ore', 'herbs-bundle', 'powder-bag', 'tied-scroll', 'bubbling-flask', 'rune-stone', 'rose', 'swap-bag',
   // Нижняя панель (см. App.tsx)
-  'hooded-figure', 'scroll-quill', 'three-friends', 'knapsack', 'gavel',
+  'hooded-figure', 'scroll-quill', 'knapsack', 'podium', 'gavel',
 ]
 
 const require = createRequire(import.meta.url)

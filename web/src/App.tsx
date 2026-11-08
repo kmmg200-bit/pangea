@@ -7,35 +7,48 @@ import { EquipmentTab } from './EquipmentTab'
 import { ItemsTab } from './ItemsTab'
 import { QuestsTab } from './QuestsTab'
 import { SquadTab } from './SquadTab'
-import type { HeroView } from './types'
+import { TopTab } from './TopTab'
+import type { HeroView, TopKind, TopView } from './types'
 import type { GameIcon } from './gameIcons'
 import { ErrorView, Icon, Segment, Spinner } from './ui'
 import { useLoad, type Loaded } from './useLoad'
 
-type Tab = 'character' | 'quests' | 'squad' | 'items' | 'auction'
+type Tab = 'character' | 'quests' | 'items' | 'top' | 'auction'
 
 const tabs: { id: Tab; icon: GameIcon; label: string }[] = [
   { id: 'character', icon: 'hooded-figure', label: 'Персонаж' },
   { id: 'quests', icon: 'scroll-quill', label: 'Задания' },
-  { id: 'squad', icon: 'three-friends', label: 'Отряд' },
   { id: 'items', icon: 'knapsack', label: 'Вещи' },
+  { id: 'top', icon: 'podium', label: 'Топ' },
   { id: 'auction', icon: 'gavel', label: 'Аукцион' },
 ]
 
-/** Части «Персонажа»: сам герой и всё надетое. */
-type HeroPart = 'hero' | 'equipment'
+/** Части «Персонажа» — как в меню героя в боте: сам герой, всё надетое и отряд. */
+type HeroPart = 'hero' | 'equipment' | 'squad'
 
 const heroParts: { id: HeroPart; label: string }[] = [
   { id: 'hero', label: 'Герой' },
   { id: 'equipment', label: 'Снаряжение' },
+  { id: 'squad', label: 'Отряд' },
 ]
 
-/** Вкладка из адреса (`#squad`, `#equipment`): так приложение можно открыть сразу на нужной. */
+/** Вкладка из адреса (`#top`, `#equipment`, `#squad`): так приложение можно открыть сразу на нужной. */
 const hash = window.location.hash.replace(/^#/, '')
+const hashPart = heroParts.find((p) => p.id === hash)?.id
 
 function initialTab(): Tab {
-  return hash === 'equipment' ? 'character' : (tabs.find((t) => t.id === hash)?.id ?? 'character')
+  return hashPart ? 'character' : (tabs.find((t) => t.id === hash)?.id ?? 'character')
 }
+
+/** Загрузка каждого топа — одна на всё время работы, чтобы `useLoad` не грузил заново. */
+const topLoaders: Record<TopKind, () => Promise<TopView>> = {
+  level: () => api.top('level'),
+  depth: () => api.top('depth'),
+  kills: () => api.top('kills'),
+}
+
+/** Что уже открывали: вкладку, часть «Персонажа» или топ (`top-level`). */
+type Seen = Tab | HeroPart | `top-${TopKind}`
 
 function HeroBar(props: { hero: HeroView | undefined; loading: boolean; onReload: () => void }) {
   return (
@@ -77,32 +90,43 @@ export function App() {
   // Приложение открывается на «Персонаже», как и меню героя в боте. Остальное
   // грузится, когда вкладку впервые открыли: витрина аукциона — самый тяжёлый ответ.
   const [tab, setTab] = useState<Tab>(initialTab)
-  const [heroPart, setHeroPart] = useState<HeroPart>(hash === 'equipment' ? 'equipment' : 'hero')
-  // Снаряжение, раз открытое, держит данные: назад к герою и обратно — без перезагрузки.
-  const [equipSeen, setEquipSeen] = useState(hash === 'equipment')
-  const [seen, setSeen] = useState<Set<Tab>>(() => new Set<Tab>([initialTab()]))
-  const character = useLoad(api.character, seen.has('character'))
+  const [heroPart, setHeroPart] = useState<HeroPart>(hashPart ?? 'hero')
+  const [topKind, setTopKind] = useState<TopKind>('level')
+  const [seen, setSeen] = useState<Set<Seen>>(() => {
+    const first = initialTab()
+    return new Set<Seen>([first, first === 'top' ? 'top-level' : (hashPart ?? 'hero')])
+  })
+  const character = useLoad(api.character, seen.has('hero'))
   const quests = useLoad(api.quests, seen.has('quests'))
   const squad = useLoad(api.squad, seen.has('squad'))
   // Снаряжение берёт данные у «Вещей»: надетое, сумка и что из неё встанет в слот.
-  const inventory = useLoad(api.inventory, seen.has('items') || equipSeen)
+  const inventory = useLoad(api.inventory, seen.has('items') || seen.has('equipment'))
   const auction = useLoad(api.auction, seen.has('auction'))
+  const tops: Record<TopKind, Loaded<TopView>> = {
+    level: useLoad(topLoaders.level, seen.has('top-level')),
+    depth: useLoad(topLoaders.depth, seen.has('top-depth')),
+    kills: useLoad(topLoaders.kills, seen.has('top-kills')),
+  }
 
-  const loads = { character: heroPart === 'equipment' ? inventory : character, quests, squad, items: inventory, auction }
-  const current = loads[tab]
+  const heroLoads = { hero: character, equipment: inventory, squad }
+  const current: Loaded<{ hero: HeroView }> =
+    tab === 'character' ? heroLoads[heroPart] : tab === 'top' ? tops[topKind] : { quests, items: inventory, auction }[tab]
   // В шапке — самые свежие уровень и деньги: с открытой вкладки, а пока она
   // грузится — с любой уже загруженной.
   const hero =
-    current.data?.hero ??
+    current?.data?.hero ??
     character.data?.hero ??
     quests.data?.hero ??
     squad.data?.hero ??
     inventory.data?.hero ??
     auction.data?.hero
 
+  const markSeen = (id: Seen) => setSeen((prev) => (prev.has(id) ? prev : new Set(prev).add(id)))
+
   const open = (id: Tab) => {
     setTab(id)
-    setSeen((prev) => (prev.has(id) ? prev : new Set(prev).add(id)))
+    markSeen(id)
+    if (id === 'top') markSeen(`top-${topKind}`)
     window.scrollTo(0, 0)
   }
 
@@ -117,19 +141,26 @@ export function App() {
               value={heroPart}
               onChange={(part) => {
                 setHeroPart(part)
-                if (part === 'equipment') setEquipSeen(true)
+                markSeen(part)
               }}
             />
-            {heroPart === 'hero' ? (
-              <Body loaded={character}>{(d) => <CharacterTab data={d} />}</Body>
-            ) : (
-              <Body loaded={inventory}>{(d) => <EquipmentTab data={d} />}</Body>
-            )}
+            {heroPart === 'hero' && <Body loaded={character}>{(d) => <CharacterTab data={d} />}</Body>}
+            {heroPart === 'equipment' && <Body loaded={inventory}>{(d) => <EquipmentTab data={d} />}</Body>}
+            {heroPart === 'squad' && <Body loaded={squad}>{(d) => <SquadTab data={d} />}</Body>}
           </>
         )}
         {tab === 'quests' && <Body loaded={quests}>{(d) => <QuestsTab data={d} />}</Body>}
-        {tab === 'squad' && <Body loaded={squad}>{(d) => <SquadTab data={d} />}</Body>}
         {tab === 'items' && <Body loaded={inventory}>{(d) => <ItemsTab data={d} />}</Body>}
+        {tab === 'top' && (
+          <TopTab
+            kind={topKind}
+            onKind={(k) => {
+              setTopKind(k)
+              markSeen(`top-${k}`)
+            }}
+            loaded={tops[topKind]}
+          />
+        )}
         {tab === 'auction' && <Body loaded={auction}>{(d) => <AuctionTab data={d} />}</Body>}
         {/* Лицензия CC BY 3.0 требует назвать авторов иконок. */}
         <p className="credits">Иконки: game-icons.net (CC BY 3.0)</p>

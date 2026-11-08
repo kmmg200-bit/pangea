@@ -11,7 +11,8 @@ import pangea.model.item.{BeltSlot, BrewKind, FlaskKind, Gem, GemKind, Grip, Ite
 import pangea.model.monster.Race
 import pangea.model.squad.{Ally, AllyKind, Squad}
 import pangea.model.trauma.Trauma
-import pangea.model.user.UserId
+import pangea.model.user.{UserId, VkId}
+import pangea.model.top.{TopBoard, TopKind, TopRow}
 import pangea.service.state.QuestJournal
 import pangea.service.state.states.EquipmentState
 import pangea.test.TestFixtures
@@ -224,6 +225,25 @@ object MiniAppViewSpec extends ZIOSpecDefault {
         cands.flatMap(_.deltas).find(_.key == "attack").exists(d => d.value == atk && d.value == 18L),
         right.flatMap(_.item).exists(_.stats.exists(st => st.key == "attack" && st.value == 12L)),
         view.equipment.find(_.name == "Шлем").exists(_.candidates.isEmpty)
+      )
+    },
+
+    test("топ: места по порядку, свой герой помечен и без ссылки; вне показанных — отдельной строкой") {
+      val hero = TestFixtures.hero(UserId(1L)).copy(id = HeroId(7L), name = None, kills = 40L)
+      def row(id: Long, lvl: Long, name: Option[String] = None) =
+        TopRow(HeroId(id), UserId(id), VkId(s"10$id"), name, Race.Orc, lvl, lvl)
+      val inTop = MiniAppView.top(hero, TopKind.Level,
+                    TopBoard(List(row(3L, 20L, Some("Грох")), row(7L, 12L)), Map(HeroId(7L) -> 2L), 5L), "Безымянный")
+      val outside = MiniAppView.top(hero, TopKind.Kills,
+                      TopBoard(List(row(3L, 20L, Some("Грох"))), Map(HeroId(7L) -> 4L), 5L), "Безымянный")
+      assertTrue(
+        inTop.rows.map(r => r.place -> r.me) == List(1L -> false, 2L -> true),
+        inTop.rows.map(_.name) == List("Грох", "Безымянный"),
+        inTop.rows.map(_.profile) == List(Some("https://vk.ru/id103"), None),
+        inTop.me.isEmpty,
+        outside.rows.forall(!_.me),
+        outside.me.exists(m => m.place == 4L && m.me && m.value == 40L && m.profile.isEmpty),
+        inTop.kind == "level" && inTop.total == 5L
       )
     }
   )
