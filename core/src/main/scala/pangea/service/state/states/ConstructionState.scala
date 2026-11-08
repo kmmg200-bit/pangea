@@ -155,8 +155,8 @@ case class ConstructionState(
                   line <- inventoryRepo.fold(
                             NpcQuestLog.modify(heroDao, user.userId)(_.finish(NpcQuest.LostSquad)).as(content.text("lostSquad.questDone")))(
                             repo => LostSquadQuest.finish(heroDao, repo, content, user.userId, hero))
-                  _    <- QuestOutcomeLog.record(outcomes, hero, QuestOutcome.SquadLooted)
-                  _    <- renderer.show(user, Screen(line, Nil))
+                  stats <- QuestOutcomeLog.recordAndCount(outcomes, content, hero, QuestOutcome.SquadLooted)
+                  _    <- renderer.show(user, Screen(QuestOutcomeLog.withStats(line, stats), Nil))
                   _    <- QuestSupport.grant(heroDao, content, user, hero, Achievement.MineLooter, renderer)
                   _    <- heroDao.writeSceneData(user.userId, LootData(items = List(MaterialGenerator.item(LostSquadQuest.CrateBonus)),
                             silvers = Nil, returnState = Some(StateType.Construction),

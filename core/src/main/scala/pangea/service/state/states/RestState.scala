@@ -23,9 +23,12 @@ case class RestState(heroDao: HeroDao, scheduler: Scheduler, content: SceneConte
 
   override def targetStates: Set[StateType] = Set(StateType.Dungeon, StateType.GlobalMap, StateType.Arena)
 
-  /** Ключи в scene_data от сюжетной смерти (см. DeathState). */
+  /** Ключи в scene_data от сюжетной смерти (см. DeathState). `wakeNote` —
+    * готовый текст после строк пробуждения (например, как задание закончили
+    * другие); в старых записях его нет. */
   private val WakeToKey    = "wakeTo"
   private val WakeLinesKey = "wakeLines"
+  private val WakeNoteKey  = "wakeNote"
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     for {
@@ -40,12 +43,14 @@ case class RestState(heroDao: HeroDao, scheduler: Scheduler, content: SceneConte
       // Сюжетная смерть: куда проснуться и что сказать при пробуждении.
       wakeTo        = existingData.flatMap(_.hcursor.get[Option[StateType]](WakeToKey).toOption).flatten
       wakeLines     = existingData.flatMap(_.hcursor.get[List[String]](WakeLinesKey).toOption).getOrElse(Nil)
+      wakeNote      = existingData.flatMap(_.hcursor.get[Option[String]](WakeNoteKey).toOption).flatten
       _            <- heroDao.writeSceneData(user.userId, Json.obj(
                         "restStartedAt"  -> now.asJson,
                         "restDurationMs" -> duration.asJson,
                         "postDeath"      -> postDeath.asJson,
                         WakeToKey        -> wakeTo.asJson,
-                        WakeLinesKey     -> wakeLines.asJson))
+                        WakeLinesKey     -> wakeLines.asJson,
+                        WakeNoteKey      -> wakeNote.asJson))
       // push-пробуждение: поллер по таймеру сам выполнит wakeUp. Перепланирование
       // снимает прежний Revive.
       _            <- scheduler.schedule(user.userId, now + duration, TaskKind.Revive, StateType.Rest, ReviveAction)
@@ -74,6 +79,7 @@ case class RestState(heroDao: HeroDao, scheduler: Scheduler, content: SceneConte
       postDeath  = sceneData.flatMap(_.hcursor.get[Boolean]("postDeath").toOption).getOrElse(false)
       wakeTo     = sceneData.flatMap(_.hcursor.get[Option[StateType]](WakeToKey).toOption).flatten
       wakeLines  = sceneData.flatMap(_.hcursor.get[List[String]](WakeLinesKey).toOption).getOrElse(Nil)
+      wakeNote   = sceneData.flatMap(_.hcursor.get[Option[String]](WakeNoteKey).toOption).flatten
       isInstant  = parseAction(ua.payload).contains("InstantRest")
       result    <- startedAt match {
                      case _ if isInstant && !postDeath => instantRest(user, now, renderer)
@@ -89,7 +95,7 @@ case class RestState(heroDao: HeroDao, scheduler: Scheduler, content: SceneConte
                        heroDao.getHeroByUserId(user.userId)
                          .flatMap(ZIO.fromOption(_))
                          .orElseFail(new Throwable(s"No hero for user ${user.userId}"))
-                         .flatMap(hero => wakeUp(user, now, hero, postDeath, wakeTo, wakeLines, renderer))
+                         .flatMap(hero => wakeUp(user, now, hero, postDeath, wakeTo, wakeLines, wakeNote, renderer))
                    }
     } yield result
 
@@ -119,7 +125,7 @@ case class RestState(heroDao: HeroDao, scheduler: Scheduler, content: SceneConte
     * показа, Revive снимал сам себя, и герой застревал в отдыхе навсегда. */
   private def wakeUp(
     user: User, nowMs: Long, hero: pangea.model.hero.Hero, postDeath: Boolean,
-    wakeTo: Option[StateType], wakeLines: List[String], renderer: Renderer
+    wakeTo: Option[StateType], wakeLines: List[String], wakeNote: Option[String], renderer: Renderer
   ): Task[StateType] = {
     val maxHp    = hero.effectiveMaxHp(nowMs)
     val maxArmor = hero.effectiveMaxArmor(nowMs)
@@ -131,6 +137,7 @@ case class RestState(heroDao: HeroDao, scheduler: Scheduler, content: SceneConte
       _ <- heroDao.updateSquad(user.userId, hero.squad.restored(hero.lvl))
       _ <- renderer.show(user, Screen(content.text(textKey), Nil))
       _ <- ZIO.foreachDiscard(wakeLines)(key => renderer.show(user, Screen(content.text(key), Nil)))
+      _ <- ZIO.foreachDiscard(wakeNote)(note => renderer.show(user, Screen(note, Nil)))
       _ <- heroDao.writeSceneData(user.userId, Json.Null)
       _ <- scheduler.cancel(user.userId, TaskKind.Revive)
     } yield wakeTo.getOrElse(StateType.Dungeon)

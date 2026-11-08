@@ -111,14 +111,17 @@ case class DeathState(
       deathRestMinutes = 90.0 - 89.0 * math.exp(-DeathState.RestGrowthK * (hero.lvl - 1L))
       deathRestMs      = (deathRestMinutes * 60000.0 * hero.sets.deathRestMult).toLong
       // Коллектор: задание закрыто здесь же, а что сказать и куда идти —
-      // RestState прочитает при пробуждении.
-      _            <- ZIO.when(collector)(MarisaQuest.finish(heroDao, inventoryRepo, content, user.userId, hero) *>
-                        QuestOutcomeLog.record(outcomes, hero, QuestOutcome.MarisaFell))
+      // RestState прочитает при пробуждении. Как «Письмо Марисе» закончили
+      // другие — готовым текстом (`wakeNote`), после «Квест завершён».
+      fellStats    <- if (collector) MarisaQuest.finish(heroDao, inventoryRepo, content, user.userId, hero) *>
+                        QuestOutcomeLog.recordAndCount(outcomes, content, hero, QuestOutcome.MarisaFell)
+                      else ZIO.none
       wake          = if (collector) Json.obj(
                         "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
                         "wakeLines" -> List(
                           if (withMarisa) "marisa.deathReturnWithMarisa" else "marisa.deathReturn",
-                          "marisa.questDone").asJson)
+                          "marisa.questDone").asJson,
+                        "wakeNote"  -> fellStats.asJson)
                       else if (raid) Json.obj(
                         "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
                         "wakeLines" -> List("murlocVillage.raid.death").asJson)

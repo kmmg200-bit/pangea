@@ -4,7 +4,7 @@ import doobie.implicits._
 import doobie.util.transactor
 import doobie.util.transactor.Transactor
 import pangea.model.hero.HeroId
-import pangea.model.quest.QuestOutcome
+import pangea.model.quest.{NpcQuest, QuestOutcome}
 import zio.interop.catz._
 import zio.{Task, ZLayer}
 
@@ -15,6 +15,10 @@ trait QuestOutcomeDao {
   /** Запомнить, чем герой закончил задание. `at` — когда, мс. Повтор
     * перезаписывает: в подсчёте герой один. */
   def record(heroId: HeroId, outcome: QuestOutcome, at: Long): Task[Unit]
+
+  /** Сколько героев закончили задание каждым исходом. Строки, которых
+    * [[QuestOutcome]] не знает, не считаются. */
+  def tally(quest: NpcQuest): Task[Map[QuestOutcome, Long]]
 }
 
 class QuestOutcomeDaoLive(xa: Transactor[Task]) extends QuestOutcomeDao {
@@ -25,6 +29,13 @@ class QuestOutcomeDaoLive(xa: Transactor[Task]) extends QuestOutcomeDao {
           on conflict (hero_id, quest) do update
           set outcome = excluded.outcome, at = excluded.at"""
       .update.run.transact(xa).unit
+
+  override def tally(quest: NpcQuest): Task[Map[QuestOutcome, Long]] =
+    sql"""select outcome, count(*) from quest_outcomes
+          where quest = ${quest.key}
+          group by outcome"""
+      .query[(String, Long)].to[List].transact(xa)
+      .map(_.flatMap { case (name, n) => QuestOutcome.find(quest, name).map(_ -> n) }.toMap)
 }
 
 object QuestOutcomeDao {

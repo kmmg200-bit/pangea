@@ -179,8 +179,10 @@ object LostSquadSpec extends ZIOSpecDefault {
         q    <- questOf(d)
         h    <- heroOf(d)
         end  <- o.of(h.id, NpcQuest.LostSquad)
+        all  <- texts(r)
       } yield assertTrue(thanks.text.contains("Двенадцатый фонарь") && thanks.choices.map(_.id) == List("MineGifts")) &&
               assertTrue(end.contains(QuestOutcome.SquadLedOut)) &&
+              assertTrue(all.contains("Вы — среди первых, кто закончил «Пропавшая дружина»")) &&
               assertTrue(out == StateType.Loot && q.isDone(NpcQuest.LostSquad)) &&
               assertTrue(loot.exists(l => l.items.size == 1 + LostSquadQuest.GiftCount && l.returnState.contains(StateType.Dungeon))) &&
               assertTrue(loot.exists(_.items.headOption.exists(i => i.itemType == ItemType.Helmet && i.rarity == ItemRarity.Violet &&
@@ -238,6 +240,7 @@ object LostSquadSpec extends ZIOSpecDefault {
         h   <- heroOf(d)
         said <- texts(r)
         o    <- TestQuestOutcomeDao.make
+        _    <- o.seed(QuestOutcome.SquadLedOut -> 7, QuestOutcome.SquadLooted -> 2)
         site = ConstructionState(d, sch, c, Some(inv), Some(o))
         _    <- site.enter(testUser, r)
         menu <- r.sentScreens.map(_.last)
@@ -251,6 +254,8 @@ object LostSquadSpec extends ZIOSpecDefault {
         fin  <- o.of(h2.id, NpcQuest.LostSquad)
       } yield assertTrue(out == StateType.Dungeon && LostSquadQuest.crateOnHands(q) && LostSquadQuest.squadAbandoned(q)) &&
               assertTrue(fin.contains(QuestOutcome.SquadLooted)) &&
+              assertTrue(end.contains("📊 Как закончили «Пропавшая дружина» герои Пангеи:\n" +
+                "• 70% вывели дружину наверх\n• 30% бросили дружину у фонаря и унесли её груз — как и вы")) &&
               assertTrue(bag.exists(_.questItem.contains(QuestItemKind.SquadCrate))) &&
               assertTrue(!h.squad.has(AllyKind.Gnome) && said.contains("исчезает во вспышке свитка")) &&
               // ушёл по свитку — сейчас его за столом нет, а вернётся — вдвое дороже

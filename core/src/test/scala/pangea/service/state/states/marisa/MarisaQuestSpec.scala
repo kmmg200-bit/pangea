@@ -262,6 +262,7 @@ object MarisaQuestSpec extends ZIOSpecDefault {
           r   <- TestRenderer.make
           c   <- content
           o   <- TestQuestOutcomeDao.make
+          _   <- o.seed(QuestOutcome.MarisaAbandoned -> 5, QuestOutcome.MarisaSaved -> 3, QuestOutcome.MarisaFell -> 1)
           state = MarisaHuntState(dao, inv, sched, c, outcomes = Some(o))
           _   <- state.enter(testUser, r)
           screen <- r.sentScreens.map(_.last)
@@ -272,6 +273,8 @@ object MarisaQuestSpec extends ZIOSpecDefault {
           end <- o.of(h.id, NpcQuest.Marisa)
         } yield assertTrue(screen.text.contains("А вот и тайник, Мариса") && screen.text.contains("Отдай ему эти деньги")) &&
                 assertTrue(end.contains(QuestOutcome.MarisaSaved)) &&
+                assertTrue(all.contains("Квест «Письмо Марисе» завершён.\n\n📊 Как закончили «Письмо Марисе» герои Пангеи:\n" +
+                  "• 50% бросили Марису ни с чем\n• 40% спасли Марису — как и вы\n• 10% пали от руки коллектора")) &&
                 assertTrue(screen.choices.map(_.id) == List("PayCollector", "FightCollector")) &&
                 assertTrue(res == StateType.GlobalMap) &&
                 assertTrue(h.silver == 20000L - 14644L && h.doubloons == 150L - 105L) &&
@@ -393,6 +396,7 @@ object MarisaQuestSpec extends ZIOSpecDefault {
           all <- texts(r)
         } yield assertTrue(dead.silver == 5000L && dead.doubloons == 45L) &&     // 20 000 − max(10 000, 15 000)
                 assertTrue(fell.contains(QuestOutcome.MarisaFell)) &&
+                assertTrue(all.contains("завершён") && all.contains("Вы — среди первых, кто закончил «Письмо Марисе»")) &&
                 assertTrue(inv.snapshot.isEmpty && q.isDone(NpcQuest.Marisa)) &&
                 assertTrue(scene.exists(_.hcursor.get[String]("wakeTo").toOption.contains("GlobalMap"))) &&
                 assertTrue(woke == StateType.GlobalMap) &&

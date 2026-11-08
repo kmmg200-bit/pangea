@@ -1,6 +1,7 @@
 package pangea.service.state
 
 import pangea.dao.quest.QuestOutcomeDao
+import pangea.engine.SceneContent
 import pangea.model.hero.Hero
 import pangea.model.quest.QuestOutcome
 import zio.{Task, ZIO}
@@ -20,4 +21,14 @@ object QuestOutcomeLog {
         .catchAll(e => ZIO.logWarning(
           s"Исход задания не записан: герой ${hero.id.value}, ${outcome.quest.key}/${outcome.entryName}: ${e.getMessage}"))
     }
+
+  /** Записать исход и сказать, как задание закончили другие (см.
+    * [[QuestOutcomeStats]]): строки для игрока — сцена ставит их после «Квест …
+    * завершён». Без хранилища исходов — ничего. */
+  def recordAndCount(outcomes: Option[QuestOutcomeDao], content: SceneContent, hero: Hero,
+                     outcome: QuestOutcome): Task[Option[String]] =
+    record(outcomes, hero, outcome) *> QuestOutcomeStats.text(outcomes, content, outcome)
+
+  /** Строка «Квест … завершён» и, если есть, статистика под ней — одним сообщением. */
+  def withStats(line: String, stats: Option[String]): String = (line :: stats.toList).mkString("\n\n")
 }

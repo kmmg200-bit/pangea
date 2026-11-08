@@ -209,13 +209,14 @@ case class MarisaHuntState(
       _    <- close(user, hero, renderer, QuestOutcome.MarisaAbandoned)
     } yield StateType.GlobalMap
 
-  /** Закрыть задание: письмо и карта уходят, исход записан, сцена чистится, в город. */
+  /** Закрыть задание: письмо и карта уходят, исход записан, сцена чистится, в
+    * город. Под «Квест завершён» — как его закончили другие. */
   private def close(user: User, hero: Hero, renderer: Renderer, outcome: QuestOutcome): Task[Unit] =
     for {
-      line <- MarisaQuest.finish(heroDao, inventoryRepo, content, user.userId, hero)
-      _    <- QuestOutcomeLog.record(outcomes, hero, outcome)
-      _    <- heroDao.writeSceneData(user.userId, Json.Null)
-      _    <- renderer.show(user, Screen(line, Nil))
+      line  <- MarisaQuest.finish(heroDao, inventoryRepo, content, user.userId, hero)
+      stats <- QuestOutcomeLog.recordAndCount(outcomes, content, hero, outcome)
+      _     <- heroDao.writeSceneData(user.userId, Json.Null)
+      _     <- renderer.show(user, Screen(QuestOutcomeLog.withStats(line, stats), Nil))
     } yield ()
 
   // ── Хелперы ─────────────────────────────────────────────────────────────────

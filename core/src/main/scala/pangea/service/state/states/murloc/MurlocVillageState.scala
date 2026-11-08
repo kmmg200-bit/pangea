@@ -134,10 +134,10 @@ case class MurlocVillageState(
       _    <- renderer.show(user, Screen(
                 content.text("murlocVillage.raid.victory") +
                   (if (MurlocQuest.isKin(hero)) "\n\n" + content.text("murlocVillage.raid.victoryKin") else ""), Nil))
-      line <- MurlocQuest.finish(heroDao, inventoryRepo, content, user.userId, hero)
-      _    <- QuestOutcomeLog.record(outcomes, hero,
-                if (MurlocQuest.handed(quests) > 0L) QuestOutcome.MurlocBetrayed else QuestOutcome.MurlocRaided)
-      _    <- renderer.show(user, Screen(line, Nil))
+      line  <- MurlocQuest.finish(heroDao, inventoryRepo, content, user.userId, hero)
+      stats <- QuestOutcomeLog.recordAndCount(outcomes, content, hero,
+                 if (MurlocQuest.handed(quests) > 0L) QuestOutcome.MurlocBetrayed else QuestOutcome.MurlocRaided)
+      _     <- renderer.show(user, Screen(QuestOutcomeLog.withStats(line, stats), Nil))
       _    <- QuestSupport.grant(heroDao, content, user, hero, Achievement.MurlocBane, renderer)
       _    <- heroDao.writeSceneData(user.userId, Json.Null)
       _    <- renderer.show(user, Screen(content.text("murlocVillage.raid.afterVictory"), List(content.choice("ToCity", "murlocVillage.toCity"))))
@@ -225,9 +225,9 @@ case class MurlocVillageState(
             _    <- renderer.show(user, Screen(
                       content.text("murlocVillage.village." + MurlocQuest.key(hero, "reward")) + "\n\n" +
                         content.format("murlocVillage.village.bladeGiven", "name" -> blade.name), Nil))
-            line <- MurlocQuest.finish(heroDao, inventoryRepo, content, user.userId, hero)
-            _    <- QuestOutcomeLog.record(outcomes, hero, QuestOutcome.MurlocHelped)
-            _    <- renderer.show(user, Screen(line, Nil))
+            line  <- MurlocQuest.finish(heroDao, inventoryRepo, content, user.userId, hero)
+            stats <- QuestOutcomeLog.recordAndCount(outcomes, content, hero, QuestOutcome.MurlocHelped)
+            _     <- renderer.show(user, Screen(QuestOutcomeLog.withStats(line, stats), Nil))
             _    <- QuestSupport.grant(heroDao, content, user, hero, Achievement.MurlocFavorite, renderer)
           } yield StateType.GlobalMap
         case None =>

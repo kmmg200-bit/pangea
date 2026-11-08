@@ -301,6 +301,7 @@ object MurlocQuestSpec extends ZIOSpecDefault {
           end   <- o.of(after.id, NpcQuest.Murloc)
         } yield assertTrue(all.contains("Тростник затих") && all.contains("Квест «Деревня Мурлоков» завершён")) &&
                 assertTrue(end.contains(QuestOutcome.MurlocRaided)) &&
+                assertTrue(all.contains("Вы — среди первых, кто закончил «Деревня Мурлоков»")) &&
                 assertTrue(all.contains("«Гроза Мурлоков». +1 к силе")) &&
                 assertTrue(after.hasAchievement(Achievement.MurlocBane) && after.effectiveBaseStats(0L).str == hero.effectiveBaseStats(0L).str + 1L) &&
                 assertTrue(!inv.snapshot.exists(_.questItem.contains(QuestItemKind.MurlocVillageMap)) && q.isDone(NpcQuest.Murloc)) &&
@@ -309,6 +310,7 @@ object MurlocQuestSpec extends ZIOSpecDefault {
       test("налёт после сданного снаряжения — исход «сначала помогали, потом вырезали»") {
         for {
           o <- TestQuestOutcomeDao.make
+          _ <- o.seed(QuestOutcome.MurlocHelped -> 6, QuestOutcome.MurlocRaided -> 2, QuestOutcome.MurlocBetrayed -> 1)
           t <- village(hero, Nil, handed = 5L, outcomes = Some(o))
           (state, dao, _, r) = t
           _     <- dao.writeSceneData(userId, Progress(Step.AfterRaid).asJson)
@@ -316,8 +318,12 @@ object MurlocQuestSpec extends ZIOSpecDefault {
           after <- heroOf(dao)
           q     <- quests(dao)
           end   <- o.of(after.id, NpcQuest.Murloc)
+          all   <- texts(r)
         } yield assertTrue(q.isDone(NpcQuest.Murloc) && after.hasAchievement(Achievement.MurlocBane)) &&
-                assertTrue(end.contains(QuestOutcome.MurlocBetrayed))
+                assertTrue(end.contains(QuestOutcome.MurlocBetrayed)) &&
+                assertTrue(all.contains("Квест «Деревня Мурлоков» завершён.\n\n📊 Как закончили «Деревня Мурлоков» герои Пангеи:\n" +
+                  "• 60% помогли деревне снаряжением\n• 20% вырезали деревню\n" +
+                  "• 20% сначала носили снаряжение, а потом вырезали деревню — как и вы"))
       }
     ),
 
@@ -377,6 +383,7 @@ object MurlocQuestSpec extends ZIOSpecDefault {
           blade  = inv.snapshot.find(i => bladeNames.contains(i.name))
         } yield assertTrue(res == StateType.GlobalMap) &&
                 assertTrue(end.contains(QuestOutcome.MurlocHelped)) &&
+                assertTrue(all.contains("Вы — среди первых, кто закончил «Деревня Мурлоков»")) &&
                 assertTrue(all.contains("Он твой, сухой") && blade.exists(b => all.contains(s"Вы получили «${b.name}»")) && all.contains("завершён")) &&
                 assertTrue(blade.exists(b => b.rarity == Rarity.Orange && b.itemType == ItemType.Weapon && b.lvl == 7L)) &&
                 assertTrue(!inv.snapshot.exists(_.questItem.contains(QuestItemKind.MurlocVillageMap)) && q.isDone(NpcQuest.Murloc)) &&
