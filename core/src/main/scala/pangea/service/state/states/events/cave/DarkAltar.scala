@@ -20,7 +20,7 @@ import pangea.model.stats.FightStats
 object DarkAltar {
 
   /** Имя того, что встаёт с камня по клыку. */
-  val DarkWolfName: String = "Тёмный волк"
+  val DarkWolfName: String = UndeadForm.DarkWolfName
 
   /** На столько процентов поднятый слабее того, кем был при жизни. */
   val WeakenPct: Long = 20L

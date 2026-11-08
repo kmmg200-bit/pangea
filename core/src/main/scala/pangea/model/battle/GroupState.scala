@@ -51,6 +51,10 @@ final case class BattleAlly(
   def isUndead: Boolean = kind.race == Race.Undead
   def name: String  = undead.map(_.name).getOrElse(kind.name)
   def alive: Boolean = hp > 0L
+
+  /** Пользуется ли умениями наёмников (фляга, починка, удары): крыса — нет,
+    * Тёмный волк — тоже нет, он уникальный (см. [[UndeadForm.unique]]). */
+  def usesSkills: Boolean = kind.usesSkills && !undead.exists(_.unique)
   def hpPct: Long    = if (stats.hp <= 0L) 0L else hp * 100L / stats.hp
   def armorPct: Long = if (stats.armor <= 0L) 0L else armor * 100L / stats.armor
 

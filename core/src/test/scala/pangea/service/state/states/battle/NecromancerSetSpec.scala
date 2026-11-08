@@ -268,6 +268,25 @@ object NecromancerSetSpec extends ZIOSpecDefault {
       assertTrue(orc.exists(_.name == "Деррик Мясник") && orc.exists(_.lvl == 5L))
     },
 
+    test("Тёмный волк — уникальный: умений наёмников (фляга, починка, удары) не применяет и энергию не тратит") {
+      val form = pangea.service.state.states.events.cave.DarkAltar.wolfOf(5L)
+      // раненый, без брони и с полной энергией: наёмнику тут к месту и фляга, и починка
+      val wolf = Ally(AllyKind.Undead, 2, 100L, 0L, form.stats.energy, undead = Some(form))
+      val h    = hero(0, Squad.empty.copy(allies = List(wolf)))
+      val orc  = pangea.model.battle.BattleAlly.of(undeadAlly(2).copy(energy = 10L), 10L)
+      for {
+        t <- makeState(h, SoloPveBattle.from(tough().toMonster, h))
+        (state, dao, r) = t
+        _     <- allPass
+        _     <- state.action(testUser, tap("Attack"), r)
+        after <- battleOf(dao)
+        dark   = after.group.allies.find(_.undead.exists(_.unique))
+      } yield assertTrue(form.unique && !orc.undead.exists(_.unique)) &&
+              assertTrue(dark.exists(a => !a.usesSkills && a.energy == form.stats.energy && a.hp <= 100L)) &&
+              // рядовой поднятый умения по-прежнему знает
+              assertTrue(orc.usesSkills)
+    },
+
     test("мест в отряде нет — восставший ждёт у шатра, и герой решает, кем жертвовать") {
       val now  = 1_000_000L
       val form = UndeadForm("Орк раб", 5L,

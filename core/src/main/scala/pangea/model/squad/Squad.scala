@@ -12,9 +12,19 @@ import pangea.model.stats.FightStats
  *  (имя остаётся от того, кем он был при жизни, см. [[AllyKind.Undead]]) и
  *  крыса, выскочившая из-под ног на набор «Крыса» ([[AllyKind.Rat]]) — она тот
  *  же моб, что водится в канализации. Имя типа осталось от первого из них. */
-final case class UndeadForm(name: String, lvl: Long, stats: FightStats)
+final case class UndeadForm(name: String, lvl: Long, stats: FightStats) {
+
+  /** Уникальный поднятый — Тёмный волк с алтаря: тот самый Белый волк, а не
+    * рядовой моб, поэтому умений наёмников (фляга, починка, удары) у него нет —
+    * только своя атака. Узнаём по имени: оно же лежит и в уже поднятых. */
+  def unique: Boolean = name == UndeadForm.DarkWolfName
+}
 
 object UndeadForm {
+
+  /** Имя того, что встаёт с алтаря по клыку Белого волка. */
+  val DarkWolfName: String = "Тёмный волк"
+
   implicit val encoder: Encoder[UndeadForm] = (u: UndeadForm) =>
     Json.obj("name" -> u.name.asJson, "lvl" -> u.lvl.asJson, "stats" -> u.stats.asJson)
 

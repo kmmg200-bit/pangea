@@ -4986,9 +4986,10 @@ case class BattleState(
       // 2) случайное умение из тех, что по карману и к месту
       a1 = b1.group.allies.find(_.kind == a.kind).getOrElse(a)
       target2 = b1.allyTarget(a1)
-      // Крыса умений не знает — только кусает (см. AllyKind.usesSkills).
+      // Крыса умений не знает — только кусает (см. AllyKind.usesSkills), а
+      // Тёмный волк — уникальный, не наёмник (см. UndeadForm.unique).
       // Удар попадает в выбор только вместе с целью — без неё его и нет.
-      options = if (!a1.kind.usesSkills) Nil else AllySkill.values.toList.flatMap {
+      options = if (!a1.usesSkills) Nil else AllySkill.values.toList.flatMap {
         case AllySkill.QuickStrike     => target2.map(BattleState.AllyCast.Strike(_, crushing = false))
         case AllySkill.CrushingStrike  => target2.map(BattleState.AllyCast.Strike(_, crushing = true))
         case AllySkill.HealingFlask    => Option.when(a1.hp < a1.stats.hp)(BattleState.AllyCast.Flask)
