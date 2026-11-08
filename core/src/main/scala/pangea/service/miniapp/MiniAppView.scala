@@ -94,7 +94,9 @@ object MiniAppView {
     sections: List[SectionView],
     counts:   List[CountView]
   )
-  final case class SectionView(title: Option[String], items: List[ItemView])
+  /** Раздел хранилища. `rack` — номер стойки, если раздел — стойка: её
+    * комплект можно надеть. */
+  final case class SectionView(title: Option[String], items: List[ItemView], rack: Option[Int])
   final case class CountView(label: String, value: Long)
 
   /** Шапка героя: уровень и деньги — во всех ответах; имя (у прошедших пролог
@@ -102,7 +104,8 @@ object MiniAppView {
   final case class HeroView(lvl: Long, silver: Long, doubloons: Long, name: Option[String], race: String)
 
   /** Вещи героя. `gearLocked` — почему снаряжение сейчас не сменить: герой
-    * в бою. */
+    * в бою; `storesAway` — почему не переложить вещи и не надеть стойку:
+    * герой не в городе. */
   final case class InventoryView(
     hero:       HeroView,
     capacity:   Long,
@@ -110,11 +113,12 @@ object MiniAppView {
     items:      List[ItemView],
     equipment:  List[SlotView],
     storages:   List[StorageView],
-    gearLocked: Option[String]
+    gearLocked: Option[String],
+    storesAway: Option[String]
   )
 
   /** Ответ на «надеть» или «снять»: вещи после этого и что сказать. */
-  final case class GearActionView(inventory: InventoryView, note: Option[String])
+  final case class InventoryActionView(inventory: InventoryView, note: Option[String])
 
   /** Лот. `currency` — `silver` или `doubloons`; `unsold` — неделя вышла, лот
     * ждёт хозяина. */
@@ -297,7 +301,7 @@ object MiniAppView {
   implicit val storageEncoder:   Encoder[StorageView]   = deriveEncoder
   implicit val heroEncoder:      Encoder[HeroView]      = deriveEncoder
   implicit val inventoryEncoder: Encoder[InventoryView] = deriveEncoder
-  implicit val gearActionEncoder: Encoder[GearActionView] = deriveEncoder
+  implicit val inventoryActionEncoder: Encoder[InventoryActionView] = deriveEncoder
   implicit val lotEncoder:       Encoder[LotView]       = deriveEncoder
   implicit val auctionEncoder:   Encoder[AuctionView]   = deriveEncoder
   implicit val auctionActionEncoder: Encoder[AuctionActionView] = deriveEncoder
@@ -352,7 +356,8 @@ object MiniAppView {
                     )
                   },
       storages  = storages(stores, content, describe),
-      gearLocked = Option.when(MiniApp.inBattle(h))(content.text("miniapp.equipment.inBattle"))
+      gearLocked = Option.when(MiniApp.inBattle(h))(content.text("miniapp.equipment.inBattle")),
+      storesAway = Option.unless(MiniApp.inCity(h))(content.text("miniapp.storages.away"))
     )
   }
 
@@ -403,7 +408,7 @@ object MiniAppView {
     * городе, в доме. Закрытые — тоже, с тем, как их открыть. */
   private def storages(st: Stores, content: SceneContent, describe: Item => String): List[StorageView] = {
     def t(id: String, key: String) = content.text(s"miniapp.storages.$id.$key")
-    def items(list: List[Item]) = List(SectionView(None, stacked(list, describe)))
+    def items(list: List[Item]) = List(SectionView(None, stacked(list, describe), None))
     def open(id: String, group: String, used: Option[Long], cap: Option[Long], silver: Option[PoolView] = None,
              note: Option[String] = None, sections: List[SectionView] = Nil, counts: List[CountView] = Nil) =
       StorageView(id, group, t(id, "title"), None, used, cap, silver, note, sections, counts)
@@ -451,7 +456,8 @@ object MiniAppView {
       atHome("racks", home.activeRacks > 0)(open("racks", "home", None, None,
         sections = home.racks.take(home.activeRacks).zipWithIndex.map { case (rack, i) =>
           SectionView(Some(content.format("miniapp.storages.racks.rack", "n" -> (i + 1).toString)),
-            rack.allItems.filter(_.itemType != ItemType.NoItem).map(it => view(it, 1, EquipmentState.itemStats(it))))
+            rack.allItems.filter(_.itemType != ItemType.NoItem).map(it => view(it, 1, EquipmentState.itemStats(it))),
+            Some(i + 1))
         }))
     )
   }

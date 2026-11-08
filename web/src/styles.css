@@ -1623,3 +1623,26 @@ button.row:active {
   transform: translate(-50%, -110%) scale(1.05);
   pointer-events: none;
 }
+
+/* ── Стойка: заголовок с кнопкой «Надеть» ── */
+
+.rack-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rack-wear {
+  padding: 5px 14px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.rack-wear:disabled {
+  opacity: 0.5;
+}

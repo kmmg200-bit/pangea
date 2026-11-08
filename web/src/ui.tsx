@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { gameIcons, type GameIcon } from './gameIcons'
 import { iconOf, kindOf } from './kinds'
 import type { ItemView, PoolView } from './types'
@@ -220,4 +220,22 @@ export function ErrorView(props: { code: string; onRetry: () => void }) {
       )}
     </div>
   )
+}
+
+/** Всплывающая строка над нижней панелью — что сказал бот. Пропадает сама
+  * через пять секунд или по нажатию. Возвращает саму строку (положить в
+  * разметку вкладки) и чем её показать. */
+export function useToast(): [ReactNode, (text: string) => void] {
+  const [toast, setToast] = useState<string | null>(null)
+  useEffect(() => {
+    if (!toast) return
+    const t = window.setTimeout(() => setToast(null), 5000)
+    return () => window.clearTimeout(t)
+  }, [toast])
+  const view = toast && (
+    <div className="toast" role="status" onClick={() => setToast(null)}>
+      {toast}
+    </div>
+  )
+  return [view, setToast]
 }

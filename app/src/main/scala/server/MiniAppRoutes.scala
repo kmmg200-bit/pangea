@@ -56,6 +56,10 @@ final class MiniAppRoutes(app: MiniApp) {
     case req @ POST -> Root / "api" / "app" / "equipment" / "take-off" :? SlotParam(slot) =>
       asPlayer(req)(hero => app.gear(hero, GearAct.TakeOff(slot)).flatMap(view => Ok(view.asJson)))
 
+    // Стойка дома: надеть её комплект — обменяться надетым. Меняет игру — только POST.
+    case req @ POST -> Root / "api" / "app" / "racks" / "wear" :? RackParam(n) =>
+      asPlayer(req)(hero => app.rack(hero, n).flatMap(view => Ok(view.asJson)))
+
     // Отряд: переставить союзника или героя, выгнать, решить про восставшего.
     // Меняют игру — только POST.
     case req @ POST -> Root / "api" / "app" / "squad" / "move" :? FromParam(from) +& ToParam(to) =>
@@ -121,4 +125,5 @@ final class MiniAppRoutes(app: MiniApp) {
   private object FromParam extends QueryParamDecoderMatcher[Int]("from")
   private object ToParam   extends QueryParamDecoderMatcher[Int]("to")
   private object AtParam   extends QueryParamDecoderMatcher[Int]("at")
+  private object RackParam extends QueryParamDecoderMatcher[Int]("n")
 }

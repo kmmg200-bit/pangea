@@ -79,10 +79,12 @@ export interface InventoryView {
   storages: StorageView[]
   /** Почему снаряжение сейчас не сменить: герой в бою. */
   gearLocked: string | null
+  /** Почему не переложить вещи и не надеть стойку: герой не в городе. */
+  storesAway: string | null
 }
 
 /** Ответ на «надеть» или «снять»: вещи после этого и что сказать. */
-export interface GearActionView {
+export interface InventoryActionView {
   inventory: InventoryView
   note: string | null
 }
@@ -99,7 +101,8 @@ export interface StorageView {
   capacity: number | null
   silver: PoolView | null
   note: string | null
-  sections: { title: string | null; items: ItemView[] }[]
+  /** Разделы с вещами; `rack` — номер стойки, если раздел — стойка: её комплект можно надеть. */
+  sections: { title: string | null; items: ItemView[]; rack: number | null }[]
   counts: { label: string; value: number }[]
 }
 

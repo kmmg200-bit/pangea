@@ -211,7 +211,22 @@ export function App() {
           </>
         )}
         {tab === 'quests' && <Body loaded={quests}>{(d) => <QuestsTab data={d} />}</Body>}
-        {tab === 'items' && <Body loaded={inventory}>{(d) => <ItemsTab data={d} />}</Body>}
+        {tab === 'items' && (
+          <Body loaded={inventory}>
+            {(d) => (
+              <ItemsTab
+                data={d}
+                onChange={(v) => {
+                  // Сменился комплект — статы героя и сумка «Крафта», если их
+                  // уже открывали, перечитают.
+                  inventory.set(v)
+                  if (character.data) character.reload()
+                  if (craft.data) craft.reload()
+                }}
+              />
+            )}
+          </Body>
+        )}
         {tab === 'craft' && <Body loaded={craft}>{(d) => <CraftTab data={d} />}</Body>}
         {tab === 'top' && (
           <TopTab

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api } from './api'
 import type { GameIcon } from './gameIcons'
-import type { BeltView, CandidateView, GearActionView, InventoryView, ItemView, SlotView, StatChange } from './types'
+import type { BeltView, CandidateView, InventoryActionView, InventoryView, ItemView, SlotView, StatChange } from './types'
 import { ItemText, ItemTile, num, Sheet, Tile } from './ui'
 
 /** Что в поясе — по ячейкам, со счётом и полоской; свободные — одной строкой. */
@@ -225,7 +225,7 @@ export function EquipmentTab(props: { data: InventoryView; onChange: (v: Invento
   // Что сказал бот — под тем слотом, с которым что-то делали.
   const [note, setNote] = useState<{ slot: number; text: string } | null>(null)
 
-  const run = (slot: SlotView, act: () => Promise<GearActionView>) => {
+  const run = (slot: SlotView, act: () => Promise<InventoryActionView>) => {
     setBusy(true)
     setNote(null)
     act()

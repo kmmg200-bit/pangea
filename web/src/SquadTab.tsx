@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { api } from './api'
 import type { AllyView, SquadActionView, SquadView } from './types'
-import { Empty, Meter, num } from './ui'
+import { Empty, Meter, num, useToast } from './ui'
 
 /** Кого приказ касается: союзник на своём месте или сам герой. */
 type Pick = { ally: number } | 'hero'
@@ -172,13 +172,7 @@ export function SquadTab(props: { data: SquadView; onChange: (v: SquadView) => v
   const s = props.data
   const [pick, setPick] = useState<Pick | null>(null)
   const [busy, setBusy] = useState(false)
-  const [toast, setToast] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!toast) return
-    const t = window.setTimeout(() => setToast(null), 5000)
-    return () => window.clearTimeout(t)
-  }, [toast])
+  const [toast, setToast] = useToast()
 
   const orders: Orders | null = s.locked
     ? null
@@ -273,11 +267,7 @@ export function SquadTab(props: { data: SquadView; onChange: (v: SquadView) => v
           Места {last + 1}–{s.positions} свободны.
         </p>
       )}
-      {toast && (
-        <div className="toast" role="status" onClick={() => setToast(null)}>
-          {toast}
-        </div>
-      )}
+      {toast}
     </div>
   )
 }

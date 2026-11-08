@@ -26,11 +26,12 @@ import pangea.service.auction.AuctionPurchase
 import pangea.service.cube.AzatCube
 import pangea.service.equipment.Outfit
 import pangea.service.miniapp.MiniAppView.{AuctionActionView, AuctionView, CharacterView, CraftActionView, CraftView,
-  GearActionView, InventoryView, QuestsView, SquadActionView, SquadView, TopView}
+  InventoryActionView, InventoryView, QuestsView, SquadActionView, SquadView, TopView}
 import pangea.service.payout.Payouts
 import pangea.service.squad.SquadOrders
 import pangea.service.state.{AzatData, HerbLore, NpcQuestLog, PlayerLock, QuestJournal, SquadDuty}
 import pangea.service.state.states.{EquipmentState, InventoryState}
+import pangea.service.state.states.home.Racks
 import zio.{Ref, Task, ZIO, ZLayer}
 
 import java.util.concurrent.TimeUnit
@@ -70,7 +71,11 @@ trait MiniApp {
 
   /** Надеть или снять — как в карточке слота в боте. Ответ — вещи после
     * этого и что сказать. */
-  def gear(hero: Hero, act: MiniApp.GearAct): Task[GearActionView]
+  def gear(hero: Hero, act: MiniApp.GearAct): Task[InventoryActionView]
+
+  /** Надеть комплект со стойки №`n` — обменяться с ней надетым, как кнопкой
+    * стойки дома. Только в городе. */
+  def rack(hero: Hero, n: Int): Task[InventoryActionView]
 
   /** «Крафт»: куб Азата и сумка, из которой в него кладут. */
   def craft(hero: Hero): Task[CraftView]
@@ -143,8 +148,9 @@ object MiniApp {
     def show(user: User, screen: Screen): Task[Unit] = lines.update(_ :+ screen.text)
   }
 
-  /** Герой в городе — только тогда из приложения можно работать с кубом и
-    * покупать на аукционе, как и передавать вещи. */
+  /** Герой в городе — только тогда из приложения можно работать с кубом,
+    * покупать на аукционе и перекладывать вещи по хранилищам, как и
+    * передавать их. */
   def inCity(hero: Hero): Boolean = StateType.cityStates.contains(hero.state)
 
   /** Герой в бою — тогда снаряжение и строй из приложения не меняют: ход боя
@@ -313,7 +319,7 @@ final class MiniAppLive(
 
   /** Под локом игрока, героя перечитываем уже под ним. В бою — ничего не
     * трогаем, говорим почему. */
-  override def gear(hero: Hero, act: GearAct): Task[GearActionView] =
+  override def gear(hero: Hero, act: GearAct): Task[InventoryActionView] =
     lock.withLock(hero.userId) {
       for {
         fresh <- heroes.getHero(hero.userId).someOrFail(new Throwable(s"Нет героя у игрока ${hero.userId.value}"))
@@ -322,7 +328,7 @@ final class MiniAppLive(
       } yield fresh -> note
     }.flatMap { case (fresh, note) =>
       heroes.getHero(fresh.userId).map(_.getOrElse(fresh)).flatMap(inventory)
-        .map(GearActionView(_, Option.when(note.nonEmpty)(note)))
+        .map(InventoryActionView(_, Option.when(note.nonEmpty)(note)))
     }
 
   /** Те же проверки и слова, что у карточки слота в боте: в слот — только то,
@@ -353,6 +359,38 @@ final class MiniAppLive(
                }
       said  <- lines.get
     } yield said.mkString("\n\n")
+
+  /** Проверки и слова — у [[Racks]], как у кнопки стойки дома: что не так
+    * (не по уровню, сумка не вместит), а вышло — что поменялись. */
+  override def rack(hero: Hero, n: Int): Task[InventoryActionView] =
+    inCityAct(hero) { (user, say) =>
+      racks.swap(user, n, say).flatMap {
+        case Left(why) => say.show(user, Screen(why, Nil))
+        case Right(_)  => say.show(user, Screen(content.format("home.rack.swapped", "n" -> n.toString), Nil))
+      }
+    }
+
+  private val racks = Racks(heroDao, inventories, content)
+
+  /** Действие с хранилищами: под локом игрока, героя перечитываем уже под
+    * ним; не в городе — ничего не трогаем, говорим почему. Что сказал бот,
+    * собирается в заметку, а ответ — вещи после действия. */
+  private def inCityAct(hero: Hero)(act: (User, Renderer) => Task[Unit]): Task[InventoryActionView] =
+    lock.withLock(hero.userId) {
+      for {
+        fresh <- heroes.getHero(hero.userId).someOrFail(new Throwable(s"Нет героя у игрока ${hero.userId.value}"))
+        note  <- if (!MiniApp.inCity(fresh)) ZIO.succeed(content.text("miniapp.storages.away"))
+                 else for {
+                   user  <- users.getUserById(fresh.userId).someOrFail(new Throwable(s"Нет игрока ${fresh.userId.value}"))
+                   lines <- Ref.make(Vector.empty[String])
+                   _     <- act(user, new MiniApp.Collect(lines))
+                   said  <- lines.get
+                 } yield said.mkString("\n\n")
+      } yield fresh -> note
+    }.flatMap { case (fresh, note) =>
+      heroes.getHero(fresh.userId).map(_.getOrElse(fresh)).flatMap(inventory)
+        .map(InventoryActionView(_, Option.when(note.nonEmpty)(note)))
+    }
 
   /** Те же слова, что у Рахадима в боте, и куплено ли. */
   private def purchaseNote(result: AuctionPurchase.Result): (String, Boolean) = result match {
