@@ -165,8 +165,8 @@ object HeroSetsSpec extends ZIOSpecDefault {
 
     test("описание предмета показывает его набор") {
       val it = piece(1L, ItemType.Helmet, Some(ItemSet.Ghoul))
-      assertTrue(it.statsLines.exists(_ == "Набор: «Упырь»")) &&
-      assertTrue(!piece(2L, ItemType.Helmet, None).statsLines.exists(_.startsWith("Набор")))
+      assertTrue(it.statsLines.exists(_ == "🔗 Набор: «Упырь»")) &&
+      assertTrue(!piece(2L, ItemType.Helmet, None).statsLines.exists(_.contains("Набор")))
     }
   )
 }

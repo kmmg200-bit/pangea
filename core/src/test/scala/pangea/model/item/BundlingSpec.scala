@@ -66,7 +66,7 @@ object BundlingSpec extends ZIOSpecDefault {
       val b = Bundling.pack(five(mithril)).get
       assertTrue(
         b.name == "Стопка: Мифрил ×5",
-        b.displayTitle == "📦 Мифрил ×5",
+        b.displayTitle == "📦 Мифрил",
         b.itemType == ItemType.Bundle,
         b.lvl == mithril(1L).lvl && b.rarity == mithril(1L).rarity,
         b.statsLines == mithril(1L).statsLines,

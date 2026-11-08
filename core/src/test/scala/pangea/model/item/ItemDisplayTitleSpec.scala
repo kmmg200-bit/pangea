@@ -35,6 +35,18 @@ object ItemDisplayTitleSpec extends ZIOSpecDefault {
       assertTrue(helmet.displayTitle == "🔵 [Ур.12] Хороший Шлем Рыцаря")
     },
 
+    test("вещь набора: звено перед именем — и в заголовке, и в строке «Набор» карточки") {
+      val inSet = item("🔵 Хороший Шлем Каменного стража", 12L, Rarity.Blue, ItemType.Helmet)
+        .copy(set = Some(ItemSet.StoneGuard))
+      val plain = item("🔵 Хороший Шлем Рыцаря", 12L, Rarity.Blue, ItemType.Helmet)
+      val noRim = item("Шлем Каменного стража", 3L, Rarity.Gray, ItemType.Helmet).copy(set = Some(ItemSet.StoneGuard))
+      assertTrue(inSet.displayTitle == "🔵 [Ур.12] 🔗 Хороший Шлем Каменного стража") &&
+      assertTrue(plain.displayTitle == "🔵 [Ур.12] Хороший Шлем Рыцаря") &&
+      assertTrue(noRim.displayTitle == "[Ур.3] 🔗 Шлем Каменного стража") &&
+      assertTrue(inSet.statsLines.contains("🔗 Набор: «Каменный страж»")) &&
+      assertTrue(!plain.statsLines.exists(_.contains("Набор")))
+    },
+
     test("кружок берётся из редкости предмета и не дублируется в имени") {
       val titles = List(Rarity.Gray, Rarity.White, Rarity.Green, Rarity.Blue,
                         Rarity.Purple, Rarity.Violet, Rarity.Orange)

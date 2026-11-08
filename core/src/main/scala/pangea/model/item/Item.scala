@@ -183,7 +183,9 @@ case class Item(
    *  (трофеи, тестовые предметы) остаётся «[Ур.N] <имя>».
    *
    *  У карт клада, камней-усилителей и материалов уровня нет — только имя.
-   *  У стопки — значок, что в ней и сколько: «📦 Мифрил ×5». */
+   *  У стопки — значок и что в ней: «📦 Мифрил» (сколько внутри — на её
+   *  карточке). У вещи набора
+   *  перед именем звено: «🔵 [Ур.12] 🔗 Хороший Шлем Каменного стража». */
   def displayTitle: String =
     if (isBundle) bundleTitle
     else if (isQuestItem) s"${Item.QuestMark} $name" // сюжетный предмет: звёздочка вместо редкости и уровня
@@ -192,14 +194,18 @@ case class Item(
         itemType == ItemType.Flask || itemType == ItemType.Brew || itemType == ItemType.RuneStone ||
         rose.isDefined) name
     else {
+      // Вещь набора видна сразу, по звену перед именем, — без похода в карточку.
+      val mark   = if (set.isDefined) s"${Item.SetMark} " else ""
       val prefix = s"${rarity.emoji} "
-      if (name.startsWith(prefix)) s"${rarity.emoji} [Ур.$lvl] ${name.stripPrefix(prefix)}"
-      else s"[Ур.$lvl] $name"
+      if (name.startsWith(prefix)) s"${rarity.emoji} [Ур.$lvl] $mark${name.stripPrefix(prefix)}"
+      else s"[Ур.$lvl] $mark$name"
     }
 
-  private def bundleTitle: String = bundle.map(_.items) match {
-    case Some(inside @ (first :: _)) => s"${Item.BundleMark} ${first.displayTitle} ×${inside.size}"
-    case _                           => s"${Item.BundleMark} $name"
+  // Сколько в стопке, не пишем: значок и так говорит, что это стопка, а их
+  // всегда поровну (см. Bundling.Size).
+  private def bundleTitle: String = bundle.flatMap(_.items.headOption) match {
+    case Some(first) => s"${Item.BundleMark} ${first.displayTitle}"
+    case None        => s"${Item.BundleMark} $name"
   }
 
   /** Текст-описание карты (для целой — описание зоны, для половинки — заглушка).
@@ -224,7 +230,8 @@ case class Item(
       Option.when(evasion > 0)(s"💨 +$evasion"),
       Option.when(hp > 0)(s"❤ +$hp")
     ).flatten
-    val setLine = set.map(s => s"Набор: «${s.label}»").toList
+    // То же звено, что перед именем: на карточке видно, что оно значит.
+    val setLine = set.map(s => s"${Item.SetMark} Набор: «${s.label}»").toList
     // Чем лук отличается от меча, видно только в бою — скажем сразу.
     val rangedLine = Option.when(ranged)(
       s"🏹 Бьёт на ${GripRates.RangedReach} места в обе стороны; вблизи — на ${GripRates.RangedClosePenaltyPct}% слабее").toList
@@ -317,6 +324,9 @@ object Item {
 
   /** Значок стопки (см. [[Bundling]]) — в списке сумки и на карточке. */
   val BundleMark: String = "📦"
+
+  /** Значок вещи набора — перед именем в заголовке и в строке «Набор» карточки. */
+  val SetMark: String = "🔗"
 
   def NoItem: Item =
     Item(0, "Пусто", 0, Rarity.Gray, ItemType.NoItem, 0, 0, 0, 0, 0, 0, 0, ItemDetails.Plain)

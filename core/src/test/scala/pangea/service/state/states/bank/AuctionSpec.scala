@@ -340,9 +340,9 @@ object AuctionSpec extends ZIOSpecDefault {
           _    <- f.state.action(testUser, text("500"), f.renderer)
           _    <- f.state.action(testUser, tap("SellConfirm"), f.renderer)
           lots  = f.lots.snapshot
-        } yield assertTrue(list.choices.exists(c => c.id == "AucSell_7" && c.label == "📦 Рубиновая пыль ×5")) &&
+        } yield assertTrue(list.choices.exists(c => c.id == "AucSell_7" && c.label == "📦 Рубиновая пыль")) &&
                 assertTrue(lots.size == 1 && lots.head.item == bundle && f.inv.snapshot.isEmpty) &&
-                assertTrue(f.players.announcedTrade.exists(_.contains("📦 Рубиновая пыль ×5")))
+                assertTrue(f.players.announcedTrade.exists(_.contains("📦 Рубиновая пыль")))
       },
 
       test("купленная стопка ложится в сумку целиком — одной вещью, как была") {

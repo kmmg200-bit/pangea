@@ -109,7 +109,7 @@ object BundleStateSpec extends ZIOSpecDefault {
         _    <- state.action(testUser, tap("Pack"), r)
         list <- r.sentScreens.map(_.last)
       } yield assertTrue(inv.snapshot.size == 1 && inv.snapshot.forall(_.isBundle)) &&
-              assertTrue(list.choices.exists(_.label == "📦 Мифрил ×5"))
+              assertTrue(list.choices.exists(_.label == "📦 Мифрил"))
     },
 
     test("карточка стопки: что внутри и «Распаковать»; распаковка возвращает те же вещи") {

@@ -609,7 +609,7 @@ object MiniAppView {
   }
 
   /** Стопку приложение показывает видом того, что в ней лежит: значок и фильтр
-    * — от содержимого, а что это стопка, видно по названию («📦 Мифрил ×5»). */
+    * — от содержимого, а что это стопка, видно по значку в названии («📦 Мифрил»). */
   private def view(item: Item, count: Int, text: String): ItemView = {
     val shape = Bundling.contents(item).headOption.getOrElse(item)
     ItemView(
