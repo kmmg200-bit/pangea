@@ -117,7 +117,7 @@ object RatKingBattleSpec extends ZIOSpecDefault {
       // три шага в круге, набор под него — «Крыса», кровь — его ингредиент
       assertTrue(king.abilities == 3 && king.set.contains(ItemSet.Rat)) &&
       assertTrue(king.ingredient == MaterialKind.RatKingBlood) &&
-      assertTrue(king.poisonsOnHit && king.fightsInGroup && king.roundDamageCapPct == 20L)
+      assertTrue(king.poisonsOnHit && king.fightsInGroup)
     },
 
     // ── Способности ──────────────────────────────────────────────────────────
@@ -185,33 +185,50 @@ object RatKingBattleSpec extends ZIOSpecDefault {
 
     // ── Предел урона за раунд ────────────────────────────────────────────────
 
-    test("за раунд от него отваливается не больше пятой части запаса") {
-      val huge = hero(atk = 1000000L)
-      val cap  = king.stats(bossLvl).hp * king.RoundDamageCapPct / 100L
-      val pool = king.stats(bossLvl).hp + king.stats(bossLvl).armor
+    test("за раунд от него отваливается не больше четверти HP и четверти брони — и об этом крыса") {
+      val huge  = hero(atk = 1000000L)
+      val s     = king.stats(bossLvl)
       for {
         t <- strike(huge, kingBattle(huge, turn = 1), 1, 1)
         (after, log) = t
       } yield assertTrue(log.contains("Одна из крыс короля пала и перестала быть частью короля")) &&
-              // с одного удара он теряет ровно предел, не больше
-              assertTrue(after.exists(b => pool - (b.monsterCurrentHp + b.monsterCurrentArmor) == cap)) &&
-              assertTrue(after.exists(_.monsterCurrentHp > 0L)) &&
-              // счётчик раунда обнулился его же ходом
-              assertTrue(after.exists(_.bossTaken == 0L))
+              // такой удар снёс бы его целиком, а он теряет ровно предел — порознь
+              assertTrue(after.exists(_.monsterCurrentArmor == s.armor - s.armor * 25L / 100L)) &&
+              assertTrue(after.exists(_.monsterCurrentHp == s.hp - s.hp * 25L / 100L)) &&
+              // счёт раунда лежит на бою до следующего хода героя
+              assertTrue(after.exists(b => b.bossTaken == s.hp * 25L / 100L && b.bossArmorTaken == s.armor * 25L / 100L))
     },
 
-    test("предел не трогает ни обычных мобов, ни прочих боссов") {
+    test("новый раунд — новый предел: со вторым ходом героя он теряет ещё четверть") {
+      val huge = hero(atk = 1000000L)
+      val s    = king.stats(bossLvl)
+      for {
+        t <- strike(huge, kingBattle(huge, turn = 1, taken = s.hp), 1, 1)
+        (after, _) = t
+      } yield
+        // прошлый раунд он отдал сполна, но счёт обнулился с новым ходом героя
+        assertTrue(after.exists(_.monsterCurrentHp == s.hp - s.hp * 25L / 100L)) &&
+        assertTrue(after.exists(_.bossTaken == s.hp * 25L / 100L))
+    },
+
+    test("предел держит всех минибоссов, а обычных мобов не трогает") {
       val huge  = hero(atk = 1000000L)
       val wolf  = MiniBoss.WhiteWolf
       val stats = wolf.stats(2L)
       val boss  = SoloPveBattle.from(Monster(0L, 2L, wolf.race, MobRarity.Legendary, stats), huge)
                     .copy(bossKind = Some(wolf.entryName), monsterCurrentEnergy = 400L)
+      val plain = SoloPveBattle.from(Monster(0L, 2L, wolf.race, MobRarity.Legendary, stats), huge)
       for {
-        t <- strike(huge, boss, 1, 1)
-        (after, _) = t
-      } yield assertTrue(wolf.roundDamageCapPct == 0L) &&
-              // волка такой удар сносит целиком — предела у него нет
-              assertTrue(after.isEmpty || after.exists(_.monsterCurrentHp == 0L))
+        w <- strike(huge, boss, 1, 1)
+        (wolfAfter, wolfLog) = w
+        p <- strike(huge, plain, 1, 1)
+        (plainAfter, _) = p
+      } yield
+        // волк держится и говорит об этом общей строкой — у него нет крыс
+        assertTrue(wolfAfter.exists(_.monsterCurrentHp == stats.hp - stats.hp * 25L / 100L)) &&
+        assertTrue(wolfLog.contains("Белый Волк держится: больше за этот раунд с него не снять")) &&
+        // моба с теми же статами, но без босса, такой удар сносит целиком
+        assertTrue(plainAfter.isEmpty || plainAfter.exists(_.monsterCurrentHp == 0L))
     },
 
     // ── Добыча ───────────────────────────────────────────────────────────────

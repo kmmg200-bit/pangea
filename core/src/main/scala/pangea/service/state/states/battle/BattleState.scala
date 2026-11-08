@@ -208,9 +208,11 @@ case class BattleState(
       // Щит, поднятый в прошлом раунде, своё отстоял, и кинжал наизготовку тоже:
       // их снимает первое действие нового раунда. Посреди раунда — после пояса,
       // Блока или Контрудара — они ещё держатся (см. Skill.Block, Counterstrike).
+      // С ними же заново считается и предел минибосса за раунд (BossRoundCap).
       // Комбо стихий — не больше одного за ход героя: счёт с нуля каждый ход.
       fresh   = walled.copy(comboUsed = false)
-      struck <- turn(hero, if (fresh.midRound) fresh else fresh.copy(heroBlockPct = 0L, heroCounterReady = false), now)
+      struck <- turn(hero,
+                  if (fresh.midRound) fresh else fresh.freshRound.copy(heroBlockPct = 0L, heroCounterReady = false), now)
       // «Упырь» (порог 12): пир — только за тех, кого уложил САМ герой, и тут
       // же, в бою. Считаем до хода союзников: их добычу упырь не ест.
       feasted = ghoulFeast(battle, struck, now)
@@ -1063,7 +1065,8 @@ case class BattleState(
   private def squadRound(hero: Hero, battle: SoloPveBattle, now: Long): Task[TurnResult] =
     for {
       // Место напротив союзника могло освободиться и позже — смотрим каждый раунд.
-      moved    <- ZIO.succeed(battle.leaveDownedHero)
+      // Раунд новый — и предел минибосса за раунд считается заново.
+      moved    <- ZIO.succeed(battle.freshRound.leaveDownedHero)
       (walked, turnedTo) = moved
       allied   <- allyPhase(TurnResult(hero, walked,
                     Vector(turnsAwayLine(walked, turnedTo)).filter(_.nonEmpty), Outcome.Continue))
@@ -1340,10 +1343,12 @@ case class BattleState(
             // На арене соперник мог поднять щит своим ходом — он режет и удар героя.
             guarded = BattleState.shieldCut(battle.foeBlockPct,
                         (resisted * (1.0 - monsterDefenceCut(hero, battle, buffedEff, nowMs))).toLong.max(1L))
-            // Предел босса за раунд: Крысиный король отдаёт не больше пятой
-            // части запаса, сколько бы герой ни вложил в удар и умение.
-            capped = capBossDamage(battle, guarded)
-            (armorDmg, hpDmg) = splitElementalDamage(battle.monsterCurrentArmor, capped, hero)
+            (armorRaw, hpRaw) = splitElementalDamage(battle.monsterCurrentArmor, guarded, hero)
+            // Предел минибосса за раунд: больше четверти HP и четверти брони он
+            // не теряет, сколько бы герой ни вложил в удар (см. BossRoundCap).
+            hurt     = battle.hurtActive(armorRaw, hpRaw)
+            armorDmg = hurt.armor
+            hpDmg    = hurt.hp
             // В лог идёт то, что РЕАЛЬНО ушло в цель: сырое число сбивало с толку
             // там, где сопротивление режет удар в разы (каменного элементаля голая
             // сталь берёт на 20%, и «357 урона» превращались в 71 снятой брони).
@@ -1351,9 +1356,8 @@ case class BattleState(
               "battle.hit",
               "damage"  -> (armorDmg + hpDmg).toString,
               "monster" -> battle.monsterName
-            ) + capLine(guarded, capped).map("\n" + _).getOrElse("")
-            newArmor = battle.monsterCurrentArmor - armorDmg
-            newHp    = (battle.monsterCurrentHp - hpDmg).max(0L)
+            ) + capLine(hurt).map("\n" + _).getOrElse("")
+            newHp    = hurt.battle.monsterCurrentHp
             // Баф «ядовитые атаки»: на любом попадании снимается. Моб травится, только
             // если удар прошёл в HP (hpDmg > 0) и моб жив: повторное попадание стакает
             // текущий яд (+OnHit), иначе накладывает свежий.
@@ -1430,9 +1434,7 @@ case class BattleState(
             healedHero = if (vamp + setSteal + flaskSteal > 0) hero.copy(fightStats = hero.fightStats.copy(hp = (hero.fightStats.hp + vamp + setSteal + flaskSteal).min(maxHp))) else hero
             vampGained = healedHero.fightStats.hp - hero.fightStats.hp
             effectsFed = if (!flaskBite) effectsWeak else effectsWeak.copy(heroVampiricHits = effectsWeak.heroVampiricHits - 1)
-            hitBattle = noteBossDamage(battle, armorDmg + hpDmg)
-              .copy(monsterCurrentHp = newHp, monsterCurrentArmor = newArmor, heroStruck = true)
-              .withEffects(effectsFed)
+            hitBattle = hurt.battle.copy(heroStruck = true).withEffects(effectsFed)
             // Проки стихий оружия (30% каждый) — только если моб жив после удара.
             elemResult <- if (newHp > 0) resolveElementProcs(hero, hitBattle)
                           else ZIO.succeed((hitBattle, Vector.empty[String]))
@@ -1862,9 +1864,7 @@ case class BattleState(
     }
   }
 
-  /** Круг Крысиного короля: призыв → пропуск → объединение. Ход он берёт раз в
-    * раунд, поэтому здесь же обнуляется счётчик урона, который герой успел по
-    * нему положить (см. [[capBossDamage]]). */
+  /** Круг Крысиного короля: призыв → пропуск → объединение. */
   private def ratKingTurnCast(
       hero: Hero,
       battle: SoloPveBattle
@@ -1872,7 +1872,7 @@ case class BattleState(
     val king   = MiniBoss.RatKing
     val lvl    = battle.monsterLvl
     val energy = battle.monsterCurrentEnergy
-    val next   = nextTurn(battle, king).copy(bossTaken = 0L)
+    val next   = nextTurn(battle, king)
 
     def spend(cost: Long, b: SoloPveBattle): SoloPveBattle = b.copy(monsterCurrentEnergy = energy - cost)
 
@@ -1925,27 +1925,17 @@ case class BattleState(
     }
   }
 
-  /** Сколько из этого удара дойдёт до минибосса с пределом: Крысиный король —
-    * ком из крыс и разваливается по одной, больше
-    * [[MiniBoss.roundDamageCapPct]] % своего максимума HP за раунд он не теряет.
-    * Предел общий на удар с руки и умение: счётчик обнуляется, когда босс берёт
-    * свой ход. Возвращает урезанный урон и бой с подросшим счётчиком. */
-  private def capBossDamage(battle: SoloPveBattle, damage: Long): Long =
-    battle.boss.map(_.roundDamageCapPct).filter(_ > 0L) match {
-      case None      => damage
-      case Some(pct) =>
-        val cap = (battle.monsterStats.hp * pct / 100L).max(1L)
-        damage.min((cap - battle.bossTaken).max(0L))
-    }
+  /** Строка о том, что удар упёрся в предел минибосса за раунд (см.
+    * `BossRoundCap`, `SoloPveBattle.hurtActive`) — раз за раунд на HP и раз на
+    * броню, а не на каждый срезанный удар. У Крысиного короля от кома
+    * отваливается крыса, прочие просто держатся. */
+  private def capLine(hurt: SoloPveBattle.Hurt): Option[String] =
+    Option.when(hurt.held)(capText(hurt.battle))
 
-  /** Записать в счёт раунда то, что по боссу с пределом реально прошло. */
-  private def noteBossDamage(battle: SoloPveBattle, dealt: Long): SoloPveBattle =
-    if (battle.boss.exists(_.roundDamageCapPct > 0L)) battle.copy(bossTaken = battle.bossTaken + dealt)
-    else battle
-
-  /** Строка о том, что предел сработал: ком потерял очередную крысу. */
-  private def capLine(before: Long, after: Long): Option[String] =
-    Option.when(after < before)(content.text("battle.ratKing.capped"))
+  /** Сама строка о пределе — для того, кто стоит в полях боя `b`. */
+  private def capText(b: SoloPveBattle): String =
+    if (b.boss.contains(MiniBoss.RatKing)) content.text("battle.ratKing.capped")
+    else content.format("battle.bossCapped", "monster" -> b.monsterName)
 
   /** Круг огненного: всплеск → сфера → щит → пропуск. */
   private def fireTurnCast(
@@ -2721,8 +2711,14 @@ case class BattleState(
         b = b.copy(monsterCurrentHp = b.monsterCurrentHp + heal)
         log = log :+ content.format("battle.comboFireAirAbsorbed", "monster" -> b.monsterName, "heal" -> heal.toString)
       } else {
-        b = b.copy(monsterCurrentHp = (b.monsterCurrentHp - dmg).max(0L))
-        log = log :+ content.format("battle.comboFireAir", "damage" -> dmg.toString)
+        // Взрыв снимает 30% HP и больше — минибосс теряет от него не больше
+        // остатка своего предела за раунд (см. BossRoundCap).
+        val hurt = b.hurtActive(0L, dmg)
+        b = hurt.battle
+        log = log :+ (
+          if (hurt.absorbed) content.format("battle.comboFireAirHeld", "monster" -> b.monsterName)
+          else content.format("battle.comboFireAir", "damage" -> hurt.hp.toString))
+        log = log ++ capLine(hurt)
       }
       // Горение после взрыва — по тем же правилам огня и холода; кого огонь не
       // берёт, тот и не загорается.
@@ -2737,11 +2733,12 @@ case class BattleState(
     // стихий при этом ОСТАЮТСЯ: комбо идёт им в довесок, а не вместо них.
     if (lightCold) {
       val armorCut = (maxArmor.toDouble * BattleState.ComboArmorCutPct / 100.0).toLong.max(0L)
-      b = b.copy(
-        monsterCurrentArmor = (b.monsterCurrentArmor - armorCut).max(0L),
-        effects = b.effects.copy(monsterSkillBlockedTurns = BattleState.ComboSkillBlockTurns)
+      // Броню минибосса трещина срезает не больше остатка предела за раунд.
+      val hurt     = b.hurtActive(armorCut, 0L)
+      b = hurt.battle.copy(
+        effects = hurt.battle.effects.copy(monsterSkillBlockedTurns = BattleState.ComboSkillBlockTurns)
       )
-      log = log :+ content.text("battle.comboLightningCold")
+      log = (log :+ content.text("battle.comboLightningCold")) ++ capLine(hurt)
     }
 
     // Одиночные проки стихий — идут своим чередом, в том числе после комбо.
@@ -2968,8 +2965,10 @@ case class BattleState(
                 case _ => poisonedE
               }
             }
-            battleAfterAtk = battle.copy(
-              monsterCurrentHp = (battle.monsterCurrentHp - thorns).max(0L),
+            // Шипы ранят минибосса не больше остатка его предела за раунд (см.
+            // BossRoundCap); целиком поглощённые молчат.
+            thorned = battle.hurtActive(0L, thorns)
+            battleAfterAtk = thorned.battle.copy(
               toughnessUsed    = battle.toughnessUsed || toughTriggered,
               effects          = effectsAfterHit
             )
@@ -2977,7 +2976,8 @@ case class BattleState(
               Option.when(impenTriggered)(content.text("battle.impenetrable")),
               Option.when(slipped)(content.text("battle.deepSlip")),
               Option.when(toughTriggered)(content.format("battle.toughness", "armor" -> restoredArmor.toString)),
-              Option.when(thorns > 0)(content.format("battle.thorns", "damage" -> thorns.toString, "monster" -> battle.monsterName)),
+              Option.when(thorned.hp > 0)(content.format("battle.thorns", "damage" -> thorned.hp.toString, "monster" -> battle.monsterName)),
+              capLine(thorned),
               // Из минибоссов поджигает только огненный элементаль; остальные —
               // мобы с огнём на оружии (демоны), у них строка без элементаля.
               Option.when(ignites && !thawed)(content.text(
@@ -3287,7 +3287,11 @@ case class BattleState(
   /** Тик DoT-эффектов МОНСТРА в конце раунда (каждый снимает `pct`% макс.HP мимо
     * брони). Порядок: яд → кровотечение → горение. Яд слабеет ([[Poison.decayed]]),
     * кровотечение НЕ затухает, горение усиливается ([[Burn.grown]]). Возвращает
-    * обновлённый бой и склеенную строку эффектов (пустую, если DoT нет). */
+    * обновлённый бой и склеенную строку эффектов (пустую, если DoT нет).
+    *
+    * Минибосса раны ранят не больше остатка его предела за раунд (см.
+    * `BossRoundCap`): целиком поглощённый тик молчит, а дошедший до предела
+    * договаривает об этом строкой. */
   private def tickMonsterEffects(
       battle: SoloPveBattle,
       monsterName: String,
@@ -3295,9 +3299,19 @@ case class BattleState(
   ): (SoloPveBattle, String, Long) = {
     val maxHp = battle.monsterStats.hp
     var eff   = battle.effects
-    var hp    = battle.monsterCurrentHp
+    var cur   = battle // HP и счёт предела минибосса — через hurtActive
     var lines = Vector.empty[String]
+    var held  = Vector.empty[String]
     var bled  = 0L // урон кровотечения за этот тик — «Упырь» (порог 10) лечит им героя
+
+    // Рана снимает HP; возвращает, сколько сняла на деле.
+    def tick(icon: String, label: String, dmg: Long): Long = {
+      val hurt = cur.hurtActive(0L, dmg)
+      cur = hurt.battle
+      if (!hurt.absorbed) lines = lines :+ dotTick(icon, label, hurt.hp, monsterName)
+      held = held ++ capLine(hurt)
+      hurt.hp
+    }
 
     // Поднятый мёртв: травить и обескровливать в нём нечего, и зараза с него
     // сходит сама — ровно как с героя-нежити. Зато сухая плоть занимается
@@ -3309,34 +3323,29 @@ case class BattleState(
     }
 
     eff.monsterPoison.foreach { p =>
-      val dmg = monsterDotDamage(battle, p.damageOn(maxHp))
-      hp = (hp - dmg).max(0L)
+      tick(Poison.Icon, Poison.Label, monsterDotDamage(battle, p.damageOn(maxHp)))
       eff = eff.copy(monsterPoison = p.decayed)
-      lines = lines :+ dotTick(Poison.Icon, Poison.Label, dmg, monsterName)
     }
     eff.monsterBleed.foreach { b =>
-      val dmg = monsterDotDamage(battle, b.damageOn(maxHp))
-      hp = (hp - dmg).max(0L)
-      bled += dmg
       // Кровотечение не затухает — сила остаётся прежней.
-      lines = lines :+ dotTick(Bleed.Icon, Bleed.Label, dmg, monsterName)
+      bled += tick(Bleed.Icon, Bleed.Label, monsterDotDamage(battle, b.damageOn(maxHp)))
     }
     eff.monsterBurn.foreach { bn =>
       val fire = if (undead) ItemSet.Necromancer.UndeadFireTakenPct else 0L
-      val dmg  = bn.damageOn(maxHp) * (100L + fire) / 100L
-      hp = (hp - dmg).max(0L)
+      tick(Burn.Icon, Burn.Label, bn.damageOn(maxHp) * (100L + fire) / 100L)
       // «Дикое пламя» (порог 6) ускоряет рост: шаг применяется несколько раз,
       // сохраняя саму кривую роста (+2 п.п. до порога, дальше +1). На поднятом
       // пламя растёт вдвое охотнее — тем же порядком.
       val steps = sets.burnGrowthMult.max(1L) * (if (undead) ItemSet.Necromancer.UndeadBurnGrowthMult else 1L)
       eff = eff.copy(monsterBurn = Some((1L to steps).foldLeft(bn)((b, _) => b.grown)))
-      lines = lines :+ dotTick(Burn.Icon, Burn.Label, dmg, monsterName)
     }
-    val after = battle.copy(monsterCurrentHp = hp, effects = eff)
+    val after = cur.copy(effects = eff)
     // Истёк ранами — в счёт тому из отряда, кто бил его последним: пламя,
     // яд и кровь от его ударов и добили.
-    val credited = if (battle.monsterCurrentHp > 0L && hp <= 0L) creditKill(after, after.monsterLastAllyHit) else after
-    (credited, lines.mkString("\n"), bled)
+    val credited =
+      if (battle.monsterCurrentHp > 0L && after.monsterCurrentHp <= 0L) creditKill(after, after.monsterLastAllyHit)
+      else after
+    (credited, (lines ++ held).mkString("\n"), bled)
   }
 
   /** Добитый засчитывается союзнику по имени `by` — стоит он ещё или уже выбыл
@@ -3729,9 +3738,8 @@ case class BattleState(
             if (Skill.rangedSkills.contains(slot.skill)) "battle.group.splitSplash" else "battle.group.sweepSplash"
           dealSkillDamage(hero, bumped, reduced, dealt => tmpl.replace("{}", dealt.toString), next,
             splash = (b, dealt) => strikeOthersProcs(hero, b, around(b.group.activePos)) { tmp =>
-              val amount = (dealt * pct / 100L).max(1L)
-              (plainHit(tmp, amount),
-               content.format(splashKey, "monster" -> tmp.monsterName, "damage" -> amount.toString))
+              plainHit(tmp, (dealt * pct / 100L).max(1L))(d =>
+                content.format(splashKey, "monster" -> tmp.monsterName, "damage" -> d.toString))
             })
 
         case Skill.Effect.Whirl =>
@@ -3749,8 +3757,8 @@ case class BattleState(
           dealSkillDamage(hero, bumped, reduced, dealt => step + tmpl.replace("{}", dealt.toString), next,
             splash = (b, _) => strikeOthersProcs(hero, b, around(b.group.heroPos)) { tmp =>
               val amount = (raw * (1.0 - monsterDefenceCut(hero, tmp, effWithAir(hero, tmp, nowMs), nowMs))).toLong.max(1L)
-              (plainHit(tmp, amount),
-               content.format("battle.group.whirlHit", "monster" -> tmp.monsterName, "damage" -> amount.toString))
+              plainHit(tmp, amount)(d =>
+                content.format("battle.group.whirlHit", "monster" -> tmp.monsterName, "damage" -> d.toString))
             })
 
         case Skill.Effect.FanBleed(pct) =>
@@ -3760,8 +3768,9 @@ case class BattleState(
             b.withEffects(b.effects.copy(monsterBleed = Some(b.effects.monsterBleed.map(_.stackedWith(pct)).getOrElse(Bleed(pct)))))
           dealSkillDamage(hero, bleed(bumped), raw, dealt => tmpl.replace("{}", dealt.toString), next,
             splash = (b, _) => strikeOthersProcs(hero, b, around(b.group.heroPos)) { tmp =>
-              (bleed(plainHit(tmp, raw)),
-               content.format("battle.group.fanCut", "monster" -> tmp.monsterName, "damage" -> raw.toString, "pct" -> pct.toString))
+              val (cut, line) = plainHit(tmp, raw)(d =>
+                content.format("battle.group.fanCut", "monster" -> tmp.monsterName, "damage" -> d.toString, "pct" -> pct.toString))
+              (bleed(cut), line)
             })
 
         case Skill.Effect.WarCry(maxPct, turns) =>
@@ -3819,8 +3828,9 @@ case class BattleState(
           dealSkillDamage(hero, rooted(bumped, turns), reduced, dealt => tmpl.replace("{}", dealt.toString), next,
             splash = (b, _) => strikeOthersProcs(hero, b, (b.group.heroPos - reach) to (b.group.heroPos + reach)) { tmp =>
               val amount = (raw * (1.0 - monsterDefenceCut(hero, tmp, effWithAir(hero, tmp, nowMs), nowMs))).toLong.max(1L)
-              (rooted(plainHit(tmp, amount), turns),
-               content.format("battle.group.barrageHit", "monster" -> tmp.monsterName, "damage" -> amount.toString))
+              val (cut, line) = plainHit(tmp, amount)(d =>
+                content.format("battle.group.barrageHit", "monster" -> tmp.monsterName, "damage" -> d.toString))
+              (rooted(cut, turns), line)
             })
 
         case Skill.Effect.Leap =>
@@ -3951,8 +3961,9 @@ case class BattleState(
       line: Long => String,
       next: (Hero, SoloPveBattle, Vector[String]) => Task[TurnResult],
       // Что тот же удар делает с остальным строем (Размашистый, Вихрь, Веерный
-      // порез): получает бой после удара по цели и урон, который по ней реально
-      // прошёл.
+      // порез): получает бой после удара по цели и урон, который по ней прошёл
+      // бы без предела минибосса (см. BossRoundCap) — после сопротивления и
+      // граней стихий.
       splash: (SoloPveBattle, Long) => Task[(SoloPveBattle, Vector[String])] = (b, _) => ZIO.succeed((b, Vector.empty)),
       // Крит по этому умению уже разыгран снаружи («Удар в слабое место» катает
       // свой шанс сам) — второй раз не катаем.
@@ -3981,13 +3992,13 @@ case class BattleState(
     // Урон навыка тоже несёт стихию оружия — раздельный урон по броне/HP с тем же
     // усилением. Проки стихий роллятся отдельным броском (как и на обычной атаке).
     val resisted          = (raw * bossResistance(hero, battle)).toLong.max(1L)
-    // Предел босса за раунд делится между ударом и умением — счёт общий.
-    val capped            = capBossDamage(battle, resisted)
-    val (armorDmg, hpDmg) = splitElementalDamage(battle.monsterCurrentArmor, capped, hero)
+    val (armorRaw, hpRaw) = splitElementalDamage(battle.monsterCurrentArmor, resisted, hero)
+    // Предел минибосса за раунд — общий на всё, что по нему прошло: удар,
+    // умения, отряд, раны (см. BossRoundCap).
+    val hurt              = battle.hurtActive(armorRaw, hpRaw)
     val critLine          = if (crit) "\n" + content.text("battle.skillCrit") else ""
-    val skillLine         = line(armorDmg + hpDmg) + critLine + capLine(resisted, capped).map("\n" + _).getOrElse("")
-    val newArmor = battle.monsterCurrentArmor - armorDmg
-    val newHp    = (battle.monsterCurrentHp - hpDmg).max(0L)
+    val skillLine         = line(hurt.dealt) + critLine + capLine(hurt).map("\n" + _).getOrElse("")
+    val newHp    = hurt.battle.monsterCurrentHp
     // «Упырь» (порог 12): любое умение, нанёсшее урон, всегда пускает цели кровь.
     val bledEffects0 =
       if (!hero.sets.skillsAlwaysBleed || newHp <= 0) battle.effects
@@ -4001,16 +4012,17 @@ case class BattleState(
       else bledEffects0.copy(monsterBurn = Some(
         bledEffects0.monsterBurn.map(_.reignited).getOrElse(Burn.onIgnite)))
     val effects  = bledEffects
-    val hit      = noteBossDamage(battle, armorDmg + hpDmg)
-      .copy(monsterCurrentHp = newHp, monsterCurrentArmor = newArmor)
-      .withEffects(effects)
+    val hit      = hurt.battle.withEffects(effects)
+    // Отголосок по строю — от силы самого удара: предел минибосса держит только
+    // его самого и соседей не бережёт.
+    val struck   = armorRaw + hpRaw
     if (newHp <= 0)
-      splash(hit, armorDmg + hpDmg).flatMap { case (swept, splashLog) =>
+      splash(hit, struck).flatMap { case (swept, splashLog) =>
         next(hero, swept, Vector(skillLine) ++ splashLog)
       }
     else
       resolveElementProcs(hero, hit).flatMap { case (afterProcs, elemLog) =>
-        splash(afterProcs, armorDmg + hpDmg).flatMap { case (swept, splashLog) =>
+        splash(afterProcs, struck).flatMap { case (swept, splashLog) =>
           next(hero, swept, Vector(skillLine) ++ elemLog ++ splashLog)
         }
       }
@@ -4033,7 +4045,9 @@ case class BattleState(
     near.foldLeft((battle, Vector.empty[String])) { case ((b, log), pos) =>
       val idx         = b.group.idxOf(pos)
       val (tmp, line) = hit(b.withActive(b.group.others(idx)))
+      // Счёт предела минибосса живёт на бою: задетым мог оказаться он сам.
       val placed      = b.copy(group = b.group.copy(others = b.group.others.updated(idx, tmp.activeSlot)))
+                          .withBossTally(tmp)
       val lines       = if (line.isEmpty) log else log :+ line
       if (tmp.monsterCurrentHp > 0L) (placed, lines)
       else (placed.sideFallen(idx), lines :+ content.format("battle.group.sideSlain", "monster" -> tmp.monsterName))
@@ -4061,11 +4075,13 @@ case class BattleState(
             if (struck.monsterCurrentHp > 0L) resolveElementProcs(hero, struck)
             else ZIO.succeed((struck, Vector.empty[String]))
           procs.map { case (tmp, procLog) =>
+            // Счёт предела минибосса — тоже с временной пары: задетым мог
+            // оказаться сам босс, стоящий в строю.
             val placed = b.copy(
               group       = b.group.copy(others = b.group.others.updated(idx, tmp.activeSlot)),
               effects     = tmp.effects.withMonsterPart(b.effects),
               bossCharges = tmp.bossCharges,
-              comboUsed   = tmp.comboUsed)
+              comboUsed   = tmp.comboUsed).withBossTally(tmp)
             val lines = (if (line.isEmpty) log else log :+ line) ++ procLog
             if (tmp.monsterCurrentHp > 0L) (placed, lines)
             else (placed.sideFallen(idx), lines :+ content.format("battle.group.sideSlain", "monster" -> tmp.monsterName))
@@ -4076,11 +4092,15 @@ case class BattleState(
 
   /** Урон-«отголосок» умения по мобу во временной паре: броня, потом HP — без
     * защиты и стихий (это отголосок удара, а не удар). Проки стихий по задетому
-    * бросает [[strikeOthersProcs]]. */
-  private def plainHit(tmp: SoloPveBattle, amount: Long): SoloPveBattle = {
+    * бросает [[strikeOthersProcs]]. Минибосс в строю теряет от него не больше
+    * остатка своего предела за раунд. Возвращает бой и строку — `line` получает
+    * урон, который дошёл на деле, — с припиской о пределе, если он встал; съел
+    * предел отголосок целиком — вместо «0 урона» строка о самом пределе. */
+  private def plainHit(tmp: SoloPveBattle, amount: Long)(line: Long => String): (SoloPveBattle, String) = {
     val armorDmg = math.min(tmp.monsterCurrentArmor, amount)
-    tmp.copy(monsterCurrentArmor = tmp.monsterCurrentArmor - armorDmg,
-             monsterCurrentHp    = (tmp.monsterCurrentHp - (amount - armorDmg)).max(0L))
+    val hurt     = tmp.hurtActive(armorDmg, amount - armorDmg)
+    (hurt.battle,
+     if (hurt.absorbed) capText(hurt.battle) else line(hurt.dealt) + capLine(hurt).map("\n" + _).getOrElse(""))
   }
 
   /** Моб в полях не сходит с места `turns` раундов. Счётчик ставится с запасом
@@ -4978,26 +4998,31 @@ case class BattleState(
   }
 
   /** Аура по чужой стороне: каждому по его природе, павшие уходят в добычу.
-    * Строк не даёт — о себе аура сказала одной на всё поле. */
+    * Строк не даёт — о себе аура сказала одной на всё поле. Минибосса она жжёт
+    * не больше остатка его предела за раунд (см. `BossRoundCap`) — где бы он ни
+    * стоял. */
   private def auraOnMonsters(battle: SoloPveBattle, aura: Aura, power: Long => Long): SoloPveBattle = {
-    def touched(sign: Int, cur: Long, maxHp: Long): Long = sign match {
-      case s if s > 0 => (cur + power(maxHp)).min(maxHp).max(cur)
-      case s if s < 0 => (cur - power(maxHp)).max(0L)
-      case _          => cur
-    }
+    def healed(cur: Long, maxHp: Long): Long = (cur + power(maxHp)).min(maxHp).max(cur)
     // Активный: его HP живут в полях боя.
     val afterActive = {
       val sign = if (battle.monsterCurrentHp <= 0L) 0 else aura.sign(Nature.of(battle.monsterRace, battle.monsterUndead))
-      battle.copy(monsterCurrentHp = touched(sign, battle.monsterCurrentHp, battle.monsterStats.hp))
+      if (sign > 0) battle.copy(monsterCurrentHp = healed(battle.monsterCurrentHp, battle.monsterStats.hp))
+      else if (sign < 0) battle.hurtActive(0L, power(battle.monsterStats.hp)).battle
+      else battle
     }
     // Слоты строя: павших убираем с конца, чтобы индексы не плыли.
-    val slots = afterActive.group.others.zipWithIndex.map { case (slot, idx) =>
-      val sign = if (!slot.alive) 0 else aura.sign(Nature.of(slot.race, slot.undead))
-      val hp   = touched(sign, slot.currentHp, slot.stats.hp)
-      (slot.copy(currentHp = hp), idx, hp <= 0L && slot.alive)
+    val (touched, fallen) = afterActive.group.others.indices.foldLeft((afterActive, List.empty[Int])) {
+      case ((b, gone), idx) =>
+        val slot = b.group.others(idx)
+        val sign = if (!slot.alive) 0 else aura.sign(Nature.of(slot.race, slot.undead))
+        val next =
+          if (sign > 0) b.copy(group = b.group.copy(others = b.group.others.updated(idx,
+                          slot.copy(currentHp = healed(slot.currentHp, slot.stats.hp)))))
+          else if (sign < 0) b.hurtSlot(idx, 0L, power(slot.stats.hp))._1
+          else b
+        (next, if (slot.alive && !next.group.others(idx).alive) idx :: gone else gone)
     }
-    val withSlots = afterActive.copy(group = afterActive.group.copy(others = slots.map(_._1)))
-    slots.filter(_._3).map(_._2).sorted.reverse.foldLeft(withSlots)((b, idx) => b.sideFallen(idx))
+    fallen.sorted.reverse.foldLeft(touched)((b, idx) => b.sideFallen(idx))
   }
 
   // ── Союзники ────────────────────────────────────────────────────────────────
@@ -5072,13 +5097,16 @@ case class BattleState(
       b3 = b2.copy(group = b2.group.updateAlly(a.position)(x =>
              x.copy(energy = (x.energy + x.kind.energyRegen(x.lvl)).min(x.stats.energy))))
       // Лог — одной строкой на цель, с суммарным уроном удара и умения; проки и
-      // раны считаются, но экран не засоряют. Промах — только если не попало ничем.
+      // раны считаются, но экран не засоряют. Промах — только если не попало ничем;
+      // попало, но минибосс держит предел за раунд, — так и говорим.
       blows   = List(struck, blow2).flatMap(b => b.target.map(name => (name, b.damage, b.slew)))
       byName  = blows.groupMapReduce(_._1)(_._2)(_ + _)
+      heldOn  = List(struck, blow2).filter(_.held).flatMap(_.target).toSet
       order   = blows.map(_._1).distinct
       hitLog  = order.map { m =>
         val dmg = byName(m)
         if (dmg > 0L) content.format("battle.ally.hit", "name" -> a.name, "monster" -> m, "damage" -> dmg.toString)
+        else if (heldOn(m)) content.format("battle.ally.held", "name" -> a.name, "monster" -> m)
         else content.format("battle.ally.miss", "name" -> a.name, "monster" -> m)
       }.toVector
       slewLog = blows.collect { case (m, _, true) => content.format("battle.ally.slew", "name" -> a.name, "monster" -> m) }.toVector
@@ -5113,11 +5141,8 @@ case class BattleState(
           // сопротивление — как у голой стали (см. AllyKind.element).
           resist  = tmp.boss.map(b => elem.fold(b.plainDamageTakenMult)(b.damageTakenMult)).getOrElse(1.0)
           dmg     = (base * resist).toLong.max(1L)
-          // Предел босса за раунд (Крысиный король) общий для всех, кто его бьёт:
-          // и для героя, и для отряда (см. capBossDamage).
-          (armorDmg, hpDmg) = if (crushing) (0L, capBossDamage(tmp, dmg)) else {
-            val cut       = capBossDamage(tmp,
-                              (dmg * (1.0 - BattleState.defenceReduction(effectiveMonsterDefence(tmp), 0L, a.stats.atk))).toLong.max(1L))
+          (armorRaw, hpRaw) = if (crushing) (0L, dmg) else {
+            val cut       = (dmg * (1.0 - BattleState.defenceReduction(effectiveMonsterDefence(tmp), 0L, a.stats.atk))).toLong.max(1L)
             val rawArmor  = math.min(tmp.monsterCurrentArmor, cut)
             val rawHp     = cut - rawArmor
             val armorMult = elem.map(_.armorMult).getOrElse(1.0)
@@ -5126,27 +5151,30 @@ case class BattleState(
             val lightning = if (elem.contains(Element.Lightning)) (aDmg * Element.Lightning.ArmorToHpFrac).toLong else 0L
             (aDmg, ((rawHp * hpMult).toLong + lightning).max(0L))
           }
-          newHp    = (tmp.monsterCurrentHp - hpDmg).max(0L)
+          // Предел минибосса за раунд общий для всех, кто его бьёт: и для героя,
+          // и для отряда (см. BossRoundCap).
+          hurt     = tmp.hurtActive(armorRaw, hpRaw)
+          newHp    = hurt.battle.monsterCurrentHp
           // Кто бил последним, запоминаем: истечёт моб ранами — убит им.
-          hit      = noteBossDamage(tmp, armorDmg + hpDmg)
-                       .copy(monsterCurrentHp = newHp, monsterCurrentArmor = tmp.monsterCurrentArmor - armorDmg,
-                             monsterLastAllyHit = Some(a.name))
-          dealt    = armorDmg + hpDmg
+          hit      = hurt.battle.copy(monsterLastAllyHit = Some(a.name))
+          dealt    = hurt.dealt
           // Прок стихии считается молча — строки его в лог союзника не идут.
           procRoll <- if (newHp > 0L) Random.nextIntBetween(1, 101) else ZIO.succeed(100)
           procced  = if (newHp > 0L && procRoll <= Element.ProcChancePct) applyProcs(hit, elem.toSet)._1 else hit
           guarded  = procced.withEffects(procced.effects)
           // Этим ударом добил — был жив до него, а после него нет.
           killed   = tmp.monsterCurrentHp > 0L && guarded.monsterCurrentHp <= 0L
+          // Удар дошёл, но предел минибосса съел его целиком: это не промах.
+          held     = hurt.absorbed
           // обратно: активный — как есть, слот — в строй; добитый слот — в павшие
           result =
-            if (active) AllyBlow(guarded, Some(tmp.monsterName), dealt, slew = false, killed = killed)
+            if (active) AllyBlow(guarded, Some(tmp.monsterName), dealt, slew = false, killed = killed, held = held)
             else {
               // Счёт предела живёт на бою: босс в бою один, где бы он ни стоял.
-              val restored = battle.copy(bossTaken = guarded.bossTaken,
-                               group = battle.group.copy(others = battle.group.others.updated(idx, guarded.activeSlot)))
+              val restored = battle.copy(group = battle.group.copy(others = battle.group.others.updated(idx, guarded.activeSlot)))
+                               .withBossTally(guarded)
               if (guarded.monsterCurrentHp <= 0L) AllyBlow(restored.sideFallen(idx), Some(tmp.monsterName), dealt, slew = true, killed = killed)
-              else AllyBlow(restored, Some(tmp.monsterName), dealt, slew = false)
+              else AllyBlow(restored, Some(tmp.monsterName), dealt, slew = false, held = held)
             }
         } yield result
     } yield out
@@ -6181,11 +6209,11 @@ case class BattleState(
         .getOrElse(b.boss.map(_.plainDamageTakenMult).getOrElse(1.0))
       val full     = (damage * resist).toLong.max(1L)
       // Сперва броня, остаток — в HP: удар тяжёлый, но не сквозь доспех.
+      // Минибосс теряет не больше остатка своего предела за раунд.
       val armorDmg = full.min(b.monsterCurrentArmor)
-      val hpDmg    = (full - armorDmg).min(b.monsterCurrentHp)
-      val dealt    = armorDmg + hpDmg
-      val hit      = b.copy(monsterCurrentHp = (b.monsterCurrentHp - hpDmg).max(0L),
-                            monsterCurrentArmor = (b.monsterCurrentArmor - armorDmg).max(0L))
+      val hurt     = b.hurtActive(armorDmg, (full - armorDmg).min(b.monsterCurrentHp))
+      val dealt    = hurt.dealt
+      val hit      = hurt.battle
       // Стихия и яд ложатся молча: строки проков только засорили бы экран.
       val alive   = hit.monsterCurrentHp > 0L
       val procced = if (alive) element.map(e => applyProcs(hit, Set(e))._1).getOrElse(hit) else hit
@@ -6205,7 +6233,9 @@ case class BattleState(
         if (!slot.alive) (b, total, foes)
         else {
           val (hit, dealt) = strike(b.withActive(slot))
+          // Счёт предела минибосса — с временной пары: задетым мог быть он сам.
           val back    = b.copy(group = b.group.copy(others = b.group.others.updated(idx, hit.activeSlot)))
+                          .withBossTally(hit)
           val settled = if (hit.monsterCurrentHp <= 0L) back.sideFallen(idx) else back
           (settled, total + dealt, foes + 1)
         }
@@ -6719,9 +6749,11 @@ object BattleState {
   /** Удар союзника: бой после него, кого бил, сколько снял, добил ли соседа. */
   /** Удар союзника: `slew` — добитый стоял в строю и уходит в павшие со своей
     * строкой «добивает»; `killed` — этот удар вообще кого-то добил, в том числе
-    * стоявшего в полях боя. */
+    * стоявшего в полях боя; `held` — удар дошёл, но минибосс его не почувствовал:
+    * предел за раунд уже исчерпан (см. `BossRoundCap`), и в лог он идёт не
+    * промахом. */
   final case class AllyBlow(battle: SoloPveBattle, target: Option[String], damage: Long, slew: Boolean,
-                            killed: Boolean = false)
+                            killed: Boolean = false, held: Boolean = false)
 
   /** Кто зовёт сородичей в конце первого раунда. */
   def summons(rarity: Rarity): Boolean = rarity == Rarity.Legendary || rarity == Rarity.Mythical

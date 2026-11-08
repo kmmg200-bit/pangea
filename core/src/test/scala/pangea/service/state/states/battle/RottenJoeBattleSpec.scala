@@ -26,6 +26,11 @@ object RottenJoeBattleSpec extends ZIOSpecDefault {
   private val joe     = MiniBoss.RottenJoe
   private val bossLvl = 2L // герой 15 уровня → BossLvL = (15−1)/5 = 2
 
+  /** Сколько процентов HP у Джо перед ударом, который должен его уронить: меньше
+    * предела минибосса за раунд (четверть, см. BossRoundCap) — с полного HP
+    * одним ударом его теперь не свалить. */
+  private val FallPct = 20L
+
   private def weapon(gem: Option[GemKind]): Item =
     Item(50L, "Меч", 1L, Rarity.Blue, ItemType.Weapon,
       attack = 10, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0,
@@ -190,10 +195,11 @@ object RottenJoeBattleSpec extends ZIOSpecDefault {
 
     // ── «Отказывается умирать» ────────────────────────────────────────────────
     test("первое обнуление HP: поднимается на 75% и слабеет в атаке") {
-      // Герой бьёт сильнее, чем у Джо всего HP, — падение гарантировано.
+      // У Джо пятая часть HP — меньше предела минибосса за раунд (BossRoundCap),
+      // и удар сильнее всего его HP роняет его наверняка.
       val h = hero(atk = 100000L)
       for {
-        r <- strike(h, joeBattle(h, turn = 3), seedTurn(100))
+        r <- strike(h, joeBattle(h, turn = 3, hpPct = FallPct), seedTurn(100))
         (_, after, log, out) = r
         maxHp = joe.stats(bossLvl).hp
       } yield assertTrue(out == StateType.Battle) && // бой не кончился
@@ -207,8 +213,8 @@ object RottenJoeBattleSpec extends ZIOSpecDefault {
     test("второй и третий подъёмы дают 50% и 25% HP") {
       val h = hero(atk = 100000L)
       for {
-        second <- strike(h, joeBattle(h, turn = 3, revives = 1), seedTurn(100))
-        third  <- strike(h, joeBattle(h, turn = 3, revives = 2), seedTurn(100))
+        second <- strike(h, joeBattle(h, turn = 3, revives = 1, hpPct = FallPct), seedTurn(100))
+        third  <- strike(h, joeBattle(h, turn = 3, revives = 2, hpPct = FallPct), seedTurn(100))
         maxHp   = joe.stats(bossLvl).hp
       } yield assertTrue(second._2.get.monsterCurrentHp == maxHp * 50L / 100L) &&
               assertTrue(second._2.get.bossRevives == 2) &&
@@ -220,7 +226,7 @@ object RottenJoeBattleSpec extends ZIOSpecDefault {
     test("после третьего подъёма следующая смерть — окончательная") {
       val h = hero(atk = 100000L)
       for {
-        r <- strike(h, joeBattle(h, turn = 3, revives = 3), seedTurn(100))
+        r <- strike(h, joeBattle(h, turn = 3, revives = 3, hpPct = FallPct), seedTurn(100))
         (_, after, _, out) = r
       } yield assertTrue(out == StateType.Loot) && assertTrue(after.isEmpty) // бой закрыт
     },
@@ -229,7 +235,7 @@ object RottenJoeBattleSpec extends ZIOSpecDefault {
       val h = hero(atk = 100000L, gem = Some(GemKind.Ruby))
       for {
         // 60 — удар героя, 100 — прок огня не нужен: горение уже висит
-        r <- strike(h, joeBattle(h, turn = 3, revives = 1, burning = true), seedTurn(100))
+        r <- strike(h, joeBattle(h, turn = 3, revives = 1, burning = true, hpPct = FallPct), seedTurn(100))
         (_, after, log, out) = r
       } yield assertTrue(out == StateType.Loot) &&
               assertTrue(after.isEmpty) &&
@@ -240,7 +246,7 @@ object RottenJoeBattleSpec extends ZIOSpecDefault {
     test("а вот первое падение пламя не отменяет — Джо всё равно встаёт") {
       val h = hero(atk = 100000L, gem = Some(GemKind.Ruby))
       for {
-        r <- strike(h, joeBattle(h, turn = 3, burning = true), seedTurn(100))
+        r <- strike(h, joeBattle(h, turn = 3, burning = true, hpPct = FallPct), seedTurn(100))
         (_, after, log, out) = r
       } yield assertTrue(out == StateType.Battle) &&
               assertTrue(after.get.bossRevives == 1) &&
@@ -274,7 +280,7 @@ object RottenJoeBattleSpec extends ZIOSpecDefault {
     test("после Джо игрок не идёт осматривать логово элементаля") {
       val h = hero(atk = 100000L)
       for {
-        t <- makeState(h, joeBattle(h, turn = 3, revives = 3))
+        t <- makeState(h, joeBattle(h, turn = 3, revives = 3, hpPct = FallPct))
         (state, dao, r) = t
         _     <- seedTurn(100)
         _     <- state.action(testUser, tap("Attack"), r)

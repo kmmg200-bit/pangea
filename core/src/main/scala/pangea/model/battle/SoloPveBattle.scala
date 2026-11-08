@@ -81,9 +81,10 @@ case class SoloPveBattle(
   // Уровень тех, кого минибосс зовёт себе на помощь: у Крысиного короля это
   // уровень задания, по которому катается вся канализация. 0 — звать некого.
   minionLvl:      Long = 0L,
-  // Сколько урона минибосс уже принял в этом раунде от удара и умения героя:
-  // по нему считается предел (см. MiniBoss.roundDamageCapPct). Обнуляется, когда
-  // босс берёт свой ход.
+  // Сколько HP минибосс уже потерял в этом раунде — от кого и от чего угодно:
+  // по нему считается предел (см. BossRoundCap), броня — в `bossArmorTaken`.
+  // Обнуляется с началом раунда героя. До общего предела здесь копился урон по
+  // Крысиному королю — такой счёт читается как HP и живёт до конца раунда.
   bossTaken:      Long = 0L,
   // Западня: бежать отсюда некуда. Так дерутся те, кто сам выбрал место и
   // время, — городская банда, подкараулившая героя в лабиринте.
@@ -146,7 +147,10 @@ case class SoloPveBattle(
   // Комбо стихий (Огонь+Воздух, Молния+Холод) за этот ход героя уже было: второе
   // не срабатывает — стихии ложатся поодиночке. Сбрасывается в начале каждого
   // хода героя (см. BattleState.resolveLoaded).
-  comboUsed: Boolean = false
+  comboUsed: Boolean = false,
+  // Сколько брони минибосс уже потерял в этом раунде — пара к `bossTaken`, по
+  // ней считается предел брони (см. BossRoundCap).
+  bossArmorTaken: Long = 0L
 ) {
 
   /** Множитель Стены трофеев к урону героя по тому, кто сейчас в полях. */
@@ -748,6 +752,63 @@ case class SoloPveBattle(
   def boss: Option[pangea.model.monster.MiniBoss] =
     bossKind.flatMap(pangea.model.monster.MiniBoss.byName)
 
+  // ── Предел минибосса за раунд ─────────────────────────────────────────────
+
+  /** Сколько ещё HP и брони (именно в таком порядке) может потерять в этом
+    * раунде минибосс с такими максимумами (см.
+    * [[pangea.model.monster.BossRoundCap]]). Босс в бою один, и счёт один —
+    * где бы он ни стоял: в полях или в строю. */
+  def bossRoom(maxHp: Long, maxArmor: Long): (Long, Long) = {
+    import pangea.model.monster.BossRoundCap
+    ((BossRoundCap.of(maxHp, BossRoundCap.HpPct) - bossTaken).max(0L),
+     (BossRoundCap.of(maxArmor, BossRoundCap.ArmorPct) - bossArmorTaken).max(0L))
+  }
+
+  /** Урон тому, кто в полях: `armorDmg` по броне, `hpDmg` по HP. Минибосс за
+    * раунд теряет не больше своего предела (см. BossRoundCap): что сверх — до
+    * него не доходит, а дошедшее идёт в счёт раунда. Прочим — как есть.
+    *
+    * Все пути урона по тому, кто в полях, идут через этот метод, а не через
+    * `copy`, — чтобы новый источник урона не обошёл предел, забыв про него. */
+  def hurtActive(armorDmg: Long, hpDmg: Long): SoloPveBattle.Hurt = {
+    val wantArmor = armorDmg.max(0L).min(monsterCurrentArmor)
+    val wantHp    = hpDmg.max(0L)
+    val isBoss    = boss.isDefined
+    val (hpRoom, armorRoom) =
+      if (isBoss) bossRoom(monsterStats.hp, monsterStats.armor) else (Long.MaxValue, Long.MaxValue)
+    val armor = wantArmor.min(armorRoom)
+    val hp    = wantHp.min(hpRoom)
+    val newHp = (monsterCurrentHp - hp).max(0L)
+    val hurt  = copy(monsterCurrentArmor = monsterCurrentArmor - armor, monsterCurrentHp = newHp)
+    // В счёт идёт то, что босс реально потерял: удар сверх остатка HP его не
+    // увеличивает — Гнилой Джо встаёт и держит предел дальше.
+    val tallied =
+      if (!isBoss) hurt
+      else hurt.copy(bossTaken = bossTaken + (monsterCurrentHp - newHp), bossArmorTaken = bossArmorTaken + armor)
+    // Предел встал на пути впервые за раунд: этот удар до него дошёл, а не
+    // упёрся в уже исчерпанный. О павшем говорить незачем.
+    val held = newHp > 0L && ((hp < wantHp && hpRoom > 0L) || (armor < wantArmor && armorRoom > 0L))
+    SoloPveBattle.Hurt(tallied, armor, hp, wantArmor + wantHp, held)
+  }
+
+  /** Урон мобу строя под индексом `idx` — по тем же правилам, что и тому, кто в
+    * полях (см. [[hurtActive]]): он встаёт во временную пару, получает удар и
+    * возвращается на место, а счёт предела остаётся на бою. Павшего из строя не
+    * убирает — это дело вызывающего. */
+  def hurtSlot(idx: Int, armorDmg: Long, hpDmg: Long): (SoloPveBattle, SoloPveBattle.Hurt) = {
+    val hurt = withActive(group.others(idx)).hurtActive(armorDmg, hpDmg)
+    (copy(group = group.copy(others = group.others.updated(idx, hurt.battle.activeSlot))).withBossTally(hurt.battle),
+     hurt)
+  }
+
+  /** Счёт предела минибосса — с боя `of`. Удар по временной паре правит счёт на
+    * ней, а в строй возвращается только слот: счёт надо забрать отдельно. */
+  def withBossTally(of: SoloPveBattle): SoloPveBattle =
+    copy(bossTaken = of.bossTaken, bossArmorTaken = of.bossArmorTaken)
+
+  /** Новый раунд героя: предел минибосса считается заново. */
+  def freshRound: SoloPveBattle = copy(bossTaken = 0L, bossArmorTaken = 0L)
+
   /** Обновляет эффекты боя, уважая иммунитеты расы моба: элементалю нельзя
    *  навесить яд или кровотечение — ему нечему течь и нечего травить. Все точки,
    *  накладывающие эффекты на моба, идут через этот метод, а не через `copy`,
@@ -836,6 +897,18 @@ case class SoloPveBattle(
 }
 
 object SoloPveBattle {
+  /** Итог удара по тому, кто в полях (см. [[SoloPveBattle.hurtActive]]): бой
+    * после него, сколько дошло по броне и по HP, сколько просили (`asked`) и
+    * встал ли на пути предел минибосса впервые за раунд (`held` — пора сказать
+    * об этом строкой). */
+  final case class Hurt(battle: SoloPveBattle, armor: Long, hp: Long, asked: Long, held: Boolean) {
+    /** Сколько дошло всего. */
+    def dealt: Long = armor + hp
+
+    /** Предел съел удар целиком: просили, а не дошло ничего. */
+    def absorbed: Boolean = dealt == 0L && asked > 0L
+  }
+
   /** Сборка боя из моба и героя: статы/hp/броня берутся с моба, слоты активных
    *  навыков отдаёт сам герой (`hero.activeSkillSlots`). Единая точка входа в
    *  бой для всех событий. `squad = false` — сюжетный бой, в который отряд не
@@ -961,6 +1034,7 @@ object SoloPveBattle {
       preyGone            <- c.getOrElse[Boolean]("preyGone")(false)
       monsterDodgeBonus   <- c.getOrElse[Long]("monsterDodgeBonus")(0L)
       comboUsed           <- c.getOrElse[Boolean]("comboUsed")(false)
+      bossArmorTaken      <- c.getOrElse[Long]("bossArmorTaken")(0L)
     } yield SoloPveBattle(monsterLvl, monsterRace, monsterRarity, monsterStats,
                          monsterCurrentHp, monsterCurrentArmor, heroBattleState, consumableUsed, monsterMarked,
                          monsterUndead,
@@ -969,7 +1043,7 @@ object SoloPveBattle {
                          noFlee, lootLevel, holyWater, heroBlockPct, monsterBlockPct,
                          heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall,
                          monsterLastAllyHit, heroStruck, roundsFought, secondWindUsed, preyName, preyGone,
-                         monsterDodgeBonus, comboUsed)
+                         monsterDodgeBonus, comboUsed, bossArmorTaken)
 
   /** Номер самого соперника среди «мобов» зеркала арены; его союзники — от
     * единицы (см. `ArenaSide.allies`). */

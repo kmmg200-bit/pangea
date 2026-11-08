@@ -266,13 +266,13 @@ object BossCycleSpec extends ZIOSpecDefault {
               assertTrue(after.exists(a => a.bossRevives == 1 && a.monsterCurrentHp > 0L))
     },
 
-    test("предел Крысиного короля держит и удары союзников: больше пятой части запаса за раунд он не теряет") {
+    test("предел минибосса держит и удары союзников: больше четверти HP за раунд он не теряет") {
       val h    = hero(behindAlly)
       val base = tough(bossOne(MiniBoss.RatKing, h, turn = 1))
       // союзник бьёт так, что без предела короля бы не стало
       val b    = base.copy(group = base.group.copy(allies = base.group.allies.map(a =>
                    a.copy(stats = a.stats.copy(atk = 100000000L)))))
-      val cap  = b.monsterStats.hp * MiniBoss.RatKing.RoundDamageCapPct / 100L
+      val cap  = b.monsterStats.hp * pangea.model.monster.BossRoundCap.HpPct / 100L
       for {
         t <- squadRound(h, b, seed = 13L, feed = sureHits)
         (out, after, _) = t
