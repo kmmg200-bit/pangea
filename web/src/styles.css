@@ -79,6 +79,9 @@
   box-sizing: border-box;
 }
 
+/* Докрутил до края — страница ВК вокруг приложения не едет следом. Иначе в
+   браузере (m.vk.ru) она уезжает вверх: шапка приложения прячется под шапку
+   ВК, а под нижней панелью вылезает пустая полоса. */
 html,
 body {
   margin: 0;
@@ -86,6 +89,7 @@ body {
   color: var(--text);
   font: 15px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
 }
 
 body.locked {
