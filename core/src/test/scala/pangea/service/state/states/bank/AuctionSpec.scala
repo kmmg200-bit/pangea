@@ -65,7 +65,7 @@ object AuctionSpec extends ZIOSpecDefault {
       // Второй герой — продавец: ему приходит выручка.
       _        <- heroDao.insertHero(TestFixtures.hero(sellerUs).copy(id = seller, silver = 0L, doubloons = 0L))
       invRepo   = TestInventoryRepository.withItems(inventory)
-      aucRepo   = new TestAuctionRepository(lots)
+      aucRepo   = new TestAuctionRepository(lots, invRepo)
       bankRepo  = TestBankRepository.of(cells, silver = vaultSilver)
       payoutDao = TestPayoutDao.empty
       userRepo <- TestUserRepository.withUsers(testUser, sellerUser)
@@ -74,7 +74,7 @@ object AuctionSpec extends ZIOSpecDefault {
       content  <- ZIO.attempt(SceneContent.load())
       payouts   = Payouts(payoutDao, heroDao, content)
     } yield Fix(
-      AuctionState(heroDao, invRepo, TestItemRepository.make, aucRepo, userRepo, bankRepo, payouts, players, content),
+      AuctionState(heroDao, invRepo, aucRepo, userRepo, bankRepo, payouts, players, content),
       heroDao, invRepo, aucRepo, bankRepo, payoutDao, players, renderer)
   }
 

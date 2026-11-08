@@ -18,11 +18,15 @@ object AuctionRepoError {
   case object LotGone      extends AuctionRepoError
   /** У героя уже [[pangea.model.auction.AuctionLot.MaxLots]] лотов на торгах. */
   case object TooManyLots  extends AuctionRepoError
+  /** Выставляемой вещи в сумке уже нет. */
+  case object NotInBag     extends AuctionRepoError
   case object Failed       extends AuctionRepoError
 }
 
 /** Аукцион Торгового дома: витрина, выставление, покупка и возврат вещей.
- *  Деньги репозиторий не трогает — их считает состояние через `Purse`. */
+ *  Вещь переходит между сумкой и лотом одной транзакцией: перешла целиком или
+ *  осталась, где была. Деньги репозиторий не трогает — их считает состояние
+ *  через `Purse`. */
 trait AuctionRepository {
   /** Страница витрины: лоты, сколько всего страниц и какая показана. */
   def page(now: Long, page: Int, pageSize: Int): IO[AuctionRepoError, (List[AuctionLot], Int, Int)]
@@ -33,14 +37,16 @@ trait AuctionRepository {
   /** Сколько лотов героя сейчас на торгах (считая непроданные). */
   def mineCount(sellerId: HeroId): IO[AuctionRepoError, Long]
 
-  /** Выставить вещь. Плату за выставление берёт вызывающий. */
+  /** Выставить вещь: из сумки продавца — в лот. Плату за выставление берёт
+    * вызывающий. */
   def sell(sellerId: HeroId, item: Item, price: Long, currency: AuctionCurrency, now: Long): IO[AuctionRepoError, AuctionLot]
 
-  /** Купить: лот удаляется атомарно, поэтому второму покупателю придёт
-    * [[AuctionRepoError.LotGone]] и списывать с него нечего. */
-  def buy(lotId: Long, now: Long): IO[AuctionRepoError, AuctionLot]
+  /** Купить: лот закрывается, и вещь ложится в сумку покупателя. Лот удаляется
+    * атомарно, поэтому второму покупателю придёт [[AuctionRepoError.LotGone]]
+    * и списывать с него нечего. */
+  def buy(lot: AuctionLot, buyer: HeroId, now: Long): IO[AuctionRepoError, AuctionLot]
 
-  /** Снять свой лот с торгов или забрать непроданное: возвращает вещь. */
+  /** Снять свой лот с торгов или забрать непроданное: вещь — в сумку хозяина. */
   def reclaim(lotId: Long, sellerId: HeroId): IO[AuctionRepoError, AuctionLot]
 }
 

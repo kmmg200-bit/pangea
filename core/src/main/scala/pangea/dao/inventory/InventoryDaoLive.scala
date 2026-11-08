@@ -1,5 +1,6 @@
 package pangea.dao.inventory
 
+import doobie.ConnectionIO
 import doobie.postgres.circe.json.implicits._
 import doobie.implicits._
 import doobie.util.transactor.Transactor
@@ -25,7 +26,18 @@ class InventoryDaoLive(xa: Transactor[Task]) extends InventoryDao {
       .transact(xa)
 
   override def update(inventory: Inventory): Task[Unit] =
+    InventoryDaoLive.updateIo(inventory).transact(xa).unit
+}
+
+/** Сумка внутри чужой транзакции: вещь переходит между сумкой и лотом
+  * аукциона целиком или не переходит вовсе (см. [[pangea.dao.auction.AuctionDaoLive]]). */
+object InventoryDaoLive {
+  /** Сумка с замком на строку до конца транзакции. */
+  def lockedIo(heroId: HeroId): ConnectionIO[Inventory] =
+    sql"select * from inventories where hero_id = $heroId for update"
+      .query[Inventory]
+      .unique
+
+  def updateIo(inventory: Inventory): ConnectionIO[Int] =
     sql"update inventories set max_items = ${inventory.maxItems}, items = ${inventory.items.asJson} where id = ${inventory.id}".update.run
-      .transact(xa)
-      .unit
 }

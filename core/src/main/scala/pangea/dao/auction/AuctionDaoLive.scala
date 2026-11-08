@@ -1,9 +1,14 @@
 package pangea.dao.auction
 
+import doobie.ConnectionIO
+import doobie.free.connection.{pure, unit}
 import doobie.implicits._
 import doobie.util.transactor.Transactor
+import pangea.dao.inventory.InventoryDaoLive
+import pangea.dao.item.ItemDaoLive
 import pangea.model.auction.AuctionLot
 import pangea.model.hero.HeroId
+import pangea.model.item.Item
 import pangea.model.item.Item.meta
 import zio.Task
 import zio.interop.catz._
@@ -27,14 +32,32 @@ class AuctionDaoLive(xa: Transactor[Task]) extends AuctionDao {
   private val lockIds =
     sql"select pg_advisory_xact_lock(${AuctionDaoLive.LotIdLock})".query[Unit].unique
 
-  override def insert(lot: AuctionLot): Task[AuctionLot] =
+  // Вещь в сумку внутри той же транзакции: новый номер, как при любой выдаче
+  // (см. ItemRepository.persist), и дописать её в сумку под замком строки.
+  private def toBag(heroId: HeroId, item: Item): ConnectionIO[Unit] =
+    for {
+      id  <- ItemDaoLive.insertIo(heroId.value, item)
+      bag <- InventoryDaoLive.lockedIo(heroId)
+      _   <- InventoryDaoLive.updateIo(bag.addItem(item.copy(id = id)))
+    } yield ()
+
+  // В лот идёт вещь, как она лежит в сумке, а не копия, с которой пришли.
+  override def listed(lot: AuctionLot): Task[Option[AuctionLot]] =
     (for {
-      _  <- lockIds
-      id <- freeId
-      _  <- sql"""insert into auction_lots(id, seller_id, item, price, currency, listed_at, expires_at)
-                  values($id, ${lot.sellerId.value}, ${lot.item}, ${lot.price}, ${lot.currency},
-                         ${lot.listedAt}, ${lot.expiresAt})""".update.run
-    } yield lot.copy(id = id)).transact(xa)
+      bag <- InventoryDaoLive.lockedIo(lot.sellerId)
+      res <- bag.items.data.find(_.id == lot.item.id) match {
+               case None => pure(Option.empty[AuctionLot])
+               case Some(item) =>
+                 for {
+                   _  <- InventoryDaoLive.updateIo(bag.withItems(bag.items.withoutOne(item.id)))
+                   _  <- lockIds
+                   id <- freeId
+                   _  <- sql"""insert into auction_lots(id, seller_id, item, price, currency, listed_at, expires_at)
+                               values($id, ${lot.sellerId.value}, $item, ${lot.price}, ${lot.currency},
+                                      ${lot.listedAt}, ${lot.expiresAt})""".update.run
+                 } yield Option(lot.copy(id = id, item = item))
+             }
+    } yield res).transact(xa)
 
   override def get(id: Long): Task[Option[AuctionLot]] =
     (fr"select" ++ columns ++ fr"from auction_lots where id = $id")
@@ -66,13 +89,20 @@ class AuctionDaoLive(xa: Transactor[Task]) extends AuctionDao {
 
   // Гонка двух покупателей решается здесь: строка либо удалилась (значит, лот
   // был наш), либо её уже не было — и второй получит `false`.
-  override def sold(id: Long, now: Long): Task[Boolean] =
-    sql"delete from auction_lots where id = $id and expires_at > $now"
-      .update.run.transact(xa).map(_ == 1)
+  override def sold(lot: AuctionLot, buyer: HeroId, now: Long): Task[Boolean] =
+    (for {
+      gone <- sql"""delete from auction_lots
+                    where id = ${lot.id} and seller_id = ${lot.sellerId.value} and listed_at = ${lot.listedAt}
+                      and expires_at > $now""".update.run
+      _    <- if (gone == 1) toBag(buyer, lot.item) else unit
+    } yield gone == 1).transact(xa)
 
-  override def returned(id: Long, sellerId: HeroId): Task[Boolean] =
-    sql"delete from auction_lots where id = $id and seller_id = ${sellerId.value}"
-      .update.run.transact(xa).map(_ == 1)
+  override def returned(id: Long, sellerId: HeroId): Task[Option[AuctionLot]] =
+    (for {
+      lot <- (fr"delete from auction_lots where id = $id and seller_id = ${sellerId.value} returning" ++ columns)
+               .query[AuctionLot].option
+      _   <- lot.fold(unit)(l => toBag(sellerId, l.item))
+    } yield lot).transact(xa)
 }
 
 object AuctionDaoLive {

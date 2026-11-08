@@ -5,10 +5,9 @@ import pangea.engine.{Players, SceneContent}
 import pangea.model.auction.{AuctionCurrency, AuctionLot}
 import pangea.model.hero.Hero
 import pangea.model.user.User
-import pangea.repository.auction.AuctionRepository
+import pangea.repository.auction.{AuctionRepoError, AuctionRepository}
 import pangea.repository.bank.BankRepository
 import pangea.repository.inventory.InventoryRepository
-import pangea.repository.item.ItemRepository
 import pangea.repository.user.UserRepository
 import pangea.service.payout.Payouts
 import pangea.service.purse.Purse
@@ -24,11 +23,11 @@ import java.util.concurrent.TimeUnit
   *
   * Гонку двух покупателей ловит сам аукцион: лот закрывается одним DELETE, и
   * тому, кто опоздал на пару секунд, приходит [[AuctionPurchase.Result.Gone]] —
-  * до списания денег дело не доходит. */
+  * до списания денег дело не доходит. Закрыть лот и положить вещь в сумку —
+  * одна транзакция: вещь не пропадёт между лотом и покупателем. */
 final class AuctionPurchase(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
-  itemRepo:      ItemRepository,
   auctionRepo:   AuctionRepository,
   userRepo:      UserRepository,
   bankRepo:      BankRepository,
@@ -54,24 +53,18 @@ final class AuctionPurchase(
         case Right(lot) if !canPay(lot, hero, wallet.total) => ZIO.succeed(Result.NoMoney(lot))
         case Right(_) if inv.freeSlots <= 0        => ZIO.succeed(Result.NoRoom)
         case Right(lot) =>
-          // Лот закрывается первым и атомарно: опоздавший увидит «лот ушёл»,
-          // и никаких денег с него не спишется.
-          auctionRepo.buy(lot.id, now).either.flatMap {
-            case Left(_)  => ZIO.succeed(Result.Gone)
-            case Right(_) => handOver(user, hero, lot)
-          }
+          // Лот закрывается первым и вместе с вещью в сумке: опоздавший увидит
+          // «лот ушёл», и никаких денег с него не спишется. Упала транзакция —
+          // лот на месте, вещь у продавца, денег не трогаем.
+          auctionRepo.buy(lot, hero.id, now).foldZIO(
+            {
+              case AuctionRepoError.Failed => ZIO.fail(new Throwable(s"Лот ${lot.id} не продался: сбой базы"))
+              case _                       => ZIO.succeed(Result.Gone)
+            },
+            _ => payForLot(user, hero, lot).flatMap(tellSeller(lot, _)).as(Result.Bought(lot))
+          )
       }
     } yield out
-
-  /** Вещь — покупателю, деньги — продавцу. Если вещь вдруг не влезла, лот
-    * возвращается хозяину, и деньги не трогаем. */
-  private def handOver(user: User, hero: Hero, lot: AuctionLot): Task[Result] =
-    itemRepo.persist(hero.id, lot.item)
-      .flatMap(item => inventoryRepo.addItem(hero.id, item).mapError(asThrowable))
-      .foldZIO(
-        _ => auctionRepo.reclaim(lot.id, lot.sellerId).ignore.as(Result.NoRoom),
-        _ => payForLot(user, hero, lot).flatMap(tellSeller(lot, _)).as(Result.Bought(lot))
-      )
 
   /** Покупатель платит, а выручка продавца идёт в его банковскую ячейку. Не
     * приняла (полна или монета не та) — деньги ждут его в городе. Возвращает,

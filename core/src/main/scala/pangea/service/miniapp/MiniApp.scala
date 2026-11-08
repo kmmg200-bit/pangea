@@ -141,7 +141,7 @@ object MiniApp {
         topCache    <- Ref.make(Map.empty[TopKind, CachedTop])
       } yield new MiniAppLive(config, users, heroes, inventories, lots, heroDao, artifacts, barrels, vaults, content,
         tops, topCache, new AzatCube(heroDao, inventories, items, content),
-        new AuctionPurchase(heroDao, inventories, items, lots, users, bank, payouts, players, content), lock)
+        new AuctionPurchase(heroDao, inventories, lots, users, bank, payouts, players, content), lock)
     }
 }
 

@@ -4,7 +4,8 @@ import pangea.dao.auction.AuctionDao
 import pangea.model.auction.{AuctionCurrency, AuctionLot}
 import pangea.model.hero.HeroId
 import pangea.model.item.Item
-import zio.{IO, ZIO}
+import pangea.service.ErrorLog
+import zio.{IO, Task, ZIO}
 
 final class AuctionRepositoryLive(dao: AuctionDao) extends AuctionRepository {
 
@@ -38,21 +39,20 @@ final class AuctionRepositoryLive(dao: AuctionDao) extends AuctionRepository {
       // Своих лотов на торгах — не больше десяти, считая непроданные.
       mine <- mineCount(sellerId)
       _   <- ZIO.when(mine >= AuctionLot.MaxLots.toLong)(ZIO.fail(AuctionRepoError.TooManyLots))
-      lot <- dao.insert(AuctionLot.fresh(sellerId, item, price, currency, now))
-               .orElseFail(AuctionRepoError.Failed)
+      lot <- moved(s"Лот героя ${sellerId.value} не выставился", dao.listed(AuctionLot.fresh(sellerId, item, price, currency, now)))
+               .someOrFail(AuctionRepoError.NotInBag)
     } yield lot
 
-  def buy(lotId: Long, now: Long): IO[AuctionRepoError, AuctionLot] =
-    for {
-      lot  <- lot(lotId)
-      done <- dao.sold(lotId, now).orElseFail(AuctionRepoError.Failed)
-      _    <- ZIO.when(!done)(ZIO.fail(AuctionRepoError.LotGone))
-    } yield lot
+  def buy(lot: AuctionLot, buyer: HeroId, now: Long): IO[AuctionRepoError, AuctionLot] =
+    moved(s"Лот ${lot.id} не продался герою ${buyer.value}", dao.sold(lot, buyer, now))
+      .filterOrFail(identity)(AuctionRepoError.LotGone).as(lot)
 
   def reclaim(lotId: Long, sellerId: HeroId): IO[AuctionRepoError, AuctionLot] =
-    for {
-      lot  <- lot(lotId)
-      done <- dao.returned(lotId, sellerId).orElseFail(AuctionRepoError.Failed)
-      _    <- ZIO.when(!done)(ZIO.fail(AuctionRepoError.LotGone))
-    } yield lot
+    moved(s"Лот $lotId не вернулся герою ${sellerId.value}", dao.returned(lotId, sellerId))
+      .someOrFail(AuctionRepoError.LotGone)
+
+  /** Транзакция с вещью упала — откатилась целиком, вещь там же, где была.
+    * Причину пишем в лог: снаружи останется только `Failed`. */
+  private def moved[A](what: => String, tx: Task[A]): IO[AuctionRepoError, A] =
+    tx.tapErrorCause(ErrorLog.logged(what)).orElseFail(AuctionRepoError.Failed)
 }

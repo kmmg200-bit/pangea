@@ -8,8 +8,20 @@ import zio.{IO, ZIO}
 
 /** Аукцион в памяти: те же правила, что в проде, включая «кто первый, того и
   * лот» — покупка забирает лот, и второму достаётся отказ. Проданные и снятые
-  * лоты не хранятся. */
-class TestAuctionRepository(private var lots: List[AuctionLot] = Nil) extends AuctionRepository {
+  * лоты не хранятся. Вещь ходит между лотом и сумкой `bag` разом, как в
+  * транзакции прода: выставленная уходит из сумки, купленная и снятая — в
+  * неё, с новым номером. */
+class TestAuctionRepository(private var lots: List[AuctionLot] = Nil,
+                            bag: TestInventoryRepository = TestInventoryRepository.accepting)
+    extends AuctionRepository {
+
+  private var nextItemId = 10000L
+
+  /** В сумку с новым номером — как `ItemRepository.persist`. */
+  private def toBag(item: Item): Unit = {
+    nextItemId += 1
+    bag.put(item.copy(id = nextItemId))
+  }
 
   /** Наименьший свободный номер — как в проде: проданный лот освобождает свой. */
   private def freeId: Long = Iterator.from(1).map(_.toLong).find(n => !lots.exists(_.id == n)).get
@@ -41,28 +53,33 @@ class TestAuctionRepository(private var lots: List[AuctionLot] = Nil) extends Au
     else if (price < AuctionLot.MinPrice) ZIO.fail(AuctionRepoError.PriceTooLow)
     else if (price > AuctionLot.MaxPrice) ZIO.fail(AuctionRepoError.PriceTooHigh)
     else if (lots.count(_.sellerId == sellerId) >= AuctionLot.MaxLots) ZIO.fail(AuctionRepoError.TooManyLots)
-    else ZIO.succeed {
-      val lot = AuctionLot.fresh(sellerId, item, price, currency, now).copy(id = freeId)
-      lots = lots :+ lot
-      lot
+    else bag.snapshot.find(_.id == item.id) match {
+      case None => ZIO.fail(AuctionRepoError.NotInBag)
+      case Some(inBag) =>
+        bag.removeItem(inBag.id, sellerId).orElseFail(AuctionRepoError.Failed).as {
+          val lot = AuctionLot.fresh(sellerId, inBag, price, currency, now).copy(id = freeId)
+          lots = lots :+ lot
+          lot
+        }
     }
 
-  def buy(lotId: Long, now: Long): IO[AuctionRepoError, AuctionLot] =
-    lots.find(_.id == lotId) match {
-      case Some(lot) if lot.onSale(now) =>
-        lots = lots.filterNot(_.id == lotId)
-        ZIO.succeed(lot)
-      case Some(_) => ZIO.fail(AuctionRepoError.LotGone)
-      case None    => ZIO.fail(AuctionRepoError.LotNotFound)
+  // Лот сверяется целиком: номер мог занять чужой лот.
+  def buy(lot: AuctionLot, buyer: HeroId, now: Long): IO[AuctionRepoError, AuctionLot] =
+    lots.find(l => l == lot && l.onSale(now)) match {
+      case Some(found) =>
+        lots = lots.filterNot(_.id == found.id)
+        toBag(found.item)
+        ZIO.succeed(found)
+      case None => ZIO.fail(AuctionRepoError.LotGone)
     }
 
   def reclaim(lotId: Long, sellerId: HeroId): IO[AuctionRepoError, AuctionLot] =
-    lots.find(_.id == lotId) match {
-      case Some(lot) if lot.sellerId == sellerId =>
+    lots.find(l => l.id == lotId && l.sellerId == sellerId) match {
+      case Some(lot) =>
         lots = lots.filterNot(_.id == lotId)
+        toBag(lot.item)
         ZIO.succeed(lot)
-      case Some(_) => ZIO.fail(AuctionRepoError.LotGone)
-      case None    => ZIO.fail(AuctionRepoError.LotNotFound)
+      case None => ZIO.fail(AuctionRepoError.LotGone)
     }
 
   def snapshot: List[AuctionLot] = lots

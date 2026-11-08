@@ -273,7 +273,7 @@ object StatesMap {
           Transfer   -> TransferState(heroDao, inventoryRepo, transfers, content, background),
           Mail       -> MailState(heroDao, inventoryRepo, parcels, content),
           BankVault  -> BankVaultState(heroDao, inventoryRepo, bankRepo, content, artifacts),
-          Auction    -> AuctionState(heroDao, inventoryRepo, itemRepo, auctionRepo, userRepo, bankRepo, payouts, players, content),
+          Auction    -> AuctionState(heroDao, inventoryRepo, auctionRepo, userRepo, bankRepo, payouts, players, content),
           FetShop    -> FetShopState(heroDao, artifactRepo, inventoryRepo, content, Some(itemRepo), Some(journal)),
           Backpack   -> BackpackState(heroDao, inventoryRepo, artifactRepo, content),
           Casket     -> ArtifactState(ArtifactKind.Casket, heroDao, inventoryRepo, itemRepo, artifactRepo, content),

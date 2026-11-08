@@ -38,14 +38,14 @@ object AuctionPurchaseSpec extends ZIOSpecDefault {
       heroDao  <- TestHeroDao.withHero(userId, TestFixtures.hero(userId).copy(silver = silver, doubloons = doubloons))
       _        <- heroDao.insertHero(TestFixtures.hero(sellerUs).copy(id = seller, silver = 0L, doubloons = 0L))
       inv       = TestInventoryRepository.withItems(bag)
-      aucRepo   = new TestAuctionRepository(lots)
+      aucRepo   = new TestAuctionRepository(lots, inv)
       // Ячейка одна на всех в тестовом банке; продавцу без своей выручка ждёт в городе.
       bank      = TestBankRepository.of(cells = if (vaultSilver > 0L) 1 else 0, silver = vaultSilver)
       payoutDao = TestPayoutDao.empty
       users    <- TestUserRepository.withUsers(buyerUser, sellerUser)
       players   = new TestPlayers
       content  <- ZIO.attempt(SceneContent.load())
-      purchase  = new AuctionPurchase(heroDao, inv, TestItemRepository.make, aucRepo, users, bank,
+      purchase  = new AuctionPurchase(heroDao, inv, aucRepo, users, bank,
                     Payouts(payoutDao, heroDao, content), players, content)
     } yield Fix(purchase, heroDao, inv, aucRepo, bank, payoutDao, players)
 

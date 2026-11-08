@@ -43,6 +43,10 @@ class TestInventoryRepository(canAdd: Boolean, private var items: List[Item] = N
         })
     }
 
+  /** Положить без проверки места — как транзакция аукциона: лишняя вещь
+    * лучше пропавшей. */
+  def put(item: Item): Unit = items = items :+ item
+
   def snapshot: List[Item] = items
 }
 

@@ -10,13 +10,12 @@ import pangea.model.hero.Hero
 import pangea.model.item.{Item, ItemType}
 import pangea.model.state.StateType
 import pangea.model.user.User
-import pangea.repository.auction.AuctionRepository
+import pangea.repository.auction.{AuctionRepoError, AuctionRepository}
 import pangea.repository.bank.BankRepository
 import pangea.service.auction.AuctionPurchase
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.user.UserRepository
 import pangea.service.payout.Payouts
-import pangea.repository.item.ItemRepository
 import pangea.service.purse.Purse
 import pangea.service.chat.Links
 import pangea.service.state.states.bank.AuctionState._
@@ -42,7 +41,6 @@ import java.util.concurrent.TimeUnit
 case class AuctionState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
-  itemRepo:      ItemRepository,
   auctionRepo:   AuctionRepository,
   userRepo:      UserRepository,
   bankRepo:      BankRepository,
@@ -55,7 +53,7 @@ case class AuctionState(
   private val purse = Purse(heroDao, Some(bankRepo))
 
   private val purchase =
-    new AuctionPurchase(heroDao, inventoryRepo, itemRepo, auctionRepo, userRepo, bankRepo, payouts, players, content)
+    new AuctionPurchase(heroDao, inventoryRepo, auctionRepo, userRepo, bankRepo, payouts, players, content)
 
   private val branch = new Branch(
     routes = Map(
@@ -349,13 +347,12 @@ case class AuctionState(
             renderer.show(user, Screen(content.format("bank.auction.noFee", "fee" -> s"${c.emoji} $fee"), backRow))
           else
             chargeFee(user, hero, c, fee) *>
-              inventoryRepo.removeItem(it.id, hero.id).mapError(asThrowable) *>
+              // Вещь уходит из сумки в лот одной транзакцией с ним самим.
               auctionRepo.sell(hero.id, it, price, c, now).foldZIO(
                 {
-                  // Лот не записался — вещь возвращаем в сумку, деньги за сбор
+                  // Лот не записался — вещь осталась в сумке, деньги за сбор
                   // уже ушли; о сборе честно говорим в сообщении об отказе.
-                  case e => inventoryRepo.addItem(hero.id, it).ignore *>
-                              renderer.show(user, Screen(content.text("bank.auction.listFailed"), backRow)) *>
+                  case e => renderer.show(user, Screen(content.text("bank.auction.listFailed"), backRow)) *>
                               ZIO.logError(s"auction sell failed: $e")
                 },
                 lot => players.announceTrade(AuctionLot.announcement(lot)).ignore *>
@@ -428,12 +425,15 @@ case class AuctionState(
         case Right(lot) if lot.sellerId != hero.id => renderer.show(user, Screen(content.text("bank.auction.notYours"), backRow))
         case Right(_) if inv.freeSlots <= 0        => renderer.show(user, Screen(content.text("bank.auction.noRoom"), backRow))
         case Right(lot) =>
+          // Лот закрывается вместе с вещью в сумке. Упала транзакция — лот
+          // на месте, а не «ушёл».
           auctionRepo.reclaim(lot.id, hero.id).foldZIO(
-            _ => renderer.show(user, Screen(content.text("bank.auction.lotGone"), backRow)),
-            _ => itemRepo.persist(hero.id, lot.item)
-                   .flatMap(item => inventoryRepo.addItem(hero.id, item).mapError(asThrowable)) *>
-                   renderer.show(user, Screen(content.format("bank.auction.reclaimed",
-                     "id" -> lot.id.toString, "name" -> lot.item.displayTitle), Nil)) *>
+            {
+              case AuctionRepoError.Failed => ZIO.fail(new Throwable(s"Лот ${lot.id} не вернулся: сбой базы"))
+              case _                       => renderer.show(user, Screen(content.text("bank.auction.lotGone"), backRow))
+            },
+            _ => renderer.show(user, Screen(content.format("bank.auction.reclaimed",
+                   "id" -> lot.id.toString, "name" -> lot.item.displayTitle), Nil)) *>
                    showMine(user, renderer)
           )
       }
