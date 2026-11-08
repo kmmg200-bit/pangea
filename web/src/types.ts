@@ -41,6 +41,8 @@ export interface CandidateView {
 }
 
 export interface SlotView {
+  /** Номер слота: им говорят боту, куда надеть и что снять. */
+  index: number
   name: string
   item: ItemView | null
   /** Пустой слот, занятый чужой вещью: левая рука под двуручным. */
@@ -75,6 +77,14 @@ export interface InventoryView {
   equipment: SlotView[]
   /** Остальные хранилища: артефакты при себе, бочка и ячейка в городе, дом. */
   storages: StorageView[]
+  /** Почему снаряжение сейчас не сменить: герой в бою. */
+  gearLocked: string | null
+}
+
+/** Ответ на «надеть» или «снять»: вещи после этого и что сказать. */
+export interface GearActionView {
+  inventory: InventoryView
+  note: string | null
 }
 
 /** Хранилище вещей. Закрытое — `locked` с тем, как его открыть; открытое —

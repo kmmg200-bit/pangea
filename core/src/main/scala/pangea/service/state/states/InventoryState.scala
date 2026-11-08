@@ -22,13 +22,14 @@ import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
+import pangea.service.equipment.Outfit
 import pangea.service.state.states.InventoryState._
 import pangea.service.state.states.home.Racks
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.states.murloc.MurlocVillageState
 import pangea.service.state.states.race.RaceQuestState
 import pangea.service.state.{BarrelThievesQuest, BeltContents, HedgeSongQuest, HerbLore, InventoryFeedback, ItemMenu, MarisaQuest, MurlocQuest, NpcQuestLog, QuestGoods,
-  QuestSupport, SlotChoice, StackMove, State,
+  SlotChoice, StackMove, State,
   StrayCasketQuest, UiScene, UserAction}
 import zio.{Random, Task, ZIO}
 
@@ -39,6 +40,9 @@ case class InventoryState(
   content:        SceneContent,
   artifacts:      Option[ArtifactRepository] = None
 ) extends State {
+
+  /** Надеть — общее с карточкой слота и с Mini App. */
+  private val outfit = new Outfit(heroDao, inventoryRepo, itemRepository, content)
 
   private val branch = new Branch(
     routes = Map(
@@ -734,7 +738,6 @@ case class InventoryState(
 
   private def equipById(user: User, itemId: Long, renderer: Renderer, pairSlot: Option[Int]): Task[StateType] =
     for {
-      now  <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
       hero <- getHero(user)
       inv  <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       // true — остаёмся на показанном экране (выбор кольца ждёт нажатия и
@@ -756,30 +759,13 @@ case class InventoryState(
           // берут ещё одно, и слот ещё не выбран — спрашиваем, что снять.
           else if (pairSlot.isEmpty && SlotChoice.needed(hero.equipment, item))
             renderer.show(user, slotChoiceScreen(item, hero.equipment, itemId)).as(true)
-          else {
-            val done     = InventoryState.equipWith(hero, item, pairSlot, now)
-            val capDelta = InventoryState.equipmentStashDelta(hero.equipment, done.equipment, hero.runes.brandedPassives.toSet)
-            InventoryState.equipBlock(inv, capDelta, done.toBag, belt = item.itemType == ItemType.Belt) match {
-              // Замена, снимающая последний «Тайник», двуручное поверх двух
-              // одноручных или пояс меньше прежнего переполнят сумку → блокируем.
-              case Some(key) =>
-                renderer.show(user, Screen(content.format(key, "name" -> item.name), Nil)).as(false)
-              case None =>
-                (heroDao.updateEquipmentAndFightStats(user.userId, done.equipment, done.fightStats) *>
-                  inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)) *>
-                  BeltContents.persist(Some(itemRepository), hero.id, done.spilled).flatMap(spilled =>
-                    ZIO.foreachDiscard(done.removed ++ spilled)(old => inventoryRepo.addItem(hero.id, old).ignore)) *>
-                  ZIO.when(capDelta != 0)(inventoryRepo.increaseCapacity(hero.id, capDelta).orElse(ZIO.unit)) *>
-                  renderer.show(user, Screen(
-                    content.format("inventory.equipped",
-                      "name" -> item.name,
-                      "old"  -> InventoryState.removedNames(done.removed)) +
-                      BeltContents.movedLine(content, done.beltMoved, done.spilled), Nil)) *>
-                  // Двенадцатая вещь набора — за собранный набор своё достижение.
-                  QuestSupport.grantFullSets(heroDao, content, user,
-                    hero.copy(equipment = done.equipment, fightStats = done.fightStats), renderer)).as(false)
-            }
-          }
+          else
+            outfit.wear(user, hero, item, pairSlot, renderer) { done =>
+              content.format("inventory.equipped",
+                "name" -> item.name,
+                "old"  -> InventoryState.removedNames(done.removed)) +
+                BeltContents.movedLine(content, done.beltMoved, done.spilled)
+            }.as(false)
       }
       res <- if (keepScreen) ZIO.succeed(StateType.Inventory) else showList(user, renderer)
     } yield res

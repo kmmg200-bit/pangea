@@ -923,12 +923,11 @@ button.row:active {
   text-transform: uppercase;
 }
 
+/* Вещь на примерку: сама строка открывает описание, «Надеть» — справа. */
 .cand {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: stretch;
   width: 100%;
-  padding: 10px 12px;
   border: 1px solid var(--line);
   border-left: 4px solid var(--rarity, var(--line));
   border-radius: 10px;
@@ -940,6 +939,58 @@ button.row:active {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.cand-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.cand-wear {
+  flex: 0 0 auto;
+  align-self: center;
+  margin-right: 10px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.equip-off {
+  align-self: flex-start;
+  padding: 7px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cand-wear:disabled,
+.equip-off:disabled {
+  opacity: 0.45;
+}
+
+.gear-note {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 14px;
+  white-space: pre-wrap;
 }
 
 .cand-top .row-title {

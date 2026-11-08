@@ -9,7 +9,7 @@ import org.typelevel.ci.CIStringSyntax
 import pangea.model.hero.Hero
 import pangea.model.top.TopKind
 import pangea.service.miniapp.{MiniApp, VkLaunchParams}
-import pangea.service.miniapp.MiniApp.{CubeAct, Denied}
+import pangea.service.miniapp.MiniApp.{CubeAct, Denied, GearAct}
 import pangea.service.miniapp.MiniAppView._
 import zio.Task
 import zio.interop.catz._
@@ -47,6 +47,14 @@ final class MiniAppRoutes(app: MiniApp) {
 
     case req @ GET -> Root / "api" / "app" / "auction" =>
       asPlayer(req)(hero => app.auction(hero).flatMap(view => Ok(view.asJson)))
+
+    // Снаряжение: надеть вещь из сумки в слот, снять надетое. Меняют игру —
+    // только POST.
+    case req @ POST -> Root / "api" / "app" / "equipment" / "wear" :? SlotParam(slot) +& ItemParam(id) =>
+      asPlayer(req)(hero => app.gear(hero, GearAct.Wear(slot, id)).flatMap(view => Ok(view.asJson)))
+
+    case req @ POST -> Root / "api" / "app" / "equipment" / "take-off" :? SlotParam(slot) =>
+      asPlayer(req)(hero => app.gear(hero, GearAct.TakeOff(slot)).flatMap(view => Ok(view.asJson)))
 
     // Покупка лота: меняет игру — только POST.
     case req @ POST -> Root / "api" / "app" / "auction" / "buy" :? LotParam(id) =>
@@ -89,4 +97,5 @@ final class MiniAppRoutes(app: MiniApp) {
   private object KindParam extends OptionalQueryParamDecoderMatcher[String]("kind")
   private object ItemParam extends QueryParamDecoderMatcher[Long]("item")
   private object LotParam  extends QueryParamDecoderMatcher[Long]("lot")
+  private object SlotParam extends QueryParamDecoderMatcher[Int]("slot")
 }

@@ -185,7 +185,22 @@ export function App() {
               }}
             />
             {heroPart === 'hero' && <Body loaded={character}>{(d) => <CharacterTab data={d} />}</Body>}
-            {heroPart === 'equipment' && <Body loaded={inventory}>{(d) => <EquipmentTab data={d} />}</Body>}
+            {heroPart === 'equipment' && (
+              <Body loaded={inventory}>
+                {(d) => (
+                  <EquipmentTab
+                    data={d}
+                    onChange={(v) => {
+                      // Сумка — у «Вещей» те же данные; статы героя и сумка «Крафта»,
+                      // если их уже открывали, перечитают.
+                      inventory.set(v)
+                      if (character.data) character.reload()
+                      if (craft.data) craft.reload()
+                    }}
+                  />
+                )}
+              </Body>
+            )}
             {heroPart === 'squad' && <Body loaded={squad}>{(d) => <SquadTab data={d} />}</Body>}
           </>
         )}

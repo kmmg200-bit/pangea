@@ -64,9 +64,11 @@ object MiniAppView {
   final case class SetChangeView(name: String, before: Int, after: Int, max: Int)
 
   /** Слот снаряжения: что надето; `busy` — пустой, но занят (левая рука под
-    * двуручным: само оружие — в правой); `belt` — что лежит в поясе. */
-  final case class SlotView(name: String, item: Option[ItemView], busy: Option[String], belt: Option[BeltView],
-                            candidates: List[CandidateView])
+    * двуручным: само оружие — в правой); `belt` — что лежит в поясе. `index` —
+    * номер слота в [[EquipmentState.slots]]: им приложение говорит, куда
+    * надеть и что снять. */
+  final case class SlotView(index: Int, name: String, item: Option[ItemView], busy: Option[String],
+                            belt: Option[BeltView], candidates: List[CandidateView])
 
   /** Ячейка пояса: что в ней и сколько из скольких. Опустевшая помнит, чем
     * была полна, — `uses` у неё ноль. */
@@ -99,14 +101,20 @@ object MiniAppView {
     * до имён его нет) и раса — для подписи над куклой снаряжения. */
   final case class HeroView(lvl: Long, silver: Long, doubloons: Long, name: Option[String], race: String)
 
+  /** Вещи героя. `gearLocked` — почему снаряжение сейчас не сменить: герой
+    * в бою. */
   final case class InventoryView(
-    hero:      HeroView,
-    capacity:  Long,
-    occupied:  Long,
-    items:     List[ItemView],
-    equipment: List[SlotView],
-    storages:  List[StorageView]
+    hero:       HeroView,
+    capacity:   Long,
+    occupied:   Long,
+    items:      List[ItemView],
+    equipment:  List[SlotView],
+    storages:   List[StorageView],
+    gearLocked: Option[String]
   )
+
+  /** Ответ на «надеть» или «снять»: вещи после этого и что сказать. */
+  final case class GearActionView(inventory: InventoryView, note: Option[String])
 
   /** Лот. `currency` — `silver` или `doubloons`; `unsold` — неделя вышла, лот
     * ждёт хозяина. */
@@ -283,6 +291,7 @@ object MiniAppView {
   implicit val storageEncoder:   Encoder[StorageView]   = deriveEncoder
   implicit val heroEncoder:      Encoder[HeroView]      = deriveEncoder
   implicit val inventoryEncoder: Encoder[InventoryView] = deriveEncoder
+  implicit val gearActionEncoder: Encoder[GearActionView] = deriveEncoder
   implicit val lotEncoder:       Encoder[LotView]       = deriveEncoder
   implicit val auctionEncoder:   Encoder[AuctionView]   = deriveEncoder
   implicit val auctionActionEncoder: Encoder[AuctionActionView] = deriveEncoder
@@ -323,9 +332,10 @@ object MiniAppView {
       capacity  = inv.maxItems,
       occupied  = inv.occupied,
       items     = stacked(inv.items.data, describe),
-      equipment = EquipmentState.slots.map { slot =>
+      equipment = EquipmentState.slots.zipWithIndex.map { case (slot, idx) =>
                     val worn = slot.get(h.equipment)
                     SlotView(
+                      index      = idx,
                       name       = slot.name,
                       // Описание надетой — что она даёт, без названия и без сравнения с собой.
                       item       = Option.when(worn.itemType != ItemType.NoItem)(view(worn, 1, InventoryState.gearBody(worn, Some(h)))),
@@ -334,7 +344,8 @@ object MiniAppView {
                       candidates = candidates(h, before, slot, inv.items.data, describe, now)
                     )
                   },
-      storages  = storages(stores, content, describe)
+      storages  = storages(stores, content, describe),
+      gearLocked = Option.when(MiniApp.inBattle(h))(content.text("miniapp.equipment.inBattle"))
     )
   }
 

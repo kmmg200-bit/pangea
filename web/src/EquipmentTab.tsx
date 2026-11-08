@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import { api } from './api'
 import type { GameIcon } from './gameIcons'
-import type { BeltView, CandidateView, InventoryView, ItemView, SlotView, StatChange } from './types'
+import type { BeltView, CandidateView, GearActionView, InventoryView, ItemView, SlotView, StatChange } from './types'
 import { ItemText, ItemTile, num, Sheet, Tile } from './ui'
 
 /** Что в поясе — по ячейкам, со счётом и полоской; свободные — одной строкой. */
@@ -86,30 +87,50 @@ function extras(item: ItemView): string[] {
   ].filter((x): x is string => typeof x === 'string')
 }
 
-function Candidate(props: { c: CandidateView; onOpen: (i: ItemView) => void }) {
+/** Надеть и снять; `busy` — ждём ответа бота. Нет его вовсе (`null`) — герой в бою. */
+interface Gear {
+  wear: (slot: SlotView, item: ItemView) => void
+  takeOff: (slot: SlotView) => void
+  busy: boolean
+}
+
+function Candidate(props: {
+  c: CandidateView
+  onOpen: (i: ItemView) => void
+  /** Надеть — `null`, когда сейчас нельзя: бой. */
+  onWear: (() => void) | null
+  busy: boolean
+}) {
   const { item, deltas, set } = props.c
   return (
-    <button className={`cand rarity-${item.rarity}`} onClick={() => props.onOpen(item)}>
-      <span className="cand-top">
-        <ItemTile item={item} />
-        <span className="row-title">
-          {item.title}
-          {item.count > 1 && <span className="row-sub"> ×{num(item.count)}</span>}
-        </span>
-        <span className="lvl">ур. {num(item.lvl)}</span>
-      </span>
-      <span className="chips-row">
-        {deltas.map((d) => (
-          <Chip key={d.key} stat={d} delta />
-        ))}
-        {deltas.length === 0 && <span className="row-sub">статы не изменятся</span>}
-        {set && set.after !== set.before && (
-          <span className="chip-stat">
-            «{set.name}» {num(set.before)} → {num(set.after)} из {num(set.max)}
+    <div className={`cand rarity-${item.rarity}`}>
+      <button className="cand-main" onClick={() => props.onOpen(item)}>
+        <span className="cand-top">
+          <ItemTile item={item} />
+          <span className="row-title">
+            {item.title}
+            {item.count > 1 && <span className="row-sub"> ×{num(item.count)}</span>}
           </span>
-        )}
-      </span>
-    </button>
+          <span className="lvl">ур. {num(item.lvl)}</span>
+        </span>
+        <span className="chips-row">
+          {deltas.map((d) => (
+            <Chip key={d.key} stat={d} delta />
+          ))}
+          {deltas.length === 0 && <span className="row-sub">статы не изменятся</span>}
+          {set && set.after !== set.before && (
+            <span className="chip-stat">
+              «{set.name}» {num(set.before)} → {num(set.after)} из {num(set.max)}
+            </span>
+          )}
+        </span>
+      </button>
+      {props.onWear && (
+        <button className="cand-wear" onClick={props.onWear} disabled={props.busy}>
+          Надеть
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -121,8 +142,10 @@ function SlotRow(props: {
   open: boolean
   onToggle: () => void
   onOpen: (i: ItemView) => void
+  gear: Gear | null
+  note: string | null
 }) {
-  const { slot, open } = props
+  const { slot, open, gear } = props
   const item = slot.item
   const hasMore = !!item || slot.candidates.length > 0
   const dot = slot.candidates.length > 0 && <span className="dot" title="в сумке есть вещь на этот слот" />
@@ -169,10 +192,22 @@ function SlotRow(props: {
       </button>
       {open && (
         <div className="erow-body">
+          {props.note && <p className="gear-note">{props.note}</p>}
           {/* У пояса описание — его ячейки; у прочих — что вещь даёт, как в боте. */}
           {slot.belt ? <BeltCard belt={slot.belt} /> : item && <div className="item-text equip-desc">{item.text}</div>}
+          {item && gear && (
+            <button className="equip-off" onClick={() => gear.takeOff(slot)} disabled={gear.busy}>
+              Снять
+            </button>
+          )}
           {slot.candidates.map((c) => (
-            <Candidate key={c.item.id} c={c} onOpen={props.onOpen} />
+            <Candidate
+              key={c.item.id}
+              c={c}
+              onOpen={props.onOpen}
+              onWear={gear && (() => gear.wear(slot, c.item))}
+              busy={!!gear?.busy}
+            />
           ))}
         </div>
       )}
@@ -181,12 +216,38 @@ function SlotRow(props: {
 }
 
 /** «Снаряжение»: все слоты подряд, как в боте. Зелёная точка — в сумке есть
-  * вещь на этот слот. Надевать — пока в боте. */
-export function EquipmentTab(props: { data: InventoryView }) {
+  * вещь на этот слот. Надевают и снимают здесь же — где угодно, только не в
+  * бою; бот проверит это сам, под тем же замком, что и ходы в чате. */
+export function EquipmentTab(props: { data: InventoryView; onChange: (v: InventoryView) => void }) {
   const [openSlot, setOpenSlot] = useState<string | null>(null)
   const [sheet, setSheet] = useState<ItemView | null>(null)
+  const [busy, setBusy] = useState(false)
+  // Что сказал бот — под тем слотом, с которым что-то делали.
+  const [note, setNote] = useState<{ slot: number; text: string } | null>(null)
+
+  const run = (slot: SlotView, act: () => Promise<GearActionView>) => {
+    setBusy(true)
+    setNote(null)
+    act()
+      .then((r) => {
+        props.onChange(r.inventory)
+        if (r.note) setNote({ slot: slot.index, text: r.note })
+      })
+      .catch(() => setNote({ slot: slot.index, text: 'Ответ не дошёл. Обновите (⟳) и проверьте снаряжение.' }))
+      .finally(() => setBusy(false))
+  }
+
+  const gear: Gear | null = props.data.gearLocked
+    ? null
+    : {
+        wear: (slot, item) => run(slot, () => api.equipWear(slot.index, item.id)),
+        takeOff: (slot) => run(slot, () => api.equipTakeOff(slot.index)),
+        busy,
+      }
+
   return (
     <>
+      {props.data.gearLocked && <section className="card card-warn storage-note">{props.data.gearLocked}</section>}
       <p className="muted-note equip-hint">
         <span className="dot" />
         <span>— в сумке есть вещь на этот слот. Нажмите на строку.</span>
@@ -199,6 +260,8 @@ export function EquipmentTab(props: { data: InventoryView }) {
             open={openSlot === slot.name}
             onToggle={() => setOpenSlot(openSlot === slot.name ? null : slot.name)}
             onOpen={setSheet}
+            gear={gear}
+            note={note?.slot === slot.index ? note.text : null}
           />
         ))}
       </div>

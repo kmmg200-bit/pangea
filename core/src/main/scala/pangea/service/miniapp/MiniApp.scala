@@ -24,20 +24,21 @@ import pangea.repository.item.ItemRepository
 import pangea.repository.user.UserRepository
 import pangea.service.auction.AuctionPurchase
 import pangea.service.cube.AzatCube
+import pangea.service.equipment.Outfit
 import pangea.service.miniapp.MiniAppView.{AuctionActionView, AuctionView, CharacterView, CraftActionView, CraftView,
-  InventoryView, QuestsView, SquadView, TopView}
+  GearActionView, InventoryView, QuestsView, SquadView, TopView}
 import pangea.service.payout.Payouts
 import pangea.service.state.{AzatData, HerbLore, NpcQuestLog, PlayerLock, QuestJournal}
-import pangea.service.state.states.InventoryState
+import pangea.service.state.states.{EquipmentState, InventoryState}
 import zio.{Ref, Task, ZIO, ZLayer}
 
 import java.util.concurrent.TimeUnit
 
 /** VK Mini App: персонаж, задания, отряд, инвентарь, крафт, топ и аукцион вне
   * чата. Просмотр безопасен из любого места, даже из боя: сцены, лок игрока и
-  * `hero.state` не трогаются, а данные только читаются. Что меняет игру (куб
-  * Азата, покупка на аукционе), идёт под локом игрока — тем же, что и ходы в
-  * чате, — и только когда герой в городе. */
+  * `hero.state` не трогаются, а данные только читаются. Что меняет игру, идёт
+  * под локом игрока — тем же, что и ходы в чате: куб Азата и покупка на
+  * аукционе — только когда герой в городе, снаряжение — когда он не в бою. */
 trait MiniApp {
 
   /** Игрок по параметрам запуска приложения. Героя здесь не заводим: игру
@@ -60,6 +61,10 @@ trait MiniApp {
 
   /** Топ: первые [[MiniApp.TopSize]] и место самого героя. */
   def top(hero: Hero, kind: TopKind): Task[TopView]
+
+  /** Надеть или снять — как в карточке слота в боте. Ответ — вещи после
+    * этого и что сказать. */
+  def gear(hero: Hero, act: MiniApp.GearAct): Task[GearActionView]
 
   /** «Крафт»: куб Азата и сумка, из которой в него кладут. */
   def craft(hero: Hero): Task[CraftView]
@@ -103,6 +108,14 @@ object MiniApp {
     case object Activate                    extends CubeAct
   }
 
+  /** Что делают со снаряжением: надевают вещь из сумки в слот или снимают
+    * надетое. Слот — номер в [[EquipmentState.slots]]. */
+  sealed trait GearAct
+  object GearAct {
+    final case class Wear(slot: Int, itemId: Long) extends GearAct
+    final case class TakeOff(slot: Int)            extends GearAct
+  }
+
   /** Чем кончилось действие: что сказать и номера вещей, что получились. */
   private[miniapp] final case class Outcome(note: Option[String], made: List[Long])
 
@@ -115,6 +128,11 @@ object MiniApp {
   /** Герой в городе — только тогда из приложения можно работать с кубом и
     * покупать на аукционе, как и передавать вещи. */
   def inCity(hero: Hero): Boolean = StateType.cityStates.contains(hero.state)
+
+  /** Герой в бою — тогда снаряжение из приложения не меняют: ход боя уже
+    * посчитан на надетом. Любой бой — в лабиринте, сюжетный, на арене — это
+    * [[StateType.Battle]]. */
+  def inBattle(hero: Hero): Boolean = hero.state == StateType.Battle
 
   val live: ZLayer[MiniAppConfig with UserRepository with HeroRepository with InventoryRepository with AuctionRepository
                      with HeroDao with ArtifactDao with BarrelDao with BankVaultDao with TopDao
@@ -141,7 +159,8 @@ object MiniApp {
         topCache    <- Ref.make(Map.empty[TopKind, CachedTop])
       } yield new MiniAppLive(config, users, heroes, inventories, lots, heroDao, artifacts, barrels, vaults, content,
         tops, topCache, new AzatCube(heroDao, inventories, items, content),
-        new AuctionPurchase(heroDao, inventories, lots, users, bank, payouts, players, content), lock)
+        new AuctionPurchase(heroDao, inventories, lots, users, bank, payouts, players, content),
+        new Outfit(heroDao, inventories, items, content), lock)
     }
 }
 
@@ -160,9 +179,10 @@ final class MiniAppLive(
   topCache:    Ref[Map[TopKind, MiniApp.CachedTop]],
   azatCube:    AzatCube,
   purchase:    AuctionPurchase,
+  outfit:      Outfit,
   lock:        PlayerLock
 ) extends MiniApp {
-  import MiniApp.{CubeAct, Denied, Outcome}
+  import MiniApp.{CubeAct, Denied, GearAct, Outcome}
 
   override def player(launchParams: String): Task[Either[Denied, Hero]] =
     config.vkSecret.map(_.trim).filter(_.nonEmpty) match {
@@ -238,6 +258,49 @@ final class MiniAppLive(
       heroes.getHero(fresh.userId).map(_.getOrElse(fresh)).flatMap(auction)
         .map(AuctionActionView(_, note, bought))
     }
+
+  /** Под локом игрока, героя перечитываем уже под ним. В бою — ничего не
+    * трогаем, говорим почему. */
+  override def gear(hero: Hero, act: GearAct): Task[GearActionView] =
+    lock.withLock(hero.userId) {
+      for {
+        fresh <- heroes.getHero(hero.userId).someOrFail(new Throwable(s"Нет героя у игрока ${hero.userId.value}"))
+        note  <- if (MiniApp.inBattle(fresh)) ZIO.succeed(content.text("miniapp.equipment.inBattle"))
+                 else gearAct(fresh, act)
+      } yield fresh -> note
+    }.flatMap { case (fresh, note) =>
+      heroes.getHero(fresh.userId).map(_.getOrElse(fresh)).flatMap(inventory)
+        .map(GearActionView(_, Option.when(note.nonEmpty)(note)))
+    }
+
+  /** Те же проверки и слова, что у карточки слота в боте: в слот — только то,
+    * что в него встаёт ([[EquipmentState.fitting]]). */
+  private def gearAct(hero: Hero, act: GearAct): Task[String] =
+    for {
+      user  <- users.getUserById(hero.userId).someOrFail(new Throwable(s"Нет игрока ${hero.userId.value}"))
+      lines <- Ref.make(Vector.empty[String])
+      say    = new MiniApp.Collect(lines)
+      gone   = say.show(user, Screen(content.text("equipment.wearGone"), Nil))
+      _     <- act match {
+                 case GearAct.Wear(idx, id) =>
+                   EquipmentState.slots.lift(idx) match {
+                     case None => gone
+                     case Some(slot) =>
+                       inventories.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
+                         EquipmentState.fitting(hero, slot, inv.items.data).find(_.id == id) match {
+                           case None       => gone
+                           case Some(item) => outfit.wear(user, hero, item, slot.pairSlot, say)(Outfit.wornLine(content, item, _)).unit
+                         }
+                       }
+                   }
+                 case GearAct.TakeOff(idx) =>
+                   EquipmentState.slots.lift(idx) match {
+                     case None       => say.show(user, Screen(content.text("equipment.slotEmpty"), Nil))
+                     case Some(slot) => outfit.takeOff(user, hero, slot, say).unit
+                   }
+               }
+      said  <- lines.get
+    } yield said.mkString("\n\n")
 
   /** Те же слова, что у Рахадима в боте, и куплено ли. */
   private def purchaseNote(result: AuctionPurchase.Result): (String, Boolean) = result match {
