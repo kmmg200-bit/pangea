@@ -503,7 +503,8 @@ object MiniAppView {
       upgradePoints = c.upgradePoints,
       traumaLeft    = c.traumaLeftMs.map(HeroCard.traumaLeft),
       traumas       = c.traumas.map(t => TraumaView(t.name, t.penalties.shortText)),
-      effects       = SkillsState.entries(h).map(e => EffectView(effectKind(e), e.label, e.describe(h))),
+      effects       = SkillsState.entries(h, SkillsState.buffs(content, h, now, azat.blessingUntil))
+                        .map(e => EffectView(effectKind(e), e.label, e.describe(h))),
       achievements  = AchievementsView(Achievement.values.size,
                         Achievement.values.toList.filter(h.hasAchievement).map(a => AchievementView(a.title, a.bonusLine))),
       knowledge     = Knowledge.values.toList.filter(lore.knows).map { k =>
@@ -562,6 +563,7 @@ object MiniAppView {
     case _: SkillEntry.Set     => "set"
     case SkillEntry.WeaponFx   => "weapon"
     case SkillEntry.ArmorFx    => "armor"
+    case _: SkillEntry.Buffs   => "buffs"
   }
 
   /** «Задания» — тот же журнал, что в боте, по разделам. */

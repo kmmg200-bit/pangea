@@ -31,6 +31,7 @@ function Plain(props: { icon: string; label: string; value: number }) {
 
 /** Группы эффектов — в том же порядке, что список «Эффекты» в боте. */
 const effectGroups: { label: string; kinds: EffectView['kind'][] }[] = [
+  { label: 'Зелья и бафы', kinds: ['buffs'] },
   { label: 'Умения', kinds: ['active'] },
   { label: 'Пассивные', kinds: ['passive'] },
   { label: 'Камни и наборы', kinds: ['weapon', 'armor', 'set'] },

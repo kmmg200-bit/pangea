@@ -186,7 +186,7 @@ export interface CharacterView {
 
 /** Эффект — как на экране «Эффекты» бота. */
 export interface EffectView {
-  kind: 'active' | 'passive' | 'set' | 'weapon' | 'armor'
+  kind: 'buffs' | 'active' | 'passive' | 'set' | 'weapon' | 'armor'
   label: string
   text: string
 }

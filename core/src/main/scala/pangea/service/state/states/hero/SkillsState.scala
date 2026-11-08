@@ -5,17 +5,23 @@ import io.circe.{Decoder, Encoder, jawn}
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.hero.{Equipment, Hero}
-import pangea.model.item.{ItemSet, PassiveKind}
+import pangea.model.home.HomeRates
+import pangea.model.item.{BrewEffect, BrewKind, BrewRates, ItemSet, PassiveKind}
 import pangea.model.rune.Rune
 import pangea.model.skill.Skill
 import pangea.model.state.StateType
+import pangea.model.stats.StatBoost
 import pangea.model.user.User
-import pangea.service.state.{ItemMenu, State, UiScene, UserAction}
+import pangea.service.state.states.gustavo.BoostStat
+import pangea.service.state.{AzatData, ItemMenu, State, UiScene, UserAction}
 import zio.{Task, ZIO}
 
+import java.util.concurrent.TimeUnit
+
 /**
- * Экран «Эффекты» — список кнопками ВСЕХ активных умений, пассивок и наборов,
- * которые сейчас действуют на герое: активные — с оружия/нагрудника и клейм на
+ * Экран «Эффекты» — первой кнопкой «Зелья и бафы» (всё временное, см.
+ * [[SkillsState.buffs]]), а за ней — список кнопками ВСЕХ активных умений,
+ * пассивок и наборов, которые сейчас действуют на герое: активные — с оружия/нагрудника и клейм на
  * теле ([[Hero.activeSkillSlots]]), пассивные — со всего остального снаряжения
  * и клейм ([[Hero.passives]]), наборы — по порогам. У руны с клейма — пометка
  * «на теле», в описании — понимание. Умение и на вещи, и на теле — две кнопки:
@@ -51,7 +57,7 @@ case class SkillsState(heroDao: HeroDao, content: SceneContent) extends State {
   private def showList(user: User, renderer: Renderer): Task[StateType] =
     for {
       hero  <- getHero(user)
-      items  = entries(hero)
+      items <- allEntries(user, hero)
       scene <- readScene(user)
       _ <- if (items.isEmpty)
              renderer.show(user, Screen(content.text("skills.empty"),
@@ -70,7 +76,8 @@ case class SkillsState(heroDao: HeroDao, content: SceneContent) extends State {
   private def navigate(user: User, renderer: Renderer, delta: Int): Task[StateType] =
     for {
       hero  <- getHero(user)
-      (_, totalPages, _) = ItemMenu.page(entries(hero), 0)
+      items <- allEntries(user, hero)
+      (_, totalPages, _) = ItemMenu.page(items, 0)
       scene <- readScene(user)
       cur    = scene.page.getOrElse(0)
       np     = (cur + delta).max(0).min(totalPages - 1)
@@ -101,13 +108,22 @@ case class SkillsState(heroDao: HeroDao, content: SceneContent) extends State {
 
   private def handleFallback(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     for {
-      hero <- getHero(user)
-      res  <- parseAction(ua.payload)
-                .flatMap(a => entries(hero).find(_.buttonId == a)) match {
-                  case Some(entry) => showDetail(user, entry, renderer)
-                  case None        => showList(user, renderer)
-                }
+      hero  <- getHero(user)
+      items <- allEntries(user, hero)
+      res   <- parseAction(ua.payload)
+                 .flatMap(a => items.find(_.buttonId == a)) match {
+                   case Some(entry) => showDetail(user, entry, renderer)
+                   case None        => showList(user, renderer)
+                 }
     } yield res
+
+  /** Весь список «Эффектов»: зелья и бафы — сроки на «сейчас», благословение
+   *  из `azat_data`, — а за ними умения, камни и наборы. */
+  private def allEntries(user: User, hero: Hero): Task[List[SkillEntry]] =
+    for {
+      now  <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+      azat <- AzatData.read(heroDao, user.userId)
+    } yield entries(hero, buffs(content, hero, now, azat.blessingUntil))
 
   private def parseAction(payload: Option[String]): Option[String] =
     payload.flatMap(p => jawn.decode[Map[String, String]](p).toOption.flatMap(_.get("action")))
@@ -193,6 +209,14 @@ object SkillsState {
       def label: String    = "🛡 Эффекты доспехов"
       def describe(hero: Hero): String = armorFx(hero)
     }
+
+    /** Зелья и бафы: всё временное, что сейчас действует на герое, по строке
+     *  на каждое (см. [[buffs]]). Строки готовые: в них сроки на «сейчас»
+     *  и благословение, которое живёт не в герое, а в `azat_data`. */
+    final case class Buffs(label: String, lines: List[String]) extends SkillEntry {
+      def buttonId: String = "Fx_Buffs"
+      def describe(hero: Hero): String = lines.mkString("\n")
+    }
   }
 
   private val ActivePrefix  = "ActiveSkill_"
@@ -222,7 +246,74 @@ object SkillsState {
    *  порог — стабильный порядок между перерисовками. Одинаковые вещи схлопнуты
    *  в одну кнопку, а сколько их — видно по «×2»; умение, которое ещё и
    *  выжжено на теле, получает рядом вторую кнопку «на теле». */
-  def entries(hero: Hero): List[SkillEntry] = {
+  def entries(hero: Hero, buffs: Option[SkillEntry] = None): List[SkillEntry] = buffs.toList ++ skills(hero)
+
+  /** Зелья и бафы — по строке на всё временное, что действует на герое сейчас:
+   *  благословение Азата (живёт в `azat_data`, поэтому приходит параметром), сон
+   *  дома, зелья Густаво и отвары, зелье застоя Фета и то, что на оружии до
+   *  ближайшего боя. Ничего нет — нет и кнопки. Травмы — не бафы: они на
+   *  «Персонаже». */
+  def buffs(content: SceneContent, hero: Hero, nowMs: Long, blessingUntil: Option[Long]): Option[SkillEntry.Buffs] = {
+    def t(key: String, args: (String, String)*): String = content.format(s"skills.buffs.$key", args: _*)
+    def left(until: Long): String = pangea.util.TimeLeft.format(until - nowMs)
+    val dust     = hero.weaponDust
+    val blessing = blessingUntil.filter(_ > nowMs).map(u => t("blessing", "left" -> left(u)))
+    val boosts   = hero.statBoosts.active(nowMs).map(b => boostLine(content, b, left(b.until)))
+    val frozen   = Option.when(hero.expFrozen)(t("frozen"))
+    val layers   = Option.when(dust.layers.nonEmpty)(t("dust", "names" ->
+                     dust.layers.groupBy(_.displayName).toList
+                       .sortBy { case (n, _) => dust.layers.indexWhere(_.displayName == n) }
+                       .map { case (n, xs) => if (xs.sizeIs > 1) s"$n ×${xs.size}" else n }
+                       .mkString(", ")))
+    val coat     = dust.coat.map {
+                     case pangea.model.hero.WeaponCoat.Poison => t("coatPoison")
+                     case pangea.model.hero.WeaponCoat.Bleed  => t("coatBleed")
+                   }
+    val mirrors  = Option.when(dust.mirrors > 0)(t("mirrors", "n" -> dust.mirrors.toString))
+    val lines    = blessing.toList ++ boosts ++ frozen ++ layers ++ coat ++ mirrors
+    Option.when(lines.nonEmpty)(SkillEntry.Buffs(content.text("skills.buffs.label"), lines))
+  }
+
+  /** Строка одного бафа из `Hero.statBoosts`. Отвары с тайной — зовы и пузырь
+   *  — только с названием и сроком: что они делают, игрок узнаёт сам. Баф, о
+   *  котором здесь не знают, — «особый эффект» со сроком, но не пропадает. */
+  private def boostLine(content: SceneContent, b: StatBoost, left: String): String = {
+    def t(key: String, args: (String, String)*): String = content.format(s"skills.buffs.$key", args: _*)
+    def brew(effect: BrewEffect): String = BrewKind.values.find(_.effect == effect).fold("")(_.label)
+    b.name match {
+      case HomeRates.RestedBoost =>
+        t("rested", "pct" -> HomeRates.RestedExpPct.toString, "left" -> left)
+      case BrewRates.BubbleBoost =>
+        t("untimed", "name" -> brew(BrewEffect.Bubble))
+      case BrewRates.WolfCallBoost =>
+        t("timed", "name" -> brew(BrewEffect.WolfCall), "left" -> left)
+      case BrewRates.RotCallBoost =>
+        t("timed", "name" -> brew(BrewEffect.RotCall), "left" -> left)
+      case n if n.startsWith(BrewRates.SentenceBoost) =>
+        val key  = n.drop(BrewRates.SentenceBoost.length)
+        val race = pangea.model.monster.Race.withNameOption(key).fold(key)(_.toString)
+        t("sentence", "name" -> brew(BrewEffect.Sentence), "race" -> race, "left" -> left)
+      case n =>
+        val pct = List(b.buff.str, b.buff.vit, b.buff.agi, b.buff.int).max
+        statPotion(n) match {
+          case Some((name, stat)) =>
+            t("stat", "name" -> name, "stat" -> stat.toLowerCase, "pct" -> pct.toString, "left" -> left)
+          case None => t("other", "left" -> left)
+        }
+    }
+  }
+
+  /** Чей это баф к характеристике: название зелья Густаво или отвара — и что
+   *  он прибавляет. */
+  private def statPotion(name: String): Option[(String, String)] =
+    BoostStat.all.find(_.boostName == name).map(bs => bs.potion.capitalize -> bs.label)
+      .orElse(BrewKind.values.collectFirst(Function.unlift((k: BrewKind) => k.effect match {
+        case BrewEffect.Boost(`name`, _, stat) => Some(k.label -> stat)
+        case _                                 => None
+      })))
+
+  /** Умения, пассивки, камни и наборы — то, что даёт надетое и выжженное. */
+  private def skills(hero: Hero): List[SkillEntry] = {
     val eq            = hero.equipment
     val worn          = eq.passiveKinds
     val bodyPassives  = hero.runes.brandedPassives.toSet
