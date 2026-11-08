@@ -142,7 +142,11 @@ case class SoloPveBattle(
   // На арене: прибавка к уклонению соперника от его бафов — «Перекат», зелье
   // уворота (см. ArenaBattle). Он здесь «моб», и своих бафов у него в этом
   // зеркале нет. Держится только за самим соперником, не за его союзниками.
-  monsterDodgeBonus: Long = 0L
+  monsterDodgeBonus: Long = 0L,
+  // Комбо стихий (Огонь+Воздух, Молния+Холод) за этот ход героя уже было: второе
+  // не срабатывает — стихии ложатся поодиночке. Сбрасывается в начале каждого
+  // хода героя (см. BattleState.resolveLoaded).
+  comboUsed: Boolean = false
 ) {
 
   /** Множитель Стены трофеев к урону героя по тому, кто сейчас в полях. */
@@ -956,6 +960,7 @@ object SoloPveBattle {
       preyName            <- c.getOrElse[Option[String]]("preyName")(None)
       preyGone            <- c.getOrElse[Boolean]("preyGone")(false)
       monsterDodgeBonus   <- c.getOrElse[Long]("monsterDodgeBonus")(0L)
+      comboUsed           <- c.getOrElse[Boolean]("comboUsed")(false)
     } yield SoloPveBattle(monsterLvl, monsterRace, monsterRarity, monsterStats,
                          monsterCurrentHp, monsterCurrentArmor, heroBattleState, consumableUsed, monsterMarked,
                          monsterUndead,
@@ -964,7 +969,7 @@ object SoloPveBattle {
                          noFlee, lootLevel, holyWater, heroBlockPct, monsterBlockPct,
                          heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall,
                          monsterLastAllyHit, heroStruck, roundsFought, secondWindUsed, preyName, preyGone,
-                         monsterDodgeBonus)
+                         monsterDodgeBonus, comboUsed)
 
   /** Номер самого соперника среди «мобов» зеркала арены; его союзники — от
     * единицы (см. `ArenaSide.allies`). */

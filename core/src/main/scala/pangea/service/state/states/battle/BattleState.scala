@@ -208,7 +208,9 @@ case class BattleState(
       // Щит, поднятый в прошлом раунде, своё отстоял, и кинжал наизготовку тоже:
       // их снимает первое действие нового раунда. Посреди раунда — после пояса,
       // Блока или Контрудара — они ещё держатся (см. Skill.Block, Counterstrike).
-      struck <- turn(hero, if (walled.midRound) walled else walled.copy(heroBlockPct = 0L, heroCounterReady = false), now)
+      // Комбо стихий — не больше одного за ход героя: счёт с нуля каждый ход.
+      fresh   = walled.copy(comboUsed = false)
+      struck <- turn(hero, if (fresh.midRound) fresh else fresh.copy(heroBlockPct = 0L, heroCounterReady = false), now)
       // «Упырь» (порог 12): пир — только за тех, кого уложил САМ герой, и тут
       // же, в бою. Считаем до хода союзников: их добычу упырь не ест.
       feasted = ghoulFeast(battle, struck, now)
@@ -2681,13 +2683,19 @@ case class BattleState(
   private def applyProcs(battle: SoloPveBattle, fired: Set[Element]): (SoloPveBattle, Vector[String]) = {
     val maxHp      = battle.monsterStats.hp
     val maxArmor   = MonsterSkill.monsterMaxArmor(battle)
-    val fireAir    = fired(Element.Fire) && fired(Element.Air)
-    val lightCold  = fired(Element.Lightning) && fired(Element.Cold)
     // Огонь и холод гасят друг друга. Сработали оба в одном ударе — ни пламя, ни
-    // мороз на цель не ложатся, а что на ней было, то и остаётся. Поодиночке:
-    // холод по горящему гасит огонь и сам не ложится, огонь по замёрзшему
-    // растапливает лёд и сам не занимается.
+    // мороз на цель не ложатся, а что на ней было, то и остаётся. И в комбо ни
+    // тот, ни другой уже не идёт: ни Огонь+Воздух, ни Молния+Холод — Воздух и
+    // Молния тогда срабатывают поодиночке. Поодиночке: холод по горящему гасит
+    // огонь и сам не ложится, огонь по замёрзшему растапливает лёд и сам не
+    // занимается.
     val steam      = fired(Element.Fire) && fired(Element.Cold)
+    // Комбо — не больше одного за ход героя (см. SoloPveBattle.comboUsed): было
+    // уже — стихии ложатся поодиночке. Обоим комбо разом не бывать: одному нужен
+    // Огонь, другому Холод, а вместе они гасят друг друга.
+    val combos     = !battle.comboUsed && !steam
+    val fireAir    = combos && fired(Element.Fire) && fired(Element.Air)
+    val lightCold  = combos && fired(Element.Lightning) && fired(Element.Cold)
 
     // Кого огонь не берёт (огненный элементаль — он сам пламя).
     val fireproof  = battle.boss.exists(_.immuneToBurn)
@@ -2797,6 +2805,7 @@ case class BattleState(
       b = burnt
       log = log :+ content.format("battle.lightningBurn", "energy" -> lost.toString)
     }
+    if (fireAir || lightCold) b = b.copy(comboUsed = true)
     (b.withEffects(b.effects), log)
   }
 
@@ -3719,7 +3728,7 @@ case class BattleState(
           val splashKey =
             if (Skill.rangedSkills.contains(slot.skill)) "battle.group.splitSplash" else "battle.group.sweepSplash"
           dealSkillDamage(hero, bumped, reduced, dealt => tmpl.replace("{}", dealt.toString), next,
-            splash = (b, dealt) => strikeOthers(b, around(b.group.activePos)) { tmp =>
+            splash = (b, dealt) => strikeOthersProcs(hero, b, around(b.group.activePos)) { tmp =>
               val amount = (dealt * pct / 100L).max(1L)
               (plainHit(tmp, amount),
                content.format(splashKey, "monster" -> tmp.monsterName, "damage" -> amount.toString))
@@ -3738,7 +3747,7 @@ case class BattleState(
             case None => ""
           }
           dealSkillDamage(hero, bumped, reduced, dealt => step + tmpl.replace("{}", dealt.toString), next,
-            splash = (b, _) => strikeOthers(b, around(b.group.heroPos)) { tmp =>
+            splash = (b, _) => strikeOthersProcs(hero, b, around(b.group.heroPos)) { tmp =>
               val amount = (raw * (1.0 - monsterDefenceCut(hero, tmp, effWithAir(hero, tmp, nowMs), nowMs))).toLong.max(1L)
               (plainHit(tmp, amount),
                content.format("battle.group.whirlHit", "monster" -> tmp.monsterName, "damage" -> amount.toString))
@@ -3750,7 +3759,7 @@ case class BattleState(
           def bleed(b: SoloPveBattle): SoloPveBattle =
             b.withEffects(b.effects.copy(monsterBleed = Some(b.effects.monsterBleed.map(_.stackedWith(pct)).getOrElse(Bleed(pct)))))
           dealSkillDamage(hero, bleed(bumped), raw, dealt => tmpl.replace("{}", dealt.toString), next,
-            splash = (b, _) => strikeOthers(b, around(b.group.heroPos)) { tmp =>
+            splash = (b, _) => strikeOthersProcs(hero, b, around(b.group.heroPos)) { tmp =>
               (bleed(plainHit(tmp, raw)),
                content.format("battle.group.fanCut", "monster" -> tmp.monsterName, "damage" -> raw.toString, "pct" -> pct.toString))
             })
@@ -3808,7 +3817,7 @@ case class BattleState(
           // задетые раунд не шагают.
           val reach = BattleState.skillReach(hero, slot.skill)
           dealSkillDamage(hero, rooted(bumped, turns), reduced, dealt => tmpl.replace("{}", dealt.toString), next,
-            splash = (b, _) => strikeOthers(b, (b.group.heroPos - reach) to (b.group.heroPos + reach)) { tmp =>
+            splash = (b, _) => strikeOthersProcs(hero, b, (b.group.heroPos - reach) to (b.group.heroPos + reach)) { tmp =>
               val amount = (raw * (1.0 - monsterDefenceCut(hero, tmp, effWithAir(hero, tmp, nowMs), nowMs))).toLong.max(1L)
               (rooted(plainHit(tmp, amount), turns),
                content.format("battle.group.barrageHit", "monster" -> tmp.monsterName, "damage" -> amount.toString))
@@ -3944,7 +3953,7 @@ case class BattleState(
       // Что тот же удар делает с остальным строем (Размашистый, Вихрь, Веерный
       // порез): получает бой после удара по цели и урон, который по ней реально
       // прошёл.
-      splash: (SoloPveBattle, Long) => (SoloPveBattle, Vector[String]) = (b, _) => (b, Vector.empty),
+      splash: (SoloPveBattle, Long) => Task[(SoloPveBattle, Vector[String])] = (b, _) => ZIO.succeed((b, Vector.empty)),
       // Крит по этому умению уже разыгран снаружи («Удар в слабое место» катает
       // свой шанс сам) — второй раз не катаем.
       critRolled: Boolean = false
@@ -3960,7 +3969,7 @@ case class BattleState(
       value: Long,
       line: Long => String,
       next: (Hero, SoloPveBattle, Vector[String]) => Task[TurnResult],
-      splash: (SoloPveBattle, Long) => (SoloPveBattle, Vector[String]),
+      splash: (SoloPveBattle, Long) => Task[(SoloPveBattle, Vector[String])],
       crit: Boolean
   ): Task[TurnResult] = {
     // Стена трофеев: прибавка к урону умения по расе цели. Здесь, а не в числе
@@ -3995,13 +4004,15 @@ case class BattleState(
     val hit      = noteBossDamage(battle, armorDmg + hpDmg)
       .copy(monsterCurrentHp = newHp, monsterCurrentArmor = newArmor)
       .withEffects(effects)
-    if (newHp <= 0) {
-      val (swept, splashLog) = splash(hit, armorDmg + hpDmg)
-      next(hero, swept, Vector(skillLine) ++ splashLog)
-    } else
+    if (newHp <= 0)
+      splash(hit, armorDmg + hpDmg).flatMap { case (swept, splashLog) =>
+        next(hero, swept, Vector(skillLine) ++ splashLog)
+      }
+    else
       resolveElementProcs(hero, hit).flatMap { case (afterProcs, elemLog) =>
-        val (swept, splashLog) = splash(afterProcs, armorDmg + hpDmg)
-        next(hero, swept, Vector(skillLine) ++ elemLog ++ splashLog)
+        splash(afterProcs, armorDmg + hpDmg).flatMap { case (swept, splashLog) =>
+          next(hero, swept, Vector(skillLine) ++ elemLog ++ splashLog)
+        }
       }
   }
 
@@ -4029,8 +4040,43 @@ case class BattleState(
     }
   }
 
+  /** То же, что [[strikeOthers]], но задетого ещё и обжигают стихии оружия:
+    * выжил после удара — по нему бросаются проки, как по цели умения (по 30% на
+    * стихию, с бонусами наборов; комбо — не больше одного за ход героя, см.
+    * `SoloPveBattle.comboUsed`). Добить его может и комбо — тогда он уходит в
+    * павшие. Геройская половина эффектов (бодрость от Воздуха), заряды босса и
+    * отметка о комбо возвращаются в бой — они не на слоте моба. */
+  private def strikeOthersProcs(hero: Hero, battle: SoloPveBattle, positions: Seq[Int])(
+      hit: SoloPveBattle => (SoloPveBattle, String)
+  ): Task[(SoloPveBattle, Vector[String])] = {
+    val near = positions.toList.distinct.sorted
+      .filter(pos => pos != battle.group.activePos && battle.monsterAt(pos).exists(_.alive))
+    ZIO.foldLeft(near)((battle, Vector.empty[String])) { case ((b, log), pos) =>
+      val idx = b.group.idxOf(pos)
+      b.group.others.lift(idx) match {
+        case None => ZIO.succeed((b, log))
+        case Some(slot) =>
+          val (struck, line) = hit(b.withActive(slot))
+          val procs =
+            if (struck.monsterCurrentHp > 0L) resolveElementProcs(hero, struck)
+            else ZIO.succeed((struck, Vector.empty[String]))
+          procs.map { case (tmp, procLog) =>
+            val placed = b.copy(
+              group       = b.group.copy(others = b.group.others.updated(idx, tmp.activeSlot)),
+              effects     = tmp.effects.withMonsterPart(b.effects),
+              bossCharges = tmp.bossCharges,
+              comboUsed   = tmp.comboUsed)
+            val lines = (if (line.isEmpty) log else log :+ line) ++ procLog
+            if (tmp.monsterCurrentHp > 0L) (placed, lines)
+            else (placed.sideFallen(idx), lines :+ content.format("battle.group.sideSlain", "monster" -> tmp.monsterName))
+          }
+      }
+    }
+  }
+
   /** Урон-«отголосок» умения по мобу во временной паре: броня, потом HP — без
-    * защиты, стихий и проков (это отголосок удара, а не удар). */
+    * защиты и стихий (это отголосок удара, а не удар). Проки стихий по задетому
+    * бросает [[strikeOthersProcs]]. */
   private def plainHit(tmp: SoloPveBattle, amount: Long): SoloPveBattle = {
     val armorDmg = math.min(tmp.monsterCurrentArmor, amount)
     tmp.copy(monsterCurrentArmor = tmp.monsterCurrentArmor - armorDmg,
