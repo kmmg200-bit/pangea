@@ -88,6 +88,21 @@ object MoneyTransferSpec extends ZIOSpecDefault {
       assertTrue(Transfers.fee(55L) == 6L && Transfers.fee(51L) == 6L)
     },
 
+    test("строка о передаче денег — в ту беседу, где написали «Передать», а не в торговую") {
+      val general = 2000000001L
+      for {
+        t <- chat(silver = 500L, doubloons = 100L)
+        (handler, _, _, _, players, _) = t
+        _ <- handler.transferFromChat(sender.vkId, friend.vkId,
+               ChatCommand.transferQuery("Передать серебро 100").getOrElse(""), -1L, Some(general))
+        _ <- handler.transferFromChat(sender.vkId, friend.vkId,
+               ChatCommand.transferQuery("Передать дублоны 50").getOrElse(""), -2L, Some(general))
+      } yield assertTrue(players.announcedTrade.isEmpty) &&
+              assertTrue(players.announcedAt.map(_._1) == List(general, general)) &&
+              assertTrue(players.announcedAt.exists(_._2.contains("передал 🪙 100"))) &&
+              assertTrue(players.announcedAt.exists(_._2.contains("передал 🟡 50")))
+    },
+
     test("серебро: с отправителя списано, получателю легло в ячейку, беседа знает") {
       for {
         t <- chat(silver = 500L)

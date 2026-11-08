@@ -157,8 +157,8 @@ object TrophyWallSpec extends ZIOSpecDefault {
       } yield assertTrue(inv.snapshot.map(_.id) == List(11L)) &&
               assertTrue(!MerchantState.isJunk(ear, MerchantState.JunkSaleSettings(rarities = Rarity.values.toSet, trophies = true))) &&
               assertTrue(!transfers.sendable(ear)) &&
-              assertTrue(transfers.trophyRefusal(List(ear), "Ухо Каркана").contains("transfer.noNamedTrophies")) &&
-              assertTrue(transfers.trophyRefusal(List(head), "Голова").contains("transfer.noTrophies"))
+              assertTrue(transfers.refusal(List(ear), "Ухо Каркана").contains("transfer.noNamedTrophies")) &&
+              assertTrue(transfers.refusal(List(head), "Голова").contains("transfer.noTrophies"))
     }
   )
 }

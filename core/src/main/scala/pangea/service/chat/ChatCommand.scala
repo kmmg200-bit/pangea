@@ -121,6 +121,18 @@ object ChatCommand {
     CountByWord.findFirstMatchIn(query).orElse(CountByX.findFirstMatchIn(query))
       .flatMap(_.group(1).toIntOption).getOrElse(1).max(1)
 
+  /** Слова, которыми просят стопку (см. `Bundling`): без одного из них стопку
+    * не передают — даже когда отдельных таких вещей в сумке нет. */
+  val BundleWords: Set[String] = Set("стопка", "стопку")
+
+  /** Просят ли стопку — и что останется от запроса без этого слова: по
+    * остатку ищут то, что в стопке лежит. «Стопку надколотый череп» — стопка
+    * надколотых черепов, «стопку» — любая стопка. */
+  def bundleQuery(query: String): (Boolean, String) = {
+    val words = normalize(query).split(' ').toList.filter(_.nonEmpty)
+    (words.exists(BundleWords.contains), words.filterNot(BundleWords.contains).mkString(" "))
+  }
+
   /** Название вещи: запрос без количества. */
   def itemQuery(query: String): String =
     CountByX.replaceAllIn(CountByWord.replaceAllIn(query, " "), " ")

@@ -51,7 +51,9 @@ final class VkInboxHandler(stateHandler: StateHandler, adminConfig: AdminConfig)
           case None =>
             (msg.quotedAuthor, ChatCommand.transferQuery(msg.text)) match {
               case (Some(to), Some(query)) if to > 0L =>
-                stateHandler.transferFromChat(VkId(from.toString), VkId(to.toString), query, msg.chatEventKey)
+                // Строка о передаче уйдёт в эту же беседу (см. Transfers.log).
+                stateHandler.transferFromChat(VkId(from.toString), VkId(to.toString), query, msg.chatEventKey,
+                  Some(msg.peerId))
               case _ => ZIO.unit
             }
         }

@@ -154,16 +154,72 @@ object TransferSpec extends ZIOSpecDefault {
                 assertTrue(parcelDao.snapshot.isEmpty && inv.snapshot.size == 1)
       },
 
-      test("стопку передают целиком: «стопка» — стопку, точное название — саму вещь") {
+      test("стопку передают целиком и только со словом: «стопку надколотый череп» — стопку, без слова — сам череп") {
         val bundle = pangea.model.item.Bundling.pack((11L to 15L).toList.map(skull)).get.copy(id = 7L)
         for {
           f   <- fixture(List(bundle, skull(1L)))
           (transfers, hero, inv, parcelDao, _) = f
           one <- transfers.quickSend(testUser, hero, target, "надколотый череп", 1, 0L)
-          two <- transfers.quickSend(testUser, hero, target, "стопка", 1, 0L)
+          two <- transfers.quickSend(testUser, hero, target, "Стопку надколотый череп", 1, 0L)
         } yield assertTrue(one.isInstanceOf[Transfers.Outcome.Sent] && two.isInstanceOf[Transfers.Outcome.Sent]) &&
-                assertTrue(parcelDao.snapshot.map(_.item.id).toSet == Set(1L, 7L) && inv.snapshot.isEmpty) &&
+                assertTrue(parcelDao.snapshot.map(_.item.id) == List(1L, 7L) && inv.snapshot.isEmpty) &&
                 assertTrue(parcelDao.snapshot.exists(_.item == bundle))
+      },
+
+      test("без слова «стопку» стопку не отдают, даже когда отдельных таких вещей нет, — и подсказывают, как") {
+        val bundle = pangea.model.item.Bundling.pack((11L to 15L).toList.map(skull)).get.copy(id = 7L)
+        for {
+          f   <- fixture(List(bundle))
+          (transfers, hero, inv, parcelDao, _) = f
+          out <- transfers.quickSend(testUser, hero, target, "надколотый череп", 1, 0L)
+        } yield assertTrue(out == Transfers.Outcome.Forbidden(
+                  "📦 «надколотый череп» у вас только в стопке. Чтобы передать стопку, так и скажите: " +
+                  "«Передать стопку надколотый череп».")) &&
+                assertTrue(parcelDao.snapshot.isEmpty && inv.snapshot == List(bundle))
+      },
+
+      test("строка о передаче — в беседу, где её затеяли; стопка в ней, в ответе и в письме — «стопку «…»»") {
+        val bundle  = pangea.model.item.Bundling.pack((11L to 15L).toList.map(skull)).get.copy(id = 7L)
+        val general = 2000000001L
+        for {
+          f    <- fixture(List(bundle))
+          (transfers, hero, _, _, players) = f
+          out  <- transfers.quickSend(testUser, hero, target, "стопку надколотый череп", 1, 0L, Some(general))
+          sent  = Some(out).collect { case s: Transfers.Outcome.Sent => s }
+          _    <- ZIO.foreachDiscard(sent)(_.handOver)
+        } yield assertTrue(players.announcedTrade.isEmpty) &&
+                assertTrue(players.announcedAt == List(general ->
+                  s"📦 Игрок [id${testUser.vkId.value}|Иван Иванов] передал стопку «Надколотый череп» игроку [id${friendUser.vkId.value}|Пётр]")) &&
+                assertTrue(sent.map(_.message).contains(
+                  "📦 Вы передали стопку «Надколотый череп» игроку Пётр. Всё ляжет к нему в банковскую ячейку.")) &&
+                assertTrue(players.sentLetters.exists { case (to, text) =>
+                  to == friendUs && text.startsWith("📦 Иван Иванов передал(а) вам: стопку «Надколотый череп».") })
+      },
+
+      test("стопки в строках о передаче — по-русски: стопку, 2 стопки, 5 стопок, 21 стопку; прочее — «×N»") {
+        val bundle = pangea.model.item.Bundling.pack((11L to 15L).toList.map(skull)).get.copy(id = 7L)
+        for {
+          f <- fixture(Nil)
+          (transfers, _, _, _, _) = f
+        } yield assertTrue(transfers.what(bundle, 1) == "стопку «Надколотый череп»") &&
+                assertTrue(transfers.what(bundle, 2) == "2 стопки «Надколотый череп»") &&
+                assertTrue(transfers.what(bundle, 5) == "5 стопок «Надколотый череп»") &&
+                assertTrue(transfers.what(bundle, 12) == "12 стопок «Надколотый череп»") &&
+                assertTrue(transfers.what(bundle, 21) == "21 стопку «Надколотый череп»") &&
+                assertTrue(transfers.what(skull(1L), 2) == "Надколотый череп ×2")
+      },
+
+      test("«стопка» и «стопку» — оба слова годятся; одно слово — любая стопка, а вся сумка — со стопками") {
+        val bundle = pangea.model.item.Bundling.pack((11L to 15L).toList.map(skull)).get.copy(id = 7L)
+        for {
+          f <- fixture(Nil)
+          (transfers, _, _, _, _) = f
+          items = List(bundle, skull(1L), sword(2L))
+        } yield assertTrue(transfers.matching(items, "стопка надколотый череп") == List(bundle)) &&
+                assertTrue(transfers.matching(items, "стопку надколотый череп") == List(bundle)) &&
+                assertTrue(transfers.matching(items, "стопку") == List(bundle)) &&
+                assertTrue(transfers.matching(items, "череп") == List(skull(1L))) &&
+                assertTrue(transfers.matching(items, "").toSet == items.toSet)
       },
 
       test("в сумке ничего похожего — так и говорим") {

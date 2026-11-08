@@ -61,8 +61,9 @@ case class TransferState(
       items  = transfers.matching(inv.items.data, scene.query)
       _ <- if (items.isEmpty)
              renderer.show(user, Screen(
-               transfers.trophyRefusal(inv.items.data, scene.query).fold(
-                 content.format("transfer.nothing", "query" -> scene.query))(content.text), leaveRow))
+               transfers.refusal(inv.items.data, scene.query).fold(
+                 content.format("transfer.nothing", "query" -> scene.query))(
+                 content.format(_, "query" -> scene.query)), leaveRow))
            else {
              val (pageItems, pages, p) = ItemMenu.page(ItemStack.grouped(items), scene.page)
              val header = content.format("transfer.pick",
@@ -109,9 +110,8 @@ case class TransferState(
         case Some(item) =>
           val stats = item.statsLines
           val text  = content.format("transfer.confirm",
-            "name"  -> item.displayTitle,
-            "count" -> batch(inv.items.data, item, scene.count).size.toString,
-            "to"    -> scene.toName) + (if (stats.isEmpty) "" else "\n" + stats.mkString("\n"))
+            "what" -> transfers.what(item, batch(inv.items.data, item, scene.count).size),
+            "to"   -> scene.toName) + (if (stats.isEmpty) "" else "\n" + stats.mkString("\n"))
           writeScene(user, scene.copy(itemId = Some(item.id))) *>
             renderer.show(user, Screen(text, List(
               Choice("TransferYes", content.text("transfer.confirmYes"), color = ChoiceColor.Positive, row = Some(0)),
@@ -136,13 +136,12 @@ case class TransferState(
         case Some(item) =>
           val target = TransferTarget(HeroId(scene.toHeroId), UserId(scene.toUserId), scene.toName)
           for {
-            shipment <- transfers.send(user, hero, target, batch(inv.items.data, item, scene.count), now)
+            shipment <- transfers.send(user, hero, target, batch(inv.items.data, item, scene.count), now, scene.chat)
             // Доставка ждёт лок получателя, а наш занят этим ходом — пусть
             // идёт отдельно и начнётся, как только получатель освободится.
             _        <- background.fork(shipment.handOver
                           .catchAllCause(ErrorLog.logged(s"Передача ${user.userId.value} → ${scene.toUserId}: доставка не прошла")))
-            _        <- renderer.show(user, Screen(content.format("transfer.sent",
-                          "name" -> item.displayTitle, "count" -> shipment.items.size.toString, "to" -> scene.toName), Nil))
+            _        <- renderer.show(user, Screen(transfers.sentText(shipment.items, scene.toName), Nil))
             next     <- leave(user, renderer)
           } yield next
       }
@@ -204,7 +203,11 @@ object TransferState {
     query:    String       = "",
     count:    Int          = 1,
     page:     Int          = 0,
-    itemId:   Option[Long] = None
+    itemId:   Option[Long] = None,
+    // Беседа, где написали «Передать» (`peer_id`): туда уйдёт строка о
+    // передаче. Option: в сценах, начатых до этого поля, его нет — их строка
+    // уходит в торговую беседу, как раньше.
+    chat:     Option[Long] = None
   )
   object TransferScene {
     implicit val encoder: Encoder[TransferScene] = deriveEncoder

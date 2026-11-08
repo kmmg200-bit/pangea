@@ -3,7 +3,7 @@ package pangea.service.parcel
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Players, SceneContent}
 import pangea.model.hero.{Hero, HeroId}
-import pangea.model.item.{Item, ItemStack, ItemType}
+import pangea.model.item.{Bundling, Item, ItemStack, ItemType}
 import pangea.model.parcel.Parcel
 import pangea.model.user.{User, UserId}
 import pangea.repository.bank.BankRepository
@@ -47,23 +47,34 @@ final case class Transfers(
   def sendable(item: Item): Boolean =
     !item.isQuestItem && !item.weightless && item.itemType != ItemType.Trophy && !item.isNamedTrophy
 
-  /** Под запрос подошли только трофеи — о них стоит сказать отдельно, иначе
-    * «ничего не нашлось» сбивает с толку. Ключ текста отказа: про обычные
-    * трофеи и про уникальные — разный. */
-  def trophyRefusal(items: List[Item], query: String): Option[String] = {
+  /** Под запрос ничего не подошло — и на то есть особая причина, о которой
+    * стоит сказать, иначе «ничего не нашлось» сбивает с толку: подошли только
+    * трофеи (про обычные и уникальные — разный текст) или вещь лежит в стопке,
+    * а слово «стопку» не сказали. Ключ текста отказа; в тексте может быть
+    * `{query}` — сам запрос. */
+  def refusal(items: List[Item], query: String): Option[String] = {
     def found(p: Item => Boolean): Boolean = items.exists(i => p(i) && ChatCommand.matches(query, i.name))
     if (matching(items, query).nonEmpty) None
     else if (found(_.itemType == ItemType.Trophy)) Some("transfer.noTrophies")
     else if (found(_.isNamedTrophy)) Some("transfer.noNamedTrophies")
+    else if (!ChatCommand.bundleQuery(query)._1 &&
+             matching(items, s"${ChatCommand.BundleWords.head} $query").nonEmpty) Some("transfer.bundleWord")
     else None
   }
 
   /** Подходящее под запрос. Точное совпадение по названию бьёт частичное:
     * «надколотый череп» отдаст именно череп, а не всё, где встретилось слово.
-    * Уровень в запросе не нужен — по названию находятся вещи всех уровней. */
+    * Уровень в запросе не нужен — по названию находятся вещи всех уровней.
+    *
+    * Стопку отдают, только когда её так и назвали — «стопку надколотый
+    * череп»: тогда ищут среди стопок по тому, что в них лежит. Без этого слова
+    * стопок нет среди подходящих, даже если отдельных таких вещей нет. Пустой
+    * запрос — вся сумка, стопки тоже: там вещь выбирают кнопкой. */
   def matching(items: List[Item], query: String): List[Item] = {
-    val fit   = items.filter(i => sendable(i) && ChatCommand.matches(query, i.name))
-    val exact = fit.filter(i => ChatCommand.sameName(query, i.name))
+    val (bundle, rest) = ChatCommand.bundleQuery(query)
+    val pool  = items.filter(i => sendable(i) && (query.trim.isEmpty || i.isBundle == bundle))
+    val fit   = pool.filter(i => ChatCommand.matches(rest, Transfers.searchName(i)))
+    val exact = fit.filter(i => ChatCommand.sameName(rest, Transfers.searchName(i)))
     if (exact.nonEmpty) exact else fit
   }
 
@@ -93,37 +104,71 @@ final case class Transfers(
     target: TransferTarget,
     query:  String,
     count:  Int,
-    now:    Long
+    now:    Long,
+    chat:   Option[Long] = None
   ): Task[Transfers.Outcome] =
     for {
       inv <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       fit  = matching(inv.items.data, query)
-      res <- trophyRefusal(inv.items.data, query) match {
-               case Some(key)                 => ZIO.succeed(Transfers.Outcome.Forbidden(content.text(key)))
+      res <- refusal(inv.items.data, query) match {
+               case Some(key)                 =>
+                 ZIO.succeed(Transfers.Outcome.Forbidden(content.format(key, "query" -> query)))
                case None if fit.isEmpty       => ZIO.succeed(Transfers.Outcome.Empty)
                case None if !unambiguous(fit) => ZIO.succeed(Transfers.Outcome.NeedPick)
                case None =>
-                 send(sender, hero, target, fit.take(count.max(1)), now).map { shipment =>
-                   Transfers.Outcome.Sent(content.format("transfer.sent",
-                     "name"  -> shipment.items.head.displayTitle,
-                     "count" -> shipment.items.size.toString,
-                     "to"    -> target.name), shipment.handOver)
+                 send(sender, hero, target, fit.take(count.max(1)), now, chat).map { shipment =>
+                   Transfers.Outcome.Sent(sentText(shipment.items, target.name), shipment.handOver)
                  }
              }
     } yield res
 
   /** Отдать вещи: из сумки отправителя — в посылки получателю, плюс строка в
-    * торговую беседу. Возвращает, что ушло, и доставку получателю — её запускают,
-    * отпустив лок отправителя (см. [[handOver]]). */
+    * беседу `chat`, где передачу затеяли (см. [[log]]). Возвращает, что ушло, и
+    * доставку получателю — её запускают, отпустив лок отправителя (см.
+    * [[handOver]]). */
   def send(
     sender: User,
     hero:   Hero,
     target: TransferTarget,
     items:  List[Item],
-    now:    Long
+    now:    Long,
+    chat:   Option[Long] = None
   ): Task[Transfers.Shipment] =
-    ship(sender, target, items, now)(item =>
+    ship(sender, target, items, now, chat)(item =>
       inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)))
+
+  /** Что переданное назвать в строках о передаче: «Надколотый череп ×2», а у
+    * стопки — «стопку «Надколотый череп»», «2 стопки «…»», «5 стопок «…»».
+    * Винительный падеж: «передал …», «отнёс …», «Передать …?». */
+  def what(sample: Item, count: Int): String =
+    Bundling.contents(sample).headOption match {
+      case None => s"${sample.displayTitle} ×$count"
+      case Some(inner) if count == 1 =>
+        content.format("transfer.bundle.one", "name" -> inner.displayTitle)
+      case Some(inner) =>
+        val words = content.list("transfer.bundle.words")
+        val form  =
+          if (count % 10 == 1 && count % 100 != 11) 0
+          else if ((2 to 4).contains(count % 10) && !(12 to 14).contains(count % 100)) 1
+          else 2
+        content.format("transfer.bundle.count",
+          "n"    -> count.toString,
+          "word" -> words.lift(form).getOrElse(""),
+          "name" -> inner.displayTitle)
+    }
+
+  /** Ответ отправителю: что ушло и кому. У стопок своя строка — «стопку»
+    * не скажешь «отправлено». */
+  def sentText(items: List[Item], to: String): String =
+    items.headOption match {
+      case Some(first) if first.isBundle =>
+        content.format("transfer.sentBundle", "what" -> what(first, items.size), "to" -> to)
+      case first =>
+        content.format("transfer.sent",
+          "name"  -> first.fold("")(_.displayTitle),
+          "count" -> items.size.toString,
+          "to"    -> to)
+    }
 
   /** Отдать вещи из хранилища Торгового дома — вне города, с личным посыльным
     * (см. `Furniture.Courier`). Сумку он не трогает: что при герое вне города,
@@ -140,39 +185,40 @@ final case class Transfers(
     target: TransferTarget,
     query:  String,
     count:  Int,
-    now:    Long
+    now:    Long,
+    chat:   Option[Long] = None
   ): Task[Transfers.Outcome] =
     for {
       vault <- bank.get(hero.id).mapError(e => new Throwable(e.toString))
       items  = vault.items.data
       fit    = matching(items, query)
-      res   <- trophyRefusal(items, query) match {
-                 case Some(key)           => ZIO.succeed(Transfers.Outcome.Forbidden(content.text(key)))
+      res   <- refusal(items, query) match {
+                 case Some(key)           =>
+                   ZIO.succeed(Transfers.Outcome.Forbidden(content.format(key, "query" -> query)))
                  case None if fit.isEmpty =>
                    ZIO.succeed(Transfers.Outcome.Forbidden(content.format("transfer.courier.nothing", "query" -> query)))
                  case None if !unambiguous(fit) =>
                    ZIO.succeed(Transfers.Outcome.Forbidden(content.format("transfer.courier.ambiguous",
                      "query" -> query, "items" -> Transfers.namesOf(fit))))
                  case None =>
-                   ship(sender, target, fit.take(count.max(1)), now)(item =>
+                   ship(sender, target, fit.take(count.max(1)), now, chat)(item =>
                      bank.withdraw(hero.id, item.id).mapError(e => new Throwable(e.toString)).unit
                    ).map { shipment =>
                      Transfers.Outcome.Sent(content.format("transfer.courier.sent",
-                       "name"  -> shipment.items.headOption.fold("")(_.displayTitle),
-                       "count" -> shipment.items.size.toString,
-                       "to"    -> target.name), shipment.handOver)
+                       "what" -> shipment.items.headOption.fold("")(what(_, shipment.items.size)),
+                       "to"   -> target.name), shipment.handOver)
                    }
                }
     } yield res
 
   /** Вещи — в посылки получателю: `take` убирает каждую оттуда, где она лежит
-    * (сумка или хранилище), плюс строка в торговую беседу. */
-  private def ship(sender: User, target: TransferTarget, items: List[Item], now: Long)(
+    * (сумка или хранилище), плюс строка в беседу (см. [[log]]). */
+  private def ship(sender: User, target: TransferTarget, items: List[Item], now: Long, chat: Option[Long])(
       take: Item => Task[Unit]): Task[Transfers.Shipment] =
     for {
       name <- players.getDisplayName(sender).orElse(ZIO.succeed(content.text("transfer.someone")))
       sent <- ZIO.foreach(items)(item => take(item) *> parcels.send(target.heroId, name, item, now))
-      _    <- ZIO.when(items.nonEmpty)(announce(sender, name, target, items))
+      _    <- ZIO.when(items.nonEmpty)(announce(sender, name, target, items, chat))
     } yield Transfers.Shipment(items, handOver(name, target, sent))
 
   /** Доставка получателю — под ЕГО локом: посылки сразу в ячейку, что не
@@ -208,9 +254,8 @@ final case class Transfers(
         else content.format("transfer.noticeSplit", "vault" -> vault.toString, "mail" -> mail.toString)
       val shelf = if (landed.started) content.text("transfer.noticeShelf") else ""
       content.format("transfer.notice",
-        "from"  -> fromName,
-        "name"  -> sent.head.item.displayTitle,
-        "count" -> (vault + mail).toString) + where + shelf
+        "from" -> fromName,
+        "what" -> sent.headOption.fold("")(p => what(p.item, vault + mail))) + where + shelf
     }
     val lines = Option.when(landed.burned.nonEmpty)(parcels.burnedText(landed.burned)).toList ++ notice
     Option.when(lines.nonEmpty)(lines.mkString("\n\n"))
@@ -246,7 +291,8 @@ final case class Transfers(
     * на руках в лабиринте половина сгорела бы при смерти. Комиссия не достаётся
     * никому. Самого героя получателя здесь не трогаем — его пишут только под
     * его собственным локом. Зачислить не вышло — всё снятое возвращается. */
-  def sendSilver(sender: User, hero: Hero, target: TransferTarget, amount: Long): Task[Transfers.Outcome] =
+  def sendSilver(sender: User, hero: Hero, target: TransferTarget, amount: Long,
+                 chat: Option[Long] = None): Task[Transfers.Outcome] =
     tooLittle(Money.Silver, amount) match {
       case Some(refusal) => ZIO.succeed(Transfers.Outcome.Forbidden(refusal))
       case None =>
@@ -257,7 +303,7 @@ final case class Transfers(
             purse.total(hero).map(have => Transfers.Outcome.Forbidden(
               notEnough("transfer.money.notEnoughSilver", Money.Silver, cost, fee, have)))
           case Some(paid) =>
-            deliverSilver(sender, target, amount, refund = heroDao.updateSilver(sender.userId, paid.silver + cost))
+            deliverSilver(sender, target, amount, refund = heroDao.updateSilver(sender.userId, paid.silver + cost), chat)
               .as(Transfers.Outcome.Sent(sentLine(Money.Silver, amount, target)))
         }
     }
@@ -268,7 +314,8 @@ final case class Transfers(
     * комиссия снимаются из ячейки разом; не хватает — ничего не снято. Дальше —
     * как у [[sendSilver]]: получателю в ячейку или в город, а не вышло —
     * снятое возвращается в ячейку. */
-  def sendSilverFromVault(sender: User, hero: Hero, target: TransferTarget, amount: Long): Task[Transfers.Outcome] =
+  def sendSilverFromVault(sender: User, hero: Hero, target: TransferTarget, amount: Long,
+                          chat: Option[Long] = None): Task[Transfers.Outcome] =
     tooLittle(Money.Silver, amount) match {
       case Some(refusal) => ZIO.succeed(Transfers.Outcome.Forbidden(refusal))
       case None =>
@@ -281,7 +328,7 @@ final case class Transfers(
           case Right(_) =>
             // Вернуть в ячейку; не примет — Рахадим отдаст в городе.
             val refund = bank.depositSilver(hero.id, cost).orElse(payouts.queue(hero.id, silver = cost))
-            deliverSilver(sender, target, amount, refund).as(Transfers.Outcome.Sent(
+            deliverSilver(sender, target, amount, refund, chat).as(Transfers.Outcome.Sent(
               content.format("transfer.money.sentByCourier",
                 "money" -> Transfers.moneyLine(Money.Silver, amount),
                 "to"    -> target.name,
@@ -291,14 +338,15 @@ final case class Transfers(
 
   /** Серебро получателю: в ячейку, а не приняла — ждёт его в городе; письмо и
     * строка в беседу. Зачислить не вышло — `refund` возвращает снятое. */
-  private def deliverSilver(sender: User, target: TransferTarget, amount: Long, refund: Task[Unit]): Task[Unit] =
+  private def deliverSilver(sender: User, target: TransferTarget, amount: Long, refund: Task[Unit],
+                            chat: Option[Long]): Task[Unit] =
     for {
       intoVault <- bank.depositSilver(target.heroId, amount).either.flatMap {
                      case Right(_) => ZIO.succeed(true)
                      case Left(_)  => payouts.queue(target.heroId, silver = amount).as(false)
                    }.tapError(_ => refund)
       _         <- tellMoney(sender, target, Transfers.moneyLine(Money.Silver, amount),
-                     if (intoVault) Transfers.Landed.Vault else Transfers.Landed.City)
+                     if (intoVault) Transfers.Landed.Vault else Transfers.Landed.City, chat)
     } yield ()
 
   /** Дублоны, шаг первый — под локом отправителя: снять с его рук сумму и
@@ -334,8 +382,9 @@ final case class Transfers(
 
   /** Дублоны дошли: письмо получателю, строка в беседу. Возвращает ответ
     * отправителю. */
-  def doubloonsDelivered(sender: User, target: TransferTarget, amount: Long): Task[String] =
-    tellMoney(sender, target, Transfers.moneyLine(Money.Doubloons, amount), Transfers.Landed.Hand)
+  def doubloonsDelivered(sender: User, target: TransferTarget, amount: Long,
+                         chat: Option[Long] = None): Task[String] =
+    tellMoney(sender, target, Transfers.moneyLine(Money.Doubloons, amount), Transfers.Landed.Hand, chat)
       .as(sentLine(Money.Doubloons, amount, target))
 
   /** Меньше минимума не передают (см. [[Transfers.MinMoney]]). */
@@ -358,7 +407,8 @@ final case class Transfers(
       "fee"   -> Transfers.moneyLine(money, Transfers.fee(amount)))
 
   /** Письмо получателю — где теперь его деньги, — и строка в торговую беседу. */
-  private def tellMoney(sender: User, target: TransferTarget, line: String, landed: Transfers.Landed): Task[Unit] =
+  private def tellMoney(sender: User, target: TransferTarget, line: String, landed: Transfers.Landed,
+                        chat: Option[Long]): Task[Unit] =
     for {
       fromName <- players.getDisplayName(sender).orElse(ZIO.succeed(content.text("transfer.someone")))
       receiver <- userRepo.getUserById(target.userId).option.map(_.flatten)
@@ -369,29 +419,39 @@ final case class Transfers(
                   }
       _        <- ZIO.foreachDiscard(receiver)(r => players.notify(r, content.format(key,
                     "from" -> fromName, "money" -> line)).ignore)
-      _        <- players.announceTrade(content.format("transfer.money.announce",
+      _        <- log(chat, content.format("transfer.money.announce",
                     "from"  -> mention(sender.vkId.value, fromName),
                     "to"    -> receiver.map(r => mention(r.vkId.value, target.name)).getOrElse(target.name),
                     "money" -> line)).ignore
     } yield ()
 
-  /** Строка в торговую беседу: передача — дело публичное. Письмо получателю уходит
+  /** Строка о передаче: передача — дело публичное. Письмо получателю уходит
     * с доставкой ([[handOver]]) — когда уже ясно, где вещи. */
-  private def announce(sender: User, fromName: String, target: TransferTarget, items: List[Item]): Task[Unit] =
+  private def announce(sender: User, fromName: String, target: TransferTarget, items: List[Item],
+                       chat: Option[Long]): Task[Unit] =
     for {
       receiver <- userRepo.getUserById(target.userId).option.map(_.flatten)
-      _        <- players.announceTrade(content.format("transfer.announce",
-                    "from"  -> mention(sender.vkId.value, fromName),
-                    "to"    -> receiver.map(r => mention(r.vkId.value, target.name)).getOrElse(target.name),
-                    "name"  -> items.head.displayTitle,
-                    "count" -> items.size.toString)).ignore
+      _        <- log(chat, content.format("transfer.announce",
+                    "from" -> mention(sender.vkId.value, fromName),
+                    "to"   -> receiver.map(r => mention(r.vkId.value, target.name)).getOrElse(target.name),
+                    "what" -> items.headOption.fold("")(what(_, items.size)))).ignore
     } yield ()
+
+  /** Лог передачи — в ту беседу, где её затеяли (`chat` — её `peer_id`): там
+    * о ней договаривались, там её и видят. Беседа не известна — передачу
+    * начали до того, как её стали запоминать, — в торговую, как раньше. */
+  private def log(chat: Option[Long], text: String): Task[Unit] =
+    chat.fold(players.announceTrade(text))(players.announceAt(_, text))
 
   /** Кликабельное упоминание игрока в ВК. */
   private def mention(vkId: String, name: String): String = s"[id$vkId|$name]"
 }
 
 object Transfers {
+
+  /** По какому названию ищут вещь в запросе: у стопки — по тому, что в ней
+    * лежит («стопку надколотый череп»), у прочих — по своему. */
+  def searchName(item: Item): String = Bundling.contents(item).headOption.fold(item.name)(_.name)
 
   /** Чем кончилась попытка передать по одной фразе из беседы. */
   sealed trait Outcome
