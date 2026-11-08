@@ -110,6 +110,19 @@ export interface AuctionView {
   hero: HeroView
   lots: LotView[]
   mine: LotView[]
+  /** Сколько серебра наберётся на покупку: на руках вместе с ячейкой. */
+  silver: number
+  /** Свободных мест в сумке: купленное ложится туда. */
+  bagFree: number
+  /** Почему сейчас нельзя покупать: герой не в городе. */
+  away: string | null
+}
+
+/** Ответ на покупку: витрина после неё, что сказал Рахадим и куплено ли. */
+export interface AuctionActionView {
+  auction: AuctionView
+  note: string
+  bought: boolean
 }
 
 /** Характеристика: сейчас — со всем, что действует, и родная — до расы, травм и зелий. */

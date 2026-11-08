@@ -142,7 +142,7 @@ export function App() {
   }
 
   const heroLoads = { hero: character, equipment: inventory, squad }
-  const current: Loaded<{ hero: HeroView }> =
+  const current: Omit<Loaded<{ hero: HeroView }>, 'set'> =
     tab === 'character' ? heroLoads[heroPart] : tab === 'top' ? tops[topKind] : { quests, items: inventory, craft, auction }[tab]
   // В шапке — самые свежие уровень и деньги: с открытой вкладки, а пока она
   // грузится — с любой уже загруженной.
@@ -202,7 +202,22 @@ export function App() {
             loaded={tops[topKind]}
           />
         )}
-        {tab === 'auction' && <Body loaded={auction}>{(d) => <AuctionTab data={d} />}</Body>}
+        {tab === 'auction' && (
+          <Body loaded={auction}>
+            {(d) => (
+              <AuctionTab
+                data={d}
+                onChange={(v, bought) => {
+                  // Деньги в шапке — из свежей витрины. Купленное легло в сумку —
+                  // «Вещи» и «Крафт», если их уже открывали, перечитают её.
+                  auction.set(v)
+                  if (bought && inventory.data) inventory.reload()
+                  if (bought && craft.data) craft.reload()
+                }}
+              />
+            )}
+          </Body>
+        )}
         {/* Лицензия CC BY 3.0 требует назвать авторов иконок. */}
         <p className="credits">Иконки: game-icons.net (CC BY 3.0)</p>
       </main>

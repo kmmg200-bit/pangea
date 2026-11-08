@@ -2,6 +2,7 @@ package pangea.service.miniapp
 
 import pangea.engine.SceneContent
 import pangea.model.artifact.HeroArtifacts
+import pangea.model.auction.{AuctionCurrency, AuctionLot}
 import pangea.model.bank.BankVault
 import pangea.model.barrel.Barrel
 import pangea.model.hero.{Achievement, AzatState, HeroId, Knowledge, LoreData}
@@ -266,6 +267,22 @@ object MiniAppViewSpec extends ZIOSpecDefault {
         inCity.cube.bag.map(_.id) == List(5L),
         inCity.cube.away.isEmpty,
         away.cube.away.contains(c.text("miniapp.craft.away"))
+      )
+    },
+
+    test("аукцион: чем платить и куда класть — как пришло; вне города — почему не купить") {
+      import pangea.model.state.StateType
+      val c      = SceneContent.load()
+      val hero   = TestFixtures.hero(UserId(1L), state = StateType.TradeHouse)
+      val lot    = AuctionLot(3L, HeroId(2L), sword, 300L, AuctionCurrency.Doubloons, 0L, AuctionLot.LifetimeMs)
+      val funds  = MiniAppView.Funds(silver = 1200L, bagFree = 4L)
+      val inCity = MiniAppView.auction(hero, List(lot), Nil, 0L, _ => "", funds, c)
+      val away   = MiniAppView.auction(hero.copy(state = StateType.Battle), List(lot), Nil, 0L, _ => "", funds, c)
+      assertTrue(
+        inCity.lots.map(l => (l.id, l.currency, l.mine)) == List((3L, "doubloons", false)),
+        inCity.silver == 1200L && inCity.bagFree == 4L,
+        inCity.away.isEmpty,
+        away.away.contains(c.text("miniapp.auction.away"))
       )
     }
   )

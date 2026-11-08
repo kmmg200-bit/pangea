@@ -6,6 +6,8 @@ export interface Loaded<T> {
   error: string | null
   loading: boolean
   reload: () => void
+  /** Подменить данные свежими — из ответа на действие, без новой загрузки. */
+  set: (data: T) => void
 }
 
 /** Загрузка с бота: данные, код ошибки (см. ApiError) и «обновить». Прежние
@@ -38,5 +40,5 @@ export function useLoad<T>(load: () => Promise<T>, enabled = true): Loaded<T> {
   }, [load, enabled, tick])
 
   const reload = useCallback(() => setTick((t) => t + 1), [])
-  return { data, error, loading, reload }
+  return { data, error, loading, reload, set: setData }
 }

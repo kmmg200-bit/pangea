@@ -1,5 +1,6 @@
 import { launchParams } from './platform'
 import type {
+  AuctionActionView,
   AuctionView,
   CharacterView,
   CraftActionView,
@@ -52,6 +53,7 @@ export const api = {
   top: (kind: TopKind) => get<TopView>(`top?kind=${kind}`),
   inventory: () => get<InventoryView>('inventory'),
   auction: () => get<AuctionView>('auction'),
+  auctionBuy: (lot: number) => post<AuctionActionView>(`auction/buy?lot=${lot}`),
   craft: () => get<CraftView>('craft'),
   cubeDeposit: (item: number) => post<CraftActionView>(`craft/cube/deposit?item=${item}`),
   cubeWithdraw: (item: number) => post<CraftActionView>(`craft/cube/withdraw?item=${item}`),

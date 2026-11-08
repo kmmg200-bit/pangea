@@ -48,6 +48,10 @@ final class MiniAppRoutes(app: MiniApp) {
     case req @ GET -> Root / "api" / "app" / "auction" =>
       asPlayer(req)(hero => app.auction(hero).flatMap(view => Ok(view.asJson)))
 
+    // Покупка лота: меняет игру — только POST.
+    case req @ POST -> Root / "api" / "app" / "auction" / "buy" :? LotParam(id) =>
+      asPlayer(req)(hero => app.buy(hero, id).flatMap(view => Ok(view.asJson)))
+
     case req @ GET -> Root / "api" / "app" / "craft" =>
       asPlayer(req)(hero => app.craft(hero).flatMap(view => Ok(view.asJson)))
 
@@ -84,4 +88,5 @@ final class MiniAppRoutes(app: MiniApp) {
 
   private object KindParam extends OptionalQueryParamDecoderMatcher[String]("kind")
   private object ItemParam extends QueryParamDecoderMatcher[Long]("item")
+  private object LotParam  extends QueryParamDecoderMatcher[Long]("lot")
 }

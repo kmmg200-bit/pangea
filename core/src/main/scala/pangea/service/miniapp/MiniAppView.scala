@@ -120,8 +120,21 @@ object MiniAppView {
     unsold:    Boolean
   )
 
-  /** Витрина и свои лоты (свои — с непроданными). */
-  final case class AuctionView(hero: HeroView, lots: List[LotView], mine: List[LotView])
+  /** Витрина и свои лоты (свои — с непроданными).
+    *
+    * @param silver  сколько серебра наберётся на покупку: на руках вместе с ячейкой
+    * @param bagFree свободных мест в сумке: купленное ложится туда
+    * @param away    почему сейчас нельзя покупать: герой не в городе
+    */
+  final case class AuctionView(hero: HeroView, lots: List[LotView], mine: List[LotView], silver: Long, bagFree: Long,
+                               away: Option[String])
+
+  /** Ответ на покупку: витрина после неё, что сказал Рахадим и куплено ли. */
+  final case class AuctionActionView(auction: AuctionView, note: String, bought: Boolean)
+
+  /** Чем платить и куда класть: серебро на руках вместе с ячейкой и свободные
+    * места в сумке. */
+  final case class Funds(silver: Long, bagFree: Long)
 
   /** Характеристика: сейчас — со всем, что действует, и родная — до расы, травм
     * и зелий. В боте родная стоит первой, а текущая в скобках. */
@@ -272,6 +285,7 @@ object MiniAppView {
   implicit val inventoryEncoder: Encoder[InventoryView] = deriveEncoder
   implicit val lotEncoder:       Encoder[LotView]       = deriveEncoder
   implicit val auctionEncoder:   Encoder[AuctionView]   = deriveEncoder
+  implicit val auctionActionEncoder: Encoder[AuctionActionView] = deriveEncoder
   implicit val statEncoder:      Encoder[StatView]      = deriveEncoder
   implicit val poolEncoder:      Encoder[PoolView]      = deriveEncoder
   implicit val traumaEncoder:    Encoder[TraumaView]    = deriveEncoder
@@ -427,7 +441,7 @@ object MiniAppView {
   /** Витрина и свои лоты. Описание вещи в лоте — со сравнением с надетым на
     * герое, как в карточке бота. */
   def auction(h: Hero, onSale: List[AuctionLot], mine: List[AuctionLot], now: Long,
-              describe: Item => String): AuctionView = {
+              describe: Item => String, funds: Funds, content: SceneContent): AuctionView = {
     def lot(l: AuctionLot): LotView =
       LotView(
         id        = l.id,
@@ -438,7 +452,8 @@ object MiniAppView {
         mine      = l.sellerId == h.id,
         unsold    = l.unsold(now)
       )
-    AuctionView(hero(h), onSale.map(lot), mine.map(lot))
+    AuctionView(hero(h), onSale.map(lot), mine.map(lot), funds.silver, funds.bagFree,
+      Option.unless(MiniApp.inCity(h))(content.text("miniapp.auction.away")))
   }
 
   /** «Персонаж». Благословение и быстрые отдыхи — из состояния храма (`azat`),

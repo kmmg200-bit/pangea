@@ -1013,6 +1013,70 @@ button.row:active {
   font-size: 13px;
 }
 
+/* Покупка из карточки лота: кнопка с ценой, подтверждение и слова Рахадима. */
+.buy-yes,
+.buy-no {
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.buy-yes {
+  border: 0;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.buy-no {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.buy-yes:disabled,
+.buy-no:disabled {
+  opacity: 0.45;
+}
+
+.buy-wide {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.buy-confirm {
+  margin-top: 12px;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--warn-line);
+  border-radius: 12px;
+  background: var(--warn-bg);
+}
+
+.buy-ask {
+  margin: 0 0 10px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.buy-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.buy-note {
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 14px;
+}
+
+.buy-ok {
+  color: var(--up);
+  font-weight: 600;
+}
+
 /* ── Загрузка и ошибки ─────────────────────────────────── */
 
 .spinner {

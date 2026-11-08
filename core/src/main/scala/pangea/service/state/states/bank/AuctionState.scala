@@ -12,6 +12,7 @@ import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.auction.AuctionRepository
 import pangea.repository.bank.BankRepository
+import pangea.service.auction.AuctionPurchase
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.user.UserRepository
 import pangea.service.payout.Payouts
@@ -52,6 +53,9 @@ case class AuctionState(
 
   /** Кошель: своё серебро, а следом — то, что лежит в ячейке Торгового дома. */
   private val purse = Purse(heroDao, Some(bankRepo))
+
+  private val purchase =
+    new AuctionPurchase(heroDao, inventoryRepo, itemRepo, auctionRepo, userRepo, bankRepo, payouts, players, content)
 
   private val branch = new Branch(
     routes = Map(
@@ -200,84 +204,25 @@ case class AuctionState(
       }
     } yield ()
 
+  /** Покупка — в [[AuctionPurchase]], общей с Mini App; здесь — что показать. */
   private def buy(user: User, lotId: Long, renderer: Renderer): Task[Unit] =
-    for {
-      now    <- nowMs
-      hero   <- getHero(user)
-      inv    <- inventoryRepo.get(hero.id).mapError(asThrowable)
-      wallet <- purse.wallet(hero)
-      res    <- auctionRepo.lot(lotId).either
-      _ <- res match {
-        case Left(_)                               => renderer.show(user, Screen(content.text("bank.auction.lotGone"), backRow))
-        case Right(lot) if !lot.onSale(now)        => renderer.show(user, Screen(content.text("bank.auction.lotGone"), backRow))
-        case Right(lot) if lot.sellerId == hero.id => renderer.show(user, Screen(content.text("bank.auction.ownLot"), backRow))
-        case Right(lot) if !canPay(lot, hero, wallet.total) =>
-          renderer.show(user, Screen(content.format("bank.auction.noMoney", "price" -> lot.priceLine), backRow))
-        case Right(_) if inv.freeSlots <= 0 =>
-          renderer.show(user, Screen(content.text("bank.auction.noRoom"), backRow))
-        case Right(lot) =>
-          // Лот закрывается первым и атомарно: опоздавший увидит «лот ушёл»,
-          // и никаких денег с него не спишется.
-          auctionRepo.buy(lot.id, now).either.flatMap {
-            case Left(_)  => renderer.show(user, Screen(content.text("bank.auction.lotGone"), backRow))
-            case Right(_) => handOver(user, hero, lot, renderer)
-          }
-      }
-    } yield ()
-
-  /** Вещь — покупателю, деньги — продавцу. Если вещь вдруг не влезла, лот
-    * возвращается хозяину, и деньги не трогаем. */
-  private def handOver(user: User, hero: Hero, lot: AuctionLot, renderer: Renderer): Task[Unit] =
-    itemRepo.persist(hero.id, lot.item)
-      .flatMap(item => inventoryRepo.addItem(hero.id, item).mapError(asThrowable))
-      .foldZIO(
-        _ => auctionRepo.reclaim(lot.id, lot.sellerId).ignore *>
-               renderer.show(user, Screen(content.text("bank.auction.noRoom"), backRow)),
-        _ => payForLot(user, hero, lot).flatMap(tellSeller(lot, _)) *>
-               renderer.show(user, Screen(content.format("bank.auction.bought",
-                 "name" -> lot.item.displayTitle, "price" -> lot.priceLine), Nil)) *>
-               afterPurchase(user, renderer)
-      )
+    getHero(user).flatMap(purchase.buy(user, _, lotId)).flatMap {
+      case AuctionPurchase.Result.Gone         => renderer.show(user, Screen(content.text("bank.auction.lotGone"), backRow))
+      case AuctionPurchase.Result.Own          => renderer.show(user, Screen(content.text("bank.auction.ownLot"), backRow))
+      case AuctionPurchase.Result.NoMoney(lot) =>
+        renderer.show(user, Screen(content.format("bank.auction.noMoney", "price" -> lot.priceLine), backRow))
+      case AuctionPurchase.Result.NoRoom       => renderer.show(user, Screen(content.text("bank.auction.noRoom"), backRow))
+      case AuctionPurchase.Result.Bought(lot)  =>
+        renderer.show(user, Screen(content.format("bank.auction.bought",
+          "name" -> lot.item.displayTitle, "price" -> lot.priceLine), Nil)) *>
+          afterPurchase(user, renderer)
+    }
 
   /** После покупки — туда, откуда купили: на ту же страницу витрины. Лот
     * открыли по номеру из объявления, мимо витрины, — в меню аукциона. */
   private def afterPurchase(user: User, renderer: Renderer): Task[Unit] =
     readScene(user).flatMap(scene =>
       if (scene.page.isDefined) showBrowse(user, renderer) else showMenu(user, renderer))
-
-  /** Покупатель платит, а выручка продавца идёт в его банковскую ячейку. Не
-    * приняла (полна или монета не та) — деньги ждут его в городе. Возвращает,
-    * легли ли они в ячейку: об этом говорит колокольчик. */
-  private def payForLot(user: User, hero: Hero, lot: AuctionLot): Task[Boolean] =
-    lot.currency match {
-      case AuctionCurrency.Silver =>
-        purse.charge(user.userId, hero, lot.price) *>
-          bankRepo.depositSilver(lot.sellerId, lot.price).either.flatMap {
-            case Right(_) => ZIO.succeed(true)
-            case Left(_)  => payouts.queue(lot.sellerId, silver = lot.price).as(false)
-          }
-      case AuctionCurrency.Doubloons =>
-        // Ячейка держит только серебро, поэтому дублоны всегда ждут в городе.
-        heroDao.updateDoubloons(user.userId, hero.doubloons - lot.price) *>
-          payouts.queue(lot.sellerId, doubloons = lot.price).as(false)
-    }
-
-  /** Колокольчик продавцу: лот купили, деньги уже пришли. Не дозвонились —
-    * молчим: покупка от этого не рушится, продажу видно и в «Моих лотах». */
-  private def tellSeller(lot: AuctionLot, intoVault: Boolean): Task[Unit] =
-    (for {
-      hero   <- heroDao.getHeroById(lot.sellerId).someOrFailException
-      seller <- userRepo.getUserById(hero.userId).someOrFailException
-      key     = if (intoVault) "bank.auction.soldNoticeVault" else "bank.auction.soldNoticeCity"
-      _      <- players.notify(seller, content.format(key,
-                  "id" -> lot.id.toString, "name" -> lot.item.displayTitle, "price" -> lot.priceLine))
-    } yield ()).ignore
-
-  private def canPay(lot: AuctionLot, hero: Hero, silverAvailable: Long): Boolean =
-    lot.currency match {
-      case AuctionCurrency.Silver    => silverAvailable >= lot.price
-      case AuctionCurrency.Doubloons => hero.doubloons >= lot.price
-    }
 
   // ── Выставление ────────────────────────────────────────────────────────────
 
