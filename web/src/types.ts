@@ -81,6 +81,16 @@ export interface InventoryView {
   gearLocked: string | null
   /** Почему не переложить вещи и не надеть стойку: герой не в городе. */
   storesAway: string | null
+  /** Куда можно переложить каждую вещь. */
+  moves: MoveView[]
+}
+
+/** Куда можно переложить вещь `item` (у стопки — та же, что в списке) из
+  * хранилища `from` (`bag` — сумка). Есть ли там место, скажет бот. */
+export interface MoveView {
+  from: string
+  item: number
+  to: string[]
 }
 
 /** Ответ на «надеть» или «снять»: вещи после этого и что сказать. */

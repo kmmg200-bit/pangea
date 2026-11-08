@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { groupLabels, kindOf, presentGroups, type Group } from './kinds'
 import type { InventoryView, ItemView } from './types'
-import { Chips, Empty, ItemRow, ItemText, Sheet, Toolbar } from './ui'
+import { Chips, Empty, ItemRow, Toolbar } from './ui'
 
 const sorts = [
   { id: 'bag', label: 'Как в сумке' },
@@ -22,11 +22,12 @@ export function matches(item: ItemView, group: Group | 'all', query: string): bo
   )
 }
 
-export function BagTab(props: { data: InventoryView }) {
+/** Сумка: поиск, сортировка и группы. Нажал на вещь — карточку открывает
+  * «Вещи» (`onOpen`): там же — куда её переложить. */
+export function BagTab(props: { data: InventoryView; onOpen: (i: ItemView) => void }) {
   const [group, setGroup] = useState<Group | 'all'>('all')
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('bag')
-  const [open, setOpen] = useState<ItemView | null>(null)
 
   const items = props.data.items
   const groups = useMemo(() => presentGroups(items), [items])
@@ -54,17 +55,11 @@ export function BagTab(props: { data: InventoryView }) {
           )}
           <div className="list">
             {shown.map((item) => (
-              <ItemRow key={item.id} item={item} onOpen={() => setOpen(item)} />
+              <ItemRow key={item.id} item={item} onOpen={() => props.onOpen(item)} />
             ))}
             {shown.length === 0 && <Empty>Ничего не нашлось.</Empty>}
           </div>
         </>
-      )}
-      {open && (
-        <Sheet onClose={() => setOpen(null)}>
-          <ItemText item={open} />
-          {open.count > 1 && <p className="sheet-note">В сумке: {open.count} шт.</p>}
-        </Sheet>
       )}
     </>
   )

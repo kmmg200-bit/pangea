@@ -227,6 +227,28 @@ object MiniAppViewSpec extends ZIOSpecDefault {
       )
     },
 
+    test("куда переложить: в открытые хранилища, которые берут такую вещь; сюжетное — никуда; вскрытая бочка — вне игры") {
+      import pangea.model.artifact.{Artifact, ArtifactKind}
+      import pangea.model.barrel.{BarrelThieves, StolenGoods}
+      import pangea.model.inventory.Inventory.Items
+      val hero  = TestFixtures.hero(UserId(1L))
+      val quest = sword.copy(id = 77L, itemType = ItemType.QuestItem)
+      val arts  = HeroArtifacts.empty(hero.id).copy(casket = Artifact(ArtifactKind.Casket, 1, 0, Items(List(ruby(9L)))))
+      val vault = BankVault(1L, hero.id, 1, Items(Nil), 0L)
+      val stores = MiniAppView.Stores(arts, Barrel.empty(hero.id), vault, HomeData.empty)
+      val view  = MiniAppView.inventory(hero, inv(hero, List(sword, ruby(5L), quest)), stores, content, _.name, 0L)
+      def to(from: String, id: Long) = view.moves.find(m => m.from == from && m.item == id).map(_.to)
+      val robbed = stores.copy(barrel = Barrel.empty(hero.id).copy(thieves = Some(BarrelThieves(0L, Some(StolenGoods(Nil, 0L))))))
+      val noBarrel = MiniAppView.inventory(hero, inv(hero, List(sword)), robbed, content, _.name, 0L)
+      assertTrue(
+        to("bag", sword.id).contains(List("barrel", "vault")),
+        to("bag", 5L).contains(List("casket", "barrel", "vault")),
+        to("bag", 77L).isEmpty,
+        to("casket", 9L).contains(List("bag", "barrel", "vault")),
+        noBarrel.moves.flatMap(_.to).forall(_ != "barrel")
+      )
+    },
+
     test("пояс в снаряжении — по ячейкам: сколько из скольких, пустая помнит, чем была") {
       val belt = Item(30L, "Пояс", 1L, Rarity.Blue, ItemType.Belt,
         attack = 0, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0,

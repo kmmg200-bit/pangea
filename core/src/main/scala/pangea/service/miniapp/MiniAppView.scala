@@ -16,6 +16,7 @@ import pangea.model.top.{TopBoard, TopKind}
 import pangea.service.chat.Links
 import pangea.service.cube.AzatCube
 import pangea.service.state.QuestJournal
+import pangea.service.storage.ItemStore.Place
 import pangea.service.state.states.{EquipmentState, InventoryState}
 import pangea.service.state.states.hero.SkillsState
 import pangea.service.state.states.home.{RuneAltarState, TrophyWallState}
@@ -103,6 +104,11 @@ object MiniAppView {
     * до имён его нет) и раса — для подписи над куклой снаряжения. */
   final case class HeroView(lvl: Long, silver: Long, doubloons: Long, name: Option[String], race: String)
 
+  /** Куда можно переложить вещь `item` (у стопки — та же, что в списке) из
+    * хранилища `from` (`bag` — сумка): открытые хранилища, которые берут
+    * такую вещь. Есть ли там место, скажет бот. */
+  final case class MoveView(from: String, item: Long, to: List[String])
+
   /** Вещи героя. `gearLocked` — почему снаряжение сейчас не сменить: герой
     * в бою; `storesAway` — почему не переложить вещи и не надеть стойку:
     * герой не в городе. */
@@ -114,7 +120,8 @@ object MiniAppView {
     equipment:  List[SlotView],
     storages:   List[StorageView],
     gearLocked: Option[String],
-    storesAway: Option[String]
+    storesAway: Option[String],
+    moves:      List[MoveView]
   )
 
   /** Ответ на «надеть» или «снять»: вещи после этого и что сказать. */
@@ -299,6 +306,7 @@ object MiniAppView {
   implicit val sectionEncoder:   Encoder[SectionView]   = deriveEncoder
   implicit val countEncoder:     Encoder[CountView]     = deriveEncoder
   implicit val storageEncoder:   Encoder[StorageView]   = deriveEncoder
+  implicit val moveEncoder:      Encoder[MoveView]      = deriveEncoder
   implicit val heroEncoder:      Encoder[HeroView]      = deriveEncoder
   implicit val inventoryEncoder: Encoder[InventoryView] = deriveEncoder
   implicit val inventoryActionEncoder: Encoder[InventoryActionView] = deriveEncoder
@@ -338,6 +346,7 @@ object MiniAppView {
   def inventory(h: Hero, inv: Inventory, stores: Stores, content: SceneContent, describe: Item => String,
                 now: Long): InventoryView = {
     val before = h.card(now)
+    val views  = storages(stores, content, describe)
     InventoryView(
       hero      = hero(h),
       capacity  = inv.maxItems,
@@ -355,10 +364,32 @@ object MiniAppView {
                       candidates = candidates(h, before, slot, inv.items.data, describe, now)
                     )
                   },
-      storages  = storages(stores, content, describe),
+      storages  = views,
       gearLocked = Option.when(MiniApp.inBattle(h))(content.text("miniapp.equipment.inBattle")),
-      storesAway = Option.unless(MiniApp.inCity(h))(content.text("miniapp.storages.away"))
+      storesAway = Option.unless(MiniApp.inCity(h))(content.text("miniapp.storages.away")),
+      moves      = moves(inv, stores, views)
     )
+  }
+
+  /** Что где лежит и куда его можно переложить: в открытые хранилища, которые
+    * берут такую вещь ([[ItemStore.Place.accepts]]). Вскрытая ворами бочка не
+    * отдаёт и не берёт ничего. Стопка — одной строкой, как в списке. */
+  private def moves(inv: Inventory, st: Stores, storages: List[StorageView]): List[MoveView] = {
+    val open = Place.all.filter(p => p == Place.Bag || storages.exists(s => s.id == p.id && s.locked.isEmpty))
+      .filterNot(p => p == Place.Barrel && st.barrel.robbed)
+    def inside(p: Place): List[Item] = p match {
+      case Place.Bag         => inv.items.data
+      case Place.Art(kind)   => st.artifacts.of(kind).items.data
+      case Place.Barrel      => st.barrel.items.data
+      case Place.Vault       => st.vault.items.data
+      case Place.Shelf(kind) => kind.get(st.home)
+    }
+    for {
+      from      <- open
+      (item, _) <- ItemStack.grouped(inside(from))
+      to         = open.filter(p => p != from && p.accepts(item)).map(_.id)
+      if to.nonEmpty
+    } yield MoveView(from.id, item.id, to)
   }
 
   /** Что из сумки встанет в слот ([[EquipmentState.fitting]]) и что изменится,

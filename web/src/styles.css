@@ -1646,3 +1646,38 @@ button.row:active {
 .rack-wear:disabled {
   opacity: 0.5;
 }
+
+/* ── «Переложить» в карточке вещи ── */
+
+.move {
+  margin-top: 16px;
+}
+
+.move-list {
+  display: grid;
+  gap: 6px;
+}
+
+.move-to {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+  text-align: left;
+}
+
+.move-to:disabled {
+  opacity: 0.45;
+}
+
+.move-free {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+}

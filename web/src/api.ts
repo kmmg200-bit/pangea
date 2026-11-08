@@ -62,6 +62,8 @@ export const api = {
   equipWear: (slot: number, item: number) => post<InventoryActionView>(`equipment/wear?slot=${slot}&item=${item}`),
   equipTakeOff: (slot: number) => post<InventoryActionView>(`equipment/take-off?slot=${slot}`),
   rackWear: (n: number) => post<InventoryActionView>(`racks/wear?n=${n}`),
+  storeMove: (from: string, to: string, item: number, all: boolean) =>
+    post<InventoryActionView>(`storages/move?from=${from}&to=${to}&item=${item}&all=${all}`),
   auction: () => get<AuctionView>('auction'),
   auctionBuy: (lot: number) => post<AuctionActionView>(`auction/buy?lot=${lot}`),
   craft: () => get<CraftView>('craft'),

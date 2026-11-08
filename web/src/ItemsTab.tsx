@@ -23,6 +23,56 @@ interface Acts {
   busy: boolean
 }
 
+/** «Переложить» в карточке вещи: хранилища, которые её возьмут, и сколько в
+  * них свободно. Стопку — по одной вещи или всю. Есть ли место, скажет бот. */
+function MovePanel(props: { data: InventoryView; from: string; item: ItemView; acts: Acts | null; onDone: () => void }) {
+  const { data, from, item, acts } = props
+  const [all, setAll] = useState(false)
+  const to = data.moves.find((m) => m.from === from && m.item === item.id)?.to ?? []
+  if (to.length === 0) return null
+  if (!acts) return <p className="sheet-note">{data.storesAway}</p>
+  const place = (id: string) => {
+    if (id === BAG) return { title: 'Сумка', free: data.capacity - data.occupied }
+    const s = data.storages.find((x) => x.id === id)
+    const free = s && s.used !== null && s.capacity !== null ? s.capacity - s.used : null
+    return { title: s?.title ?? id, free }
+  }
+  return (
+    <div className="move">
+      <div className="sub-title">Переложить</div>
+      {item.count > 1 && (
+        <Segment
+          options={[
+            { id: 'one', label: 'Одну' },
+            { id: 'all', label: `Все ${item.count}` },
+          ]}
+          value={all ? 'all' : 'one'}
+          onChange={(v) => setAll(v === 'all')}
+        />
+      )}
+      <div className="move-list">
+        {to.map((id) => {
+          const p = place(id)
+          return (
+            <button
+              key={id}
+              className="move-to"
+              disabled={acts.busy}
+              onClick={() => {
+                acts.run(() => api.storeMove(from, id, item.id, all))
+                props.onDone()
+              }}
+            >
+              <span>{p.title}</span>
+              {p.free !== null && <span className="move-free">свободно {num(Math.max(0, p.free))}</span>}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; acts: Acts | null; away: string | null }) {
   const s = props.storage
   const { acts } = props
@@ -100,13 +150,15 @@ function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; a
 }
 
 /** «Вещи»: при себе, в городе и в доме. Закрытое хранилище видно с замком —
-  * нажал, и написано, как его открыть. Комплект со стойки надевают только в
-  * городе: бот проверит это сам, под тем же замком, что и ходы в чате. Что
-  * сказал бот — всплывает над нижней панелью. */
+  * нажал, и написано, как его открыть. Вещь из любого хранилища — в любое,
+  * которое её возьмёт (из карточки вещи), а комплект со стойки — на героя;
+  * то и другое только в городе: бот проверит это сам, под тем же замком,
+  * что и ходы в чате. Что сказал бот — всплывает над нижней панелью. */
 export function ItemsTab(props: { data: InventoryView; onChange: (v: InventoryView) => void }) {
   const [group, setGroup] = useState<Group>('self')
   const [picked, setPicked] = useState<Record<Group, string>>({ self: BAG, city: '', home: '' })
-  const [open, setOpen] = useState<ItemView | null>(null)
+  // Открытая карточка вещи и откуда вещь: `bag` — сумка, иначе — хранилище.
+  const [open, setOpen] = useState<{ item: ItemView; from: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useToast()
 
@@ -141,14 +193,24 @@ export function ItemsTab(props: { data: InventoryView; onChange: (v: InventoryVi
       <Segment options={groups} value={group} onChange={setGroup} />
       <Chips options={options} value={current} onChange={(id) => setPicked({ ...picked, [group]: id })} />
       {current === BAG && group === 'self' ? (
-        <BagTab data={props.data} />
+        <BagTab data={props.data} onOpen={(item) => setOpen({ item, from: BAG })} />
       ) : storage ? (
-        <Storage storage={storage} onOpen={setOpen} acts={acts} away={props.data.storesAway} />
+        <Storage
+          storage={storage}
+          onOpen={(item) => setOpen({ item, from: storage.id })}
+          acts={acts}
+          away={props.data.storesAway}
+        />
       ) : null}
       {open && (
         <Sheet onClose={() => setOpen(null)}>
-          <ItemText item={open} />
-          {open.count > 1 && <p className="sheet-note">Здесь: {open.count} шт.</p>}
+          <ItemText item={open.item} />
+          {open.item.count > 1 && (
+            <p className="sheet-note">
+              {open.from === BAG ? 'В сумке' : 'Здесь'}: {open.item.count} шт.
+            </p>
+          )}
+          <MovePanel data={props.data} from={open.from} item={open.item} acts={acts} onDone={() => setOpen(null)} />
         </Sheet>
       )}
       {toast}

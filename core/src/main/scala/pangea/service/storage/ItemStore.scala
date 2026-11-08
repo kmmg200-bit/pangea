@@ -55,12 +55,72 @@ object ItemStore {
 
   private def asThrowable(e: Any): Throwable = new Throwable(e.toString)
 
+  /** Хранилище по имени — так его зовёт приложение (`StorageView.id`), — и что
+    * оно берёт: вид вещи, без мест и замков. Сюжетное из сумки не уходит
+    * никуда. */
+  sealed abstract class Place(val id: String) {
+    def accepts(item: Item): Boolean
+  }
+
+  object Place {
+    case object Bag extends Place("bag") {
+      def accepts(item: Item): Boolean = true
+    }
+
+    /** Ларец, Живая сумка или шкаф: что берёт — решает сам артефакт. */
+    final case class Art(kind: ArtifactKind) extends Place(kind match {
+      case ArtifactKind.Casket    => "casket"
+      case ArtifactKind.LivingBag => "livingBag"
+      case ArtifactKind.Wardrobe  => "wardrobe"
+    }) {
+      def accepts(item: Item): Boolean = kind.accepts(item) && !item.isQuestItem
+    }
+
+    case object Barrel extends Place("barrel") {
+      def accepts(item: Item): Boolean = !item.isQuestItem
+    }
+
+    case object Vault extends Place("vault") {
+      def accepts(item: Item): Boolean = !item.isQuestItem
+    }
+
+    final case class Shelf(kind: HomeShelf.Kind) extends Place(kind.id) {
+      def accepts(item: Item): Boolean = kind.accepts(item) && !item.isQuestItem
+    }
+
+    val all: List[Place] = List(Bag, Art(ArtifactKind.Casket), Art(ArtifactKind.LivingBag), Art(ArtifactKind.Wardrobe),
+      Barrel, Vault, Shelf(HomeShelf.Herbs), Shelf(HomeShelf.Brews), Shelf(HomeShelf.Gems))
+
+    def byId(id: String): Option[Place] = all.find(_.id == id)
+  }
+
+  /** Все хранилища героя по имени — для того, кто переносит между любыми
+    * (Mini App). Сумка отказывает одними словами, откуда бы ни несли. */
+  final class All(
+    heroDao:       HeroDao,
+    inventoryRepo: InventoryRepository,
+    artifacts:     ArtifactRepository,
+    barrelRepo:    BarrelRepository,
+    bankRepo:      BankRepository,
+    content:       SceneContent
+  ) {
+    private val bag = new Bag(inventoryRepo, InventoryFeedback.refusalLine(content, _, storage = true))
+
+    def apply(place: Place): ItemStore = place match {
+      case Place.Bag         => bag
+      case Place.Art(kind)   => new Artifact(artifacts, kind, content)
+      case Place.Barrel      => new Barrel(barrelRepo, content)
+      case Place.Vault       => new Vault(bankRepo, content)
+      case Place.Shelf(kind) => new HomeShelf(heroDao, kind, content)
+    }
+  }
+
   /** Сумка. Места не хватило — `refusal`: слова у каждого хранилища свои, как
     * в боте. Пыли и малым рунам мешает только свой предел на вид. */
   final class Bag(inventoryRepo: InventoryRepository, refusal: Item => String) extends ItemStore {
     def items(hero: Hero): Task[List[Item]] = inventoryRepo.get(hero.id).mapError(asThrowable).map(_.items.data)
 
-    def accepts(item: Item): Boolean = true
+    def accepts(item: Item): Boolean = Place.Bag.accepts(item)
 
     def put(hero: Hero, item: Item): Task[Option[String]] =
       inventoryRepo.get(hero.id).mapError(asThrowable).flatMap { inv =>
@@ -86,7 +146,7 @@ object ItemStore {
   final class Artifact(artifacts: ArtifactRepository, kind: ArtifactKind, content: SceneContent) extends ItemStore {
     def items(hero: Hero): Task[List[Item]] = artifacts.get(hero.id).mapError(asThrowable).map(_.of(kind).items.data)
 
-    def accepts(item: Item): Boolean = kind.accepts(item) && !item.isQuestItem
+    def accepts(item: Item): Boolean = Place.Art(kind).accepts(item)
 
     def put(hero: Hero, item: Item): Task[Option[String]] =
       artifacts.put(hero.id, kind, item).either.flatMap {
@@ -109,7 +169,7 @@ object ItemStore {
   final class Barrel(barrelRepo: BarrelRepository, content: SceneContent) extends ItemStore {
     def items(hero: Hero): Task[List[Item]] = barrelRepo.get(hero.id).mapError(asThrowable).map(_.items.data)
 
-    def accepts(item: Item): Boolean = !item.isQuestItem
+    def accepts(item: Item): Boolean = Place.Barrel.accepts(item)
 
     def put(hero: Hero, item: Item): Task[Option[String]] =
       barrelRepo.deposit(hero.id, item).either.flatMap {
@@ -132,7 +192,7 @@ object ItemStore {
   final class Vault(bankRepo: BankRepository, content: SceneContent) extends ItemStore {
     def items(hero: Hero): Task[List[Item]] = bankRepo.get(hero.id).mapError(asThrowable).map(_.items.data)
 
-    def accepts(item: Item): Boolean = !item.isQuestItem
+    def accepts(item: Item): Boolean = Place.Vault.accepts(item)
 
     def put(hero: Hero, item: Item): Task[Option[String]] =
       bankRepo.deposit(hero.id, item).either.flatMap {
@@ -161,7 +221,7 @@ object ItemStore {
   ) extends ItemStore {
     def items(hero: Hero): Task[List[Item]] = load(hero).map(shelf.get)
 
-    def accepts(item: Item): Boolean = shelf.accepts(item) && !item.isQuestItem
+    def accepts(item: Item): Boolean = Place.Shelf(shelf).accepts(item)
 
     def put(hero: Hero, item: Item): Task[Option[String]] =
       load(hero).flatMap { home =>
@@ -190,7 +250,10 @@ object ItemStore {
   object HomeShelf {
 
     /** Какая полка: что на ней лежит, сколько мест и в каком доме она есть. */
-    sealed abstract class Kind(val missingKey: String, val fullKey: String) {
+    sealed abstract class Kind(val id: String) {
+      def missingKey: String = s"miniapp.storages.$id.locked"
+      def fullKey: String    = s"miniapp.storages.$id.full"
+
       def get(home: HomeData): List[Item]
       def set(home: HomeData, items: List[Item]): HomeData
       def room(home: HomeData): Int
@@ -199,7 +262,7 @@ object ItemStore {
     }
 
     /** Полки трав на верстаке травника — в доме со второго. */
-    case object Herbs extends Kind("miniapp.storages.herbs.locked", "miniapp.storages.herbs.full") {
+    case object Herbs extends Kind("herbs") {
       def get(home: HomeData): List[Item]                   = home.herbs
       def set(home: HomeData, items: List[Item]): HomeData = home.copy(herbs = items)
       def room(home: HomeData): Int                         = home.herbShelves
@@ -208,7 +271,7 @@ object ItemStore {
     }
 
     /** Полка отваров на том же верстаке. */
-    case object Brews extends Kind("miniapp.storages.brews.locked", "miniapp.storages.brews.full") {
+    case object Brews extends Kind("brews") {
       def get(home: HomeData): List[Item]                   = home.brews
       def set(home: HomeData, items: List[Item]): HomeData = home.copy(brews = items)
       def room(home: HomeData): Int                         = home.brewShelves
@@ -217,7 +280,7 @@ object ItemStore {
     }
 
     /** Хранилище камней — только в доме на парящем острове. */
-    case object Gems extends Kind("miniapp.storages.gems.locked", "miniapp.storages.gems.full") {
+    case object Gems extends Kind("gems") {
       def get(home: HomeData): List[Item]                   = home.gems
       def set(home: HomeData, items: List[Item]): HomeData = home.copy(gems = items)
       def room(home: HomeData): Int                         = home.gemShelves

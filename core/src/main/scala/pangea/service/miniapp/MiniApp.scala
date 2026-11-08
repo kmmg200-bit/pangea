@@ -16,8 +16,10 @@ import pangea.model.item.Item
 import pangea.model.state.StateType
 import pangea.model.top.{TopBoard, TopKind}
 import pangea.model.user.User
+import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.auction.AuctionRepository
 import pangea.repository.bank.BankRepository
+import pangea.repository.barrel.BarrelRepository
 import pangea.repository.hero.HeroRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
@@ -29,7 +31,9 @@ import pangea.service.miniapp.MiniAppView.{AuctionActionView, AuctionView, Chara
   InventoryActionView, InventoryView, QuestsView, SquadActionView, SquadView, TopView}
 import pangea.service.payout.Payouts
 import pangea.service.squad.SquadOrders
-import pangea.service.state.{AzatData, HerbLore, NpcQuestLog, PlayerLock, QuestJournal, SquadDuty}
+import pangea.service.storage.ItemStore
+import pangea.service.storage.ItemStore.Place
+import pangea.service.state.{AzatData, BarrelRobbery, HerbLore, NpcQuestLog, PlayerLock, QuestJournal, SquadDuty, StackMove}
 import pangea.service.state.states.{EquipmentState, InventoryState}
 import pangea.service.state.states.home.Racks
 import zio.{Ref, Task, ZIO, ZLayer}
@@ -76,6 +80,11 @@ trait MiniApp {
   /** Надеть комплект со стойки №`n` — обменяться с ней надетым, как кнопкой
     * стойки дома. Только в городе. */
   def rack(hero: Hero, n: Int): Task[InventoryActionView]
+
+  /** Переложить вещь `itemId` из хранилища `from` в `to` (имена — как у
+    * [[MiniAppView.StorageView]], сумка — `bag`); `all` — всю её стопку.
+    * Только в городе. */
+  def move(hero: Hero, from: String, to: String, itemId: Long, all: Boolean): Task[InventoryActionView]
 
   /** «Крафт»: куб Азата и сумка, из которой в него кладут. */
   def craft(hero: Hero): Task[CraftView]
@@ -160,7 +169,8 @@ object MiniApp {
 
   val live: ZLayer[MiniAppConfig with UserRepository with HeroRepository with InventoryRepository with AuctionRepository
                      with HeroDao with ArtifactDao with BarrelDao with BankVaultDao with TopDao
-                     with ItemRepository with BankRepository with Payouts with Players with PlayerLock
+                     with ItemRepository with BankRepository with ArtifactRepository with BarrelRepository
+                     with Payouts with Players with PlayerLock
                      with SceneContent, Nothing, MiniApp] =
     ZLayer {
       for {
@@ -176,6 +186,8 @@ object MiniApp {
         tops        <- ZIO.service[TopDao]
         items       <- ZIO.service[ItemRepository]
         bank        <- ZIO.service[BankRepository]
+        artifactRepo <- ZIO.service[ArtifactRepository]
+        barrelRepo  <- ZIO.service[BarrelRepository]
         payouts     <- ZIO.service[Payouts]
         players     <- ZIO.service[Players]
         lock        <- ZIO.service[PlayerLock]
@@ -184,7 +196,9 @@ object MiniApp {
       } yield new MiniAppLive(config, users, heroes, inventories, lots, heroDao, artifacts, barrels, vaults, content,
         tops, topCache, new AzatCube(heroDao, inventories, items, content),
         new AuctionPurchase(heroDao, inventories, lots, users, bank, payouts, players, content),
-        new Outfit(heroDao, inventories, items, content), new SquadOrders(heroDao, content), lock)
+        new Outfit(heroDao, inventories, items, content), new SquadOrders(heroDao, content),
+        new ItemStore.All(heroDao, inventories, artifactRepo, barrelRepo, bank, content),
+        new BarrelRobbery(heroDao, barrelRepo, items, content), lock)
     }
 }
 
@@ -205,6 +219,8 @@ final class MiniAppLive(
   purchase:    AuctionPurchase,
   outfit:      Outfit,
   orders:      SquadOrders,
+  places:      ItemStore.All,
+  robbery:     BarrelRobbery,
   lock:        PlayerLock
 ) extends MiniApp {
   import MiniApp.{CubeAct, Denied, GearAct, Outcome, SquadAct}
@@ -363,7 +379,7 @@ final class MiniAppLive(
   /** Проверки и слова — у [[Racks]], как у кнопки стойки дома: что не так
     * (не по уровню, сумка не вместит), а вышло — что поменялись. */
   override def rack(hero: Hero, n: Int): Task[InventoryActionView] =
-    inCityAct(hero) { (user, say) =>
+    inCityAct(hero) { (user, _, say) =>
       racks.swap(user, n, say).flatMap {
         case Left(why) => say.show(user, Screen(why, Nil))
         case Right(_)  => say.show(user, Screen(content.format("home.rack.swapped", "n" -> n.toString), Nil))
@@ -372,10 +388,50 @@ final class MiniAppLive(
 
   private val racks = Racks(heroDao, inventories, content)
 
+  /** Перенос — общим [[ItemStore.move]], слова отказов — те же, что у экранов
+    * бота. Стопка — по одной, пока принимает новое место ([[StackMove]]). */
+  override def move(hero: Hero, from: String, to: String, itemId: Long, all: Boolean): Task[InventoryActionView] =
+    inCityAct(hero) { (user, fresh, say) =>
+      def tell(text: String) = say.show(user, Screen(text, Nil))
+      val gone = content.text("stack.gone")
+      (Place.byId(from), Place.byId(to)) match {
+        case (Some(src), Some(dst)) if src != dst =>
+          barrelGuard(user, fresh, src, dst).flatMap {
+            case Some(why) => tell(why)
+            case None =>
+              val (source, target) = (places(src), places(dst))
+              val where            = content.text(s"miniapp.storages.${dst.id}.title")
+              source.items(fresh).flatMap { items =>
+                items.find(_.id == itemId) match {
+                  case None => tell(gone)
+                  case Some(item) if !target.accepts(item) =>
+                    tell(content.format("miniapp.storages.wrongPlace", "name" -> item.displayTitle, "to" -> where))
+                  case Some(item) if all =>
+                    StackMove.run(StackMove.stack(items, item))(ItemStore.move(source, target, fresh, _, gone))
+                      .flatMap(moved => tell(StackMove.summary(content, moved, "miniapp.storages.movedAll", "to" -> where)))
+                  case Some(item) =>
+                    ItemStore.move(source, target, fresh, item, gone).flatMap(why =>
+                      tell(why.getOrElse(content.format("miniapp.storages.moved", "name" -> item.displayTitle, "to" -> where))))
+                }
+              }
+          }
+        case _ => tell(gone)
+      }
+    }
+
+  /** Бочку вскрыли воры — ни класть, ни брать. Первое за сутки дело с ней —
+    * жребий, как при открытии бочки в боте ([[BarrelRobbery]]). */
+  private def barrelGuard(user: User, hero: Hero, src: Place, dst: Place): Task[Option[String]] =
+    if (src != Place.Barrel && dst != Place.Barrel) ZIO.none
+    else barrels.find(hero.id).flatMap {
+      case Some(b) if b.robbed => ZIO.some(content.text("miniapp.storages.barrel.robbed"))
+      case _ => robbery.roll(user, hero).map(now => Option.when(now)(BarrelRobbery.text(content, hero, robbedNow = true)))
+    }
+
   /** Действие с хранилищами: под локом игрока, героя перечитываем уже под
     * ним; не в городе — ничего не трогаем, говорим почему. Что сказал бот,
     * собирается в заметку, а ответ — вещи после действия. */
-  private def inCityAct(hero: Hero)(act: (User, Renderer) => Task[Unit]): Task[InventoryActionView] =
+  private def inCityAct(hero: Hero)(act: (User, Hero, Renderer) => Task[Unit]): Task[InventoryActionView] =
     lock.withLock(hero.userId) {
       for {
         fresh <- heroes.getHero(hero.userId).someOrFail(new Throwable(s"Нет героя у игрока ${hero.userId.value}"))
@@ -383,7 +439,7 @@ final class MiniAppLive(
                  else for {
                    user  <- users.getUserById(fresh.userId).someOrFail(new Throwable(s"Нет игрока ${fresh.userId.value}"))
                    lines <- Ref.make(Vector.empty[String])
-                   _     <- act(user, new MiniApp.Collect(lines))
+                   _     <- act(user, fresh, new MiniApp.Collect(lines))
                    said  <- lines.get
                  } yield said.mkString("\n\n")
       } yield fresh -> note
