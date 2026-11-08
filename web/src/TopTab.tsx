@@ -1,15 +1,26 @@
 import type { TopEntryView, TopKind, TopView } from './types'
-import { Empty, ErrorView, num, Segment, Spinner } from './ui'
+import { Empty, ErrorView, num, plural, Segment, Spinner } from './ui'
 import type { Loaded } from './useLoad'
 
 export const topKinds: { id: TopKind; label: string }[] = [
   { id: 'level', label: 'Уровень' },
   { id: 'depth', label: 'Глубина' },
   { id: 'kills', label: 'Убийства' },
+  { id: 'achievements', label: 'Достижения' },
+  { id: 'alchemy', label: 'Алхимик' },
+  { id: 'recipes', label: 'Рецепты' },
 ]
 
-/** Подпись к числу справа — что топ меряет. */
-const units: Record<TopKind, string> = { level: 'ур.', depth: 'ур. лабиринта', kills: 'убито' }
+/** Подпись к числу справа — что топ меряет. Из достижений и рецептов топ
+  * знает только число: какие они, не показываем нигде. */
+const units: Record<TopKind, (n: number) => string> = {
+  level: () => 'ур.',
+  depth: () => 'ур. лабиринта',
+  kills: () => 'убито',
+  achievements: (n) => plural(n, 'достижение', 'достижения', 'достижений'),
+  alchemy: (n) => plural(n, 'отвар', 'отвара', 'отваров'),
+  recipes: (n) => plural(n, 'рецепт', 'рецепта', 'рецептов'),
+}
 
 function Row(props: { e: TopEntryView; kind: TopKind; pinned?: boolean }) {
   const { e, kind } = props
@@ -35,7 +46,7 @@ function Row(props: { e: TopEntryView; kind: TopKind; pinned?: boolean }) {
       </span>
       <span className="top-value">
         <b>{num(e.value)}</b>
-        <span>{units[kind]}</span>
+        <span>{units[kind](e.value)}</span>
       </span>
     </div>
   )
@@ -66,13 +77,13 @@ function Board(props: { loaded: Loaded<TopView>; kind: TopKind }) {
   )
 }
 
-/** «Топ»: по уровню, глубине лабиринта и убийствам — первые сто и своё место.
-  * Загрузки держит App, как и у прочих вкладок: каждый топ грузится, когда
-  * его впервые открыли. */
+/** «Топ»: по уровню, глубине лабиринта, убийствам, достижениям, сваренным
+  * отварам и книге рецептов — первые сто и своё место. Загрузки держит App,
+  * как и у прочих вкладок: каждый топ грузится, когда его впервые открыли. */
 export function TopTab(props: { kind: TopKind; onKind: (k: TopKind) => void; loaded: Loaded<TopView> }) {
   return (
     <>
-      <Segment options={topKinds} value={props.kind} onChange={props.onKind} />
+      <Segment options={topKinds} value={props.kind} onChange={props.onKind} rows />
       <Board loaded={props.loaded} kind={props.kind} />
     </>
   )

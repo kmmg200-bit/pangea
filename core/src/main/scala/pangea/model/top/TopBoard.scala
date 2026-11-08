@@ -16,30 +16,33 @@ final case class TopRow(
   value:  Long
 )
 
+/** Где герой в топе: место и то, по чему топ считается. */
+final case class TopStanding(place: Long, value: Long)
+
 /** Снимок топа: первые герои и место каждого героя — всё из одного порядка.
   *
   * @param rows   первые герои топа, по порядку
-  * @param places место каждого героя; у того, кого в топе нет (админ), — то,
-  *               которое он занял бы: свой герой ему виден всё равно
+  * @param places место и мерка каждого героя; у того, кого в топе нет (админ),
+  *               — место, которое он занял бы: свой герой ему виден всё равно
   * @param total  сколько героев в топе
   */
-final case class TopBoard(rows: List[TopRow], places: Map[HeroId, Long], total: Long)
+final case class TopBoard(rows: List[TopRow], places: Map[HeroId, TopStanding], total: Long)
 
 object TopBoard {
 
-  /** Снимок из порядка всех героев (номер и в топе ли он) и строк первых
-    * `size` из них. Строки идут порядком `order`; чьей строки нет (героя
-    * успели удалить между запросами), того в первых и нет. */
-  def build(order: Vector[(HeroId, Boolean)], details: List[TopRow], size: Int): TopBoard = {
-    val (places, total) = order.foldLeft((Map.empty[HeroId, Long], 0L)) {
-      case ((acc, ranked), (id, true))  => (acc + (id -> (ranked + 1L)), ranked + 1L)
-      case ((acc, ranked), (id, false)) => (acc + (id -> (ranked + 1L)), ranked)
+  /** Снимок из порядка всех героев (номер, в топе ли он и его мерка) и строк
+    * первых `size` из них. Строки идут порядком `order`; чьей строки нет
+    * (героя успели удалить между запросами), того в первых и нет. */
+  def build(order: Vector[(HeroId, Boolean, Long)], details: List[TopRow], size: Int): TopBoard = {
+    val (places, total) = order.foldLeft((Map.empty[HeroId, TopStanding], 0L)) {
+      case ((acc, ranked), (id, true, value))  => (acc + (id -> TopStanding(ranked + 1L, value)), ranked + 1L)
+      case ((acc, ranked), (id, false, value)) => (acc + (id -> TopStanding(ranked + 1L, value)), ranked)
     }
     val byId = details.map(r => r.heroId -> r).toMap
     TopBoard(firsts(order, size).flatMap(byId.get), places, total)
   }
 
   /** Первые `size` героев топа — чьи строки нужны снимку. */
-  def firsts(order: Vector[(HeroId, Boolean)], size: Int): List[HeroId] =
-    order.iterator.collect { case (id, true) => id }.take(size).toList
+  def firsts(order: Vector[(HeroId, Boolean, Long)], size: Int): List[HeroId] =
+    order.iterator.collect { case (id, true, _) => id }.take(size).toList
 }

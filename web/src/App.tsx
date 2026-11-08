@@ -49,6 +49,9 @@ const topLoaders: Record<TopKind, () => Promise<TopView>> = {
   level: () => api.top('level'),
   depth: () => api.top('depth'),
   kills: () => api.top('kills'),
+  achievements: () => api.top('achievements'),
+  alchemy: () => api.top('alchemy'),
+  recipes: () => api.top('recipes'),
 }
 
 /** Что уже открывали: вкладку, часть «Персонажа» или топ (`top-level`). */
@@ -139,6 +142,9 @@ export function App() {
     level: useLoad(topLoaders.level, seen.has('top-level')),
     depth: useLoad(topLoaders.depth, seen.has('top-depth')),
     kills: useLoad(topLoaders.kills, seen.has('top-kills')),
+    achievements: useLoad(topLoaders.achievements, seen.has('top-achievements')),
+    alchemy: useLoad(topLoaders.alchemy, seen.has('top-alchemy')),
+    recipes: useLoad(topLoaders.recipes, seen.has('top-recipes')),
   }
 
   const heroLoads = { hero: character, equipment: inventory, squad }

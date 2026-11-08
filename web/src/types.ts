@@ -248,7 +248,7 @@ export interface TopEntryView {
   me: boolean
 }
 
-export type TopKind = 'level' | 'depth' | 'kills'
+export type TopKind = 'level' | 'depth' | 'kills' | 'achievements' | 'alchemy' | 'recipes'
 
 /** Топ: первые герои; `me` — строка героя, если он не попал в показанных. */
 export interface TopView {

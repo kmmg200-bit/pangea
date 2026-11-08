@@ -524,8 +524,8 @@ object MiniAppView {
       TopEntryView(i + 1L, row.name.getOrElse(noName), Option.unless(me)(Links.profile(row.vkId.value)),
         row.race.toString, row.lvl, row.value, me)
     }
-    val mine = Option.unless(shown.exists(_.me))(board.places.get(h.id)).flatten.map { place =>
-      TopEntryView(place, h.name.getOrElse(noName), None, h.race.toString, h.lvl, kind.valueOf(h), me = true)
+    val mine = Option.unless(shown.exists(_.me))(board.places.get(h.id)).flatten.map { at =>
+      TopEntryView(at.place, h.name.getOrElse(noName), None, h.race.toString, h.lvl, at.value, me = true)
     }
     TopView(hero = hero(h), kind = kind.entryName, total = board.total, rows = shown, me = mine)
   }

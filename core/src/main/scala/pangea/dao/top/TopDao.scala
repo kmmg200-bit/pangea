@@ -26,8 +26,8 @@ final class TopDaoLive(xa: transactor.Transactor[Task]) extends TopDao {
 
   override def board(kind: TopKind, size: Int): Task[TopBoard] =
     (for {
-      order   <- (fr"select h.id," ++ ranked ++ fr"from heroes h order by" ++ orderBy(kind))
-                   .query[(HeroId, Boolean)].to[Vector]
+      order   <- (fr"select h.id," ++ ranked ++ fr"," ++ valueColumn(kind) ++ fr"from heroes h order by" ++ orderBy(kind))
+                   .query[(HeroId, Boolean, Long)].to[Vector]
       details <- NonEmptyList.fromList(TopBoard.firsts(order, size)) match {
                    case None      => doobie.free.connection.pure(List.empty[TopRow])
                    case Some(ids) =>
@@ -45,12 +45,22 @@ object TopDaoLive {
     fr"(h.state <> ${StateType.Registration: StateType} and not exists" ++
       fr"(select 1 from admins a where a.user_id = h.user_id))"
 
-  /** Чем топ меряет героя. Имена колонок — свои, снаружи не приходят. */
+  /** Чем топ меряет героя. Имена колонок — свои, снаружи не приходят. Из
+    * достижений и книги рецептов берётся только число: что в них, топ не
+    * читает. */
   private def valueColumn(kind: TopKind): Fragment = kind match {
-    case TopKind.Level => fr"h.lvl"
-    case TopKind.Depth => fr"h.max_dungeon_level"
-    case TopKind.Kills => fr"h.kills"
+    case TopKind.Level        => fr"h.lvl"
+    case TopKind.Depth        => fr"h.max_dungeon_level"
+    case TopKind.Kills        => fr"h.kills"
+    // Имена через запятую; пустая строка — ни одного.
+    case TopKind.Achievements => fr"coalesce(cardinality(string_to_array(nullif(h.achievements, ''), ',')), 0)"
+    case TopKind.Alchemy      => jsonCount(fr"h.lore_data -> 'brewed'")
+    case TopKind.Recipes      => jsonCount(fr"h.home_data -> 'recipes'")
   }
+
+  /** Сколько в JSON-списке записей; нет списка (старая запись, дома нет) — ноль. */
+  private def jsonCount(list: Fragment): Fragment =
+    fr"(case when jsonb_typeof(" ++ list ++ fr") = 'array' then jsonb_array_length(" ++ list ++ fr") else 0 end)"
 
   /** Порядок топа: по мерке, затем уровень и опыт, затем кто раньше начал. */
   private def orderBy(kind: TopKind): Fragment = kind match {

@@ -13,7 +13,7 @@ import pangea.model.monster.Race
 import pangea.model.squad.{Ally, AllyKind, Squad}
 import pangea.model.trauma.Trauma
 import pangea.model.user.{UserId, VkId}
-import pangea.model.top.{TopBoard, TopKind, TopRow}
+import pangea.model.top.{TopBoard, TopKind, TopRow, TopStanding}
 import pangea.service.state.QuestJournal
 import pangea.service.state.states.EquipmentState
 import pangea.test.TestFixtures
@@ -242,14 +242,16 @@ object MiniAppViewSpec extends ZIOSpecDefault {
       )
     },
 
-    test("топ: места по порядку, свой герой помечен и без ссылки; вне показанных — отдельной строкой") {
-      val hero = TestFixtures.hero(UserId(1L)).copy(id = HeroId(7L), name = None, kills = 40L)
+    test("топ: места по порядку, свой герой помечен и без ссылки; вне показанных — отдельной строкой со своим числом") {
+      val hero = TestFixtures.hero(UserId(1L)).copy(id = HeroId(7L), name = None)
       def row(id: Long, lvl: Long, name: Option[String] = None) =
         TopRow(HeroId(id), UserId(id), VkId(s"10$id"), name, Race.Orc, lvl, lvl)
       val inTop = MiniAppView.top(hero, TopKind.Level,
-                    TopBoard(List(row(3L, 20L, Some("Грох")), row(7L, 12L)), Map(HeroId(7L) -> 2L), 5L), "Безымянный")
-      val outside = MiniAppView.top(hero, TopKind.Kills,
-                      TopBoard(List(row(3L, 20L, Some("Грох"))), Map(HeroId(7L) -> 4L), 5L), "Безымянный")
+                    TopBoard(List(row(3L, 20L, Some("Грох")), row(7L, 12L)), Map(HeroId(7L) -> TopStanding(2L, 12L)), 5L),
+                    "Безымянный")
+      // Число — из снимка топа: книги рецептов у героя под рукой нет.
+      val outside = MiniAppView.top(hero, TopKind.Recipes,
+                      TopBoard(List(row(3L, 20L, Some("Грох"))), Map(HeroId(7L) -> TopStanding(4L, 40L)), 5L), "Безымянный")
       assertTrue(
         inTop.rows.map(r => r.place -> r.me) == List(1L -> false, 2L -> true),
         inTop.rows.map(_.name) == List("Грох", "Безымянный"),

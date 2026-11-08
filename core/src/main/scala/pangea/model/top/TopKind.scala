@@ -1,15 +1,12 @@
 package pangea.model.top
 
 import enumeratum._
-import pangea.model.hero.Hero
 
 /** Какие бывают топы в Mini App. `entryName` — ключ в запросе приложения
-  * (`/api/app/top?kind=…`); в базе не хранится. */
-sealed trait TopKind extends EnumEntry {
-
-  /** Чем этот топ меряет героя — то же, что колонка в [[pangea.dao.top.TopDao]]. */
-  def valueOf(hero: Hero): Long
-}
+  * (`/api/app/top?kind=…`); в базе не хранится. Чем каждый топ меряет героя,
+  * считает [[pangea.dao.top.TopDao]]: топы по достижениям и рецептам видят
+  * только число, а не то, что за ним. */
+sealed trait TopKind extends EnumEntry
 
 object TopKind extends Enum[TopKind] {
   val values: IndexedSeq[TopKind] = findValues
@@ -17,18 +14,32 @@ object TopKind extends Enum[TopKind] {
   /** По уровню, внутри уровня — по опыту. */
   case object Level extends TopKind {
     override val entryName: String = "level"
-    def valueOf(hero: Hero): Long  = hero.lvl
   }
 
   /** По самому глубокому достигнутому уровню лабиринта. */
   case object Depth extends TopKind {
     override val entryName: String = "depth"
-    def valueOf(hero: Hero): Long  = hero.maxDungeonLevel.toLong
   }
 
   /** По тому, сколько врагов герой убил за всю жизнь. */
   case object Kills extends TopKind {
     override val entryName: String = "kills"
-    def valueOf(hero: Hero): Long  = hero.kills
+  }
+
+  /** По тому, сколько у героя достижений. */
+  case object Achievements extends TopKind {
+    override val entryName: String = "achievements"
+  }
+
+  /** Алхимик: сколько разных отваров герой сварил — в котелке, в кубе Азата
+    * или в Живой сумке. */
+  case object Alchemy extends TopKind {
+    override val entryName: String = "alchemy"
+  }
+
+  /** По записям в книге рецептов библиотеки — что получалось в кубе Азата на
+    * верстаке ремесленника. */
+  case object Recipes extends TopKind {
+    override val entryName: String = "recipes"
   }
 }

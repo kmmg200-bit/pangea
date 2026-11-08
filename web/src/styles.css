@@ -252,6 +252,11 @@ button {
   background: var(--surface-2);
 }
 
+.segment-rows {
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-flow: row;
+}
+
 .segment-item {
   padding: 7px 4px;
   border: 0;

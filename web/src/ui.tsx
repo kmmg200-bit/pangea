@@ -23,9 +23,11 @@ export function Segment<T extends string>(props: {
   options: { id: T; label: string }[]
   value: T
   onChange: (id: T) => void
+  /** Кнопок много — по три в строку, а не все в одну. */
+  rows?: boolean
 }) {
   return (
-    <div className="segment" role="tablist">
+    <div className={props.rows ? 'segment segment-rows' : 'segment'} role="tablist">
       {props.options.map((o) => (
         <button
           key={o.id}
@@ -54,6 +56,16 @@ export function Tile(props: { icon: GameIcon; rarity?: string }) {
 export const ItemTile = (props: { item: ItemView }) => <Tile icon={iconOf(props.item)} rarity={props.item.rarity} />
 
 export const num = (n: number) => n.toLocaleString('ru-RU')
+
+/** Слово к числу: «1 рецепт», «3 рецепта», «7 рецептов». */
+export function plural(n: number, one: string, few: string, many: string): string {
+  const tens = Math.abs(n) % 100
+  const last = tens % 10
+  if (tens >= 11 && tens <= 14) return many
+  if (last === 1) return one
+  if (last >= 2 && last <= 4) return few
+  return many
+}
 
 /** Полоска запаса: что это, сколько из скольких и заполненность. */
 export function Meter(props: { icon: string; label: string; pool: PoolView; tone: string }) {
