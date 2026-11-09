@@ -2,7 +2,7 @@ package pangea.service.state.states.hero
 
 import pangea.engine.SceneContent
 import pangea.model.hero.Hero
-import pangea.model.squad.{AllyKind, AllyRates, Squad, UndeadForm}
+import pangea.model.squad.{Ally, AllyKind, AllyRates, Squad, UndeadForm}
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.state.UserAction
@@ -104,7 +104,7 @@ object SquadStateSpec extends ZIOSpecDefault {
       } yield assertTrue(withT && !without)
     },
 
-    test("enter → строй по позициям: герой, союзники, пустое место; кнопки — герой и союзники по порядку и «Назад»") {
+    test("enter → строй по позициям: герой, союзники, пустое место; кнопки — герой и союзники по порядку, «Резерв» и «Назад»") {
       for {
         t <- makeState(baseHero)
         (state, _, renderer) = t
@@ -114,7 +114,10 @@ object SquadStateSpec extends ZIOSpecDefault {
               assertTrue(scr.text.contains("2. Йорген Кремень — ❤ 625/625  🧥 750/750")) &&
               assertTrue(scr.text.contains("3. Брамбл Медноус — ❤ 560/560  🧥 1225/1225")) &&
               assertTrue(scr.text.contains("4. — пусто —")) &&
-              assertTrue(scr.choices.map(_.label) == List("👤 Вы", "Йорген Кремень", "Брамбл Медноус", "↩ Назад")) &&
+              assertTrue(scr.choices.map(_.label) ==
+                List("👤 Вы", "Йорген Кремень", "Брамбл Медноус", "Резерв (0/10)", "↩ Назад")) &&
+              // «Резерв» — в последнем ряду, рядом с «Назад»
+              assertTrue(scr.choices.takeRight(2).map(_.row).distinct.size == 1) &&
               assertTrue(scr.choices.forall(_.label.length <= pangea.engine.Choice.MaxLabelLength))
     },
 
@@ -175,7 +178,7 @@ object SquadStateSpec extends ZIOSpecDefault {
               assertTrue(h2.squad.heroPos == 3 && h2.squad.allyAt(10).exists(_.kind == AllyKind.Gnome)) &&
               assertTrue(said.contains("Вы теперь на позиции 10.") && said.contains("Вы теперь на позиции 3.")) &&
               // в строю кнопки по порядку мест: Йорген на 2, герой на 3, Брамбл на 10
-              assertTrue(list.choices.map(_.label) == List("Йорген Кремень", "👤 Вы", "Брамбл Медноус", "↩ Назад"))
+              assertTrue(list.choices.map(_.label) == List("Йорген Кремень", "👤 Вы", "Брамбл Медноус", "Резерв (0/10)", "↩ Назад"))
     },
 
     test("увольнение — с подтверждением; «Нет» оставляет, «Да» убирает и сохраняет") {
@@ -194,6 +197,91 @@ object SquadStateSpec extends ZIOSpecDefault {
               assertTrue(kept.squad.has(AllyKind.Human)) &&
               assertTrue(!gone.squad.has(AllyKind.Human) && gone.squad.has(AllyKind.Gnome)) &&
               assertTrue(back == StateType.HeroStats)
+    },
+
+    test("резерв: пустой — с объяснением; из карточки союзник уходит туда и стоит в списке, «Отряд» в профиле не пропадает") {
+      for {
+        t <- makeState(baseHero)
+        (state, dao, renderer) = t
+        _     <- state.action(testUser, tap("SquadReserve"), renderer)
+        empty <- renderer.sentScreens.map(_.last)
+        _     <- state.action(testUser, pick("SquadAlly", 2), renderer)
+        card  <- renderer.sentScreens.map(_.last)
+        _     <- state.action(testUser, pick("SquadToReserve", 2), renderer)
+        _     <- state.action(testUser, pick("SquadToReserve", 3), renderer)
+        said  <- renderer.sentScreens.map(_.map(_.text).mkString("\n"))
+        hero  <- dao.getHeroByUserId(userId).map(_.get)
+        _     <- state.action(testUser, tap("SquadReserve"), renderer)
+        list  <- renderer.sentScreens.map(_.last)
+        // в строю никого, а в резерве двое — «Отряд» в профиле на месте
+        stats <- (for {
+                   r2      <- TestRenderer.make
+                   content <- ZIO.attempt(SceneContent.load())
+                   _       <- HeroStatsState(dao, content).enter(testUser, r2)
+                   scr     <- r2.sentScreens
+                 } yield scr.last.choices.exists(_.id == "OpenSquad"))
+      } yield assertTrue(empty.text.startsWith("Резерв пуст.") && empty.choices.map(_.id) == List("SquadList")) &&
+              // «В резерв» — в одном ряду с «Выгнать»
+              assertTrue(card.choices.filter(_.row == card.choices.find(_.id == "SquadDismiss").flatMap(_.row))
+                .map(_.id) == List("SquadToReserve", "SquadDismiss")) &&
+              assertTrue(said.contains("Йорген Кремень уходит в резерв.") && said.contains("Брамбл Медноус уходит в резерв.")) &&
+              assertTrue(hero.squad.allies.isEmpty && hero.squad.reserve.map(_.kind) == List(AllyKind.Human, AllyKind.Gnome)) &&
+              assertTrue(list.text.startsWith("Резерв — 2 из 10.") && list.text.contains("1. Йорген Кремень — ❤ 625/625")) &&
+              assertTrue(list.choices.map(_.id) == List("SquadReserveAlly", "SquadReserveAlly", "SquadList")) &&
+              assertTrue(list.choices.headOption.exists(c => c.data == Map("r" -> "0", "who" -> "Йорген Кремень"))) &&
+              assertTrue(stats)
+    },
+
+    test("из резерва — в строй: на свободное место; мест нет — спрашивают, кого отправить взамен, и меняют") {
+      val orc     = UndeadForm("Поднятый орк", 3L, AllyKind.Human.stats(3L))
+      val waiting = baseHero.copy(squad = baseHero.squad.copy(reserve = List(
+        Ally(AllyKind.Undead, 0, 100L, 0L, 0L, hiredUntil = Long.MaxValue, undead = Some(orc)))))
+      // тот же резерв, а строй полон: Йорген, Брамбл и восемь поднятых
+      val crowded = waiting.copy(squad = (4 to AllyRates.Positions).foldLeft(waiting.squad)((s, p) =>
+        s.copy(allies = s.allies :+ Ally(AllyKind.Undead, p, 1L, 0L, 0L, hiredUntil = Long.MaxValue,
+          undead = Some(orc.copy(name = s"Поднятый $p"))))))
+      def card(at: Int) = pick("SquadSwapIn", at, "r" -> "0", "who" -> "Поднятый орк")
+      for {
+        t1 <- makeState(waiting)
+        (s1, d1, r1) = t1
+        _    <- s1.action(testUser, UserAction("", Some("""{"action":"SquadDeploy","r":"0","who":"Поднятый орк"}""")), r1)
+        free <- d1.getHeroByUserId(userId).map(_.get)
+        said <- r1.sentScreens.map(_.map(_.text).mkString("\n"))
+        t2 <- makeState(crowded)
+        (s2, d2, r2) = t2
+        _    <- s2.action(testUser, UserAction("", Some("""{"action":"SquadDeploy","r":"0","who":"Поднятый орк"}""")), r2)
+        ask  <- r2.sentScreens.map(_.last)
+        _    <- s2.action(testUser, card(2), r2)
+        swap <- d2.getHeroByUserId(userId).map(_.get)
+        told <- r2.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(free.squad.allyAt(4).exists(_.name == "Поднятый орк") && free.squad.reserve.isEmpty) &&
+              assertTrue(said.contains("Поднятый орк встаёт в строй на позицию 4.")) &&
+              assertTrue(ask.text.startsWith("В строю нет мест.") && ask.choices.count(_.id == "SquadSwapIn") == 10) &&
+              assertTrue(ask.choices.lastOption.exists(_.id == "SquadReserveAlly")) &&
+              // Йорген уходит в резерв, орк встаёт на его место
+              assertTrue(swap.squad.allyAt(2).exists(_.name == "Поднятый орк") &&
+                         swap.squad.reserve.map(_.kind) == List(AllyKind.Human)) &&
+              assertTrue(told.contains("Йорген Кремень уходит в резерв, а Поднятый орк встаёт на позицию 2."))
+    },
+
+    test("выгнать из резерва — с подтверждением; сдвинулся список — кнопка ни о чём") {
+      val reserved = baseHero.copy(squad = baseHero.squad.toReserve(2))
+      def act(key: String, who: String) =
+        UserAction("", Some(s"""{"action":"$key","r":"0","who":"$who"}"""))
+      for {
+        t <- makeState(reserved)
+        (state, dao, renderer) = t
+        _     <- state.action(testUser, act("SquadReserveDismiss", "Йорген Кремень"), renderer)
+        ask   <- renderer.sentScreens.map(_.last)
+        // кнопка с чужим именем на этом месте — ничего не трогаем
+        _     <- state.action(testUser, act("SquadReserveDismissDo", "Брамбл Медноус"), renderer)
+        kept  <- dao.getHeroByUserId(userId).map(_.get)
+        _     <- state.action(testUser, act("SquadReserveDismissDo", "Йорген Кремень"), renderer)
+        gone  <- dao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(ask.text.contains("Выгнать Йорген Кремень из отряда?")) &&
+              assertTrue(ask.choices.map(_.id) == List("SquadReserveDismissDo", "SquadReserveAlly")) &&
+              assertTrue(kept.squad.reserve.map(_.kind) == List(AllyKind.Human)) &&
+              assertTrue(gone.squad.reserve.isEmpty && !gone.squad.has(AllyKind.Human) && gone.squad.has(AllyKind.Gnome))
     }
   )
 }

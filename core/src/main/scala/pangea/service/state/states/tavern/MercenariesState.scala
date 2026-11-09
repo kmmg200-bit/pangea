@@ -124,8 +124,9 @@ case class MercenariesState(
         content.choice("MercList", "mercenaries.toList").copy(row = Some(1)))))
     }
 
-  /** Найм: место в отряде, плата, и наёмник встаёт на первую свободную позицию.
-    * Брамбл, пока дружина ждёт, идёт даром — и отдых его не держит. */
+  /** Найм: место в отряде, плата, и наёмник встаёт на первую свободную позицию
+    * строя, а мест там нет — в резерв. Брамбл, пока дружина ждёт, идёт даром —
+    * и отдых его не держит. */
   private def hire(user: User, kind: AllyKind, renderer: Renderer): Task[Unit] =
     for {
       now    <- nowMs
@@ -135,18 +136,25 @@ case class MercenariesState(
       free    = called && kind == AllyKind.Gnome
       _      <-
         if (!available(hero.squad, now, called).contains(kind)) showList(user, renderer)
-        else if (hero.squad.freePosition.isEmpty)
+        else if (!hero.squad.canTake)
           renderer.show(user, Screen(content.text("mercenaries.squadFull"), Nil)) *> showCard(user, kind, renderer)
         else (if (free) ZIO.none else pay(user, hero, kind, quests)).flatMap {
           case Some(refusal) => renderer.show(user, Screen(refusal, Nil)) *> showCard(user, kind, renderer)
           case None =>
             // Нанят, отдохнув как положено, — переработки забыты.
-            heroDao.updateSquad(user.userId, hero.squad.welcomeBack(kind).rested(kind).hire(kind, hero.lvl, now)) *>
+            val squad = hero.squad.welcomeBack(kind).rested(kind).hire(kind, hero.lvl, now)
+            heroDao.updateSquad(user.userId, squad) *>
               renderer.show(user, Screen(content.format(if (free) "lostSquad.brambl.joined" else "mercenaries.hired",
                 "name" -> kind.name), Nil)) *>
+              reserveNote(user, squad, kind, renderer) *>
               showList(user, renderer)
         }
     } yield ()
+
+  /** Встал в резерв, а не в строй, — скажем, где его искать. */
+  private def reserveNote(user: User, squad: Squad, kind: AllyKind, renderer: Renderer): Task[Unit] =
+    ZIO.when(squad.reserve.exists(_.kind == kind))(
+      renderer.show(user, Screen(content.format("squad.inReserve", "name" -> kind.name), Nil))).unit
 
   /** Сценка «поднять раньше срока»: наёмник готов встать без отдыха — за
     * серебро сверх обычной платы. Каждый следующий раз дороже. */
@@ -179,7 +187,7 @@ case class MercenariesState(
       silver  = rushSilver(hero.squad, kind)
       _      <-
         if (!absent(hero.squad, now, LostSquadQuest.bramblCalled(quests)).exists(_._1 == kind)) showList(user, renderer)
-        else if (hero.squad.freePosition.isEmpty)
+        else if (!hero.squad.canTake)
           renderer.show(user, Screen(content.text("mercenaries.squadFull"), Nil)) *> showRush(user, kind, renderer)
         else purse.wallet(hero).flatMap { wallet =>
           if (!wallet.canAfford(silver))
@@ -195,6 +203,7 @@ case class MercenariesState(
               _     <- purse.charge(user.userId, fresh, silver)
               _     <- heroDao.updateSquad(user.userId, squad)
               _     <- renderer.show(user, Screen(content.format("mercenaries.rushed", "name" -> kind.name), Nil))
+              _     <- reserveNote(user, squad, kind, renderer)
               _     <- ZIO.when(squad.overtimeTotal > OvertimeGoal)(
                          QuestSupport.grant(heroDao, content, user, fresh, Achievement.Overtime, renderer))
               _     <- showList(user, renderer)

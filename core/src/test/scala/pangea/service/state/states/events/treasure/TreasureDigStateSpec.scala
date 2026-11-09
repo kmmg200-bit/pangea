@@ -53,6 +53,20 @@ object TreasureDigStateSpec extends ZIOSpecDefault {
               assertTrue(scr.last.text.contains("5мин"))
     },
 
+    test("Плюх в резерве ускоряет раскопки так же: 5 минут и его реплика") {
+      val base    = TestFixtures.hero(userId).copy(dungeonLevel = 20, lvl = 10L)
+      val reserve = base.copy(squad = Squad.empty.hire(AllyKind.Murloc, 10L, 0L).toReserve(2))
+      for {
+        t <- makeStateWith(reserve)
+        (state, renderer, scheduler) = t
+        _     <- state.enter(testUser, renderer)
+        sched <- scheduler.scheduled
+        scr   <- renderer.sentScreens
+      } yield assertTrue(reserve.squad.allies.isEmpty && reserve.squad.reserve.map(_.kind) == List(AllyKind.Murloc)) &&
+              assertTrue(TreasureDigState.durationFor(reserve) == 5L * 60L * 1000L) &&
+              assertTrue(sched.head.fireAt == 5L * 60L * 1000L && scr.head.text.contains("Плюх копать быстро!"))
+    },
+
     test("enter → планирует SchronDig, пишет прогресс в scene_data, показывает экран раскопок с «Уйти»") {
       for {
         t <- makeState

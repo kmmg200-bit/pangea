@@ -63,6 +63,20 @@ object SilverVeinStateSpec extends ZIOSpecDefault {
               assertTrue(pScr.last.choices.map(_.id) == List("OpenApp", "LeaveVein"))
     },
 
+    test("Брамбл в резерве ускоряет добычу так же: 8 минут и его реплика") {
+      val base    = TestFixtures.hero(userId).copy(dungeonLevel = 10, lvl = 10L)
+      val reserve = base.copy(squad = Squad.empty.hire(AllyKind.Gnome, 10L, 0L).toReserve(2))
+      for {
+        t <- makeStateWith(reserve)
+        (state, sched, r) = t
+        _     <- state.enter(testUser, r)
+        fired <- sched.scheduled
+        scr   <- r.sentScreens
+      } yield assertTrue(reserve.squad.allies.isEmpty && reserve.squad.reserve.map(_.kind) == List(AllyKind.Gnome)) &&
+              assertTrue(SilverVeinState.durationFor(reserve) == 8L * 60L * 1000L) &&
+              assertTrue(fired.head.fireAt == 8L * 60L * 1000L && scr.head.text.contains("Вдвоём быстрее"))
+    },
+
     test("DroppableGemKinds не содержит Череп (Надколотый череп не должен выпадать из жилы)") {
       assertTrue(!SilverVeinState.DroppableGemKinds.contains(GemKind.Skull)) &&
       assertTrue(SilverVeinState.DroppableGemKinds.size == GemKind.values.size - 1)

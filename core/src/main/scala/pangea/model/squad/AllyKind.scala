@@ -85,6 +85,9 @@ object AllyRates {
     * единой схемы строя — у врагов мест больше, и за одиннадцатым начинается
     * хвост, куда отряду не дотянуться (см. [[pangea.model.battle.Formation]]). */
   val Positions: Int = pangea.model.battle.Formation.HeroPlaces
+
+  /** Сколько союзников ждёт в резерве — при герое, но не в строю. */
+  val ReserveSize: Int = 10
 }
 
 object AllyKind extends Enum[AllyKind] {

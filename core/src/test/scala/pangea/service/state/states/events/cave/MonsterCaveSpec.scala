@@ -727,10 +727,34 @@ object MonsterCaveSpec extends ZIOSpecDefault {
               assertTrue(ally.exists(_.kind.race == Race.Undead))
     },
 
-    test("полный отряд: алтарь спрашивает, кем пожертвовать; отказ бережёт и трофей, и своих") {
-      val sack = trophy(TrophyKind.Sack, Race.Goblin, lvl = 16L).copy(id = 31L)
-      val full = (1 to AllyRates.Positions - 1).foldLeft(Squad.empty) { (sq, i) =>
+    test("строй полон, а в резерве место есть: поднятый встаёт в резерв, жертвовать никем не надо") {
+      val sack = trophy(TrophyKind.Sack, Race.Goblin, lvl = 16L).copy(id = 33L)
+      val line = (1 to AllyRates.Positions - 1).foldLeft(Squad.empty) { (sq, i) =>
         sq.raise(UndeadForm(s"Поднятый $i", 1L, AllyKind.Human.stats(1L)), 10L, nowStamp)
+      }
+      for {
+        t <- cave(hero().copy(squad = line), items = List(sack))
+        (state, dao, inv, _, r) = t
+        _     <- put(dao, altarCave())
+        _     <- state.action(testUser, tap("CaveAltar"), r)
+        _     <- state.action(testUser, tap("CaveUse_33"), r)
+        said  <- texts(r)
+        after <- dao.getHeroByUserId(userId).map(_.get)
+        scene <- sceneOf(dao)
+      } yield assertTrue(line.full && said.contains("он встаёт в резерв") && !said.contains("некуда встать")) &&
+              assertTrue(after.squad.allies == line.allies && after.squad.reserve.size == 1) &&
+              assertTrue(after.squad.reserve.exists(a => a.undead.exists(_.lvl == 16L) && a.position == 0)) &&
+              assertTrue(inv.snapshot.isEmpty && scene.exists(_.altarSpent))
+    },
+
+    test("полны и строй, и резерв: алтарь спрашивает, кем пожертвовать; отказ бережёт и трофей, и своих") {
+      val sack = trophy(TrophyKind.Sack, Race.Goblin, lvl = 16L).copy(id = 31L)
+      val line = (1 to AllyRates.Positions - 1).foldLeft(Squad.empty) { (sq, i) =>
+        sq.raise(UndeadForm(s"Поднятый $i", 1L, AllyKind.Human.stats(1L)), 10L, nowStamp)
+      }
+      // строй полон — следующие встают в резерв, пока не займут и его
+      val full = (1 to AllyRates.ReserveSize).foldLeft(line) { (sq, i) =>
+        sq.raise(UndeadForm(s"Запасной $i", 1L, AllyKind.Human.stats(1L)), 10L, nowStamp)
       }
       for {
         t <- cave(hero().copy(squad = full), items = List(sack))
@@ -750,7 +774,7 @@ object MonsterCaveSpec extends ZIOSpecDefault {
         _      <- state.action(testUser, swapTo(3), r)
         after  <- dao.getHeroByUserId(userId).map(_.get)
         scene  <- sceneOf(dao)
-      } yield assertTrue(ask.text.contains("некуда встать") && ask.choices.map(_.id).contains("CaveSwap")) &&
+      } yield assertTrue(full.reserveFull && ask.text.contains("некуда встать") && ask.choices.map(_.id).contains("CaveSwap")) &&
               assertTrue(ask.choices.flatMap(_.row).groupBy(identity).forall(_._2.size <= 5)) &&
               assertTrue(kept.squad.allies.size == 10 && keptBag == List(31L)) &&
               assertTrue(after.squad.allies.size == 10 && inv.snapshot.isEmpty) &&

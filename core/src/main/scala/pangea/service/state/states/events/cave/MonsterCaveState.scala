@@ -335,16 +335,19 @@ case class MonsterCaveState(
     } yield res
   }
 
-  /** Трофей встаёт с камня тем, кем был при жизни. Мест в отряде нет — сперва
-    * спросим, кем герой готов пожертвовать; трофей до ответа цел. */
+  /** Трофей встаёт с камня тем, кем был при жизни: в строй, а мест там нет — в
+    * резерв. Нет мест и в резерве — сперва спросим, кем герой готов
+    * пожертвовать; трофей до ответа цел. */
   private def raise(user: User, hero: Hero, scene: CaveScene, trophy: Item, form: UndeadForm, renderer: Renderer): Task[StateType] =
     // Тёмный волк в отряде один: второй вцепляется в прежнего и побеждает —
     // встаёт на его место, поэтому и в полном отряде жертвовать никем не надо.
     if (hero.squad.wolfRival(form).isDefined) rise(user, hero, scene, trophy, form, "cave.altar.wolfFight", renderer)
-    else if (hero.squad.full) {
+    else if (!hero.squad.full) rise(user, hero, scene, trophy, form, "cave.altar.risen", renderer)
+    else if (!hero.squad.reserveFull) rise(user, hero, scene, trophy, form, "cave.altar.toReserve", renderer)
+    else {
       val waiting = scene.copy(pending = Some(form), pendingTrophy = trophy.id)
       writeScene(user, waiting) *> askSwap(user, hero, form, renderer)
-    } else rise(user, hero, scene, trophy, form, "cave.altar.risen", renderer)
+    }
 
   /** Трофей уходит в камень, поднятый встаёт в отряд (см. [[pangea.model.squad.Squad.raise]]),
     * алтарь гаснет. `line` — чем это сказать. */

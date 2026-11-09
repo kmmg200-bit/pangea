@@ -45,13 +45,15 @@ object SquadSpec extends ZIOSpecDefault {
       assertTrue(s3.inOrder.map(_.position) == List(2, 3, 4))
     },
 
-    test("в строю десять мест для союзников: одиннадцатому вставать некуда") {
+    test("в строю десять мест для союзников: одиннадцатому в строю места нет — он встаёт в резерв") {
       val full = (1 to AllyRates.Positions - 1).foldLeft(Squad.empty) { (s, i) =>
         s.raise(UndeadForm(s"Поднятый $i", 1L, AllyKind.Human.stats(1L)), lvl, now)
       }
+      val extra = full.raise(UndeadForm("Лишний", 1L, AllyKind.Human.stats(1L)), lvl, now)
       assertTrue(full.allies.size == 10 && full.full && full.freePosition.isEmpty) &&
-      // одиннадцатый не встаёт сам — его место освобождают заменой
-      assertTrue(full.raise(UndeadForm("Лишний", 1L, AllyKind.Human.stats(1L)), lvl, now) == full) &&
+      // строй как был, а одиннадцатый — в резерве
+      assertTrue(extra.allies == full.allies && extra.reserve.map(_.name) == List("Лишний")) &&
+      // заменой место в строю освобождают по-прежнему
       assertTrue(full.replaceAt(3, UndeadForm("Лишний", 1L, AllyKind.Human.stats(1L)), lvl, now)
                    .allyAt(3).exists(_.name == "Лишний"))
     },
@@ -226,6 +228,80 @@ object SquadSpec extends ZIOSpecDefault {
       val back = s.asJson.as[Squad].toOption
       val old  = io.circe.Json.obj().as[Squad].toOption
       assertTrue(back.contains(s)) && assertTrue(old.contains(Squad.empty))
+    },
+
+    test("резерв переживает сериализацию, а запись до резерва читается с пустым") {
+      val s = Squad(allies = List(Ally(AllyKind.Gnome, 2, 10L, 20L, 30L)),
+        reserve = List(Ally(AllyKind.Murloc, 0, 5L, 6L, 7L, hiredUntil = 99L)))
+      val back = s.asJson.as[Squad].toOption
+      // так лежит отряд в базе до резерва
+      val old = io.circe.parser.parse(
+        """{"heroPos":1,"allies":[{"kind":"Gnome","position":2,"hp":10,"armor":20,"energy":30,"hiredUntil":5}],
+          |"away":{},"offDuty":{},"overtime":{},"overtimeTotal":0}""".stripMargin).flatMap(_.as[Squad]).toOption
+      assertTrue(back.contains(s)) &&
+      assertTrue(old.exists(o => o.reserve.isEmpty && o.allies.map(_.kind) == List(AllyKind.Gnome)))
+    },
+
+    test("резерв: лишний поднятый и наёмник встают туда, когда в строю нет мест; нет мест и там — никуда") {
+      val orc  = UndeadForm("Поднятый орк", 3L, AllyKind.Human.stats(3L))
+      // строй полон: герой на 1, поднятые на 2–11
+      val full = (1 to AllyRates.Positions - 1).foldLeft(Squad.empty)((s, _) => s.raise(orc, lvl, now))
+      val (r1, p1) = full.raised(orc, lvl, now)
+      val (h1, q1) = full.hired(AllyKind.Murloc, lvl, now)
+      // полон и резерв
+      val packed = (1 to AllyRates.ReserveSize).foldLeft(full)((s, _) => s.raise(orc, lvl, now))
+      val (r2, p2) = packed.raised(orc, lvl, now)
+      val (h2, q2) = packed.hired(AllyKind.Murloc, lvl, now)
+      assertTrue(AllyRates.ReserveSize == 10) &&
+      assertTrue(full.full && p1 == Placed.Reserve && r1.reserve.map(_.name) == List("Поднятый орк")) &&
+      assertTrue(r1.reserve.forall(_.position == 0) && r1.allies == full.allies) &&
+      assertTrue(q1 == Placed.Reserve && h1.reserve.exists(_.kind == AllyKind.Murloc)) &&
+      // наёмник в резерве тоже «есть»: второго такого не нанять
+      assertTrue(h1.has(AllyKind.Murloc) && h1.hired(AllyKind.Murloc, lvl, now)._2 == Placed.Nowhere) &&
+      assertTrue(packed.reserveFull && !packed.canTake && p2 == Placed.Nowhere && r2 == packed) &&
+      assertTrue(q2 == Placed.Nowhere && h2 == packed) &&
+      // восставший из боя: есть место в резерве — встаёт туда, нет — ждёт у шатра
+      assertTrue(full.admitRisen(orc, lvl, now).reserve.size == 1 && full.admitRisen(orc, lvl, now).pendingRisen.isEmpty) &&
+      assertTrue(packed.admitRisen(orc, lvl, now).pendingRisen.contains(orc))
+    },
+
+    test("резерв руками: туда и обратно, обмен со строем, выгнать; крысу туда не берут") {
+      val orc     = UndeadForm("Поднятый орк", 3L, AllyKind.Human.stats(3L))
+      val rat     = UndeadForm("Крыса", 1L, AllyKind.Human.stats(1L))
+      // Йорген на 2, орк на 3
+      val s0      = Squad.empty.hire(AllyKind.Human, lvl, 0L).raise(orc, lvl, now)
+      val s1      = s0.toReserve(3)
+      val back    = s1.deploy(0)
+      // строй полон: выставить можно только обменом
+      val full    = (1 to AllyRates.Positions - 2).foldLeft(s1)((s, _) => s.raise(orc.copy(name = "Другой"), lvl, now))
+      val swapped = full.swapIn(0, 2)
+      val withRat = Squad.empty.summonRat(rat, lvl, now)
+      assertTrue(s1.allyAt(3).isEmpty && s1.reserve.map(_.name) == List("Поднятый орк")) &&
+      assertTrue(s1.reserve.forall(_.position == 0)) &&
+      assertTrue(back.allyAt(3).exists(_.name == "Поднятый орк") && back.reserve.isEmpty) &&
+      assertTrue(full.full && full.deploy(0) == full) &&
+      // орк из резерва — на место Йоргена, Йорген — в резерв
+      assertTrue(swapped.allyAt(2).exists(_.name == "Поднятый орк") && swapped.reserve.map(_.kind) == List(AllyKind.Human)) &&
+      assertTrue(swapped.reserve.forall(_.position == 0) && swapped.allies.size == full.allies.size) &&
+      assertTrue(s1.dismissReserve(0).reserve.isEmpty && s1.dismissReserve(5) == s1) &&
+      assertTrue(withRat.toReserve(2) == withRat && withRat.allyAt(2).exists(a => !withRat.reservable(a)))
+    },
+
+    test("в резерве идут сроки и лечит отдых; Тёмный волк один на строй и резерв") {
+      def wolf(l: Long) = UndeadForm(UndeadForm.DarkWolfName, l, AllyKind.Human.stats(1L))
+      val orc  = UndeadForm("Поднятый орк", 3L, AllyKind.Human.stats(3L))
+      // Плюх на 2, орк на 3 — оба в резерв
+      val s1   = Squad.empty.hire(AllyKind.Murloc, lvl, now).raise(orc, lvl, now).toReserve(2).toReserve(3)
+      val hurt = s1.copy(reserve = s1.reserve.map(_.copy(hp = 1L)))
+      // через 12 часов наёмник отработал своё, поднятому держаться ещё сутки
+      val (after, leaving) = s1.expire(now + AllyRates.HireMs)
+      // волк ждёт в резерве — новый одолевает его и встаёт в строй
+      val newWolf = Squad.empty.raise(wolf(4L), lvl, now).toReserve(2).raise(wolf(9L), lvl, now)
+      assertTrue(s1.allies.isEmpty && s1.reserve.size == 2 && s1.nonEmpty && s1.has(AllyKind.Murloc)) &&
+      assertTrue(hurt.restored(lvl).reserve.forall(a => a.hp == a.statsAt(lvl).hp)) &&
+      assertTrue(leaving.map(_.kind) == List(AllyKind.Murloc) && after.reserve.map(_.name) == List("Поднятый орк")) &&
+      assertTrue(after.offDuty.contains(AllyKind.Murloc.entryName)) &&
+      assertTrue(newWolf.darkWolves.map(w => w.position -> w.lvlAt(lvl)) == List(2 -> 9L) && newWolf.reserve.isEmpty)
     }
   )
 }

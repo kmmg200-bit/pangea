@@ -235,6 +235,27 @@ object MercenariesStateSpec extends ZIOSpecDefault {
         _    <- state.enter(testUser, renderer)
         list <- renderer.sentScreens.map(_.last)
       } yield assertTrue(!list.text.contains("вернётся через"))
+    },
+
+    test("строй полон — нанятый встаёт в резерв и об этом сказано; полон и резерв — нанять нельзя") {
+      val orc  = pangea.model.squad.UndeadForm("Поднятый орк", 3L, AllyKind.Human.stats(3L))
+      val line = (1 to pangea.model.squad.AllyRates.Positions - 1).foldLeft(Squad.empty)((s, _) => s.raise(orc, 10L, 0L))
+      val full = (1 to pangea.model.squad.AllyRates.ReserveSize).foldLeft(line)((s, _) => s.raise(orc, 10L, 0L))
+      for {
+        t1 <- makeState(baseHero.copy(doubloons = 12L, squad = line))
+        (s1, d1, _, r1) = t1
+        _    <- s1.action(testUser, pick("MercHire", AllyKind.Human), r1)
+        h1   <- d1.getHeroByUserId(userId).map(_.get)
+        said <- r1.sentScreens.map(_.map(_.text).mkString("\n"))
+        t2 <- makeState(baseHero.copy(doubloons = 12L, squad = full))
+        (s2, d2, _, r2) = t2
+        _    <- s2.action(testUser, pick("MercHire", AllyKind.Human), r2)
+        h2   <- d2.getHeroByUserId(userId).map(_.get)
+        no   <- r2.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(h1.squad.allies == line.allies && h1.squad.reserve.map(_.kind) == List(AllyKind.Human)) &&
+              assertTrue(h1.doubloons == 2L && said.contains("В строю мест нет — Йорген Кремень ждёт в резерве.")) &&
+              assertTrue(h2.squad == full && h2.doubloons == 12L) &&
+              assertTrue(no.contains("Ни в строю, ни в резерве нет свободного места."))
     }
   )
 }

@@ -123,12 +123,26 @@ final case class Squad(
   overtime: Map[String, Int] = Map.empty,
   /** Сколько всего раз герой поднимал наёмников за серебро — для «Переработки
     * наше всё». */
-  overtimeTotal: Int = 0
+  overtimeTotal: Int = 0,
+  /** Резерв: кто при герое, но не в строю, — до [[AllyRates.ReserveSize]].
+    * Сюда встают лишние поднятые и наёмники, когда в строю нет мест, и те, кого
+    * герой отправил сам. В бой резерв не идёт, а сроки найма и тёмной силы у
+    * него идут как в строю. Места в строю у них нет (`position` — 0). */
+  reserve: List[Ally] = Nil
 ) {
-  def isEmpty: Boolean  = allies.isEmpty
-  def nonEmpty: Boolean = allies.nonEmpty
+  /** Пуст ли отряд целиком — и строй, и резерв. */
+  def isEmpty: Boolean  = allies.isEmpty && reserve.isEmpty
+  def nonEmpty: Boolean = !isEmpty
 
-  def has(kind: AllyKind): Boolean = allies.exists(_.kind == kind)
+  /** Есть ли такой при герое — в строю или в резерве: Брамбл и Плюх помогают и
+    * из резерва, а нанять второго такого же нельзя. */
+  def has(kind: AllyKind): Boolean = (allies ++ reserve).exists(_.kind == kind)
+
+  /** В резерве больше нет мест. */
+  def reserveFull: Boolean = reserve.sizeIs >= AllyRates.ReserveSize
+
+  /** Найдётся ли новенькому место — в строю или в резерве. */
+  def canTake: Boolean = freePosition.isDefined || !reserveFull
 
   def allyAt(pos: Int): Option[Ally] = allies.find(_.position == pos)
 
@@ -163,35 +177,50 @@ final case class Squad(
   def freePosition: Option[Int] =
     (1 to AllyRates.Positions).find(p => p != heroPos && allyAt(p).isEmpty)
 
-  /** Нанять на [[AllyRates.HireMs]]: на первую свободную позицию, полностью здоровым. */
-  def hire(kind: AllyKind, lvl: Long, nowMs: Long): Squad =
-    if (has(kind)) this
-    else freePosition.fold(this)(p =>
-      copy(allies = allies :+ Ally(kind, p, 0L, 0L, 0L, hiredUntil = nowMs + AllyRates.HireMs).restored(lvl)))
+  /** Нанять на [[AllyRates.HireMs]], полностью здоровым (см. [[hired]]). */
+  def hire(kind: AllyKind, lvl: Long, nowMs: Long): Squad = hired(kind, lvl, nowMs)._1
 
-  /** Кто покидает отряд к этому моменту: наёмник отработал свой найм и сядет
-    * за стол снова через [[AllyRates.OffDutyMs]], а поднятый рассыпался — его
-    * ждать неоткуда. Возвращает отряд и ушедших целиком: наверху по ним
-    * решают, что сказать игроку. */
+  /** Нанять: на первую свободную позицию строя, а мест нет — в резерв. Такой
+    * уже есть (в строю или в резерве) или мест нет нигде — отряд как был
+    * (`Placed.Nowhere`). */
+  def hired(kind: AllyKind, lvl: Long, nowMs: Long): (Squad, Placed) =
+    if (has(kind)) (this, Placed.Nowhere)
+    else place(Ally(kind, 0, 0L, 0L, 0L, hiredUntil = nowMs + AllyRates.HireMs).restored(lvl))
+
+  /** Новенький — на первое свободное место строя, мест нет — в резерв. */
+  private def place(a: Ally): (Squad, Placed) =
+    freePosition match {
+      case Some(p)              => (copy(allies = allies :+ a.copy(position = p)), Placed.Line)
+      case None if !reserveFull => (copy(reserve = reserve :+ a.copy(position = 0)), Placed.Reserve)
+      case None                 => (this, Placed.Nowhere)
+    }
+
+  /** Кто покидает отряд к этому моменту — из строя и из резерва: наёмник
+    * отработал свой найм и сядет за стол снова через [[AllyRates.OffDutyMs]], а
+    * поднятый рассыпался — его ждать неоткуда. Возвращает отряд и ушедших
+    * целиком: наверху по ним решают, что сказать игроку. */
   def expire(nowMs: Long): (Squad, List[Ally]) = {
-    val gone = allies.filter(_.leaving(nowMs))
+    val gone = (allies ++ reserve).filter(_.leaving(nowMs))
     if (gone.isEmpty) (this, Nil)
     else {
       val hired = gone.filter(_.undead.isEmpty).map(_.kind)
-      (copy(allies = allies.filterNot(_.leaving(nowMs)),
+      (copy(allies = allies.filterNot(_.leaving(nowMs)), reserve = reserve.filterNot(_.leaving(nowMs)),
             offDuty = offDuty ++ hired.map(k => k.entryName -> (nowMs + AllyRates.OffDutyMs))), gone)
     }
   }
 
   /** Поднятые до того, как у них завёлся срок, получают его с этой минуты:
     * иначе они рассыпались бы все разом при первом же заходе героя. */
-  def settleUndead(nowMs: Long): Squad =
-    if (!allies.exists(a => a.undead.isDefined && a.hiredUntil <= 0L)) this
-    else copy(allies = allies.map { a =>
-      if (a.undead.isDefined && a.hiredUntil <= 0L) a.copy(hiredUntil = nowMs + AllyRates.UndeadMs) else a
-    })
+  def settleUndead(nowMs: Long): Squad = {
+    def undated(a: Ally): Boolean = a.undead.isDefined && a.hiredUntil <= 0L
+    def dated(a: Ally): Ally = if (undated(a)) a.copy(hiredUntil = nowMs + AllyRates.UndeadMs) else a
+    if (!(allies ++ reserve).exists(undated)) this
+    else copy(allies = allies.map(dated), reserve = reserve.map(dated))
+  }
 
-  def dismiss(kind: AllyKind): Squad = copy(allies = allies.filterNot(_.kind == kind))
+  /** Убрать союзника этого вида — из строя и из резерва. */
+  def dismiss(kind: AllyKind): Squad =
+    copy(allies = allies.filterNot(_.kind == kind), reserve = reserve.filterNot(_.kind == kind))
 
   /** Убрать союзника с этой позиции. Позиция — единственный надёжный ключ:
     * поднятых с алтаря в отряде может быть несколько, и вид их не различает. */
@@ -206,32 +235,44 @@ final case class Squad(
   def updateAt(pos: Int)(f: Ally => Ally): Squad =
     copy(allies = allies.map(a => if (a.position == pos) f(a) else a))
 
-  /** Поднятый встаёт на свободное место — и держится [[AllyRates.UndeadMs]] с
-    * этой минуты, а с «Некромантом» (порог 6) вдвое дольше: `lasts` — этот
-    * множитель. Мест нет — отряд как был; заменой заведует [[replaceAt]].
-    *
-    * Тёмный волк в отряде один: если он уже есть, новый сцепляется с ним и
-    * побеждает — встаёт на место прежнего ([[wolfRival]]). Свободного места
-    * для этого не нужно. */
+  /** Поднятый встаёт в отряд (см. [[raised]]). */
   def raise(form: UndeadForm, lvl: Long, nowMs: Long, lasts: Long = 1L): Squad =
+    raised(form, lvl, nowMs, lasts)._1
+
+  /** Поднятый встаёт на свободное место строя, а мест нет — в резерв; нет и
+    * там — отряд как был (`Placed.Nowhere`), заменой тогда заведует
+    * [[replaceAt]]. Держится [[AllyRates.UndeadMs]] с этой минуты, а с
+    * «Некромантом» (порог 6) вдвое дольше: `lasts` — этот множитель.
+    *
+    * Тёмный волк в отряде один — в строю и в резерве вместе ([[wolfRival]]):
+    * если он уже есть, новый сцепляется с ним и побеждает. Прежний стоял в
+    * строю — новый встаёт на его место; был в резерве — прежний рассыпается, а
+    * новый встаёт как любой поднятый. Свободного места для этого не нужно. */
+  def raised(form: UndeadForm, lvl: Long, nowMs: Long, lasts: Long = 1L): (Squad, Placed) =
     wolfRival(form) match {
-      case Some(old) => replaceAt(old.position, form, lvl, nowMs, lasts)
-      case None      => freePosition.fold(this)(p => copy(allies = allies :+ risen(form, p, lvl, nowMs, lasts)))
+      case Some(old) if old.position > 0 => (replaceAt(old.position, form, lvl, nowMs, lasts), Placed.Line)
+      case Some(_)                       => withoutWolves.raised(form, lvl, nowMs, lasts)
+      case None                          => place(risen(form, 0, lvl, nowMs, lasts))
     }
 
   /** Поднятый занимает место того, кто на нём стоял. Встаёт Тёмный волк — с
-    * ним уходят и прежние волки: второму в отряде не бывать. */
-  def replaceAt(pos: Int, form: UndeadForm, lvl: Long, nowMs: Long, lasts: Long = 1L): Squad =
-    copy(allies = allies.filterNot(a => a.position == pos || (form.unique && a.isDarkWolf)) :+
-      risen(form, pos, lvl, nowMs, lasts))
+    * ним уходят и прежние волки, из строя и из резерва: второму не бывать. */
+  def replaceAt(pos: Int, form: UndeadForm, lvl: Long, nowMs: Long, lasts: Long = 1L): Squad = {
+    val beaten = if (form.unique) withoutWolves else this
+    beaten.copy(allies = beaten.allies.filterNot(_.position == pos) :+ risen(form, pos, lvl, nowMs, lasts))
+  }
 
-  /** Тёмные волки отряда, по местам. Больше одного их не бывает: новый
-    * сцепляется с прежним и побеждает (см. [[raise]]). Несколько бывает лишь у
-    * тех, кто поднял их до этого правила, — новый одолеет всех разом. */
-  def darkWolves: List[Ally] = inOrder.filter(_.isDarkWolf)
+  private def withoutWolves: Squad =
+    copy(allies = allies.filterNot(_.isDarkWolf), reserve = reserve.filterNot(_.isDarkWolf))
+
+  /** Тёмные волки отряда: сперва строй по местам, потом резерв. Больше одного
+    * их не бывает: новый сцепляется с прежним и побеждает (см. [[raised]]).
+    * Несколько бывает лишь у тех, кто поднял их до этого правила, — новый
+    * одолеет всех разом. */
+  def darkWolves: List[Ally] = inOrder.filter(_.isDarkWolf) ++ reserve.filter(_.isDarkWolf)
 
   /** С кем сцепится этот поднятый: Тёмный волк — с прежним волком отряда
-    * (первым по строю), прочим делить нечего. */
+    * (первым по строю, а нет в строю — из резерва), прочим делить нечего. */
   def wolfRival(form: UndeadForm): Option[Ally] =
     if (form.unique) darkWolves.headOption else None
 
@@ -246,23 +287,23 @@ final case class Squad(
     * выдавать ли одну на входе в бой. */
   def hasRat: Boolean = allies.exists(_.kind == AllyKind.Rat)
 
-  /** Восставший в бою уходит с героем на [[AllyRates.RisenMs]]. Мест нет — он
+  /** Восставший в бою уходит с героем на двое суток ([[AllyRates.RisenLasts]]):
+    * в строй, а мест нет — в резерв (см. [[raised]]). Нет мест и в резерве —
     * ждёт у шатра ([[pendingRisen]]), и в «Отряде» герой решит, кем за него
-    * пожертвовать. Ждущего второй раз не перебиваем: первый дождётся ответа.
-    * Тёмному волку при прежнем волке ждать незачем: он встаёт на место
-    * прежнего (см. [[raise]]). */
+    * пожертвовать. Ждущего второй раз не перебиваем: первый дождётся ответа. */
   def admitRisen(form: UndeadForm, lvl: Long, nowMs: Long): Squad =
-    if (freePosition.isDefined || wolfRival(form).isDefined) raise(form, lvl, nowMs, AllyRates.RisenLasts)
-    else if (pendingRisen.isDefined) this
-    else copy(pendingRisen = Some(form))
+    raised(form, lvl, nowMs, AllyRates.RisenLasts) match {
+      case (_, Placed.Nowhere) => if (pendingRisen.isDefined) this else copy(pendingRisen = Some(form))
+      case (placed, _)         => placed
+    }
 
   /** Ответ на вопрос «кем жертвуем»: ждущий занимает место этого союзника.
-    * Ждёт Тёмный волк, а свой в отряде уже есть (он встал, пока этот ждал), —
+    * Ждёт Тёмный волк, а свой уже стоит в строю (встал, пока этот ждал), —
     * названный союзник остаётся: новый вцепляется в прежнего волка и встаёт
     * на его место. */
   def takeRisenPlace(pos: Int, lvl: Long, nowMs: Long): Squad =
     pendingRisen.fold(this) { form =>
-      val at = wolfRival(form).fold(pos)(_.position)
+      val at = wolfRival(form).map(_.position).filter(_ > 0).getOrElse(pos)
       replaceAt(at, form, lvl, nowMs, AllyRates.RisenLasts).copy(pendingRisen = None)
     }
 
@@ -336,17 +377,64 @@ final case class Squad(
   def update(kind: AllyKind)(f: Ally => Ally): Squad =
     copy(allies = allies.map(a => if (a.kind == kind) f(a) else a))
 
-  /** Все живы и здоровы — после отдыха. */
-  def restored(lvl: Long): Squad = copy(allies = allies.map(_.restored(lvl)))
+  /** Все живы и здоровы — после отдыха: и строй, и резерв. */
+  def restored(lvl: Long): Squad = copy(allies = allies.map(_.restored(lvl)), reserve = reserve.map(_.restored(lvl)))
 
   /** По позициям. */
   def inOrder: List[Ally] = allies.sortBy(_.position)
+
+  // ── Резерв ──────────────────────────────────────────────────────────────────
+
+  /** Может ли он уйти в резерв: крыса там не усидит — лишняя и так убегает. */
+  def reservable(a: Ally): Boolean = a.kind != AllyKind.Rat
+
+  /** Союзник с места `pos` уходит в резерв, его место в строю пустеет. Крысу
+    * туда не берут, резерв полон — отряд как был. */
+  def toReserve(pos: Int): Squad =
+    allyAt(pos) match {
+      case Some(a) if reservable(a) && !reserveFull =>
+        copy(allies = allies.filterNot(_.position == pos), reserve = reserve :+ a.copy(position = 0))
+      case _ => this
+    }
+
+  /** Из резерва (`i` — номер в нём) — в строй, на первое свободное место. Мест
+    * нет — отряд как был: тогда меняют местами ([[swapIn]]). */
+  def deploy(i: Int): Squad =
+    (reserve.lift(i), freePosition) match {
+      case (Some(a), Some(p)) => copy(allies = allies :+ a.copy(position = p), reserve = reserve.patch(i, Nil, 1))
+      case _                  => this
+    }
+
+  /** Из резерва — на место `pos` в строю, а стоявший там — в резерв, на его
+    * место в списке. Крысу в резерв не отправить — тогда отряд как был. */
+  def swapIn(i: Int, pos: Int): Squad =
+    (reserve.lift(i), allyAt(pos)) match {
+      case (Some(r), Some(a)) if reservable(a) =>
+        copy(allies = allies.map(x => if (x.position == pos) r.copy(position = pos) else x),
+             reserve = reserve.updated(i, a.copy(position = 0)))
+      case _ => this
+    }
+
+  /** Выгнать из резерва. */
+  def dismissReserve(i: Int): Squad =
+    if (reserve.isDefinedAt(i)) copy(reserve = reserve.patch(i, Nil, 1)) else this
+}
+
+/** Куда встал новенький — поднятый или нанятый: в строй, в резерв или никуда,
+  * если мест нет нигде. */
+sealed trait Placed
+
+object Placed {
+  case object Line    extends Placed
+  case object Reserve extends Placed
+  case object Nowhere extends Placed
 }
 
 object Squad {
   val empty: Squad = Squad()
 
   implicit val encoder: Encoder[Squad] = deriveEncoder
+  // Резерва в записях до него нет — читается как пустой.
   implicit val decoder: Decoder[Squad] = (c: HCursor) =>
     for {
       heroPos <- c.getOrElse[Int]("heroPos")(1)
@@ -356,7 +444,8 @@ object Squad {
       pending <- c.getOrElse[Option[UndeadForm]]("pendingRisen")(None)
       overtime <- c.getOrElse[Map[String, Int]]("overtime")(Map.empty)
       total    <- c.getOrElse[Int]("overtimeTotal")(0)
-    } yield Squad(heroPos, allies, away, offDuty, pending, overtime, total).repaired
+      reserve  <- c.getOrElse[List[Ally]]("reserve")(Nil)
+    } yield Squad(heroPos, allies, away, offDuty, pending, overtime, total, reserve).repaired
 
   implicit val meta: Meta[Squad] = new Meta(pgDecoderGet, pgEncoderPut)
 }

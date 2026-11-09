@@ -312,15 +312,20 @@ object NecromancerSetSpec extends ZIOSpecDefault {
               assertTrue(after.squad.allies.size == 1)
     },
 
-    test("мест в отряде нет — восставший ждёт у шатра, и герой решает, кем жертвовать") {
+    test("мест нет ни в строю, ни в резерве — восставший ждёт у шатра, и герой решает, кем жертвовать") {
       val now  = 1_000_000L
       val form = UndeadForm("Орк раб", 5L,
         FightStats(atk = 10, hp = 200, armor = 0, defence = 1, evasion = 1, accuracy = 10, energy = 10))
-      val full = (2 to Formation.HeroPlaces).foldLeft(Squad.empty)((s, p) => s.copy(allies = s.allies :+ undeadAlly(p)))
+      val line = (2 to Formation.HeroPlaces).foldLeft(Squad.empty)((s, p) => s.copy(allies = s.allies :+ undeadAlly(p)))
+      val full = line.copy(reserve = List.fill(AllyRates.ReserveSize)(undeadAlly(0)))
       val waiting = full.admitRisen(form, 10L, now)
       val took    = waiting.takeRisenPlace(2, 10L, now)
       val dusted  = waiting.dismissRisen
-      assertTrue(full.full && waiting.pendingRisen.contains(form)) &&
+      // в строю мест нет, а в резерве есть — восставший встаёт туда, ждать нечего
+      val reserved = line.admitRisen(form, 10L, now)
+      assertTrue(reserved.pendingRisen.isEmpty && reserved.reserve.map(_.name) == List("Орк раб")) &&
+      assertTrue(reserved.reserve.forall(_.hiredUntil == now + AllyRates.UndeadMs * AllyRates.RisenLasts)) &&
+      assertTrue(full.full && full.reserveFull && waiting.pendingRisen.contains(form)) &&
       // второй ждущий первого не перебивает
       assertTrue(waiting.admitRisen(form.copy(name = "Другой"), 10L, now).pendingRisen.contains(form)) &&
       assertTrue(took.pendingRisen.isEmpty && took.allyAt(2).exists(_.name == "Орк раб")) &&
