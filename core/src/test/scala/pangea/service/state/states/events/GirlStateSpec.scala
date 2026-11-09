@@ -207,7 +207,7 @@ object GirlStateSpec extends ZIOSpecDefault {
               assertTrue(result == StateType.GlobalMap && h.guildReputation == 50L + 20L)
     },
 
-    test("уединение: кошелёк худеет на 25–50%, травмы пройдут через 90 минут, свет гаснет на 30 — из кнопок только приложение") {
+    test("уединение: кошелёк худеет на 25–50%, травмы пройдут через 90 минут, свет гаснет на 30 — в темноте «Прошу прощения…» и приложение") {
       val wounded = hero.copy(traumaUntil = Some(10L * 60L * 60L * 1000L), traumaNames = List("Хромота"))
       for {
         t <- make(wounded, Some(orcScene(Step.Room)))
@@ -217,8 +217,11 @@ object GirlStateSpec extends ZIOSpecDefault {
         h      <- heroOf(dao)
         dark   <- r.sentScreens.map(_.last)
         tasks  <- sched.scheduled
-        again  <- state.action(testUser, tap("LeaveRoom"), r)
+        // любой ввод и ранний таймер в темноте — тот же экран с теми же кнопками
+        stay   <- state.action(testUser, UserAction("эй", None), r)
         still  <- r.sentScreens.map(_.last)
+        again  <- state.action(testUser, tap("LeaveRoom"), r)
+        still2 <- r.sentScreens.map(_.last)
         _      <- TestClock.adjust(Duration.fromMillis(GirlState.RoomWaitMs + 1000L))
         out    <- state.action(testUser, tap("LeaveRoom"), r)
         all    <- texts(r)
@@ -226,12 +229,64 @@ object GirlStateSpec extends ZIOSpecDefault {
       } yield assertTrue(result == StateType.Girl) &&
               assertTrue(h.silver == 600L) &&
               assertTrue(h.traumaUntil.contains(GirlState.HealDelayMs)) &&      // TestClock на нуле
-              assertTrue(dark.text.contains("погас свет") && dark.choices.map(_.id) == List("OpenApp")) &&
+              assertTrue(dark.text.contains("погас свет") && dark.choices.map(_.id) == List("OpenApp", "Excuse")) &&
+              assertTrue(dark.choices.lastOption.exists(c => c.label == "Прошу прощения, но у меня есть дела" && c.row.contains(0))) &&
               assertTrue(tasks.exists(s => s.kind == TaskKind.GirlRoom && s.fireAt == GirlState.RoomWaitMs && s.expectedState == StateType.Girl)) &&
-              assertTrue(again == StateType.Girl && still.text.contains("погас свет")) &&
+              assertTrue(stay == StateType.Girl && still == dark && again == StateType.Girl && still2 == dark) &&
               assertTrue(out == StateType.GlobalMap) &&
               assertTrue(all.contains("оставив даму спать") && all.contains("на 400 серебра")) &&
               assertTrue(cancelled.contains(userId -> TaskKind.GirlRoom))
+    },
+
+    test("в темноте «Прошу прощения…» — уговоры: «Ну раз такое дело…» — снова темнота без второй пропажи; «Нет, мне правда надо идти!» — брат") {
+      for {
+        t <- make(hero, Some(orcScene(Step.Room)))
+        (state, dao, _, _, sched, r) = t
+        _       <- TestRandom.feedLongs(40L)
+        _       <- state.action(testUser, tap("Intimacy"), r)
+        excuse  <- state.action(testUser, tap("Excuse"), r)
+        plead   <- r.sentScreens.map(_.last)
+        back    <- state.action(testUser, tap("Intimacy"), r)
+        dark    <- r.sentScreens.map(_.last)
+        stayed  <- heroOf(dao)
+        _       <- state.action(testUser, tap("Excuse"), r)
+        refused <- state.action(testUser, tap("Refuse"), r)
+        brother <- r.sentScreens.map(_.last)
+        all     <- texts(r)
+        scene   <- sceneOf(dao)
+        cancelled <- sched.cancelled
+        // таймер, пришедший уже к брату, сцену не трогает и ничего не шлёт
+        shown   <- r.sentScreens.map(_.size)
+        late    <- state.action(testUser, UserAction("", Some(GirlState.LeaveRoomAction)), r)
+        after   <- r.sentScreens.map(_.size)
+        still   <- sceneOf(dao)
+      } yield assertTrue(excuse == StateType.Girl && plead.choices.map(_.id) == List("Intimacy", "Refuse")) &&
+              assertTrue(back == StateType.Girl && dark.text.contains("погас свет") && dark.choices.map(_.id) == List("OpenApp", "Excuse")) &&
+              assertTrue(stayed.silver == 600L) &&
+              assertTrue(refused == StateType.Girl && brother.text.contains("Приставал к моей сестре")) &&
+              assertTrue(all.contains("Одеваясь, вы замечаете, что кошелёк полегчал на 400 серебра") && all.contains("Грубиян")) &&
+              assertTrue(scene.exists(_.step == Step.Brother) && cancelled.contains(userId -> TaskKind.GirlRoom)) &&
+              assertTrue(late == StateType.Girl && after == shown && still == scene)
+    },
+
+    test("полчаса вышли, пока она уговаривала: таймер уговоры не прерывает, а «Ну раз такое дело…» выводит, как по таймеру") {
+      for {
+        t <- make(hero, Some(orcScene(Step.Room)))
+        (state, dao, _, _, _, r) = t
+        _     <- TestRandom.feedLongs(40L)
+        _     <- state.action(testUser, tap("Intimacy"), r)
+        _     <- state.action(testUser, tap("Excuse"), r)
+        _     <- TestClock.adjust(Duration.fromMillis(GirlState.RoomWaitMs))
+        shown <- r.sentScreens.map(_.size)
+        timer <- state.action(testUser, UserAction("", Some(GirlState.LeaveRoomAction)), r)
+        after <- r.sentScreens.map(_.size)
+        scene <- sceneOf(dao)
+        out   <- state.action(testUser, tap("Intimacy"), r)
+        all   <- texts(r)
+        h     <- heroOf(dao)
+      } yield assertTrue(timer == StateType.Girl && after == shown && scene.exists(_.step == Step.Excuse)) &&
+              assertTrue(out == StateType.GlobalMap && all.contains("оставив даму спать") && all.contains("на 400 серебра")) &&
+              assertTrue(h.silver == 600L)
     },
 
     test("отказ дважды: брат требует половину серебра с бочкой; отдать — из кошелька и бочки") {
@@ -245,7 +300,10 @@ object GirlStateSpec extends ZIOSpecDefault {
         demand <- r.sentScreens.map(_.last)
         result <- state.action(testUser, tap("PayBrother"), r)
         h      <- heroOf(dao)
+        all    <- texts(r)
       } yield assertTrue(excuse.choices.map(_.id) == List("Intimacy", "Refuse")) &&
+              // не уединялись — и пропадать из кошелька было нечему
+              assertTrue(all.contains("Грубиян") && !all.contains("Одеваясь")) &&
               assertTrue(demand.text.contains("500 серебра") && demand.choices.map(_.id) == List("PayBrother", "FightBrother")) &&
               assertTrue(demand.choices.head.label == "Отдать серебро (500)") &&
               assertTrue(result == StateType.GlobalMap) &&

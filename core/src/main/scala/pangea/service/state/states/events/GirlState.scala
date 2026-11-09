@@ -73,13 +73,13 @@ case class GirlState(
       "LeaveTavern"   -> Target.Run { (u, _, r) => reward(u, r, _.lvl * RepPerLevelTavern) *> clear(u).as(StateType.GlobalMap) },
       "Intimacy"      -> Target.Run { (u, _, r) => intimacy(u, r) },
       "Excuse"        -> Target.Run { (u, _, r) => show(u, r, Step.Excuse) },
-      "Refuse"        -> Target.Run { (u, _, r) => r.show(u, Screen(content.text("girl.refuse"), Nil)) *> show(u, r, Step.Brother) },
+      "Refuse"        -> Target.Run { (u, _, r) => refuse(u, r) },
       "Explain"       -> Target.Run { (u, _, r) => demand(u, r) },
       "PayBrother"    -> Target.Run { (u, _, r) => payBrother(u, r) },
       "FightBrother"  -> Target.Run { (u, _, r) => fightBrother(u, r) },
       "LeaveRoom"     -> Target.Run { (u, _, r) => leaveRoom(u, r) }
     ),
-    // Любой другой ввод — снова текущий шаг: в комнате это экран без кнопок.
+    // Любой другой ввод — снова текущий шаг: в темноте это её экран (см. lightsOut).
     fallback = Target.Run { (u, _, r) => resume(u, r) }
   )
 
@@ -205,43 +205,75 @@ case class GirlState(
   // ── Таверна: комната ────────────────────────────────────────────────────────
 
   /** Уединение: кошелёк худеет на 25–50% (скажем в конце), травмы пройдут через
-    * полтора часа, свет гаснет на полчаса — из кнопок только приложение. */
+    * полтора часа, свет гаснет на полчаса (см. [[lightsOut]]). Уже уединялись —
+    * значит, герой вернулся от уговоров («Ну раз такое дело…» после «Прошу
+    * прощения…» в темноте): снова темнота, без второго уединения и второй
+    * пропажи. */
   private def intimacy(user: User, renderer: Renderer): Task[StateType] =
-    for {
-      now   <- nowMs
-      hero  <- getHero(user)
-      scene <- requireScene(user)
-      pct   <- Random.nextLongBetween(LossPctMin, LossPctMax + 1L)
-      lost   = hero.silver * pct / 100L
-      _     <- heroDao.updateSilver(user.userId, hero.silver - lost)
-      healAt = now + HealDelayMs
-      _     <- ZIO.when(hero.traumaActive(now) && hero.traumaUntil.exists(_ > healAt))(
-                 heroDao.updateTrauma(user.userId, Some(healAt), hero.traumaNames))
-      _     <- writeScene(user, scene.copy(step = Step.RoomWait, lost = lost, roomStartedAt = Some(now)))
-      _     <- scheduler.schedule(user.userId, now + RoomWaitMs, TaskKind.GirlRoom, StateType.Girl, LeaveRoomAction)
-      _     <- renderer.show(user, Screen(content.text("girl.intimacy"), Nil))
-      _     <- renderer.show(user, Screen(content.text("girl.lightsOut"), List(AppButton.choice(content))))
-    } yield StateType.Girl
+    requireScene(user).flatMap { scene =>
+      if (scene.roomStartedAt.isDefined) writeScene(user, scene.copy(step = Step.RoomWait)) *> leaveRoom(user, renderer)
+      else
+        for {
+          now   <- nowMs
+          hero  <- getHero(user)
+          pct   <- Random.nextLongBetween(LossPctMin, LossPctMax + 1L)
+          lost   = hero.silver * pct / 100L
+          _     <- heroDao.updateSilver(user.userId, hero.silver - lost)
+          healAt = now + HealDelayMs
+          _     <- ZIO.when(hero.traumaActive(now) && hero.traumaUntil.exists(_ > healAt))(
+                     heroDao.updateTrauma(user.userId, Some(healAt), hero.traumaNames))
+          _     <- writeScene(user, scene.copy(step = Step.RoomWait, lost = lost, roomStartedAt = Some(now)))
+          _     <- scheduler.schedule(user.userId, now + RoomWaitMs, TaskKind.GirlRoom, StateType.Girl, LeaveRoomAction)
+          _     <- renderer.show(user, Screen(content.text("girl.intimacy"), Nil))
+          _     <- renderer.show(user, lightsOut)
+        } yield StateType.Girl
+    }
+
+  /** Тёмная комната. Через полчаса герой уходит сам (таймер шлёт «LeaveRoom»),
+    * а раньше — только через «Прошу прощения, но у меня есть дела»: та же
+    * кнопка, что в комнате, и тот же путь — уговоры, а настоит — брат. Так
+    * случайно не уйдёшь. Рядом кнопка приложения. Без своих кнопок ВК оставлял
+    * здесь клавиатуру комнаты — и её «Оуу, ну раз такое дело…». */
+  private def lightsOut: Screen =
+    Screen(content.text("girl.lightsOut"),
+      AppButton.inRow(content, List(content.choice("Excuse", "girl.room.choices.Excuse"))))
 
   /** Пока полчаса не прошли — тот же тёмный экран; прошли — выход из комнаты. */
   private def roomWait(user: User, renderer: Renderer, scene: GirlScene): Task[Unit] =
     nowMs.flatMap { now =>
       if (scene.roomStartedAt.exists(start => now - start >= RoomWaitMs)) leaveRoom(user, renderer).unit
-      else renderer.show(user, Screen(content.text("girl.lightsOut"), Nil))
+      else renderer.show(user, lightsOut)
     }
 
+  /** Полчаса прошли — герой выходит из комнаты. Раньше срока — та же темнота.
+    * Ушёл от неё к уговорам или к брату — таймер их не прерывает: вернётся в
+    * темноту — выйдет там (см. [[intimacy]]). */
   private def leaveRoom(user: User, renderer: Renderer): Task[StateType] =
     for {
       now   <- nowMs
       scene <- requireScene(user)
       done   = scene.roomStartedAt.exists(start => now - start >= RoomWaitMs)
-      res <- if (!done) renderer.show(user, Screen(content.text("girl.lightsOut"), Nil)).as(StateType.Girl)
-             else
-               scheduler.cancel(user.userId, TaskKind.GirlRoom) *>
-                 renderer.show(user, Screen(content.text("girl.roomLeft"), Nil)) *>
-                 renderer.show(user, Screen(content.format("girl.silverGone", "silver" -> scene.lost.toString), Nil)) *>
-                 clear(user).as(StateType.GlobalMap)
+      res   <- if (scene.step != Step.RoomWait) ZIO.succeed(StateType.Girl)
+               else if (!done) renderer.show(user, lightsOut).as(StateType.Girl)
+               else
+                 scheduler.cancel(user.userId, TaskKind.GirlRoom) *>
+                   renderer.show(user, Screen(content.text("girl.roomLeft"), Nil)) *>
+                   renderer.show(user, Screen(content.format("girl.silverGone", "silver" -> scene.lost.toString), Nil)) *>
+                   clear(user).as(StateType.GlobalMap)
     } yield res
+
+  /** «Нет, мне правда надо идти!» — она зовёт брата. Если уже уединялись (ушёл
+    * из темноты раньше срока), таймер комнаты больше не нужен, а пропажу из
+    * кошелька герой замечает, пока одевается: на улицу он выйдет уже после
+    * брата. */
+  private def refuse(user: User, renderer: Renderer): Task[StateType] =
+    requireScene(user).flatMap { scene =>
+      ZIO.when(scene.roomStartedAt.isDefined)(
+        scheduler.cancel(user.userId, TaskKind.GirlRoom) *>
+          renderer.show(user, Screen(content.format("girl.silverNoticed", "silver" -> scene.lost.toString), Nil))) *>
+        renderer.show(user, Screen(content.text("girl.refuse"), Nil)) *>
+        show(user, renderer, Step.Brother)
+    }
 
   // ── Таверна: брат ───────────────────────────────────────────────────────────
 
@@ -315,6 +347,7 @@ case class GirlState(
     case Step.Excuse   => content.screen("girl.excuse")
     case Step.Brother  => content.screen("girl.brother")
     case Step.Demand   => demandScreen(scene.price)
+    case Step.RoomWait => lightsOut
     case _             => Screen(content.text("girl.lightsOut"), Nil)
   }
 
