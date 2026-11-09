@@ -13,6 +13,7 @@ import pangea.model.barrel.Barrel
 import pangea.model.home.HomeData
 import pangea.model.hero.Hero
 import pangea.model.item.{Chisel, Item, ItemType, MaterialKind}
+import pangea.model.monster.Race
 import pangea.model.state.StateType
 import pangea.model.top.{TopBoard, TopKind}
 import pangea.model.user.User
@@ -26,7 +27,7 @@ import pangea.repository.item.ItemRepository
 import pangea.repository.user.UserRepository
 import pangea.service.auction.AuctionPurchase
 import pangea.service.cube.AzatCube
-import pangea.service.equipment.{GemWork, Outfit}
+import pangea.service.equipment.{BeltWork, BrewWork, GemWork, Outfit}
 import pangea.service.miniapp.MiniAppView.{AuctionActionView, AuctionView, CharacterView, CraftActionView, CraftView,
   InventoryActionView, InventoryView, QuestsView, SquadActionView, SquadView, TopView}
 import pangea.service.payout.Payouts
@@ -76,6 +77,9 @@ trait MiniApp {
   /** Надеть или снять — как в карточке слота в боте. Ответ — вещи после
     * этого и что сказать. */
   def gear(hero: Hero, act: MiniApp.GearAct): Task[InventoryActionView]
+
+  /** Отвар из сумки — как с его карточки в боте; не в бою. */
+  def brew(hero: Hero, itemId: Long, act: MiniApp.BrewAct): Task[InventoryActionView]
 
   /** Надеть комплект со стойки №`n` — обменяться с ней надетым, как кнопкой
     * стойки дома. Только в городе. */
@@ -140,6 +144,31 @@ object MiniApp {
     final case class InsertGem(slot: Int, from: String, itemId: Long) extends GearAct
     /** Переписать резцом узор надетой вещи. */
     final case class UseChisel(slot: Int) extends GearAct
+    /** Вещь из сумки — на пояс; `slot` — вместо какой ячейки, когда пояс полон. */
+    final case class BeltPut(itemId: Long, slot: Option[Int]) extends GearAct
+    /** Вынуть ячейку пояса в сумку целиком. */
+    final case class BeltTake(slot: Int) extends GearAct
+  }
+
+  /** Что делают с отваром из сумки. На что тратить — травму, род, ячейку фляги —
+    * игрок выбрал из того, что прислал бот ([[MiniAppView.BrewAskView]]). */
+  sealed trait BrewAct
+  object BrewAct {
+    case object Drink                       extends BrewAct
+    case object Coat                        extends BrewAct
+    final case class Cure(trauma: String)   extends BrewAct
+    final case class Sentence(race: String) extends BrewAct
+    final case class Refill(slot: Int)      extends BrewAct
+
+    /** Из запроса: `how` — это [[MiniAppView.BrewAskView.action]]. */
+    def parse(how: String, arg: Option[String]): Option[BrewAct] = (how, arg) match {
+      case ("drink", _)          => Some(Drink)
+      case ("coat", _)           => Some(Coat)
+      case ("cure", Some(t))     => Some(Cure(t))
+      case ("sentence", Some(r)) => Some(Sentence(r))
+      case ("refill", Some(n))   => n.toIntOption.map(Refill)
+      case _                     => None
+    }
   }
 
   /** Приказы отряду: переставить союзника (с места на место) или героя,
@@ -226,6 +255,7 @@ object MiniApp {
         tops, topCache, new AzatCube(heroDao, inventories, items, content),
         new AuctionPurchase(heroDao, inventories, lots, users, bank, payouts, players, content),
         new Outfit(heroDao, inventories, items, content), new GemWork(heroDao, inventories, items, content),
+        new BrewWork(heroDao, inventories, content), new BeltWork(heroDao, inventories, items, content),
         new SquadOrders(heroDao, content),
         new ItemStore.All(heroDao, inventories, artifactRepo, barrelRepo, bank, content),
         new BarrelRobbery(heroDao, barrelRepo, items, content), lock)
@@ -249,12 +279,14 @@ final class MiniAppLive(
   purchase:    AuctionPurchase,
   outfit:      Outfit,
   gemWork:     GemWork,
+  brewWork:    BrewWork,
+  beltWork:    BeltWork,
   orders:      SquadOrders,
   places:      ItemStore.All,
   robbery:     BarrelRobbery,
   lock:        PlayerLock
 ) extends MiniApp {
-  import MiniApp.{CubeAct, Denied, GearAct, Outcome, SquadAct}
+  import MiniApp.{BrewAct, CubeAct, Denied, GearAct, Outcome, SquadAct}
 
   override def player(launchParams: String): Task[Either[Denied, Hero]] =
     config.vkSecret.map(_.trim).filter(_.nonEmpty) match {
@@ -367,19 +399,49 @@ final class MiniAppLive(
         .map(AuctionActionView(_, note, bought))
     }
 
+  override def gear(hero: Hero, act: GearAct): Task[InventoryActionView] =
+    notInBattle(hero, content.text("miniapp.equipment.inBattle"))(gearAct(_, act))
+
+  override def brew(hero: Hero, itemId: Long, act: BrewAct): Task[InventoryActionView] =
+    notInBattle(hero, content.text("battle.belt.notInBattle"))(brewAct(_, itemId, act))
+
   /** Под локом игрока, героя перечитываем уже под ним. В бою — ничего не
     * трогаем, говорим почему. */
-  override def gear(hero: Hero, act: GearAct): Task[InventoryActionView] =
+  private def notInBattle(hero: Hero, refused: String)(act: Hero => Task[String]): Task[InventoryActionView] =
     lock.withLock(hero.userId) {
       for {
         fresh <- heroes.getHero(hero.userId).someOrFail(new Throwable(s"Нет героя у игрока ${hero.userId.value}"))
-        note  <- if (MiniApp.inBattle(fresh)) ZIO.succeed(content.text("miniapp.equipment.inBattle"))
-                 else gearAct(fresh, act)
+        note  <- if (MiniApp.inBattle(fresh)) ZIO.succeed(refused) else act(fresh)
       } yield fresh -> note
     }.flatMap { case (fresh, note) =>
       heroes.getHero(fresh.userId).map(_.getOrElse(fresh)).flatMap(inventory)
         .map(InventoryActionView(_, Option.when(note.nonEmpty)(note)))
     }
+
+  /** Те же правила и слова, что у карточки отвара в боте ([[BrewWork]]). Стало
+    * нельзя, пока игрок смотрел, и причину никто не назвал — сказать это. */
+  private def brewAct(hero: Hero, itemId: Long, act: BrewAct): Task[String] =
+    for {
+      user  <- users.getUserById(hero.userId).someOrFail(new Throwable(s"Нет игрока ${hero.userId.value}"))
+      lines <- Ref.make(Vector.empty[String])
+      say    = new MiniApp.Collect(lines)
+      inv   <- inventories.get(hero.id).mapError(e => new Throwable(e.toString))
+      _     <- inv.items.data.find(_.id == itemId) match {
+                 case None => say.show(user, Screen(content.text("stack.gone"), Nil))
+                 case Some(item) =>
+                   (act match {
+                     case BrewAct.Drink        => brewWork.drink(user, hero, item, say)
+                     case BrewAct.Coat         => brewWork.coat(user, hero, item, say)
+                     case BrewAct.Cure(t)      => brewWork.cure(user, hero, item, t, say)
+                     case BrewAct.Refill(slot) => brewWork.refill(user, hero, item, slot, say)
+                     case BrewAct.Sentence(r)  =>
+                       Race.withNameOption(r).filter(Race.mortals.contains)
+                         .fold(ZIO.succeed(false): Task[Boolean])(brewWork.sentence(user, hero, item, _, say))
+                   }) *> lines.get.flatMap(said =>
+                     ZIO.when(said.isEmpty)(say.show(user, Screen(content.text("miniapp.brew.stale"), Nil))).unit)
+               }
+      said  <- lines.get
+    } yield said.mkString("\n\n")
 
   /** Те же проверки и слова, что у карточки слота в боте: в слот — только то,
     * что в него встаёт ([[EquipmentState.fitting]]). */
@@ -427,6 +489,20 @@ final class MiniAppLive(
                        case _                          => say.show(user, Screen(content.text("inventory.chisel.gone"), Nil))
                      }
                    }
+                 case GearAct.BeltPut(id, slot) =>
+                   inventories.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap(_.items.data.find(_.id == id) match {
+                     case None => say.show(user, Screen(content.text("stack.gone"), Nil))
+                     case Some(item) =>
+                       (if (slot.isEmpty) beltWork.put(user, hero, item, say)
+                        else beltWork.swap(user, hero, item, slot, say)).flatMap {
+                         case BeltWork.Put.Done       => ZIO.unit
+                         case BeltWork.Put.NotForBelt => say.show(user, Screen(content.text("stack.gone"), Nil))
+                         case BeltWork.Put.Full(_, _) => say.show(user, Screen(content.text("inventory.beltFull"), Nil))
+                       }
+                   })
+                 case GearAct.BeltTake(idx) =>
+                   beltWork.take(user, hero, idx, say).flatMap(found =>
+                     ZIO.unless(found)(say.show(user, Screen(content.text("battle.belt.gone"), Nil))).unit)
                }
       said  <- lines.get
     } yield said.mkString("\n\n")

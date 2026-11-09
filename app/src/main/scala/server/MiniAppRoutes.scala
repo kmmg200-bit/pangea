@@ -66,6 +66,18 @@ final class MiniAppRoutes(app: MiniApp) {
     case req @ POST -> Root / "api" / "app" / "equipment" / "chisel" :? SlotParam(slot) =>
       asPlayer(req)(hero => app.gear(hero, GearAct.UseChisel(slot)).flatMap(view => Ok(view.asJson)))
 
+    // Пояс: положить из сумки (`slot` — вместо какой ячейки) и вынуть ячейку. Меняют игру — только POST.
+    case req @ POST -> Root / "api" / "app" / "belt" / "put" :? ItemParam(id) +& BeltCellParam(slot) =>
+      asPlayer(req)(hero => app.gear(hero, GearAct.BeltPut(id, slot)).flatMap(view => Ok(view.asJson)))
+
+    case req @ POST -> Root / "api" / "app" / "belt" / "take" :? SlotParam(slot) =>
+      asPlayer(req)(hero => app.gear(hero, GearAct.BeltTake(slot)).flatMap(view => Ok(view.asJson)))
+
+    // Отвар из сумки: выпить, смазать оружие, заправить флягу. Меняет игру — только POST.
+    case req @ POST -> Root / "api" / "app" / "brew" / how :? ItemParam(id) +& ArgParam(arg) =>
+      MiniApp.BrewAct.parse(how, arg).fold(NotFound(error("off")))(act =>
+        asPlayer(req)(hero => app.brew(hero, id, act).flatMap(view => Ok(view.asJson))))
+
     // Переложить вещь (или всю стопку) из одного хранилища в другое. Меняет игру — только POST.
     case req @ POST -> Root / "api" / "app" / "storages" / "move" :? PlaceFrom(from) +& PlaceTo(to) +& ItemParam(id) +& AllParam(all) =>
       asPlayer(req)(hero => app.move(hero, from, to, id, all.getOrElse(false)).flatMap(view => Ok(view.asJson)))
@@ -148,6 +160,8 @@ final class MiniAppRoutes(app: MiniApp) {
   private object LotParam  extends QueryParamDecoderMatcher[Long]("lot")
   private object SlotParam extends QueryParamDecoderMatcher[Int]("slot")
   private object SocketParam extends QueryParamDecoderMatcher[Int]("socket")
+  private object BeltCellParam extends OptionalQueryParamDecoderMatcher[Int]("slot")
+  private object ArgParam extends OptionalQueryParamDecoderMatcher[String]("arg")
   private object FromParam extends QueryParamDecoderMatcher[Int]("from")
   private object ToParam   extends QueryParamDecoderMatcher[Int]("to")
   private object AtParam   extends QueryParamDecoderMatcher[Int]("at")

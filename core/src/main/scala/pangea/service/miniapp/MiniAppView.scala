@@ -10,11 +10,13 @@ import pangea.model.barrel.Barrel
 import pangea.model.hero.{Achievement, AzatState, CubeStatus, Hero, HeroCard, Knowledge, LoreData}
 import pangea.model.home.{HomeData, HomeRates, House}
 import pangea.model.inventory.Inventory
-import pangea.model.item.{BeltSlot, Bundling, Chisel, GemBreaking, Item, ItemDetails, ItemStack, ItemType, MaterialKind, Rarity}
+import pangea.model.item.{BeltSlot, BrewEffect, Bundling, Chisel, GemBreaking, Item, ItemDetails, ItemStack, ItemType, MaterialKind, Rarity}
+import pangea.model.monster.Race
 import pangea.model.squad.AllyRates
 import pangea.model.top.{TopBoard, TopKind}
 import pangea.service.chat.Links
 import pangea.service.cube.AzatCube
+import pangea.service.equipment.{BeltWork, BrewWork}
 import pangea.service.state.QuestJournal
 import pangea.service.storage.ItemStore.Place
 import pangea.service.state.states.{EquipmentState, InventoryState}
@@ -83,8 +85,9 @@ object MiniAppView {
                             gems: List[SocketedView], freeSocket: Boolean, chisel: Option[String])
 
   /** Ячейка пояса: что в ней и сколько из скольких. Опустевшая помнит, чем
-    * была полна, — `uses` у неё ноль. */
-  final case class BeltCellView(name: String, uses: Int, max: Int)
+    * была полна, — `uses` у неё ноль. `swap` — подпись, когда вместо неё кладут
+    * другое. */
+  final case class BeltCellView(name: String, uses: Int, max: Int, swap: String)
 
   /** Пояс: сколько ячеек всего и что в каждой. */
   final case class BeltView(capacity: Int, cells: List[BeltCellView])
@@ -122,10 +125,26 @@ object MiniAppView {
     * не дотянуться (почему — `storesAway`). */
   final case class MoveView(from: String, item: Long, to: List[String], far: Boolean)
 
+  /** Один из вариантов, на что потратить отвар: `id` уходит боту. */
+  final case class BrewOptionView(id: String, label: String)
+
+  /** Что можно сделать с отваром. `action` — как действие зовётся в запросе;
+    * `refusal` — почему сейчас нельзя: нажатие только скажет это. Есть `options`
+    * — `question` спрашивает, на что тратить, и выбор сразу тратит склянку; нет
+    * — `question` переспрашивает, тратить ли. `hint` — что ещё сказать к вопросу. */
+  final case class BrewAskView(action: String, label: String, question: String, hint: Option[String],
+                               options: List[BrewOptionView], refusal: Option[String])
+
+  /** Чем можно воспользоваться из сумки: `item` — как в списке вещей, `brew` —
+    * что можно сделать с отваром, `belt` — кладётся ли на пояс, `beltFull` — на
+    * поясе нет места, и вот вопрос, что снять. */
+  final case class BagActView(item: Long, brew: List[BrewAskView], belt: Boolean, beltFull: Option[String])
+
   /** Вещи героя. `gearLocked` — почему снаряжение и комплект со стойки сейчас
     * не сменить: герой в бою; `storesAway` — почему дотянуться удастся не до
     * всех хранилищ: герой не в городе или в бою; `gemStock` — камни, которые
-    * можно вставить в гнездо. */
+    * можно вставить в гнездо; `bagActs` — отвары и что кладётся на пояс, пусто
+    * в бою. */
   final case class InventoryView(
     hero:       HeroView,
     capacity:   Long,
@@ -136,7 +155,8 @@ object MiniAppView {
     gearLocked: Option[String],
     storesAway: Option[String],
     moves:      List[MoveView],
-    gemStock:   List[GemStockView]
+    gemStock:   List[GemStockView],
+    bagActs:    List[BagActView]
   )
 
   /** Ответ на «надеть» или «снять»: вещи после этого и что сказать. */
@@ -331,6 +351,9 @@ object MiniAppView {
   implicit val storageEncoder:   Encoder[StorageView]   = deriveEncoder
   implicit val moveEncoder:      Encoder[MoveView]      = deriveEncoder
   implicit val gemStockEncoder:  Encoder[GemStockView]  = deriveEncoder
+  implicit val brewOptionEncoder: Encoder[BrewOptionView] = deriveEncoder
+  implicit val brewAskEncoder:   Encoder[BrewAskView]   = deriveEncoder
+  implicit val bagActEncoder:    Encoder[BagActView]    = deriveEncoder
   implicit val heroEncoder:      Encoder[HeroView]      = deriveEncoder
   implicit val inventoryEncoder: Encoder[InventoryView] = deriveEncoder
   implicit val inventoryActionEncoder: Encoder[InventoryActionView] = deriveEncoder
@@ -384,7 +407,7 @@ object MiniAppView {
                       // Описание надетой — что она даёт, без названия и без сравнения с собой.
                       item       = Option.when(worn.itemType != ItemType.NoItem)(view(worn, 1, InventoryState.gearBody(worn, Some(h)))),
                       busy       = Option.when(slot.busy(h.equipment))(EquipmentState.LeftBusyText),
-                      belt       = belt(worn),
+                      belt       = belt(worn, content),
                       candidates = candidates(h, before, slot, inv.items.data, describe, now),
                       gems       = socketed(worn, content),
                       freeSocket = worn.hasFreeSocket,
@@ -395,8 +418,65 @@ object MiniAppView {
       gearLocked = Option.when(MiniApp.inBattle(h))(content.text("miniapp.equipment.inBattle")),
       storesAway = MiniApp.storesAway(content, h),
       moves      = moves(h, inv, stores, views),
-      gemStock   = gemStock(inv, stores, describe)
+      gemStock   = gemStock(inv, stores, describe),
+      bagActs    = bagActs(h, inv, content, now)
     )
+  }
+
+  /** Что сделать с вещами сумки — те же кнопки, что на карточке в боте; в бою
+    * из сумки ничего не достать. */
+  private def bagActs(h: Hero, inv: Inventory, content: SceneContent, now: Long): List[BagActView] =
+    if (MiniApp.inBattle(h)) Nil
+    else InventoryState.listed(inv.items.data).flatMap { case (item, _) =>
+      val asks = brewAsks(h, item, content, now)
+      val slot = BeltSlot.of(item)
+      Option.when(asks.nonEmpty || slot.isDefined)(
+        BagActView(item.id, asks, slot.isDefined, slot.flatMap(beltFull(h, _, content))))
+    }
+
+  private def beltFull(h: Hero, slot: BeltSlot, content: SceneContent): Option[String] = {
+    val worn = h.equipment.belt
+    worn.details match {
+      case b: ItemDetails.Belt if worn.itemType == ItemType.Belt && !BeltWork.fits(slot, b, worn.rarity) =>
+        Some(content.format("inventory.beltSwapChoice", "name" -> slot.name))
+      case _ => None
+    }
+  }
+
+  private def brewAsks(h: Hero, item: Item, content: SceneContent, now: Long): List[BrewAskView] =
+    item.brew.toList.flatMap { kind =>
+      val confirm = content.format("miniapp.brew.confirm", "name" -> item.name)
+      val drink = Option.when(kind.drinkable)(kind.effect match {
+        case BrewEffect.CureTrauma => cureAsk(h, content, now)
+        case BrewEffect.Sentence =>
+          BrewAskView("sentence", content.text("brew.drink"), content.text("brew.whichRace"), None,
+            Race.mortals.toList.map(r => BrewOptionView(r.entryName, r.toString)), None)
+        case _ => BrewAskView("drink", content.text("brew.drink"), confirm, None, Nil, None)
+      })
+      val coat = kind.effect match {
+        case BrewEffect.Coat(_, _) =>
+          Some(BrewAskView("coat", content.text("brew.coat"), confirm, None, Nil,
+            Option.when(h.equipment.unarmed)(content.text("brew.noWeapon"))))
+        case _ => None
+      }
+      val refill = Option.when(BrewWork.fittingFlasks(h, item).nonEmpty) {
+        val open = BrewWork.openFlasks(h, item).map(f => BrewOptionView(f.slot.toString, content.format("brew.flaskPick",
+          "n" -> (f.slot + 1).toString, "name" -> f.name, "charges" -> f.charges.toString, "max" -> f.maxCharges.toString)))
+        BrewAskView("refill", content.text("brew.refill"), content.text("brew.whichFlask"), None, open,
+          Option.when(open.isEmpty)(content.text("brew.flaskFull")))
+      }
+      List(drink, coat, refill).flatten
+    }
+
+  /** Какую травму лечить: лёгкие и средние на выбор, тяжёлые — только названы. */
+  private def cureAsk(h: Hero, content: SceneContent, now: Long): BrewAskView = {
+    val curable = BrewWork.curable(h, now)
+    val heavy   = BrewWork.heavy(h, now)
+    BrewAskView("cure", content.text("brew.drink"), content.text("brew.whichTrauma"),
+      Option.when(heavy.nonEmpty)(content.format("brew.heavyStay", "names" -> heavy.map(_.name).mkString(", "))),
+      curable.map(t => BrewOptionView(t.name, t.name)),
+      if (curable.nonEmpty) None
+      else Some(content.text(if (heavy.isEmpty) "brew.noTraumas" else "brew.onlyHeavy")))
   }
 
   /** Камни в гнёздах вещи и что спросить перед ломкой — как в боте. */
@@ -499,13 +579,16 @@ object MiniAppView {
   }
 
   /** Пояс по ячейкам — те же числа, что в его карточке ([[Item.statsLines]]). */
-  private def belt(worn: Item): Option[BeltView] = worn.details match {
+  private def belt(worn: Item, content: SceneContent): Option[BeltView] = worn.details match {
     case b: ItemDetails.Belt =>
       val cap = ItemDetails.Belt.capacityFor(worn.rarity)
-      Some(BeltView(cap, b.slots.map {
-        case f: BeltSlot.Flask => BeltCellView(f.name, f.charges.max(0), f.maxCharges)
-        case st: BeltSlot.Stack => BeltCellView(st.name, st.count.max(0), cap)
-        case r: BeltSlot.Rose  => BeltCellView(r.name, r.charges.max(0), r.maxCharges)
+      Some(BeltView(cap, b.slots.map { slot =>
+        val swap = content.format(if (slot.uses > 0) "inventory.beltSwapSlot" else "inventory.beltSwapSlotEmpty", "name" -> slot.name)
+        slot match {
+          case f: BeltSlot.Flask  => BeltCellView(f.name, f.charges.max(0), f.maxCharges, swap)
+          case st: BeltSlot.Stack => BeltCellView(st.name, st.count.max(0), cap, swap)
+          case r: BeltSlot.Rose   => BeltCellView(r.name, r.charges.max(0), r.maxCharges, swap)
+        }
       }))
     case _ => None
   }
