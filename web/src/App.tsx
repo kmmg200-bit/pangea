@@ -6,6 +6,7 @@ import { CharacterTab } from './CharacterTab'
 import { CraftTab } from './CraftTab'
 import { EquipmentTab } from './EquipmentTab'
 import { ItemsTab } from './ItemsTab'
+import { onReturn } from './platform'
 import { QuestsTab } from './QuestsTab'
 import { SquadTab } from './SquadTab'
 import { TopTab } from './TopTab'
@@ -160,6 +161,16 @@ export function App() {
     inventory.data?.hero ??
     craft.data?.hero ??
     auction.data?.hero
+
+  // Герой ходит в чате, пока приложение свёрнуто: открытый раздел перечитываем
+  // при возврате, а прочитанный раньше — когда его снова откроют. Иначе экран
+  // покажет прежнее место героя. Топ от места героя не зависит.
+  const refresh = current.refresh
+  useEffect(() => {
+    if (tab === 'top') return
+    refresh()
+    return onReturn(refresh)
+  }, [tab, refresh])
 
   const markSeen = (id: Seen) => setSeen((prev) => (prev.has(id) ? prev : new Set(prev).add(id)))
 

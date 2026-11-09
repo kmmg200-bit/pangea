@@ -1,4 +1,4 @@
-import bridge from '@vkontakte/vk-bridge'
+import bridge, { type VKBridgeSubscribeHandler } from '@vkontakte/vk-bridge'
 
 /** Параметры запуска — строка запроса адреса, как её дал ВК. Подписаны ВК:
   * по ним бот узнаёт игрока (см. VkLaunchParams на стороне бота). */
@@ -22,6 +22,25 @@ export function initPlatform(): void {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light'
   })
   bridge.send('VKWebAppInit').catch(() => undefined)
+}
+
+/** Игрок вернулся в приложение — из чата или с другой вкладки. На телефоне об
+  * этом скажет ВК, в браузере — сам браузер; бывает, что и то и другое сразу. */
+export function onReturn(fn: () => void): () => void {
+  const restored: VKBridgeSubscribeHandler = (event) => {
+    if (event.detail.type === 'VKWebAppViewRestore') fn()
+  }
+  const shown = () => {
+    if (document.visibilityState === 'visible') fn()
+  }
+  bridge.subscribe(restored)
+  document.addEventListener('visibilitychange', shown)
+  window.addEventListener('focus', fn)
+  return () => {
+    bridge.unsubscribe(restored)
+    document.removeEventListener('visibilitychange', shown)
+    window.removeEventListener('focus', fn)
+  }
 }
 
 /** Лёгкий отклик вибрацией — когда вещь «взялась» пальцем. Вне ВК молчит. */
