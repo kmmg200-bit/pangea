@@ -10,9 +10,9 @@ import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
-import pangea.service.equipment.{GemWork, Outfit}
+import pangea.service.equipment.{BeltWork, GemWork, Outfit}
 import pangea.service.state.states.EquipmentState._
-import pangea.service.state.{BeltContents, ItemMenu, State, UiScene, UserAction}
+import pangea.service.state.{ItemMenu, State, UiScene, UserAction}
 import zio.{Task, ZIO}
 
 case class EquipmentState(
@@ -29,6 +29,9 @@ case class EquipmentState(
 
   /** Сломать камень — общее с Mini App. */
   private val gemWork = new GemWork(heroDao, inventoryRepo, itemRepo, content)
+
+  /** Вынуть с пояса — общее с Mini App. */
+  private val beltWork = new BeltWork(heroDao, inventoryRepo, itemRepo, content)
 
   private val branch = new Branch(
     routes = Map(
@@ -138,45 +141,14 @@ case class EquipmentState(
     case _ => Nil
   }
 
-  /** Вынуть расходник с пояса: фляга собирается обратно со своими зарядами,
-    * пыль — горстью, отвар — склянкой, цветок — со своими раскрытиями. В сумке
-    * нет места — ячейка остаётся как была.
-    *
-    * Пустая ячейка помнит, чем была полна, но вернуть из неё нечего: горсть
-    * высыпана, склянка выпита, цветок осыпался — такая ячейка просто
-    * освобождается. */
+  /** Вынуть расходник с пояса ([[BeltWork.take]]) — и обратно на карточку слота. */
   private def takeFromBelt(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     (readScene(user) <*> getHero(user)).flatMap { case (scene, hero) =>
-      val belt = hero.equipment.belt
-      (payloadField(ua, "slot").flatMap(_.toIntOption), belt.details) match {
-        case (Some(idx), b: ItemDetails.Belt) =>
-          b.at(idx) match {
-            case None => showList(user, renderer)
-            case Some(slot) =>
-              // Ячейку снимают целиком: стопка уходит в сумку вся, сколько в ней
-              // осталось, — и только если места хватит на всё разом.
-              val back  = BeltContents.items(slot)
-              val freed = heroDao.updateEquipment(user.userId,
-                hero.equipment.copy(belt = belt.copy(details = b.without(idx))))
-              val taken = inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
-                if (back.isEmpty)
-                  freed *> renderer.show(user, Screen(content.format("equipment.beltCleared",
-                    "name" -> slot.name), Nil))
-                else if (!BeltContents.fits(inv, back))
-                  renderer.show(user, Screen(content.text("equipment.beltTakeFull"), Nil))
-                else
-                  for {
-                    saved <- BeltContents.persist(Some(itemRepo), hero.id, back)
-                    _     <- freed
-                    _     <- ZIO.foreachDiscard(saved)(it => inventoryRepo.addItem(hero.id, it).ignore)
-                    _     <- renderer.show(user, Screen(content.format("equipment.beltTaken",
-                               "name" -> BeltContents.names(back)), Nil))
-                  } yield ()
-              }
-              taken *> scene.selectedSlot.fold(showList(user, renderer))(showSlot(user, _, renderer))
-          }
-        case _ => showList(user, renderer)
-      }
+      payloadField(ua, "slot").flatMap(_.toIntOption)
+        .fold(ZIO.succeed(false): Task[Boolean])(beltWork.take(user, hero, _, renderer)).flatMap {
+          case false => showList(user, renderer)
+          case true  => scene.selectedSlot.fold(showList(user, renderer))(showSlot(user, _, renderer))
+        }
     }
 
   /** Что из сумки встанет в этот слот: тип подходит, уровень по плечу. Сверху —

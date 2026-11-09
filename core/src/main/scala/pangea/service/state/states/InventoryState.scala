@@ -2,15 +2,12 @@ package pangea.service.state.states
 
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.syntax.EncoderOps
-import pangea.model.item.{BrewEffect, BrewKind, BrewRates}
-import pangea.model.stats.{ParamsBuff, StatBoost}
-import pangea.model.trauma.Trauma
-import pangea.service.state.AzatData
+import pangea.model.item.{BrewEffect, BrewKind}
 import io.circe.{Decoder, Encoder, jawn}
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.generator.item.{MaterialGenerator, TreasureMapGenerator}
-import pangea.model.hero.{Equipment, Hero, WeaponCoat, WeaponDust}
+import pangea.model.hero.{Equipment, Hero, WeaponDust}
 import pangea.model.inventory.Inventory
 import pangea.model.item.{BeltSlot, Bundling, Chisel, Gem, GemBreaking, Item, ItemDetails, ItemStack, ItemType, MaterialKind, QuestItemKind, RefillSource, TrophyKind}
 import pangea.model.monster.Race
@@ -22,13 +19,13 @@ import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
-import pangea.service.equipment.{GemWork, Outfit}
+import pangea.service.equipment.{BeltWork, BrewWork, GemWork, Outfit}
 import pangea.service.state.states.InventoryState._
 import pangea.service.state.states.home.Racks
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.states.murloc.MurlocVillageState
 import pangea.service.state.states.race.RaceQuestState
-import pangea.service.state.{BarrelThievesQuest, BeltContents, HedgeSongQuest, HerbLore, InventoryFeedback, ItemMenu, MarisaQuest, MurlocQuest, NpcQuestLog, QuestGoods,
+import pangea.service.state.{BarrelThievesQuest, BeltContents, HedgeSongQuest, HerbLore, ItemMenu, MarisaQuest, MurlocQuest, NpcQuestLog, QuestGoods,
   SlotChoice, StackMove, State,
   StrayCasketQuest, UiScene, UserAction}
 import zio.{Random, Task, ZIO}
@@ -46,6 +43,10 @@ case class InventoryState(
 
   /** Резец — общее с Mini App. */
   private val gemWork = new GemWork(heroDao, inventoryRepo, itemRepository, content)
+
+  /** Отвары и пояс — общее с Mini App. */
+  private val brewWork = new BrewWork(heroDao, inventoryRepo, content)
+  private val beltWork = new BeltWork(heroDao, inventoryRepo, itemRepository, content)
 
   private val branch = new Branch(
     routes = Map(
@@ -408,86 +409,30 @@ case class InventoryState(
     * заново, отвар не тратим. */
   private def refillFlask(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     withSelected(user, renderer) { (item, hero) =>
-      val slot   = payloadField(ua, "slot").flatMap(_.toIntOption)
-      val chosen = item.brew.toList.flatMap(kind => InventoryState.brewFlasks(hero)
-                     .filter(f => kind.refills.contains(f.source) && f.charges < f.maxCharges))
-                     .find(f => slot.contains(f.slot))
-      chosen match {
-        case Some(f) =>
-          heroDao.updateEquipment(user.userId, f.refilled) *>
-            consume(user, item, hero, content.format("brew.refilled", "flask" -> f.name), renderer)
-        case None => refillByBrew(user, renderer)
-      }
+      payloadField(ua, "slot").flatMap(_.toIntOption)
+        .fold(ZIO.succeed(false): Task[Boolean])(brewWork.refill(user, hero, item, _, renderer)).flatMap {
+          case true  => backToCard(user, renderer)
+          case false => refillByBrew(user, renderer)
+        }
     }
 
-  /** Смазать оружие: на ближайший бой удары по HP травят или пускают кровь.
-    * Новая смазка сменяет прежнюю; без оружия мазать нечего. */
+  /** Смазать оружие: что и как — у [[BrewWork]], общего с Mini App. */
   private def coatWeapon(user: User, renderer: Renderer): Task[StateType] =
-    withSelected(user, renderer) { (item, hero) =>
-      item.brew.map(_.effect) match {
-        case Some(BrewEffect.Coat(coat, _)) if hero.equipment.unarmed =>
-          renderer.show(user, Screen(content.text("brew.noWeapon"), Nil)) *> showItem(user, item.id, renderer)
-        case Some(BrewEffect.Coat(coat, _)) =>
-          val key = coat match { case WeaponCoat.Poison => "brew.coatedPoison"; case WeaponCoat.Bleed => "brew.coatedBleed" }
-          heroDao.updateWeaponDust(user.userId, hero.weaponDust.copy(coat = Some(coat))) *>
-            consume(user, item, hero, content.format(key, "weapon" -> hero.equipment.mainWeapon.name), renderer)
-        case _ => showItem(user, item.id, renderer)
-      }
-    }
+    withSelected(user, renderer)((item, hero) =>
+      brewWork.coat(user, hero, item, renderer).flatMap(afterBrew(user, item, renderer)))
 
-  /** Глоток: по виду отвара. Костоправный сперва спрашивает, какую травму лечить. */
+  /** Склянка ушла — на карточку: в стопке могут быть ещё; цела — на карточку этого отвара. */
+  private def afterBrew(user: User, item: Item, renderer: Renderer)(spent: Boolean): Task[StateType] =
+    if (spent) backToCard(user, renderer) else showItem(user, item.id, renderer)
+
+  /** Глоток: по виду отвара. Костоправный сперва спрашивает, какую травму
+    * лечить, приговор — какой род назвать. */
   private def drinkBrew(user: User, renderer: Renderer): Task[StateType] =
     withSelected(user, renderer) { (item, hero) =>
       item.brew.map(_.effect) match {
         case Some(BrewEffect.CureTrauma) => offerCure(user, item, hero, renderer)
-        case Some(BrewEffect.InstantRest) =>
-          for {
-            now  <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
-            azat <- AzatData.load(heroDao, user.userId, now)
-            _    <- heroDao.writeAzatData(user.userId, azat.copy(instantRests = azat.instantRests + BrewRates.InstantRests).asJson)
-            res  <- consume(user, item, hero, content.format("brew.rests",
-                      "count" -> BrewRates.InstantRests.toString,
-                      "total" -> (azat.instantRests + BrewRates.InstantRests).toString), renderer)
-          } yield res
-        // Пузырьковый нектар: плёнка ждёт своего часа и срока не имеет.
-        case Some(BrewEffect.Bubble) =>
-          for {
-            _   <- heroDao.updateStatBoosts(user.userId, hero.statBoosts.add(
-                     StatBoost(BrewRates.BubbleBoost, ParamsBuff.zero, Long.MaxValue), 0L))
-            res <- consume(user, item, hero, content.text("brew.bubble"), renderer)
-          } yield res
-        // Приговор: сперва герой называет род, и только потом пьёт.
-        case Some(BrewEffect.Sentence) => offerSentence(user, renderer)
-        // Зеркальный настой: копии ждут ближайшего боя там же, где пыль и
-        // смазка, — и сходят вместе с ними, когда бой кончится.
-        case Some(BrewEffect.Mirror(copies)) =>
-          heroDao.updateWeaponDust(user.userId, hero.weaponDust.copy(mirrors = copies)) *>
-            consume(user, item, hero, content.format("brew.mirrors", "count" -> copies.toString), renderer)
-        // Волчий зов: запах держится час, но сгорает на первой же встрече.
-        case Some(BrewEffect.WolfCall) =>
-          for {
-            now <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
-            _   <- heroDao.updateStatBoosts(user.userId, hero.statBoosts.add(
-                     StatBoost(BrewRates.WolfCallBoost, ParamsBuff.zero, now + BrewRates.WolfCallMs), now))
-            res <- consume(user, item, hero, content.text("brew.wolfCall"), renderer)
-          } yield res
-        // Гнилой зов — узелок: так же час, только смрад ведёт к Гнилому Джо.
-        case Some(BrewEffect.RotCall) =>
-          for {
-            now <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
-            _   <- heroDao.updateStatBoosts(user.userId, hero.statBoosts.add(
-                     StatBoost(BrewRates.RotCallBoost, ParamsBuff.zero, now + BrewRates.RotCallMs), now))
-            res <- consume(user, item, hero, content.text("brew.rotCall"), renderer)
-          } yield res
-        case Some(BrewEffect.Boost(name, buff, label)) =>
-          for {
-            now <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
-            _   <- heroDao.updateStatBoosts(user.userId,
-                     hero.statBoosts.add(StatBoost(name, buff, now + BrewRates.BoostDurationMs), now))
-            res <- consume(user, item, hero, content.format("brew.boosted",
-                     "brew" -> item.name, "pct" -> BrewRates.BoostPct.toString, "stat" -> label), renderer)
-          } yield res
-        case _ => showItem(user, item.id, renderer)
+        case Some(BrewEffect.Sentence)   => offerSentence(user, renderer)
+        case _ => brewWork.drink(user, hero, item, renderer).flatMap(afterBrew(user, item, renderer))
       }
     }
 
@@ -509,15 +454,8 @@ case class InventoryState(
   private def sentenceRace(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     withSelected(user, renderer) { (item, hero) =>
       payloadField(ua, "race").flatMap(Race.withNameOption).filter(Race.mortals.contains) match {
-        case None => showItem(user, item.id, renderer)
-        case Some(race) =>
-          for {
-            now <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
-            _   <- heroDao.updateStatBoosts(user.userId, hero.statBoosts.add(
-                     StatBoost(BrewRates.SentenceBoost + race.entryName, ParamsBuff.zero,
-                       now + BrewRates.SentenceMs), now))
-            res <- consume(user, item, hero, content.format("brew.sentenced", "race" -> race.toString), renderer)
-          } yield res
+        case None       => showItem(user, item.id, renderer)
+        case Some(race) => brewWork.sentence(user, hero, item, race, renderer).flatMap(afterBrew(user, item, renderer))
       }
     }
 
@@ -526,8 +464,8 @@ case class InventoryState(
     for {
       now <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
       active   = hero.activeTraumas(now)
-      curable  = active.filter(_.severity != Trauma.Heavy)
-      heavy    = active.filter(_.severity == Trauma.Heavy)
+      curable  = BrewWork.curable(hero, now)
+      heavy    = BrewWork.heavy(hero, now)
       res <-
         if (active.isEmpty)
           renderer.show(user, Screen(content.text("brew.noTraumas"), Nil)) *> showItem(user, item.id, renderer)
@@ -535,7 +473,7 @@ case class InventoryState(
           renderer.show(user, Screen(content.text("brew.onlyHeavy"), Nil)) *> showItem(user, item.id, renderer)
         else {
           val heavyLine = if (heavy.isEmpty) "" else "\n" + content.format("brew.heavyStay", "names" -> heavy.map(_.name).mkString(", "))
-          val choices = curable.distinct.map(t =>
+          val choices = curable.map(t =>
             Choice("CureTraumaPick", t.name, data = Map("trauma" -> t.name), color = ChoiceColor.Positive, row = Some(0))
           ) :+ content.choice("ItemCard", "inventory.exit").copy(row = Some(1), color = ChoiceColor.Negative)
           renderer.show(user, Screen(content.text("brew.whichTrauma") + heavyLine, choices)).as(StateType.Inventory)
@@ -544,31 +482,9 @@ case class InventoryState(
 
   private def cureTrauma(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     withSelected(user, renderer) { (item, hero) =>
-      for {
-        now <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
-        chosen = payloadField(ua, "trauma").flatMap(Trauma.byName)
-                   .filter(t => t.severity != Trauma.Heavy && hero.activeTraumas(now).contains(t))
-        res <- chosen match {
-          case None => showItem(user, item.id, renderer)
-          case Some(t) =>
-            val names = removeFirst(hero.traumaNames, t.name)
-            val until = if (names.isEmpty) None else hero.traumaUntil
-            heroDao.updateTrauma(user.userId, until, names) *>
-              consume(user, item, hero, content.format("brew.cured", "trauma" -> t.name), renderer)
-        }
-      } yield res
+      payloadField(ua, "trauma").fold(ZIO.succeed(false): Task[Boolean])(brewWork.cure(user, hero, item, _, renderer))
+        .flatMap(afterBrew(user, item, renderer))
     }
-
-  private def removeFirst(names: List[String], name: String): List[String] = {
-    val i = names.indexOf(name)
-    if (i < 0) names else names.patch(i, Nil, 1)
-  }
-
-  /** Отвар выпит: предмет уходит, сообщение, и — если в стопке ещё есть — обратно на карточку. */
-  private def consume(user: User, item: Item, hero: Hero, line: String, renderer: Renderer): Task[StateType] =
-    inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)) *>
-      renderer.show(user, Screen(line, Nil)) *>
-      backToCard(user, renderer)
 
   // ── Сюжетные предметы («Письмо Марисе») ────────────────────────────────────
 
@@ -1353,74 +1269,17 @@ case class InventoryState(
       }
     }
 
-  /** Положить расходник на пояс: фляга — со своими зарядами, роза — со своими
-    * раскрытиями, пыль, отвар и святая вода — стопкой: из сумки уходит сразу
-    * столько таких же, сколько влезает в ячейку (см.
-    * [[ItemDetails.Belt.stackFor]]), а неполная ячейка того же вида сперва
-    * доливается. Ячеек у пояса столько, сколько раньше вмещалось склянок (см.
-    * [[ItemDetails.Belt.capacityFor]]); нет пояса — вещь остаётся в сумке, нет
-    * места — спрашиваем, что снять ([[beltSwapScreen]]). */
+  /** Положить расходник на пояс: что и как — у [[BeltWork]], общего с Mini App;
+    * нет места — спрашиваем, что снять ([[beltSwapScreen]]). */
   private def putOnBelt(user: User, renderer: Renderer): Task[StateType] =
-    withSelected(user, renderer) { (item, hero) =>
-      val belt  = hero.equipment.belt
-      val cap   = ItemDetails.Belt.capacityFor(belt.rarity)
-      val stack = ItemDetails.Belt.stackFor(belt.rarity)
-      (BeltSlot.of(item), belt.details) match {
-        case (None, _) => showList(user, renderer)
-        case (Some(_), _) if belt.itemType != ItemType.Belt =>
-          renderer.show(user, Screen(content.text("inventory.beltNone"), Nil)) *> backToCard(user, renderer)
-        case (Some(unit: BeltSlot.Stack), b: ItemDetails.Belt) =>
-          inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
-            val same = sameInBag(inv.items.data, unit, item)
-            b.putStack(unit, same.size, cap, stack) match {
-              case None =>
-                renderer.show(user, beltSwapScreen(unit, b)).as(StateType.Inventory)
-              case Some((filled, n)) =>
-                // В той ячейке, куда легло: она одна изменилась (или встала новой).
-                val in = filled.slots.zipWithIndex.collectFirst {
-                  case (s: BeltSlot.Stack, i) if s.sameKind(unit) && !b.slots.lift(i).contains(s) => s.count
-                }
-                inventoryRepo.removeItems(same.take(n).map(_.id).toSet, hero.id).mapError(e => new Throwable(e.toString)) *>
-                  heroDao.updateEquipment(user.userId,
-                    hero.equipment.copy(belt = belt.copy(details = filled))) *>
-                  renderer.show(user, Screen(content.format("inventory.beltPutStack",
-                    "name" -> unit.name, "count" -> n.toString,
-                    "have" -> in.getOrElse(n).toString, "stack" -> stack.toString), Nil)) *>
-                  backToCard(user, renderer)
-            }
-          }
-        case (Some(slot), b: ItemDetails.Belt) =>
-          b.put(slot, cap) match {
-            case None =>
-              renderer.show(user, beltSwapScreen(slot, b)).as(StateType.Inventory)
-            case Some(filled) =>
-              inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)) *>
-                heroDao.updateEquipment(user.userId,
-                  hero.equipment.copy(belt = belt.copy(details = filled))) *>
-                renderer.show(user, Screen(content.format("inventory.beltPutDone",
-                  "name" -> slot.name, "used" -> filled.slots.size.toString,
-                  "cap" -> cap.toString), Nil)) *>
-                backToCard(user, renderer)
-          }
-        case _ => showList(user, renderer)
-      }
-    }
+    withSelected(user, renderer)((item, hero) =>
+      beltWork.put(user, hero, item, renderer).flatMap(afterBelt(user, renderer, showList(user, renderer))))
 
-  /** Такие же вещи в сумке, что и стопка `unit`, — выбранная первой: её-то
-    * игрок и кладёт, остальные идут следом. */
-  private def sameInBag(bag: List[Item], unit: BeltSlot.Stack, picked: Item): List[Item] = {
-    val same = bag.filter(i => BeltSlot.of(i).exists(unit.sameKind))
-    same.filter(_.id == picked.id) ++ same.filterNot(_.id == picked.id)
+  private def afterBelt(user: User, renderer: Renderer, notForBelt: => Task[StateType]): BeltWork.Put => Task[StateType] = {
+    case BeltWork.Put.Done          => backToCard(user, renderer)
+    case BeltWork.Put.NotForBelt    => notForBelt
+    case BeltWork.Put.Full(slot, b) => renderer.show(user, beltSwapScreen(slot, b)).as(StateType.Inventory)
   }
-
-  /** Ляжет ли вещь на пояс, ничего не снимая: есть свободная ячейка или — для
-    * стопки — неполная ячейка того же вида. */
-  private def fitsOnBelt(slot: BeltSlot, b: ItemDetails.Belt, rarity: pangea.model.item.Rarity): Boolean =
-    slot match {
-      case unit: BeltSlot.Stack =>
-        b.putStack(unit, 1, ItemDetails.Belt.capacityFor(rarity), ItemDetails.Belt.stackFor(rarity)).isDefined
-      case _ => b.slots.sizeIs < ItemDetails.Belt.capacityFor(rarity)
-    }
 
   /** Пояс полон: по кнопке на ячейку — что снять ради новой вещи, и «Назад».
     * Пустая ячейка помнит, чем была полна, — так и подписана. */
@@ -1435,55 +1294,11 @@ case class InventoryState(
           row   = Some(i))
       } :+ content.choice("BeltSwapBack", "common.back").copy(row = Some(belt.slots.size)))
 
-  /** Положить выбранную вещь на пояс вместо ячейки `slot`: снятое уходит в сумку
-    * вещами — стопка вся, сколько в ней осталось (пустой ячейке возвращать
-    * нечего); новая стопка набирается из сумки до полной. Сумке должно хватить
-    * места: взятое освобождает своё, снятое занимает; пыли — не больше сотни
-    * горстей. Место на поясе успело найтись — вещь просто ложится на пояс. */
+  /** Положить выбранную вещь на пояс вместо ячейки `slot` ([[BeltWork.swap]]). */
   private def swapOnBelt(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
-    withSelected(user, renderer) { (item, hero) =>
-      val belt  = hero.equipment.belt
-      val stack = ItemDetails.Belt.stackFor(belt.rarity)
-      (BeltSlot.of(item), belt.details, payloadField(ua, "slot").flatMap(_.toIntOption)) match {
-        case (Some(slot), b: ItemDetails.Belt, _) if belt.itemType == ItemType.Belt && fitsOnBelt(slot, b, belt.rarity) =>
-          putOnBelt(user, renderer)
-        case (Some(slot), b: ItemDetails.Belt, Some(idx)) if belt.itemType == ItemType.Belt =>
-          b.at(idx) match {
-            case None => backToCard(user, renderer)
-            case Some(old) =>
-              val back = BeltContents.items(old)
-              inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
-                // Что уходит из сумки на пояс: стопкой — сколько влезет, иначе — сама вещь.
-                val (put, taken) = slot match {
-                  case unit: BeltSlot.Stack =>
-                    val same = sameInBag(inv.items.data, unit, item).take(stack)
-                    (unit.withCount(same.size), same)
-                  case other => (other, List(item))
-                }
-                val after = inv.withItems(inv.items.data.filterNot(i => taken.exists(_.id == i.id)))
-                if (!BeltContents.fits(after, back))
-                  renderer.show(user, Screen(back.find(r => r.weightless && !BeltContents.fits(after, List(r)))
-                    .map(InventoryFeedback.refusalLine(content, _)).getOrElse(content.text("common.swapNoRoom")), Nil)) *>
-                    backToCard(user, renderer)
-                else
-                  for {
-                    // Место есть — теперь и сохраняем снятое (см. BeltContents.persist).
-                    saved <- BeltContents.persist(Some(itemRepository), hero.id, back)
-                    _     <- inventoryRepo.removeItems(taken.map(_.id).toSet, hero.id).mapError(e => new Throwable(e.toString))
-                    _     <- heroDao.updateEquipment(user.userId,
-                               hero.equipment.copy(belt = belt.copy(details = b.updated(idx, put))))
-                    _     <- ZIO.foreachDiscard(saved)(r => inventoryRepo.addItem(hero.id, r).mapError(e => new Throwable(e.toString)))
-                    name   = BeltContents.names(taken)
-                    _     <- renderer.show(user, Screen(
-                               if (back.isEmpty) content.format("inventory.beltSwappedEmpty", "name" -> name, "old" -> old.name)
-                               else content.format("inventory.beltSwapped", "name" -> name, "old" -> BeltContents.names(back)), Nil))
-                    res   <- backToCard(user, renderer)
-                  } yield res
-              }
-          }
-        case _ => backToCard(user, renderer)
-      }
-    }
+    withSelected(user, renderer)((item, hero) =>
+      beltWork.swap(user, hero, item, payloadField(ua, "slot").flatMap(_.toIntOption), renderer)
+        .flatMap(afterBelt(user, renderer, backToCard(user, renderer))))
 
   // ── Вставка камня: уходим на экран Socketing с id выбранного камня ─────────
 
