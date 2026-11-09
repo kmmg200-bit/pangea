@@ -11,6 +11,7 @@ import pangea.model.inventory.Inventory
 import pangea.model.item.{BeltSlot, BrewKind, FlaskKind, Gem, GemKind, Grip, Item, ItemDetails, ItemType, Rarity}
 import pangea.model.monster.Race
 import pangea.model.squad.{Ally, AllyKind, Squad}
+import pangea.model.state.StateType
 import pangea.model.trauma.Trauma
 import pangea.model.user.{UserId, VkId}
 import pangea.model.top.{TopBoard, TopKind, TopRow, TopStanding}
@@ -229,7 +230,6 @@ object MiniAppViewSpec extends ZIOSpecDefault {
     test("стойки: раздел на стойку со своим номером — её надевают; убранные в кладовую не видны; вне города — почему нельзя") {
       import pangea.model.hero.Equipment
       import pangea.model.home.Furniture
-      import pangea.model.state.StateType
       // Третья стойка — в кладовой: это старшая по номеру.
       val home = HomeData.empty.copy(tier = House.Townhouse.tier, racks = List.fill(3)(Equipment.empty),
                    stored = List(Furniture.Rack.key))
@@ -239,9 +239,9 @@ object MiniAppViewSpec extends ZIOSpecDefault {
       assertTrue(
         view.storages.find(_.id == "racks").exists(_.sections.map(_.rack) == List(Some(1), Some(2))),
         view.storages.filter(_.id != "racks").flatMap(_.sections).forall(_.rack.isEmpty),
-        view.storesAway.isEmpty,
+        view.racksAway.isEmpty,
         MiniAppView.inventory(away, inv(away, Nil), nothing(away, home), content, _.name, 0L)
-          .storesAway.contains(content.text("miniapp.storages.away"))
+          .racksAway.contains(content.text("miniapp.storages.racksAway"))
       )
     },
 
@@ -249,7 +249,7 @@ object MiniAppViewSpec extends ZIOSpecDefault {
       import pangea.model.artifact.{Artifact, ArtifactKind}
       import pangea.model.barrel.{BarrelThieves, StolenGoods}
       import pangea.model.inventory.Inventory.Items
-      val hero  = TestFixtures.hero(UserId(1L))
+      val hero  = TestFixtures.hero(UserId(1L), state = StateType.MarketSquare)
       val quest = sword.copy(id = 77L, itemType = ItemType.QuestItem)
       val arts  = HeroArtifacts.empty(hero.id).copy(casket = Artifact(ArtifactKind.Casket, 1, 0, Items(List(ruby(9L)))))
       val vault = BankVault(1L, hero.id, 1, Items(Nil), 0L)
@@ -264,6 +264,59 @@ object MiniAppViewSpec extends ZIOSpecDefault {
         to("bag", 77L).isEmpty,
         to("casket", 9L).contains(List("bag", "barrel", "vault")),
         noBarrel.moves.flatMap(_.to).forall(_ != "barrel")
+      )
+    },
+
+    test("куда переложить вне города: только между тем, что при себе; в бою — никуда; почему — сказано") {
+      import pangea.model.artifact.{Artifact, ArtifactKind}
+      import pangea.model.inventory.Inventory.Items
+      def at(state: StateType) = {
+        val hero  = TestFixtures.hero(UserId(1L), state = state)
+        val arts  = HeroArtifacts.empty(hero.id).copy(casket = Artifact(ArtifactKind.Casket, 1, 0, Items(List(ruby(9L)))))
+        val vault = BankVault(1L, hero.id, 1, Items(List(sword.copy(id = 40L))), 0L)
+        val store = MiniAppView.Stores(arts, Barrel.empty(hero.id), vault, HomeData.empty)
+        MiniAppView.inventory(hero, inv(hero, List(sword, ruby(5L))), store, content, _.name, 0L)
+      }
+      def move(v: MiniAppView.InventoryView, from: String, id: Long) = v.moves.find(m => m.from == from && m.item == id)
+      val maze  = at(StateType.Dungeon)
+      val fight = at(StateType.Battle)
+      val town  = at(StateType.MarketSquare)
+      assertTrue(
+        // Лабиринт: камень — в Ларец и обратно, остальное закрыто и об этом сказано.
+        move(maze, "bag", 5L).exists(m => m.to == List("casket") && m.far),
+        move(maze, "casket", 9L).exists(m => m.to == List("bag") && m.far),
+        // Меч в лабиринте класть некуда: шкафа нет, а ячейка и бочка — в городе.
+        move(maze, "bag", sword.id).exists(m => m.to.isEmpty && m.far),
+        // Из ячейки — никуда, хотя сумка при себе: сама ячейка в городе.
+        move(maze, "vault", 40L).exists(m => m.to.isEmpty && m.far),
+        maze.storesAway.contains(content.text("miniapp.storages.away")),
+        // Бой: ни туда, ни обратно — и причина своя.
+        fight.moves.forall(m => m.to.isEmpty && m.far),
+        fight.storesAway.contains(content.text("miniapp.storages.inBattle")),
+        // Город: всё доступно, ничего не «далеко».
+        town.moves.forall(!_.far),
+        town.storesAway.isEmpty,
+        move(town, "vault", 40L).exists(_.to.contains("bag"))
+      )
+    },
+
+    test("перенос под замком: вне города — только при себе, в бою — никак, в городе — всё") {
+      import pangea.model.artifact.ArtifactKind
+      import pangea.service.storage.ItemStore.Place
+      val casket = Place.Art(ArtifactKind.Casket)
+      def barred(state: StateType, from: Place, to: Place) =
+        MiniApp.moveBarred(content, TestFixtures.hero(UserId(1L), state = state), from, to)
+      val away   = content.text("miniapp.storages.away")
+      val battle = content.text("miniapp.storages.inBattle")
+      assertTrue(
+        barred(StateType.Dungeon, Place.Bag, casket).isEmpty,
+        barred(StateType.Dungeon, casket, Place.Art(ArtifactKind.Wardrobe)).isEmpty,
+        // Хватает одного конца вне досягаемости — в любую сторону.
+        barred(StateType.Dungeon, Place.Bag, Place.Vault).contains(away),
+        barred(StateType.Dungeon, Place.Barrel, Place.Bag).contains(away),
+        barred(StateType.Dungeon, casket, Place.Barrel).contains(away),
+        barred(StateType.Battle, Place.Bag, casket).contains(battle),
+        barred(StateType.MarketSquare, Place.Vault, Place.Barrel).isEmpty
       )
     },
 
@@ -324,7 +377,6 @@ object MiniAppViewSpec extends ZIOSpecDefault {
     ,
     test("крафт: куб — по статусу, сила — заряды или энергия дома, в сумке нет сюжетного, вне города — почему нельзя") {
       import pangea.model.hero.CubeStatus
-      import pangea.model.state.StateType
       val c      = SceneContent.load()
       val hero   = TestFixtures.hero(UserId(1L), state = StateType.MarketSquare)
       val quest  = sword.copy(id = 77L, itemType = ItemType.QuestItem)
@@ -345,7 +397,6 @@ object MiniAppViewSpec extends ZIOSpecDefault {
     },
 
     test("аукцион: чем платить и куда класть — как пришло; вне города — почему не купить") {
-      import pangea.model.state.StateType
       val c      = SceneContent.load()
       val hero   = TestFixtures.hero(UserId(1L), state = StateType.TradeHouse)
       val lot    = AuctionLot(3L, HeroId(2L), sword, 300L, AuctionCurrency.Doubloons, 0L, AuctionLot.LifetimeMs)

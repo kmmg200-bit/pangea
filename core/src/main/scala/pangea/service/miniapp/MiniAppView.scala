@@ -105,13 +105,16 @@ object MiniAppView {
   final case class HeroView(lvl: Long, silver: Long, doubloons: Long, name: Option[String], race: String)
 
   /** Куда можно переложить вещь `item` (у стопки — та же, что в списке) из
-    * хранилища `from` (`bag` — сумка): открытые хранилища, которые берут
-    * такую вещь. Есть ли там место, скажет бот. */
-  final case class MoveView(from: String, item: Long, to: List[String])
+    * хранилища `from` (`bag` — сумка) прямо сейчас: открытые хранилища,
+    * которые берут такую вещь и до которых герой дотянется. Есть ли там
+    * место, скажет бот. `far` — такую вещь взяли бы и другие, но до них сейчас
+    * не дотянуться (почему — `storesAway`). */
+  final case class MoveView(from: String, item: Long, to: List[String], far: Boolean)
 
   /** Вещи героя. `gearLocked` — почему снаряжение сейчас не сменить: герой
-    * в бою; `storesAway` — почему не переложить вещи и не надеть стойку:
-    * герой не в городе. */
+    * в бою; `storesAway` — почему дотянуться удастся не до всех хранилищ:
+    * герой не в городе или в бою; `racksAway` — почему не надеть комплект со
+    * стойки: герой не в городе. */
   final case class InventoryView(
     hero:       HeroView,
     capacity:   Long,
@@ -121,6 +124,7 @@ object MiniAppView {
     storages:   List[StorageView],
     gearLocked: Option[String],
     storesAway: Option[String],
+    racksAway:  Option[String],
     moves:      List[MoveView]
   )
 
@@ -373,15 +377,17 @@ object MiniAppView {
                   },
       storages  = views,
       gearLocked = Option.when(MiniApp.inBattle(h))(content.text("miniapp.equipment.inBattle")),
-      storesAway = Option.unless(MiniApp.inCity(h))(content.text("miniapp.storages.away")),
-      moves      = moves(inv, stores, views)
+      storesAway = MiniApp.storesAway(content, h),
+      racksAway  = Option.unless(MiniApp.inCity(h))(content.text("miniapp.storages.racksAway")),
+      moves      = moves(h, inv, stores, views)
     )
   }
 
   /** Что где лежит и куда его можно переложить: в открытые хранилища, которые
-    * берут такую вещь ([[ItemStore.Place.accepts]]). Вскрытая ворами бочка не
-    * отдаёт и не берёт ничего. Стопка — одной строкой, как в списке. */
-  private def moves(inv: Inventory, st: Stores, storages: List[StorageView]): List[MoveView] = {
+    * берут такую вещь ([[ItemStore.Place.accepts]]) и до которых герой сейчас
+    * дотянется ([[MiniApp.reach]]). Вскрытая ворами бочка не отдаёт и не берёт
+    * ничего. Стопка — одной строкой, как в списке. */
+  private def moves(h: Hero, inv: Inventory, st: Stores, storages: List[StorageView]): List[MoveView] = {
     val open = Place.all.filter(p => p == Place.Bag || storages.exists(s => s.id == p.id && s.locked.isEmpty))
       .filterNot(p => p == Place.Barrel && st.barrel.robbed)
     def inside(p: Place): List[Item] = p match {
@@ -391,12 +397,14 @@ object MiniAppView {
       case Place.Vault       => st.vault.items.data
       case Place.Shelf(kind) => kind.get(st.home)
     }
+    val near = MiniApp.reach(h)
     for {
       from      <- open
       (item, _) <- ItemStack.grouped(inside(from))
-      to         = open.filter(p => p != from && p.accepts(item)).map(_.id)
-      if to.nonEmpty
-    } yield MoveView(from.id, item.id, to)
+      takers     = open.filter(p => p != from && p.accepts(item))
+      if takers.nonEmpty
+      to         = takers.filter(p => near(from) && near(p))
+    } yield MoveView(from.id, item.id, to.map(_.id), far = to.size < takers.size)
   }
 
   /** Что из сумки встанет в слот ([[EquipmentState.fitting]]) и что изменится,

@@ -57,13 +57,14 @@ object ItemStore {
 
   /** Хранилище по имени — так его зовёт приложение (`StorageView.id`), — и что
     * оно берёт: вид вещи, без мест и замков. Сюжетное из сумки не уходит
-    * никуда. */
-  sealed abstract class Place(val id: String) {
+    * никуда. `carried` — герой носит его с собой: до него можно дотянуться и
+    * вне города. */
+  sealed abstract class Place(val id: String, val carried: Boolean) {
     def accepts(item: Item): Boolean
   }
 
   object Place {
-    case object Bag extends Place("bag") {
+    case object Bag extends Place("bag", carried = true) {
       def accepts(item: Item): Boolean = true
     }
 
@@ -72,19 +73,19 @@ object ItemStore {
       case ArtifactKind.Casket    => "casket"
       case ArtifactKind.LivingBag => "livingBag"
       case ArtifactKind.Wardrobe  => "wardrobe"
-    }) {
+    }, carried = true) {
       def accepts(item: Item): Boolean = kind.accepts(item) && !item.isQuestItem
     }
 
-    case object Barrel extends Place("barrel") {
+    case object Barrel extends Place("barrel", carried = false) {
       def accepts(item: Item): Boolean = !item.isQuestItem
     }
 
-    case object Vault extends Place("vault") {
+    case object Vault extends Place("vault", carried = false) {
       def accepts(item: Item): Boolean = !item.isQuestItem
     }
 
-    final case class Shelf(kind: HomeShelf.Kind) extends Place(kind.id) {
+    final case class Shelf(kind: HomeShelf.Kind) extends Place(kind.id, carried = false) {
       def accepts(item: Item): Boolean = kind.accepts(item) && !item.isQuestItem
     }
 

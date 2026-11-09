@@ -164,14 +164,31 @@ object MiniApp {
   }
 
   /** Герой в городе — только тогда из приложения можно работать с кубом,
-    * покупать на аукционе и перекладывать вещи по хранилищам, как и
-    * передавать их. */
+    * покупать на аукционе, надевать комплект со стойки и трогать хранилища
+    * города и дома, как и передавать вещи. */
   def inCity(hero: Hero): Boolean = StateType.cityStates.contains(hero.state)
 
   /** Герой в бою — тогда снаряжение и строй из приложения не меняют: ход боя
     * считается на надетом и на том, кто где стоит. Любой бой — в лабиринте,
     * сюжетный, на арене — это [[StateType.Battle]]. */
   def inBattle(hero: Hero): Boolean = hero.state == StateType.Battle
+
+  /** До каких хранилищ герой сейчас дотянется: в городе — до всех, вне города
+    * — только до того, что носит с собой, в бою — ни до каких. */
+  def reach(hero: Hero): Place => Boolean =
+    if (inBattle(hero)) _ => false
+    else if (inCity(hero)) _ => true
+    else _.carried
+
+  /** Почему дотянуться удастся не до всех хранилищ; `None` — до всех. */
+  def storesAway(content: SceneContent, hero: Hero): Option[String] =
+    if (inBattle(hero)) Some(content.text("miniapp.storages.inBattle"))
+    else Option.unless(inCity(hero))(content.text("miniapp.storages.away"))
+
+  /** Почему вещь из `from` в `to` сейчас не переложить: под рукой должны быть
+    * оба хранилища. `None` — можно. */
+  def moveBarred(content: SceneContent, hero: Hero, from: Place, to: Place): Option[String] =
+    storesAway(content, hero).filterNot(_ => reach(hero)(from) && reach(hero)(to))
 
   val live: ZLayer[MiniAppConfig with UserRepository with HeroRepository with InventoryRepository with AuctionRepository
                      with HeroDao with ArtifactDao with BarrelDao with BankVaultDao with TopDao
@@ -388,8 +405,9 @@ final class MiniAppLive(
   /** Проверки и слова — у [[Racks]], как у кнопки стойки дома: что не так
     * (не по уровню, сумка не вместит), а вышло — что поменялись. */
   override def rack(hero: Hero, n: Int): Task[InventoryActionView] =
-    inCityAct(hero) { (user, _, say) =>
-      racks.swap(user, n, say).flatMap {
+    storesAct(hero) { (user, fresh, say) =>
+      if (!MiniApp.inCity(fresh)) say.show(user, Screen(content.text("miniapp.storages.racksAway"), Nil))
+      else racks.swap(user, n, say).flatMap {
         case Left(why) => say.show(user, Screen(why, Nil))
         case Right(_)  => say.show(user, Screen(content.format("home.rack.swapped", "n" -> n.toString), Nil))
       }
@@ -398,14 +416,16 @@ final class MiniAppLive(
   private val racks = Racks(heroDao, inventories, content)
 
   /** Перенос — общим [[ItemStore.move]], слова отказов — те же, что у экранов
-    * бота. Стопка — по одной, пока принимает новое место ([[StackMove]]). */
+    * бота. Стопка — по одной, пока принимает новое место ([[StackMove]]). Оба
+    * хранилища должны быть герою под рукой ([[MiniApp.moveBarred]]) — жребий
+    * бочки бросается только после этого. */
   override def move(hero: Hero, from: String, to: String, itemId: Long, all: Boolean): Task[InventoryActionView] =
-    inCityAct(hero) { (user, fresh, say) =>
+    storesAct(hero) { (user, fresh, say) =>
       def tell(text: String) = say.show(user, Screen(text, Nil))
       val gone = content.text("stack.gone")
       (Place.byId(from), Place.byId(to)) match {
         case (Some(src), Some(dst)) if src != dst =>
-          barrelGuard(user, fresh, src, dst).flatMap {
+          MiniApp.moveBarred(content, fresh, src, dst).fold(barrelGuard(user, fresh, src, dst))(ZIO.some(_)).flatMap {
             case Some(why) => tell(why)
             case None =>
               val (source, target) = (places(src), places(dst))
@@ -438,19 +458,17 @@ final class MiniAppLive(
     }
 
   /** Действие с хранилищами: под локом игрока, героя перечитываем уже под
-    * ним; не в городе — ничего не трогаем, говорим почему. Что сказал бот,
-    * собирается в заметку, а ответ — вещи после действия. */
-  private def inCityAct(hero: Hero)(act: (User, Hero, Renderer) => Task[Unit]): Task[InventoryActionView] =
+    * ним — где он сейчас, решает само действие. Что сказал бот, собирается в
+    * заметку, а ответ — вещи после действия. */
+  private def storesAct(hero: Hero)(act: (User, Hero, Renderer) => Task[Unit]): Task[InventoryActionView] =
     lock.withLock(hero.userId) {
       for {
         fresh <- heroes.getHero(hero.userId).someOrFail(new Throwable(s"Нет героя у игрока ${hero.userId.value}"))
-        note  <- if (!MiniApp.inCity(fresh)) ZIO.succeed(content.text("miniapp.storages.away"))
-                 else for {
-                   user  <- users.getUserById(fresh.userId).someOrFail(new Throwable(s"Нет игрока ${fresh.userId.value}"))
-                   lines <- Ref.make(Vector.empty[String])
-                   _     <- act(user, fresh, new MiniApp.Collect(lines))
-                   said  <- lines.get
-                 } yield said.mkString("\n\n")
+        user  <- users.getUserById(fresh.userId).someOrFail(new Throwable(s"Нет игрока ${fresh.userId.value}"))
+        lines <- Ref.make(Vector.empty[String])
+        _     <- act(user, fresh, new MiniApp.Collect(lines))
+        said  <- lines.get
+        note   = said.mkString("\n\n")
       } yield fresh -> note
     }.flatMap { case (fresh, note) =>
       heroes.getHero(fresh.userId).map(_.getOrElse(fresh)).flatMap(inventory)

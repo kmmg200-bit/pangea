@@ -17,20 +17,23 @@ const groups: { id: Group; label: string }[] = [
   * вкладке «Персонаж». */
 const BAG = 'bag'
 
-/** Что можно сделать с хранилищем; нет (`null`) — герой не в городе. */
+/** Как выполнить действие с хранилищем и занято ли приложение предыдущим. */
 interface Acts {
   run: (act: () => Promise<InventoryActionView>) => void
   busy: boolean
 }
 
-/** «Переложить» в карточке вещи: хранилища, которые её возьмут, и сколько в
-  * них свободно. Стопку — по одной вещи или всю. Есть ли место, скажет бот. */
-function MovePanel(props: { data: InventoryView; from: string; item: ItemView; acts: Acts | null; onDone: () => void }) {
+/** «Переложить» в карточке вещи: хранилища, которые её возьмут и до которых
+  * герой сейчас дотянется, и сколько в них свободно. Стопку — по одной вещи
+  * или всю. Есть ли место, скажет бот. */
+function MovePanel(props: { data: InventoryView; from: string; item: ItemView; acts: Acts; onDone: () => void }) {
   const { data, from, item, acts } = props
   const [all, setAll] = useState(false)
-  const to = data.moves.find((m) => m.from === from && m.item === item.id)?.to ?? []
-  if (to.length === 0) return null
-  if (!acts) return <p className="sheet-note">{data.storesAway}</p>
+  const move = data.moves.find((m) => m.from === from && m.item === item.id)
+  if (!move) return null
+  const { to, far } = move
+  const why = far && <p className="sheet-note">{data.storesAway}</p>
+  if (to.length === 0) return <>{why}</>
   const place = (id: string) => {
     if (id === BAG) return { title: 'Сумка', free: data.capacity - data.occupied }
     const s = data.storages.find((x) => x.id === id)
@@ -69,11 +72,12 @@ function MovePanel(props: { data: InventoryView; from: string; item: ItemView; a
           )
         })}
       </div>
+      {why}
     </div>
   )
 }
 
-function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; acts: Acts | null; away: string | null }) {
+function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; acts: Acts; racksAway: string | null }) {
   const s = props.storage
   const { acts } = props
   const racks = s.sections.some((sec) => sec.rack !== null)
@@ -107,7 +111,7 @@ function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; a
         </div>
       )}
       {s.note && <section className="card card-warn storage-note">{s.note}</section>}
-      {racks && props.away && <section className="card card-warn storage-note">{props.away}</section>}
+      {racks && props.racksAway && <section className="card card-warn storage-note">{props.racksAway}</section>}
       {empty && <Empty>Пусто.</Empty>}
       {s.counts.length > 0 && (
         <div className="list">
@@ -127,7 +131,7 @@ function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; a
             {sec.rack !== null ? (
               <div className="group-label rack-head">
                 <span>{sec.title}</span>
-                {acts && (
+                {!props.racksAway && (
                   <button className="rack-wear" onClick={() => acts.run(() => api.rackWear(sec.rack ?? 0))} disabled={acts.busy}>
                     Надеть
                   </button>
@@ -151,9 +155,10 @@ function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; a
 
 /** «Вещи»: при себе, в городе и в доме. Закрытое хранилище видно с замком —
   * нажал, и написано, как его открыть. Вещь из любого хранилища — в любое,
-  * которое её возьмёт (из карточки вещи), а комплект со стойки — на героя;
-  * то и другое только в городе: бот проверит это сам, под тем же замком,
-  * что и ходы в чате. Что сказал бот — всплывает над нижней панелью. */
+  * которое её возьмёт (из карточки вещи), а комплект со стойки — на героя,
+  * но только в городе; вне города — между тем, что при себе, в бою — никак.
+  * Бот проверит это сам, под тем же замком, что и ходы в чате. Что сказал бот
+  * — всплывает над нижней панелью. */
 export function ItemsTab(props: { data: InventoryView; onChange: (v: InventoryView) => void }) {
   const [group, setGroup] = useState<Group>('self')
   const [picked, setPicked] = useState<Record<Group, string>>({ self: BAG, city: '', home: '' })
@@ -162,21 +167,19 @@ export function ItemsTab(props: { data: InventoryView; onChange: (v: InventoryVi
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useToast()
 
-  const acts: Acts | null = props.data.storesAway
-    ? null
-    : {
-        busy,
-        run: (act) => {
-          setBusy(true)
-          act()
-            .then((r) => {
-              props.onChange(r.inventory)
-              if (r.note) setToast(r.note)
-            })
-            .catch(() => setToast('Ответ не дошёл. Обновите (⟳) и проверьте вещи.'))
-            .finally(() => setBusy(false))
-        },
-      }
+  const acts: Acts = {
+    busy,
+    run: (act) => {
+      setBusy(true)
+      act()
+        .then((r) => {
+          props.onChange(r.inventory)
+          if (r.note) setToast(r.note)
+        })
+        .catch(() => setToast('Ответ не дошёл. Обновите (⟳) и проверьте вещи.'))
+        .finally(() => setBusy(false))
+    },
+  }
 
   const inGroup = useMemo(() => props.data.storages.filter((s) => s.group === group), [props.data.storages, group])
   const options = [
@@ -199,7 +202,7 @@ export function ItemsTab(props: { data: InventoryView; onChange: (v: InventoryVi
           storage={storage}
           onOpen={(item) => setOpen({ item, from: storage.id })}
           acts={acts}
-          away={props.data.storesAway}
+          racksAway={props.data.racksAway}
         />
       ) : null}
       {open && (
