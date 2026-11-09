@@ -1643,16 +1643,22 @@ case class BattleState(
             chanceRoll(true, acc.hero.sets.riseChancePct).map {
               case false => acc
               case true  =>
-                acc.battle.group.nearestFreeAllyPlace.fold(acc) { pos =>
+                // Тёмный волк в строю один: поднятый второй вцепляется в
+                // прежнего и побеждает — встаёт на его место, а прежний уходит
+                // в павшие (после боя его нет и в отряде, см. squadAfterBattle).
+                val rival = if (form.unique) acc.battle.group.darkWolf else None
+                rival.map(_.position).orElse(acc.battle.group.nearestFreeAllyPlace).fold(acc) { pos =>
                   val hp = (form.stats.hp * ItemSet.Necromancer.RiseHpPct / 100L).max(1L)
                   val ally = BattleAlly(pangea.model.squad.AllyKind.Undead, pos,
                     hp = hp, armor = 0L, energy = form.stats.energy,
                     stats = form.stats, lvl = form.lvl, undead = Some(form), home = 0)
+                  val group = rival.fold(acc.battle.group)(old =>
+                    acc.battle.group.updateAlly(old.position)(_.copy(hp = 0L, lastHitBy = Some(form.name)))
+                      .withoutAlly(old.position))
+                  val line = if (rival.isDefined) "battle.necroWolfFight" else "battle.necroRise"
                   acc.copy(
-                    battle = acc.battle.copy(group = acc.battle.group.copy(
-                      allies = acc.battle.group.allies :+ ally)),
-                    log = acc.log :+ content.format("battle.necroRise",
-                      "name" -> form.name, "n" -> pos.toString))
+                    battle = acc.battle.copy(group = group.copy(allies = group.allies :+ ally)),
+                    log = acc.log :+ content.format(line, "name" -> form.name, "n" -> pos.toString))
                 }
             }
         }

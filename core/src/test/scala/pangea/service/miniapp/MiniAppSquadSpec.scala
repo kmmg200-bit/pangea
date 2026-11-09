@@ -78,6 +78,22 @@ object MiniAppSquadSpec extends ZIOSpecDefault {
         none.isEmpty && silent.isEmpty
       )
     },
+    test("ждёт Тёмный волк, а свой в отряде уже есть: названный остаётся, волки дерутся — новый на месте прежнего") {
+      def wolf(l: Long) = UndeadForm(UndeadForm.DarkWolfName, l, AllyKind.Human.stats(3L))
+      val withOld = hero.squad.raise(wolf(4L), lvl, 0L)
+      val waiting = hero.copy(squad = withOld.copy(pendingRisen = Some(wolf(9L))))
+      val oldAt   = withOld.darkWolves.map(_.position).headOption.getOrElse(0)
+      val gnome   = hero.squad.allies.find(_.kind == AllyKind.Gnome).map(_.position).getOrElse(0)
+      for {
+        t <- run(waiting)((o, h, say) => o.takeRisenPlace(user, h, gnome, say))
+        (took, after, said, c) = t
+      } yield assertTrue(
+        took.isDefined && after.pendingRisen.isEmpty,
+        after.darkWolves.map(w => w.position -> w.lvlAt(lvl)) == List(oldAt -> 9L),
+        after.allies.exists(_.kind == AllyKind.Gnome) && after.allies.size == 3,
+        said == Vector(c.format("squad.wolfFight", "name" -> UndeadForm.DarkWolfName))
+      )
+    },
     test("в бою строй не трогают: вид говорит почему") {
       val c = SceneContent.load()
       assertTrue(

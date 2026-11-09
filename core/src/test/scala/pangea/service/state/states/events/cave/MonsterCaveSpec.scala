@@ -759,6 +759,30 @@ object MonsterCaveSpec extends ZIOSpecDefault {
               assertTrue(scene.exists(_.altarSpent))
     },
 
+    test("Тёмный волк в отряде один: второй с алтаря вцепляется в прежнего и встаёт на его место — и в полном отряде") {
+      val fang = pangea.generator.loot.LootGenerator.wolfFang(bossLvl = 7L, floorLvl = 30L).copy(id = 32L)
+      // полный отряд: прежний волк (5-го уровня) на месте 4, остальные — рядовые поднятые
+      val full = (1 to AllyRates.Positions - 1).foldLeft(Squad.empty) { (sq, i) =>
+        sq.raise(if (i == 3) DarkAltar.wolfOf(5L) else UndeadForm(s"Поднятый $i", 1L, AllyKind.Human.stats(1L)),
+          10L, nowStamp)
+      }
+      for {
+        t <- cave(hero().copy(squad = full), items = List(fang))
+        (state, dao, inv, _, r) = t
+        _     <- put(dao, altarCave())
+        _     <- state.action(testUser, tap("CaveAltar"), r)
+        _     <- state.action(testUser, tap("CaveUse_32"), r)
+        said  <- texts(r)
+        after <- dao.getHeroByUserId(userId).map(_.get)
+        scene <- sceneOf(dao)
+      } yield assertTrue(full.full && full.allyAt(4).exists(_.isDarkWolf)) &&
+              // жертвовать никем не просят: волки дерутся, побеждает новый
+              assertTrue(said.contains("Волки вцепляются друг в друга") && !said.contains("некуда встать")) &&
+              assertTrue(after.squad.darkWolves.map(w => w.position -> w.undead.map(_.lvl)) == List(4 -> Some(7L))) &&
+              assertTrue(after.squad.allies.size == 10 && inv.snapshot.isEmpty) &&
+              assertTrue(scene.exists(_.altarSpent))
+    },
+
     test("чужое алтарю безразлично: вещь остаётся у героя") {
       val herb = MaterialGenerator.item(MaterialKind.GlaiveMushroom).copy(id = 41L)
       for {

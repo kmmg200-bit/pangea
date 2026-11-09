@@ -53,6 +53,9 @@ final case class Ally(
 ) {
   def name: String = undead.map(_.name).getOrElse(kind.name)
 
+  /** Тёмный волк с алтаря или из боя с «Некромантом» — в отряде он один. */
+  def isDarkWolf: Boolean = undead.exists(_.unique)
+
   /** Потолки статов: у наёмника — по уровню героя, у поднятого — свои. */
   def statsAt(lvl: Long): FightStats = undead.map(_.stats).getOrElse(kind.stats(lvl))
 
@@ -205,13 +208,32 @@ final case class Squad(
 
   /** Поднятый встаёт на свободное место — и держится [[AllyRates.UndeadMs]] с
     * этой минуты, а с «Некромантом» (порог 6) вдвое дольше: `lasts` — этот
-    * множитель. Мест нет — отряд как был; заменой заведует [[replaceAt]]. */
+    * множитель. Мест нет — отряд как был; заменой заведует [[replaceAt]].
+    *
+    * Тёмный волк в отряде один: если он уже есть, новый сцепляется с ним и
+    * побеждает — встаёт на место прежнего ([[wolfRival]]). Свободного места
+    * для этого не нужно. */
   def raise(form: UndeadForm, lvl: Long, nowMs: Long, lasts: Long = 1L): Squad =
-    freePosition.fold(this)(p => copy(allies = allies :+ risen(form, p, lvl, nowMs, lasts)))
+    wolfRival(form) match {
+      case Some(old) => replaceAt(old.position, form, lvl, nowMs, lasts)
+      case None      => freePosition.fold(this)(p => copy(allies = allies :+ risen(form, p, lvl, nowMs, lasts)))
+    }
 
-  /** Поднятый занимает место того, кто на нём стоял. */
+  /** Поднятый занимает место того, кто на нём стоял. Встаёт Тёмный волк — с
+    * ним уходят и прежние волки: второму в отряде не бывать. */
   def replaceAt(pos: Int, form: UndeadForm, lvl: Long, nowMs: Long, lasts: Long = 1L): Squad =
-    copy(allies = allies.filterNot(_.position == pos) :+ risen(form, pos, lvl, nowMs, lasts))
+    copy(allies = allies.filterNot(a => a.position == pos || (form.unique && a.isDarkWolf)) :+
+      risen(form, pos, lvl, nowMs, lasts))
+
+  /** Тёмные волки отряда, по местам. Больше одного их не бывает: новый
+    * сцепляется с прежним и побеждает (см. [[raise]]). Несколько бывает лишь у
+    * тех, кто поднял их до этого правила, — новый одолеет всех разом. */
+  def darkWolves: List[Ally] = inOrder.filter(_.isDarkWolf)
+
+  /** С кем сцепится этот поднятый: Тёмный волк — с прежним волком отряда
+    * (первым по строю), прочим делить нечего. */
+  def wolfRival(form: UndeadForm): Option[Ally] =
+    if (form.unique) darkWolves.headOption else None
 
   /** Крыса из-под ног встаёт на свободное место и держится [[AllyRates.RatMs]].
     * Мест нет — отряд как был: лишней крысе в строю стоять негде. */
@@ -226,16 +248,23 @@ final case class Squad(
 
   /** Восставший в бою уходит с героем на [[AllyRates.RisenMs]]. Мест нет — он
     * ждёт у шатра ([[pendingRisen]]), и в «Отряде» герой решит, кем за него
-    * пожертвовать. Ждущего второй раз не перебиваем: первый дождётся ответа. */
+    * пожертвовать. Ждущего второй раз не перебиваем: первый дождётся ответа.
+    * Тёмному волку при прежнем волке ждать незачем: он встаёт на место
+    * прежнего (см. [[raise]]). */
   def admitRisen(form: UndeadForm, lvl: Long, nowMs: Long): Squad =
-    if (freePosition.isDefined) raise(form, lvl, nowMs, AllyRates.RisenLasts)
+    if (freePosition.isDefined || wolfRival(form).isDefined) raise(form, lvl, nowMs, AllyRates.RisenLasts)
     else if (pendingRisen.isDefined) this
     else copy(pendingRisen = Some(form))
 
-  /** Ответ на вопрос «кем жертвуем»: ждущий занимает место этого союзника. */
+  /** Ответ на вопрос «кем жертвуем»: ждущий занимает место этого союзника.
+    * Ждёт Тёмный волк, а свой в отряде уже есть (он встал, пока этот ждал), —
+    * названный союзник остаётся: новый вцепляется в прежнего волка и встаёт
+    * на его место. */
   def takeRisenPlace(pos: Int, lvl: Long, nowMs: Long): Squad =
-    pendingRisen.fold(this)(form =>
-      replaceAt(pos, form, lvl, nowMs, AllyRates.RisenLasts).copy(pendingRisen = None))
+    pendingRisen.fold(this) { form =>
+      val at = wolfRival(form).fold(pos)(_.position)
+      replaceAt(at, form, lvl, nowMs, AllyRates.RisenLasts).copy(pendingRisen = None)
+    }
 
   /** Ждущего отпускают: тело оседает прахом. */
   def dismissRisen: Squad = copy(pendingRisen = None)

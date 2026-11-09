@@ -180,6 +180,47 @@ object SquadSpec extends ZIOSpecDefault {
       assertTrue(fine.repaired == fine)
     },
 
+    test("Тёмный волк в отряде один: новый встаёт на место прежнего, и свободного места для этого не нужно") {
+      val old   = UndeadForm(UndeadForm.DarkWolfName, 5L, AllyKind.Human.stats(5L))
+      val fresh = UndeadForm(UndeadForm.DarkWolfName, 9L, AllyKind.Human.stats(9L))
+      val orc   = UndeadForm("Поднятый орк", 3L, AllyKind.Human.stats(3L))
+      // наёмник на месте 2, прежний волк — на 3
+      val s1    = Squad.empty.hire(AllyKind.Human, lvl, 0L).raise(old, lvl, now)
+      val s2    = s1.raise(fresh, lvl, now + 1L)
+      // полный отряд: новый волк всё равно встаёт — на место прежнего
+      val full  = (1 to AllyRates.Positions - 3).foldLeft(s1)((s, _) => s.raise(orc, lvl, now))
+      val s3    = full.raise(fresh, lvl, now)
+      // рядовой поднятый волку не соперник
+      val s4    = s1.raise(orc, lvl, now)
+      assertTrue(s2.darkWolves.map(w => w.position -> w.lvlAt(lvl)) == List(3 -> 9L)) &&
+      assertTrue(s2.allies.size == 2 && s2.allyAt(2).exists(_.kind == AllyKind.Human)) &&
+      // срок — с той минуты, когда поднялся новый
+      assertTrue(s2.allyAt(3).exists(_.hiredUntil == now + 1L + AllyRates.UndeadMs)) &&
+      assertTrue(full.full && s3.darkWolves.map(_.lvlAt(lvl)) == List(9L) && s3.allies.size == full.allies.size) &&
+      assertTrue(s4.darkWolves.size == 1 && s4.allies.size == 3)
+    },
+
+    test("новый волк одолевает всех прежних; восставший волк не ждёт у шатра, а ждавший встаёт на место волка, не названного") {
+      def wolf(l: Long) = UndeadForm(UndeadForm.DarkWolfName, l, AllyKind.Human.stats(1L))
+      val orc = UndeadForm("Поднятый орк", 3L, AllyKind.Human.stats(3L))
+      // двое волков — с тех пор, когда предела не было
+      val legacy = Squad.empty.copy(allies = List(
+        Ally(AllyKind.Undead, 2, 1L, 0L, 0L, now + 5L, Some(wolf(4L))),
+        Ally(AllyKind.Undead, 5, 1L, 0L, 0L, now + 5L, Some(wolf(6L)))))
+      val beaten = legacy.raise(wolf(8L), lvl, now)
+      // полный отряд, волк на месте 2
+      val full     = (1 to AllyRates.Positions - 2).foldLeft(Squad.empty.raise(wolf(4L), lvl, now))((s, _) => s.raise(orc, lvl, now))
+      val admitted = full.admitRisen(wolf(8L), lvl, now)
+      // волк ждал у шатра, а свой встал, пока он ждал: названный (на месте 5) остаётся
+      val took     = full.copy(pendingRisen = Some(wolf(8L))).takeRisenPlace(5, lvl, now)
+      assertTrue(beaten.darkWolves.map(w => w.position -> w.lvlAt(lvl)) == List(2 -> 8L) && beaten.allies.size == 1) &&
+      assertTrue(full.full && admitted.pendingRisen.isEmpty) &&
+      assertTrue(admitted.darkWolves.map(w => w.position -> w.lvlAt(lvl)) == List(2 -> 8L)) &&
+      assertTrue(admitted.allies.size == full.allies.size) &&
+      assertTrue(took.pendingRisen.isEmpty && took.darkWolves.map(w => w.position -> w.lvlAt(lvl)) == List(2 -> 8L)) &&
+      assertTrue(took.allyAt(5).exists(_.name == "Поднятый орк") && took.allies.size == full.allies.size)
+    },
+
     test("отряд переживает сериализацию, а пустая запись читается как пустой отряд") {
       val s    = Squad(heroPos = 2, allies = List(Ally(AllyKind.Gnome, 1, 10L, 20L, 30L)), away = Map("Human" -> 5L))
       val back = s.asJson.as[Squad].toOption

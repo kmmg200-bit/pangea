@@ -338,19 +338,27 @@ case class MonsterCaveState(
   /** Трофей встаёт с камня тем, кем был при жизни. Мест в отряде нет — сперва
     * спросим, кем герой готов пожертвовать; трофей до ответа цел. */
   private def raise(user: User, hero: Hero, scene: CaveScene, trophy: Item, form: UndeadForm, renderer: Renderer): Task[StateType] =
-    if (hero.squad.full) {
+    // Тёмный волк в отряде один: второй вцепляется в прежнего и побеждает —
+    // встаёт на его место, поэтому и в полном отряде жертвовать никем не надо.
+    if (hero.squad.wolfRival(form).isDefined) rise(user, hero, scene, trophy, form, "cave.altar.wolfFight", renderer)
+    else if (hero.squad.full) {
       val waiting = scene.copy(pending = Some(form), pendingTrophy = trophy.id)
       writeScene(user, waiting) *> askSwap(user, hero, form, renderer)
-    } else
-      for {
-        now <- nowMs
-        _ <- inventoryRepo.removeItem(trophy.id, hero.id).mapError(asThrowable)
-        // «Некромант» (порог 6) держит поднятого дольше — срок ставится здесь, в
-        // минуту поднятия, и снятый потом набор его уже не торопит.
-        _ <- heroDao.updateSquad(user.userId, hero.squad.raise(form, hero.lvl, now, hero.sets.undeadLastsMult))
-        _ <- renderer.show(user, Screen(content.format("cave.altar.risen", "name" -> form.name), Nil))
-        res <- burnOut(user, scene, renderer)
-      } yield res
+    } else rise(user, hero, scene, trophy, form, "cave.altar.risen", renderer)
+
+  /** Трофей уходит в камень, поднятый встаёт в отряд (см. [[pangea.model.squad.Squad.raise]]),
+    * алтарь гаснет. `line` — чем это сказать. */
+  private def rise(user: User, hero: Hero, scene: CaveScene, trophy: Item, form: UndeadForm, line: String,
+                   renderer: Renderer): Task[StateType] =
+    for {
+      now <- nowMs
+      _ <- inventoryRepo.removeItem(trophy.id, hero.id).mapError(asThrowable)
+      // «Некромант» (порог 6) держит поднятого дольше — срок ставится здесь, в
+      // минуту поднятия, и снятый потом набор его уже не торопит.
+      _ <- heroDao.updateSquad(user.userId, hero.squad.raise(form, hero.lvl, now, hero.sets.undeadLastsMult))
+      _ <- renderer.show(user, Screen(content.format(line, "name" -> form.name), Nil))
+      res <- burnOut(user, scene, renderer)
+    } yield res
 
   /** Экран «кем жертвуем»: весь отряд кнопками и отказ. */
   private def askSwap(user: User, hero: Hero, form: UndeadForm, renderer: Renderer): Task[StateType] = {

@@ -43,15 +43,21 @@ final class SquadOrders(heroDao: HeroDao, content: SceneContent) {
       case Some(a) => save(user, hero.squad.dismissAt(at), content.format("squad.dismissed", "name" -> a.name), renderer)
     }
 
-  /** Восставший занимает место союзника с места `at` — тот покидает отряд. */
+  /** Восставший занимает место союзника с места `at` — тот покидает отряд.
+    * Ждёт Тёмный волк, а свой в отряде уже есть, — названный остаётся: новый
+    * волк вцепляется в прежнего и встаёт на его место (см. Squad.takeRisenPlace). */
   def takeRisenPlace(user: User, hero: Hero, at: Int, renderer: Renderer): Task[Option[Squad]] =
     hero.squad.pendingRisen match {
       case None => ZIO.none
       case Some(form) =>
         ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS)).flatMap { now =>
-          val gone = hero.squad.allyAt(at).map(_.name).getOrElse("")
-          save(user, hero.squad.takeRisenPlace(at, hero.lvl, now),
-            content.format("squad.risenTook", "name" -> form.name, "gone" -> gone), renderer)
+          val line = hero.squad.wolfRival(form) match {
+            case Some(_) => content.format("squad.wolfFight", "name" -> form.name)
+            case None =>
+              val gone = hero.squad.allyAt(at).map(_.name).getOrElse("")
+              content.format("squad.risenTook", "name" -> form.name, "gone" -> gone)
+          }
+          save(user, hero.squad.takeRisenPlace(at, hero.lvl, now), line, renderer)
         }
     }
 

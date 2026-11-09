@@ -287,6 +287,31 @@ object NecromancerSetSpec extends ZIOSpecDefault {
               assertTrue(orc.usesSkills)
     },
 
+    test("порог 12: Белый волк встаёт Тёмным и вцепляется в прежнего — тот в павших, новый на его месте и один в отряде") {
+      val old   = pangea.service.state.states.events.cave.DarkAltar.wolfOf(3L)
+      val h     = hero(12, Squad.empty.copy(allies = List(
+                    Ally(AllyKind.Undead, 2, old.stats.hp, 0L, 0L, undead = Some(old)))))
+      val boss  = MiniBoss.WhiteWolf
+      val lvl   = 2L
+      val white = SoloPveBattle.from(
+                    pangea.model.monster.Monster(0L, lvl, boss.race, Rarity.Legendary, boss.stats(lvl)), h)
+                    // без брони и с одним HP — удар героя его добивает
+                    .copy(bossKind = Some(boss.entryName), monsterCurrentHp = 1L, monsterCurrentArmor = 0L)
+      for {
+        t <- makeState(h, white)
+        (state, dao, r) = t
+        _     <- allPass
+        _     <- state.action(testUser, tap("Attack"), r)
+        said  <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+        after <- dao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(white.group.darkWolf.exists(_.position == 2)) &&
+              // прежнего не добивал враг — строки о павшем от удара нет
+              assertTrue(said.contains("вцепляется в вашего прежнего волка") && !said.contains("Последний удар выбивает")) &&
+              // после боя волк в отряде один — новый, того уровня, каким пал Белый
+              assertTrue(after.squad.darkWolves.map(w => w.position -> w.lvlAt(after.lvl)) == List(2 -> lvl)) &&
+              assertTrue(after.squad.allies.size == 1)
+    },
+
     test("мест в отряде нет — восставший ждёт у шатра, и герой решает, кем жертвовать") {
       val now  = 1_000_000L
       val form = UndeadForm("Орк раб", 5L,

@@ -335,6 +335,11 @@ final case class GroupState(
   /** Строй для показа — до самого дальнего занятого места по обеим сторонам. */
   def rows: Int = (size :: allies.map(_.position)).max
 
+  /** Тёмный волк своей стороны, если он в строю
+    * ([[pangea.model.squad.UndeadForm.unique]]): второму рядом с ним не бывать —
+    * поднятый новый сцепится с ним. */
+  def darkWolf: Option[BattleAlly] = allies.find(_.undead.exists(_.unique))
+
   /** Союзника в строю опознаём по МЕСТУ: поднятых с алтаря в отряде может быть
     * несколько, и вид у них общий — по нему удар пришёлся бы сразу по всем. */
   def updateAlly(pos: Int)(f: BattleAlly => BattleAlly): GroupState =
