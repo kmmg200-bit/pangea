@@ -51,6 +51,12 @@ export interface SlotView {
   belt: BeltView | null
   /** Что из сумки встанет в этот слот. */
   candidates: CandidateView[]
+  /** Камни в гнёздах надетой вещи. */
+  gems: SocketedView[]
+  /** Есть ли свободное гнездо. */
+  freeSocket: boolean
+  /** Что спросить перед резцом; нет — резец здесь не сработает или его нет в сумке. */
+  chisel: string | null
 }
 
 /** Пояс: сколько ячеек всего и что в каждой. Опустевшая ячейка помнит, чем
@@ -83,6 +89,24 @@ export interface InventoryView {
   storesAway: string | null
   /** Куда можно переложить каждую вещь. */
   moves: MoveView[]
+  /** Камни, которые можно вставить в гнездо: из сумки и Ларца. */
+  gemStock: GemStockView[]
+}
+
+/** Камень в гнезде надетой вещи. */
+export interface SocketedView {
+  /** Номер гнезда: им приложение говорит, какой камень сломать. */
+  socket: number
+  name: string
+  /** Что спросить перед ломкой. */
+  confirm: string
+}
+
+/** Камень, который можно вставить в гнездо. */
+export interface GemStockView {
+  /** Где лежит: `bag` или `casket`. */
+  from: string
+  item: ItemView
 }
 
 /** Куда можно переложить вещь `item` (у стопки — та же, что в списке) из

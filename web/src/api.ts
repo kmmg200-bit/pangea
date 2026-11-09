@@ -69,6 +69,11 @@ export const api = {
   inventory: () => get<InventoryView>('inventory'),
   equipWear: (slot: number, item: number) => post<InventoryActionView>(`equipment/wear?slot=${slot}&item=${item}`),
   equipTakeOff: (slot: number) => post<InventoryActionView>(`equipment/take-off?slot=${slot}`),
+  equipBreakGem: (slot: number, socket: number) =>
+    post<InventoryActionView>(`equipment/break-gem?slot=${slot}&socket=${socket}`),
+  equipInsertGem: (slot: number, from: string, item: number) =>
+    post<InventoryActionView>(`equipment/insert-gem?slot=${slot}&from=${from}&item=${item}`),
+  equipChisel: (slot: number) => post<InventoryActionView>(`equipment/chisel?slot=${slot}`),
   rackWear: (n: number) => post<InventoryActionView>(`racks/wear?n=${n}`),
   storeMove: (from: string, to: string, item: number, all: boolean) =>
     post<InventoryActionView>(`storages/move?from=${from}&to=${to}&item=${item}&all=${all}`),

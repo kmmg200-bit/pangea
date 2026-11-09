@@ -1,8 +1,17 @@
 import { useState } from 'react'
 import { api } from './api'
 import type { GameIcon } from './gameIcons'
-import type { BeltView, CandidateView, InventoryActionView, InventoryView, ItemView, SlotView, StatChange } from './types'
-import { ItemText, ItemTile, num, Sheet, Tile } from './ui'
+import type {
+  BeltView,
+  CandidateView,
+  InventoryActionView,
+  InventoryView,
+  ItemView,
+  SlotView,
+  SocketedView,
+  StatChange,
+} from './types'
+import { ItemRow, ItemText, ItemTile, num, Sheet, Tile } from './ui'
 
 /** Что в поясе — по ячейкам, со счётом и полоской; свободные — одной строкой. */
 function BeltCard(props: { belt: BeltView }) {
@@ -87,11 +96,101 @@ function extras(item: ItemView): string[] {
   ].filter((x): x is string => typeof x === 'string')
 }
 
-/** Надеть и снять; `busy` — ждём ответа бота. Нет его вовсе (`null`) — герой в бою. */
+/** Надеть и снять, камни и резец; `busy` — ждём ответа бота. Нет его вовсе
+  * (`null`) — герой в бою. `pickGem` открывает список камней для гнезда,
+  * а если вставлять нечего — `null`. */
 interface Gear {
   wear: (slot: SlotView, item: ItemView) => void
   takeOff: (slot: SlotView) => void
+  breakGem: (slot: SlotView, socket: number) => void
+  chisel: (slot: SlotView) => void
+  pickGem: ((slot: SlotView) => void) | null
   busy: boolean
+}
+
+/** Что сейчас спрашиваем у игрока: какой камень ломать, ломать ли этот, браться ли за резец. */
+type Ask = { kind: 'which' } | { kind: 'gem'; gem: SocketedView } | { kind: 'chisel' }
+
+/** Что можно сделать с надетой вещью: снять, сломать или вставить камень,
+  * переписать узор. Ломка и резец необратимы — спрашиваем теми же словами,
+  * что и бот. Живёт внутри раскрытого слота: свернул — вопрос забыт. */
+function SlotActs(props: { slot: SlotView; gear: Gear }) {
+  const { slot, gear } = props
+  const [ask, setAsk] = useState<Ask | null>(null)
+  const pickGem = gear.pickGem
+  const done = (act: () => void) => {
+    setAsk(null)
+    act()
+  }
+  return (
+    <>
+      <div className="equip-acts">
+        <button className="equip-off" onClick={() => gear.takeOff(slot)} disabled={gear.busy}>
+          Снять
+        </button>
+        {slot.gems.length > 0 && (
+          <button
+            className="equip-off"
+            disabled={gear.busy}
+            onClick={() => setAsk(slot.gems.length === 1 ? { kind: 'gem', gem: slot.gems[0] } : { kind: 'which' })}
+          >
+            Сломать камень
+          </button>
+        )}
+        {slot.freeSocket && pickGem && (
+          <button className="equip-off" disabled={gear.busy} onClick={() => pickGem(slot)}>
+            Вставить камень
+          </button>
+        )}
+        {slot.chisel && (
+          <button className="equip-off" disabled={gear.busy} onClick={() => setAsk({ kind: 'chisel' })}>
+            Переписать узор
+          </button>
+        )}
+      </div>
+      {ask?.kind === 'which' && (
+        <div className="buy-confirm">
+          <p className="buy-ask">Какой камень сломать?</p>
+          <div className="equip-acts">
+            {slot.gems.map((g) => (
+              <button key={g.socket} className="equip-off" onClick={() => setAsk({ kind: 'gem', gem: g })}>
+                {g.name}
+              </button>
+            ))}
+            <button className="equip-off" onClick={() => setAsk(null)}>
+              Передумал
+            </button>
+          </div>
+        </div>
+      )}
+      {ask?.kind === 'gem' && (
+        <div className="buy-confirm">
+          <p className="buy-ask">{ask.gem.confirm}</p>
+          <div className="buy-row">
+            <button className="buy-yes" disabled={gear.busy} onClick={() => done(() => gear.breakGem(slot, ask.gem.socket))}>
+              Ломать
+            </button>
+            <button className="buy-no" onClick={() => setAsk(null)}>
+              Передумал
+            </button>
+          </div>
+        </div>
+      )}
+      {ask?.kind === 'chisel' && (
+        <div className="buy-confirm">
+          <p className="buy-ask">{slot.chisel}</p>
+          <div className="buy-row">
+            <button className="buy-yes" disabled={gear.busy} onClick={() => done(() => gear.chisel(slot))}>
+              Переписать
+            </button>
+            <button className="buy-no" onClick={() => setAsk(null)}>
+              Назад
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  )
 }
 
 function Candidate(props: {
@@ -195,11 +294,7 @@ function SlotRow(props: {
           {props.note && <p className="gear-note">{props.note}</p>}
           {/* У пояса описание — его ячейки; у прочих — что вещь даёт, как в боте. */}
           {slot.belt ? <BeltCard belt={slot.belt} /> : item && <div className="item-text equip-desc">{item.text}</div>}
-          {item && gear && (
-            <button className="equip-off" onClick={() => gear.takeOff(slot)} disabled={gear.busy}>
-              Снять
-            </button>
-          )}
+          {item && gear && <SlotActs slot={slot} gear={gear} />}
           {slot.candidates.map((c) => (
             <Candidate
               key={c.item.id}
@@ -216,11 +311,14 @@ function SlotRow(props: {
 }
 
 /** «Снаряжение»: все слоты подряд, как в боте. Зелёная точка — в сумке есть
-  * вещь на этот слот. Надевают и снимают здесь же — где угодно, только не в
-  * бою; бот проверит это сам, под тем же замком, что и ходы в чате. */
+  * вещь на этот слот. Надевают, снимают, ломают и вставляют камни, переписывают
+  * узор здесь же — где угодно, только не в бою; бот проверит это сам, под тем
+  * же замком, что и ходы в чате. */
 export function EquipmentTab(props: { data: InventoryView; onChange: (v: InventoryView) => void }) {
   const [openSlot, setOpenSlot] = useState<string | null>(null)
   const [sheet, setSheet] = useState<ItemView | null>(null)
+  // В какой слот выбираем камень.
+  const [gemFor, setGemFor] = useState<SlotView | null>(null)
   const [busy, setBusy] = useState(false)
   // Что сказал бот — под тем слотом, с которым что-то делали.
   const [note, setNote] = useState<{ slot: number; text: string } | null>(null)
@@ -242,6 +340,9 @@ export function EquipmentTab(props: { data: InventoryView; onChange: (v: Invento
     : {
         wear: (slot, item) => run(slot, () => api.equipWear(slot.index, item.id)),
         takeOff: (slot) => run(slot, () => api.equipTakeOff(slot.index)),
+        breakGem: (slot, socket) => run(slot, () => api.equipBreakGem(slot.index, socket)),
+        chisel: (slot) => run(slot, () => api.equipChisel(slot.index)),
+        pickGem: props.data.gemStock.length > 0 ? setGemFor : null,
         busy,
       }
 
@@ -268,6 +369,25 @@ export function EquipmentTab(props: { data: InventoryView; onChange: (v: Invento
       {sheet && (
         <Sheet onClose={() => setSheet(null)}>
           <ItemText item={sheet} />
+        </Sheet>
+      )}
+      {gemFor && (
+        <Sheet onClose={() => setGemFor(null)}>
+          <div className="sub-title">Какой камень вставить?</div>
+          <div className="list gem-list">
+            {props.data.gemStock.map((g) => (
+              <ItemRow
+                key={`${g.from}-${g.item.id}`}
+                item={g.item}
+                note={g.from === 'casket' ? ' · в Ларце' : undefined}
+                onOpen={() => {
+                  const slot = gemFor
+                  setGemFor(null)
+                  run(slot, () => api.equipInsertGem(slot.index, g.from, g.item.id))
+                }}
+              />
+            ))}
+          </div>
         </Sheet>
       )}
     </>
