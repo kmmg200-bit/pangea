@@ -229,9 +229,11 @@ object MiniAppView {
     boards:  List[BoardView]
   )
 
-  /** Союзник в строю — как его карточка в боте. `element` — значок стихии, у
-    * крысы — зубы. `leaves` — сколько ему ещё в отряде: наёмнику до конца
-    * найма, поднятому — пока держит тёмная сила; без срока — пусто. */
+  /** Союзник в строю или в резерве — как его карточка в боте. `position` — место
+    * в строю, у резерва 0. `element` — значок стихии, у крысы — зубы. `leaves` —
+    * сколько ему ещё в отряде: наёмнику до конца найма, поднятому — пока держит
+    * тёмная сила; без срока — пусто. `reservable` — можно ли отправить его в
+    * резерв: крысу туда не берут. */
   final case class AllyView(
     position: Int,
     name:     String,
@@ -245,7 +247,8 @@ object MiniAppView {
     defence:  Long,
     accuracy: Long,
     evasion:  Long,
-    leaves:   Option[String]
+    leaves:   Option[String],
+    reservable: Boolean
   )
 
   /** Строка топа: место, имя героя, раса, уровень и то, по чему топ
@@ -281,16 +284,20 @@ object MiniAppView {
   final case class CraftActionView(craft: CraftView, note: Option[String], made: List[Long])
 
   /** «Отряд»: сколько мест в строю, где стоит герой и кто стоит рядом.
-    * `pendingRisen` — восставший ждёт у шатра, а мест нет: надо решить, кем за
-    * него пожертвовать. `locked` — почему строй сейчас не перестроить: герой в
-    * бою. */
+    * `pendingRisen` — восставший ждёт у шатра, а мест нет ни в строю, ни в
+    * резерве: надо решить, кем за него пожертвовать. `locked` — почему строй
+    * сейчас не перестроить: герой в бою. `reserve` — кто при герое, но не в
+    * строю, по порядку: приказы адресуют его номером в этом списке и именем;
+    * `reserveSize` — сколько в резерве мест. */
   final case class SquadView(
     hero:         HeroView,
     positions:    Int,
     heroPosition: Int,
     allies:       List[AllyView],
     pendingRisen: Option[String],
-    locked:       Option[String]
+    locked:       Option[String],
+    reserve:      List[AllyView],
+    reserveSize:  Int
   )
 
   /** Ответ на приказ отряду: строй после него и что сказать. */
@@ -620,30 +627,34 @@ object MiniAppView {
     * ничего не пишет и просто их не показывает. */
   def squad(h: Hero, content: SceneContent, now: Long): SquadView = {
     val (staying, _) = h.squad.settleUndead(now).expire(now)
+    def view(a: pangea.model.squad.Ally): AllyView = {
+      val s = a.statsAt(h.lvl)
+      AllyView(
+        position   = a.position,
+        name       = a.name,
+        race       = a.kind.race.toString,
+        element    = a.kind.element.map(_.emoji).getOrElse(content.text("squad.noElement")),
+        lvl        = a.lvlAt(h.lvl),
+        hp         = PoolView(a.hp, s.hp),
+        armor      = PoolView(a.armor, s.armor),
+        energy     = PoolView(a.energy, s.energy),
+        attack     = s.atk,
+        defence    = s.defence,
+        accuracy   = s.accuracy,
+        evasion    = s.evasion,
+        leaves     = Option.when(a.hiredUntil > now)(TimeLeft.format(a.hiredUntil - now)),
+        reservable = staying.reservable(a)
+      )
+    }
     SquadView(
       hero         = hero(h),
       positions    = AllyRates.Positions,
       heroPosition = staying.heroPos,
-      allies       = staying.inOrder.map { a =>
-                       val s = a.statsAt(h.lvl)
-                       AllyView(
-                         position = a.position,
-                         name     = a.name,
-                         race     = a.kind.race.toString,
-                         element  = a.kind.element.map(_.emoji).getOrElse(content.text("squad.noElement")),
-                         lvl      = a.lvlAt(h.lvl),
-                         hp       = PoolView(a.hp, s.hp),
-                         armor    = PoolView(a.armor, s.armor),
-                         energy   = PoolView(a.energy, s.energy),
-                         attack   = s.atk,
-                         defence  = s.defence,
-                         accuracy = s.accuracy,
-                         evasion  = s.evasion,
-                         leaves   = Option.when(a.hiredUntil > now)(TimeLeft.format(a.hiredUntil - now))
-                       )
-                     },
+      allies       = staying.inOrder.map(view),
       pendingRisen = staying.pendingRisen.map(_.name),
-      locked       = Option.when(MiniApp.inBattle(h))(content.text("miniapp.squad.inBattle"))
+      locked       = Option.when(MiniApp.inBattle(h))(content.text("miniapp.squad.inBattle")),
+      reserve      = staying.reserve.map(view),
+      reserveSize  = AllyRates.ReserveSize
     )
   }
 

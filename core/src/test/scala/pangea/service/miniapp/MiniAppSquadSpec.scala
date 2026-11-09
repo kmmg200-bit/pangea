@@ -100,6 +100,47 @@ object MiniAppSquadSpec extends ZIOSpecDefault {
         MiniAppView.squad(hero.copy(state = StateType.Battle), c, 0L).locked.contains(c.text("miniapp.squad.inBattle")),
         MiniAppView.squad(hero, c, 0L).locked.isEmpty
       )
+    },
+    test("резерв из приложения: в резерв и обратно на свободное место — те же строки, что в боте") {
+      val human = hero.squad.allies.find(_.kind == AllyKind.Human).map(_.position).getOrElse(0)
+      val name  = AllyKind.Human.name
+      for {
+        t1 <- run(hero)((o, h, say) => o.toReserve(user, h, human, say))
+        (sent, after1, said1, c) = t1
+        t2 <- run(hero.copy(squad = after1))((o, h, say) => o.deploy(user, h, 0, name, None, say))
+        (back, after2, said2, _) = t2
+      } yield assertTrue(
+        sent.isDefined && after1.allyAt(human).isEmpty && after1.reserve.map(_.kind) == List(AllyKind.Human),
+        said1 == Vector(c.format("squad.toReserveDone", "name" -> name)),
+        back.isDefined && after2.reserve.isEmpty && after2.allyAt(human).exists(_.kind == AllyKind.Human),
+        said2 == Vector(c.format("squad.deployed", "name" -> name, "n" -> human.toString))
+      )
+    },
+    test("резерв из приложения: строй полон — меняются с названным; чужое имя на номере — ни о чём; выгнать") {
+      val orc     = UndeadForm("Поднятый орк", 3L, AllyKind.Human.stats(3L))
+      // Йорген и Брамбл в строю, ещё восемь поднятых — строй полон; в резерве орк
+      val full    = (1 to 8).foldLeft(hero.squad)((s, i) => s.raise(orc.copy(name = s"Поднятый $i"), lvl, 0L))
+      val crowded = hero.copy(squad = full.copy(reserve = List(
+        pangea.model.squad.Ally(AllyKind.Undead, 0, 1L, 0L, 0L, hiredUntil = Long.MaxValue, undead = Some(orc)))))
+      val human   = crowded.squad.allies.find(_.kind == AllyKind.Human).map(_.position).getOrElse(0)
+      for {
+        t1 <- run(crowded)((o, h, say) => o.deploy(user, h, 0, "Поднятый орк", None, say))
+        (noRoom, _, quiet, _) = t1
+        t2 <- run(crowded)((o, h, say) => o.deploy(user, h, 0, "Брамбл Медноус", Some(human), say))
+        (wrong, _, quiet2, _) = t2
+        t3 <- run(crowded)((o, h, say) => o.deploy(user, h, 0, "Поднятый орк", Some(human), say))
+        (swapped, after, said, c) = t3
+        t4 <- run(crowded)((o, h, say) => o.dismissReserve(user, h, 0, "Поднятый орк", say))
+        (dropped, after4, said4, _) = t4
+      } yield assertTrue(
+        crowded.squad.full,
+        noRoom.isEmpty && quiet.isEmpty && wrong.isEmpty && quiet2.isEmpty,
+        swapped.isDefined && after.allyAt(human).exists(_.name == "Поднятый орк"),
+        after.reserve.map(_.kind) == List(AllyKind.Human),
+        said == Vector(c.format("squad.swappedIn", "name" -> "Поднятый орк", "gone" -> AllyKind.Human.name,
+          "n" -> human.toString)),
+        dropped.isDefined && after4.reserve.isEmpty && said4 == Vector(c.format("squad.dismissed", "name" -> "Поднятый орк"))
+      )
     }
   )
 }

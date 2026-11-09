@@ -138,7 +138,10 @@ object MiniApp {
 
   /** Приказы отряду: переставить союзника (с места на место) или героя,
     * выгнать союзника, решить про восставшего — занять им место союзника или
-    * отпустить. */
+    * отпустить. Резерв: отправить туда союзника из строя, выставить из резерва
+    * в строй (мест нет — вместо союзника с места `swapAt`) или выгнать. В
+    * резерве союзника адресуют номером в нём (`i`) и именем (`who`): список мог
+    * сдвинуться, пока игрок смотрел. */
   sealed trait SquadAct
   object SquadAct {
     final case class Move(from: Int, to: Int) extends SquadAct
@@ -146,6 +149,9 @@ object MiniApp {
     final case class Dismiss(at: Int)         extends SquadAct
     final case class TakeRisen(at: Int)       extends SquadAct
     case object DismissRisen                  extends SquadAct
+    final case class ToReserve(at: Int)       extends SquadAct
+    final case class Deploy(i: Int, who: String, swapAt: Option[Int]) extends SquadAct
+    final case class DismissReserve(i: Int, who: String)            extends SquadAct
   }
 
   /** Чем кончилось действие: что сказать и номера вещей, что получились. */
@@ -287,6 +293,9 @@ final class MiniAppLive(
                    case SquadAct.Dismiss(at)    => orders.dismiss(user, settled, at, say)
                    case SquadAct.TakeRisen(at)  => orders.takeRisenPlace(user, settled, at, say)
                    case SquadAct.DismissRisen   => orders.dismissRisen(user, settled, say)
+                   case SquadAct.ToReserve(at)  => orders.toReserve(user, settled, at, say)
+                   case SquadAct.Deploy(i, who, swapAt) => orders.deploy(user, settled, i, who, swapAt, say)
+                   case SquadAct.DismissReserve(i, who) => orders.dismissReserve(user, settled, i, who, say)
                  }
       said    <- lines.get
     } yield said.mkString("\n\n")

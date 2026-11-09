@@ -57,6 +57,14 @@ export const api = {
   squadDismiss: (at: number) => post<SquadActionView>(`squad/dismiss?at=${at}`),
   squadRisenTake: (at: number) => post<SquadActionView>(`squad/risen/take?at=${at}`),
   squadRisenDismiss: () => post<SquadActionView>('squad/risen/dismiss'),
+  // Резерв: союзника в нём зовут номером в списке и именем — список мог сдвинуться.
+  squadToReserve: (at: number) => post<SquadActionView>(`squad/reserve?at=${at}`),
+  squadDeploy: (i: number, who: string, swap: number | null) =>
+    post<SquadActionView>(
+      `squad/reserve/deploy?i=${i}&who=${encodeURIComponent(who)}` + (swap === null ? '' : `&swap=${swap}`),
+    ),
+  squadReserveDismiss: (i: number, who: string) =>
+    post<SquadActionView>(`squad/reserve/dismiss?i=${i}&who=${encodeURIComponent(who)}`),
   top: (kind: TopKind) => get<TopView>(`top?kind=${kind}`),
   inventory: () => get<InventoryView>('inventory'),
   equipWear: (slot: number, item: number) => post<InventoryActionView>(`equipment/wear?slot=${slot}&item=${item}`),

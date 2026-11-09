@@ -178,6 +178,24 @@ object MiniAppViewSpec extends ZIOSpecDefault {
       )
     },
 
+    test("отряд: резерв — по порядку, со сроками и без места в строю; ушедшего из резерва тоже не показываем") {
+      val hour  = 3600000L
+      val inLine = Ally(AllyKind.Human, position = 2, hp = 10L, armor = 0L, energy = 0L, hiredUntil = 5 * hour)
+      val waits  = Ally(AllyKind.Gnome, position = 0, hp = 7L, armor = 0L, energy = 0L, hiredUntil = 3 * hour)
+      val gone   = Ally(AllyKind.Murloc, position = 0, hp = 10L, armor = 0L, energy = 0L, hiredUntil = hour / 2)
+      val hero   = TestFixtures.hero(UserId(1L)).copy(squad =
+                     Squad(heroPos = 1, allies = List(inLine), reserve = List(gone, waits)))
+      val view   = MiniAppView.squad(hero, content, hour)
+      assertTrue(
+        view.reserveSize == 10,
+        view.allies.map(_.name) == List(AllyKind.Human.name),
+        view.reserve.map(_.name) == List(AllyKind.Gnome.name),
+        view.reserve.flatMap(_.leaves) == List("2ч 0мин"),
+        view.reserve.forall(a => a.position == 0 && a.reservable && a.hp.current == 7L),
+        view.allies.forall(_.reservable)
+      )
+    },
+
     test("хранилища: некупленные артефакты и дом без дома — с замком и тем, как открыть; бочка открыта всегда") {
       val hero = TestFixtures.hero(UserId(1L))
       val view = MiniAppView.inventory(hero, inv(hero, Nil), nothing(hero), content, _.name, 0L)

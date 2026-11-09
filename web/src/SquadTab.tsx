@@ -1,10 +1,15 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { api } from './api'
 import type { AllyView, SquadActionView, SquadView } from './types'
 import { Empty, Meter, num, useToast } from './ui'
 
-/** Кого приказ касается: союзник на своём месте или сам герой. */
-type Pick = { ally: number } | 'hero'
+/** Кого приказ касается: союзник на своём месте, союзник из резерва (номер в
+  * нём) или сам герой. */
+type Pick = { ally: number } | { reserve: number } | 'hero'
+
+const pickedAlly = (p: Pick | null): number | null => (p !== null && typeof p === 'object' && 'ally' in p ? p.ally : null)
+const pickedReserve = (p: Pick | null): number | null =>
+  p !== null && typeof p === 'object' && 'reserve' in p ? p.reserve : null
 
 /** Что можно делать со строем; нет его вовсе (`null`) — герой в бою. */
 interface Orders {
@@ -32,10 +37,32 @@ function Places(props: { s: SquadView; from: number; onPick: (to: number) => voi
   )
 }
 
-/** Приказы союзнику: переставить и выгнать — с подтверждением, как в боте. */
+/** «Выгнать» с подтверждением, как в боте: ушедшего не вернуть. */
+function Dismiss(props: { name: string; label: string; busy: boolean; onDismiss: () => void }) {
+  const [confirm, setConfirm] = useState(false)
+  return confirm ? (
+    <div className="buy-confirm">
+      <p className="buy-ask">Выгнать {props.name} из отряда?</p>
+      <div className="buy-row">
+        <button className="squad-danger" onClick={props.onDismiss} disabled={props.busy}>
+          Выгнать
+        </button>
+        <button className="buy-no" onClick={() => setConfirm(false)} disabled={props.busy}>
+          Отмена
+        </button>
+      </div>
+    </div>
+  ) : (
+    <button className="equip-off" onClick={() => setConfirm(true)} disabled={props.busy}>
+      {props.label}
+    </button>
+  )
+}
+
+/** Приказы союзнику в строю: переставить, отправить в резерв (крысу туда не
+  * берут) и выгнать — с подтверждением, как в боте. */
 function AllyOrders(props: { s: SquadView; ally: AllyView; orders: Orders }) {
   const { ally, orders } = props
-  const [confirm, setConfirm] = useState(false)
   return (
     <div className="squad-orders" onClick={(e) => e.stopPropagation()}>
       <div className="sub-title">Переставить на место</div>
@@ -45,38 +72,76 @@ function AllyOrders(props: { s: SquadView; ally: AllyView; orders: Orders }) {
         busy={orders.busy}
         onPick={(to) => orders.run(() => api.squadMove(ally.position, to), { ally: to })}
       />
-      {confirm ? (
-        <div className="buy-confirm">
-          <p className="buy-ask">Выгнать {ally.name} из отряда?</p>
-          <div className="buy-row">
-            <button
-              className="squad-danger"
-              onClick={() => orders.run(() => api.squadDismiss(ally.position), null)}
-              disabled={orders.busy}
-            >
-              Выгнать
-            </button>
-            <button className="buy-no" onClick={() => setConfirm(false)} disabled={orders.busy}>
-              Отмена
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button className="equip-off" onClick={() => setConfirm(true)} disabled={orders.busy}>
-          Выгнать из отряда
+      {ally.reservable && (
+        <button
+          className="equip-off"
+          onClick={() => orders.run(() => api.squadToReserve(ally.position), null)}
+          disabled={orders.busy}
+        >
+          В резерв
         </button>
       )}
+      <Dismiss
+        name={ally.name}
+        label="Выгнать из отряда"
+        busy={orders.busy}
+        onDismiss={() => orders.run(() => api.squadDismiss(ally.position), null)}
+      />
+    </div>
+  )
+}
+
+/** Приказы союзнику из резерва: выставить в строй — на свободное место, а
+  * мест нет — вместо того, кого назовут (тот уйдёт в резерв); и выгнать. */
+function ReserveOrders(props: { s: SquadView; ally: AllyView; index: number; orders: Orders }) {
+  const { s, ally, index, orders } = props
+  const [swap, setSwap] = useState(false)
+  // Мест в строю — вместе с героем; союзников на одного меньше.
+  const full = s.allies.length >= s.positions - 1
+  const deploy = (at: number | null) => orders.run(() => api.squadDeploy(index, ally.name, at), null)
+  return (
+    <div className="squad-orders" onClick={(e) => e.stopPropagation()}>
+      {swap ? (
+        <>
+          <div className="sub-title">В строю нет мест. Кого отправить в резерв взамен?</div>
+          <div className="squad-places">
+            {s.allies
+              .filter((a) => a.reservable)
+              .map((a) => (
+                <button key={a.position} className="squad-place" onClick={() => deploy(a.position)} disabled={orders.busy}>
+                  <span className="squad-place-n">{a.position}</span>
+                  <span className="squad-place-who">{a.name}</span>
+                </button>
+              ))}
+          </div>
+          <button className="buy-no" onClick={() => setSwap(false)} disabled={orders.busy}>
+            Отмена
+          </button>
+        </>
+      ) : (
+        <button className="buy-yes" onClick={() => (full ? setSwap(true) : deploy(null))} disabled={orders.busy}>
+          Выставить в отряд
+        </button>
+      )}
+      <Dismiss
+        name={ally.name}
+        label="Выгнать"
+        busy={orders.busy}
+        onDismiss={() => orders.run(() => api.squadReserveDismiss(index, ally.name), null)}
+      />
     </div>
   )
 }
 
 function AllyCard(props: {
-  s: SquadView
   ally: AllyView
+  /** Что в кружке слева: место в строю, у резерва — «Р». */
+  badge: string
   open: boolean
   /** Раскрыть приказы; `null` — сейчас приказывать нельзя: бой. */
   onToggle: (() => void) | null
-  orders: Orders | null
+  /** Приказы — видны, когда карточка раскрыта. */
+  children?: ReactNode
 }) {
   const a = props.ally
   return (
@@ -85,7 +150,7 @@ function AllyCard(props: {
       onClick={props.onToggle ?? undefined}
     >
       <div className="ally-head">
-        <span className="ally-pos">{a.position}</span>
+        <span className="ally-pos">{props.badge}</span>
         <span className="ally-name">
           <span className="row-title">{a.name}</span>
           <span className="row-sub">
@@ -108,19 +173,19 @@ function AllyCard(props: {
         <span>👁 {num(a.evasion)}</span>
       </div>
       {a.leaves && <div className="row-sub">⏳ Уйдёт через {a.leaves}</div>}
-      {props.open && props.orders && <AllyOrders s={props.s} ally={a} orders={props.orders} />}
+      {props.open && props.children}
     </section>
   )
 }
 
-/** Восставший ждёт у шатра, а мест нет: кем за него пожертвовать — или
-  * отпустить его. Жертву подтверждают: ушедшего не вернуть. */
+/** Восставший ждёт у шатра, а мест нет ни в строю, ни в резерве: кем за него
+  * пожертвовать — или отпустить его. Жертву подтверждают: ушедшего не вернуть. */
 function Risen(props: { s: SquadView; orders: Orders | null }) {
   const { s, orders } = props
   const [victim, setVictim] = useState<AllyView | null>(null)
   return (
     <section className="card card-warn squad-risen">
-      <div>💀 {s.pendingRisen} поднялся и ждёт у шатра, но мест в строю нет. Кем пожертвуем?</div>
+      <div>💀 {s.pendingRisen} поднялся и ждёт у шатра, но мест нет ни в строю, ни в резерве. Кем пожертвуем?</div>
       {orders &&
         (victim ? (
           <div className="buy-confirm">
@@ -163,11 +228,12 @@ function Risen(props: { s: SquadView; orders: Orders | null }) {
   )
 }
 
-/** «Отряд»: строй по местам. Нажал на союзника или на себя — куда встать, а
-  * союзника ещё и выгнать; восставший без места — кем за него пожертвовать.
-  * Всё как в «Отряде» в боте и где угодно, только не в бою: бот проверит это
-  * сам, под тем же замком, что и ходы в чате. Что сказал бот — всплывает
-  * над нижней панелью. */
+/** «Отряд»: строй по местам и резерв под ним. Нажал на союзника или на себя —
+  * куда встать, а союзника ещё отправить в резерв или выгнать; нажал на
+  * союзника в резерве — выставить в строй или выгнать; восставший без места —
+  * кем за него пожертвовать. Всё как в «Отряде» в боте и где угодно, только не
+  * в бою: бот проверит это сам, под тем же замком, что и ходы в чате. Что
+  * сказал бот — всплывает над нижней панелью. */
 export function SquadTab(props: { data: SquadView; onChange: (v: SquadView) => void }) {
   const s = props.data
   const [pick, setPick] = useState<Pick | null>(null)
@@ -194,7 +260,7 @@ export function SquadTab(props: { data: SquadView; onChange: (v: SquadView) => v
   const toggle = (p: Pick) => () =>
     setPick((cur) => (JSON.stringify(cur) === JSON.stringify(p) ? null : p))
 
-  if (s.allies.length === 0)
+  if (s.allies.length === 0 && s.reserve.length === 0)
     return (
       <Empty>
         Союзников пока нет. Наёмники ждут за дальним столом в таверне, а поднятые и крысы находят героя в лабиринте сами.
@@ -205,6 +271,8 @@ export function SquadTab(props: { data: SquadView; onChange: (v: SquadView) => v
   const last = Math.max(s.heroPosition, ...s.allies.map((a) => a.position))
   const places = Array.from({ length: last }, (_, i) => i + 1)
   const heroOpen = pick === 'hero'
+  const openAlly = pickedAlly(pick)
+  const openReserve = pickedReserve(pick)
 
   return (
     <div className="character">
@@ -216,19 +284,18 @@ export function SquadTab(props: { data: SquadView; onChange: (v: SquadView) => v
       {s.pendingRisen && <Risen s={s} orders={orders} />}
       {places.map((pos) => {
         const ally = s.allies.find((a) => a.position === pos)
-        if (ally) {
-          const open = typeof pick === 'object' && pick?.ally === pos
+        if (ally)
           return (
             <AllyCard
               key={pos}
-              s={s}
               ally={ally}
-              open={open}
+              badge={String(pos)}
+              open={openAlly === pos}
               onToggle={orders && toggle({ ally: pos })}
-              orders={orders}
-            />
+            >
+              {orders && <AllyOrders s={s} ally={ally} orders={orders} />}
+            </AllyCard>
           )
-        }
         if (pos === s.heroPosition)
           return (
             <div
@@ -266,6 +333,29 @@ export function SquadTab(props: { data: SquadView; onChange: (v: SquadView) => v
         <p className="muted-note">
           Места {last + 1}–{s.positions} свободны.
         </p>
+      )}
+      <div className="sub-title">
+        Резерв · {s.reserve.length} из {s.reserveSize}
+      </div>
+      {s.reserve.length === 0 ? (
+        <p className="muted-note">
+          Резерв пуст. Сюда встают лишние поднятые и наёмники, когда в строю нет мест, — и те, кого вы отправите сами.
+        </p>
+      ) : (
+        <>
+          <p className="muted-note">Они идут с вами, но в бой не вступают; сроки у них идут как в строю.</p>
+          {s.reserve.map((a, i) => (
+            <AllyCard
+              key={`${i}-${a.name}`}
+              ally={a}
+              badge="Р"
+              open={openReserve === i}
+              onToggle={orders && toggle({ reserve: i })}
+            >
+              {orders && <ReserveOrders s={s} ally={a} index={i} orders={orders} />}
+            </AllyCard>
+          ))}
+        </>
       )}
       {toast}
     </div>

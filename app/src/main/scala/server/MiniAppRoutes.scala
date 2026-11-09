@@ -81,6 +81,17 @@ final class MiniAppRoutes(app: MiniApp) {
     case req @ POST -> Root / "api" / "app" / "squad" / "risen" / "dismiss" =>
       squadOrder(req, SquadAct.DismissRisen)
 
+    // Резерв: отправить туда из строя, выставить в строй (мест нет — вместо
+    // союзника с места `swap`) или выгнать. В резерве союзник — номер `i` и имя.
+    case req @ POST -> Root / "api" / "app" / "squad" / "reserve" :? AtParam(at) =>
+      squadOrder(req, SquadAct.ToReserve(at))
+
+    case req @ POST -> Root / "api" / "app" / "squad" / "reserve" / "deploy" :? IndexParam(i) +& WhoParam(who) +& SwapParam(swap) =>
+      squadOrder(req, SquadAct.Deploy(i, who, swap))
+
+    case req @ POST -> Root / "api" / "app" / "squad" / "reserve" / "dismiss" :? IndexParam(i) +& WhoParam(who) =>
+      squadOrder(req, SquadAct.DismissReserve(i, who))
+
     // Покупка лота: меняет игру — только POST.
     case req @ POST -> Root / "api" / "app" / "auction" / "buy" :? LotParam(id) =>
       asPlayer(req)(hero => app.buy(hero, id).flatMap(view => Ok(view.asJson)))
@@ -133,4 +144,7 @@ final class MiniAppRoutes(app: MiniApp) {
   private object PlaceFrom extends QueryParamDecoderMatcher[String]("from")
   private object PlaceTo   extends QueryParamDecoderMatcher[String]("to")
   private object AllParam  extends OptionalQueryParamDecoderMatcher[Boolean]("all")
+  private object IndexParam extends QueryParamDecoderMatcher[Int]("i")
+  private object WhoParam   extends QueryParamDecoderMatcher[String]("who")
+  private object SwapParam  extends OptionalQueryParamDecoderMatcher[Int]("swap")
 }

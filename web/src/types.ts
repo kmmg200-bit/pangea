@@ -229,6 +229,8 @@ export interface AllyView {
   evasion: number
   /** Сколько ему ещё в отряде — текстом бота; без срока — null. */
   leaves: string | null
+  /** Можно ли отправить его в резерв: крысу туда не берут. */
+  reservable: boolean
 }
 
 export interface SquadView {
@@ -236,10 +238,16 @@ export interface SquadView {
   positions: number
   heroPosition: number
   allies: AllyView[]
-  /** Восставший ждёт у шатра, а мест нет: кем за него пожертвовать. */
+  /** Восставший ждёт у шатра, а мест нет ни в строю, ни в резерве: кем за него
+    * пожертвовать. */
   pendingRisen: string | null
   /** Почему строй сейчас не перестроить: герой в бою. */
   locked: string | null
+  /** Резерв — кто при герое, но не в строю, по порядку (место в строю у них 0).
+    * В приказах союзника из резерва зовут номером в этом списке и именем. */
+  reserve: AllyView[]
+  /** Сколько в резерве мест. */
+  reserveSize: number
 }
 
 /** Ответ на приказ отряду: строй после него и что сказать. */
