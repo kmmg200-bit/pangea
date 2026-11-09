@@ -90,7 +90,7 @@ case class InventoryState(
       "DustWeapon"        -> Target.Run { (u, _,  r) => sprinkleDust(u, r) },
       "DrinkBrew"         -> Target.Run { (u, _,  r) => drinkBrew(u, r) },
       "RefillByBrew"      -> Target.Run { (u, _,  r) => refillByBrew(u, r) },
-      "RackKeyUse"        -> Target.Run { (u, _,  r) => useRackKey(u, r) },
+      "RackKeyUse"        -> Target.Run { (u, ua, r) => useRackKey(u, ua, r) },
       "RefillFlaskPick"   -> Target.Run { (u, ua, r) => refillFlask(u, ua, r) },
       "CoatWeapon"        -> Target.Run { (u, _,  r) => coatWeapon(u, r) },
       "CureTraumaPick"    -> Target.Run { (u, ua, r) => cureTrauma(u, ua, r) },
@@ -161,11 +161,14 @@ case class InventoryState(
       _ <- if (items.isEmpty) renderer.show(user, emptyScreen(hero, note))
            else {
              // Одинаковые камни, материалы и трофеи показываются одной кнопкой,
-             // но места в сумке занимают по-прежнему поштучно.
-             val stacks = ItemStack.grouped(items)
+             // но места в сумке занимают по-прежнему поштучно. Ключи стоек —
+             // связкой, когда их два и больше.
+             val stacks = InventoryState.listed(items)
+             val ring   = InventoryState.keyRing(items).isDefined
              val (pageItems, totalPages, page) = ItemMenu.page(stacks, scene.page.getOrElse(0))
              val header   = s"📦 Инвентарь${if (totalPages > 1) s" (${page + 1}/$totalPages)" else ""} | 🪙 ${hero.silver} | 🟡 ${hero.doubloons}"
-             val itemBtns = ItemMenu.stackButtons(pageItems, ItemActionPrefix)
+             val itemBtns = ItemMenu.stackButtons(pageItems, ItemActionPrefix, label = (it, n) =>
+               Option.when(ring && InventoryState.isRackKey(it))(InventoryState.keyRingLabel(content, n)))
              val nav      = navRow(page, totalPages, "InventoryPrev", "InventoryNext", "BackFromInventory")
              renderer.show(user, Screen(StackMove.withNote(note, header), itemBtns ++ nav))
            }
@@ -175,7 +178,7 @@ case class InventoryState(
     for {
       hero  <- getHero(user)
       inv   <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
-      (_, totalPages, _) = ItemMenu.page(inv.items.data, 0)
+      (_, totalPages, _) = ItemMenu.page(InventoryState.listed(inv.items.data), 0)
       scene <- readScene(user)
       cur    = scene.page.getOrElse(0)
       np     = (cur + delta).max(0).min(totalPages - 1)
@@ -567,8 +570,37 @@ case class InventoryState(
   // ── Сюжетные предметы («Письмо Марисе») ────────────────────────────────────
 
   /** Письмо: описание и «Вскрыть» (после вскрытия — «Перечитать»); карта:
-    * описание и «Отправиться по карте». Ни выбросить, ни продать. */
+    * описание и «Отправиться по карте». Ни выбросить, ни продать. Ключ стойки,
+    * когда ключей два и больше, — карточка связки ([[showKeyRing]]). */
   private def showQuestItem(user: User, item: Item, renderer: Renderer): Task[StateType] =
+    keyRingOf(user, item).flatMap {
+      case Some(keys) => showKeyRing(user, keys, renderer)
+      case None       => showPlainQuestItem(user, item, renderer)
+    }
+
+  /** Связка — если это ключ стойки и ключей стоек при герое два и больше. */
+  private def keyRingOf(user: User, item: Item): Task[Option[List[(Int, Item)]]] =
+    if (!InventoryState.isRackKey(item)) ZIO.none
+    else
+      for {
+        hero <- getHero(user)
+        inv  <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
+      } yield InventoryState.keyRing(inv.items.data)
+
+  /** Связка ключей: какие ключи на кольце и кнопка на каждый — повернуть его.
+    * Кнопки — по [[InventoryState.KeyRingPerRow]] в ряд, выход — рядом ниже. */
+  private def showKeyRing(user: User, keys: List[(Int, Item)], renderer: Renderer): Task[StateType] = {
+    val perRow = InventoryState.KeyRingPerRow
+    val turns  = keys.zipWithIndex.map { case ((n, _), i) =>
+      Choice("RackKeyUse", content.format("inventory.keyRing.turn", "n" -> n.toString),
+        color = ChoiceColor.Positive, data = Map("n" -> n.toString), row = Some(i / perRow))
+    }
+    val exit = content.choice("InventoryList", "inventory.exit")
+      .copy(color = ChoiceColor.Negative, row = Some((keys.size + perRow - 1) / perRow))
+    renderer.show(user, Screen(InventoryState.keyRingText(content, keys.map(_._1)), turns :+ exit)).as(StateType.Inventory)
+  }
+
+  private def showPlainQuestItem(user: User, item: Item, renderer: Renderer): Task[StateType] =
     for {
       quests <- NpcQuestLog.load(heroDao, user.userId)
       opened  = quests.of(NpcQuest.Marisa).bonus
@@ -684,10 +716,18 @@ case class InventoryState(
     } yield res
 
   /** Повернуть ключ стойки: магия меняет надетое местами с тем, что висит на
-    * стойке дома, — где угодно, кроме боя (из боя в сумку не попасть). */
-  private def useRackKey(user: User, renderer: Renderer): Task[StateType] =
-    withSelected(user, renderer) { (item, _) =>
-      item.questItem.flatMap(QuestItemKind.rackOf) match {
+    * стойке дома, — где угодно, кроме боя (из боя в сумку не попасть). Со
+    * связки номер ключа приходит в кнопке — и такой ключ должен быть при герое;
+    * с карточки одного ключа — это сам ключ. */
+  private def useRackKey(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
+    withSelected(user, renderer) { (item, hero) =>
+      val chosen = payloadField(ua, "n").flatMap(_.toIntOption) match {
+        case Some(n) =>
+          inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
+            .map(inv => Option.when(InventoryState.rackKeys(inv.items.data).exists(_._1 == n))(n))
+        case None => ZIO.succeed(item.questItem.flatMap(QuestItemKind.rackOf))
+      }
+      chosen.flatMap {
         case None => showItem(user, item.id, renderer)
         case Some(n) =>
           Racks(heroDao, inventoryRepo, content).swap(user, n, renderer).flatMap {
@@ -1576,6 +1616,50 @@ object InventoryState {
     case Brewed(kind)          => brewText(content, item, kind)
     case _                     => itemText(item, hero.equipment, Some(hero))
   }
+
+  // ── Связка ключей ──────────────────────────────────────────────────────────
+
+  /** Связка: с этого числа ключей стоек при герое они в сумке одной строкой, а
+    * в её карточке — кнопка на каждый. В базе ключи остаются отдельными вещами:
+    * связка — только то, как их показывают. */
+  val KeyRingMin: Int = 2
+
+  /** Кнопок ключей в ряд на карточке связки. */
+  val KeyRingPerRow: Int = 3
+
+  /** Ключ ли это от стойки дома. */
+  def isRackKey(item: Item): Boolean = item.questItem.flatMap(QuestItemKind.rackOf).isDefined
+
+  /** Ключи стоек среди вещей — с номерами, по порядку номеров. */
+  def rackKeys(items: List[Item]): List[(Int, Item)] =
+    items.flatMap(i => i.questItem.flatMap(QuestItemKind.rackOf).map(_ -> i)).sortBy(_._1)
+
+  /** Связка — ключи стоек, если их хотя бы [[KeyRingMin]]. */
+  def keyRing(items: List[Item]): Option[List[(Int, Item)]] =
+    Some(rackKeys(items)).filter(_.sizeIs >= KeyRingMin)
+
+  /** Сумка строками, как её показывают: одинаковое — стопкой
+    * ([[ItemStack.grouped]]), ключи стоек — связкой: она встаёт туда, где лежит
+    * первый из них, и её счётчик — сколько ключей на кольце. */
+  def listed(items: List[Item]): List[(Item, Int)] =
+    keyRing(items) match {
+      case None => ItemStack.grouped(items)
+      case Some(keys) =>
+        val ids   = keys.map(_._2.id).toSet
+        val first = items.find(i => ids.contains(i.id)).map(_.id)
+        ItemStack.grouped(items.filter(i => !ids.contains(i.id) || first.contains(i.id)))
+          .map { case (it, n) => if (first.contains(it.id)) (it, keys.size) else (it, n) }
+    }
+
+  /** Строка связки в сумке: «★ Связка ключей (3)». */
+  def keyRingLabel(content: SceneContent, n: Int): String =
+    s"${Item.QuestMark} " + content.format("inventory.keyRing.button", "n" -> n.toString)
+
+  /** Карточка связки — какие ключи на кольце и что они делают; ею же связку
+    * описывает Mini App. */
+  def keyRingText(content: SceneContent, numbers: List[Int]): String =
+    s"${Item.QuestMark} ${content.text("inventory.keyRing.name")}\n\n" +
+      content.format("inventory.keyRing.text", "keys" -> numbers.map(n => s"№$n").mkString(", "))
 
   /** Стопка: значок и сколько внутри, а под ними — карточка того, что в ней
     * лежит: вещи в стопке одинаковые, и одной карточки на всех хватает. */

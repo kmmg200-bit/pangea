@@ -59,11 +59,13 @@ object ItemMenu {
 
   /** То же, но одинаковые вещи стоят одной кнопкой с приписью «(3 шт)». Кнопка
    *  ведёт на первый предмет группы: действие всегда идёт над ОДНИМ предметом,
-   *  сколько бы их ни лежало рядом. */
-  def stackButtons(items: List[(Item, Int)], prefix: String, baseRow: Int = 0): List[Choice] =
+   *  сколько бы их ни лежало рядом. `label` — своя подпись строки (связка
+   *  ключей в сумке), если нужна. */
+  def stackButtons(items: List[(Item, Int)], prefix: String, baseRow: Int = 0,
+                   label: (Item, Int) => Option[String] = (_, _) => None): List[Choice] =
     items.zipWithIndex.map { case ((it, count), idx) =>
       Choice(s"$prefix${it.id}",
-        truncate(it.displayTitle + pangea.model.item.ItemStack.countSuffix(count)),
+        truncate(label(it, count).getOrElse(it.displayTitle + pangea.model.item.ItemStack.countSuffix(count))),
         row = Some(baseRow + idx))
     }
 

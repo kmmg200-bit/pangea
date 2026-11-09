@@ -360,7 +360,7 @@ object MiniAppView {
       hero      = hero(h),
       capacity  = inv.maxItems,
       occupied  = inv.occupied,
-      items     = stacked(inv.items.data, describe),
+      items     = bag(inv.items.data, content, describe),
       equipment = EquipmentState.slots.zipWithIndex.map { case (slot, idx) =>
                     val worn = slot.get(h.equipment)
                     SlotView(
@@ -434,6 +434,22 @@ object MiniAppView {
 
   private def stacked(items: List[Item], describe: Item => String): List[ItemView] =
     ItemStack.grouped(items).map { case (item, count) => view(item, count, describe(item)) }
+
+  /** Сумка — как в боте ([[InventoryState.listed]]): стопками, а ключи стоек,
+    * когда их два и больше, — одной строкой «★ Связка ключей (N)». Связка не
+    * стопка: счётчика «×N» у неё нет — какие ключи на кольце, говорит её
+    * карточка. */
+  private def bag(items: List[Item], content: SceneContent, describe: Item => String): List[ItemView] = {
+    val ring = InventoryState.keyRing(items)
+    InventoryState.listed(items).map { case (item, count) =>
+      ring.filter(_ => InventoryState.isRackKey(item)) match {
+        case Some(keys) =>
+          view(item, 1, InventoryState.keyRingText(content, keys.map(_._1)))
+            .copy(title = InventoryState.keyRingLabel(content, keys.size))
+        case None => view(item, count, describe(item))
+      }
+    }
+  }
 
   /** Пояс по ячейкам — те же числа, что в его карточке ([[Item.statsLines]]). */
   private def belt(worn: Item): Option[BeltView] = worn.details match {

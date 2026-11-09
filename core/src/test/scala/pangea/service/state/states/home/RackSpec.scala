@@ -183,6 +183,47 @@ object RackSpec extends ZIOSpecDefault {
               assertTrue(said.contains("Магия в ключе завихрилась и сменила весь надетый комплект"))
     },
 
+    test("связка ключей: два ключа и больше — в сумке одной строкой; в карточке кнопка на ключ — поворачивает свою стойку") {
+      val key1  = QuestItemKind.item(QuestItemKind.RackKey1).copy(id = 71L)
+      val key2  = QuestItemKind.item(QuestItemKind.RackKey2).copy(id = 72L)
+      val key3  = QuestItemKind.item(QuestItemKind.RackKey3).copy(id = 73L)
+      val three = HomeData(tier = 2, metJunona = true, racks = List.fill(3)(Equipment.empty))
+      val pick  = UserAction("", Some(s"""{"action":"${InventoryState.ItemActionPrefix}73"}"""))
+      for {
+        t <- make(hero(), three, items = List(helmet, key3, key1, key2))
+        (_, dao, inv, r, c) = t
+        bag    = InventoryState(dao, inv, TestItemRepository.make, c)
+        _     <- bag.enter(testUser, r)
+        list  <- r.sentScreens.map(_.last)
+        _     <- bag.action(testUser, pick, r)
+        ring  <- r.sentScreens.map(_.last)
+        _     <- bag.action(testUser, tap("RackKeyUse", "n" -> "2"), r)
+        h     <- heroOf(dao)
+        home  <- homeOf(dao)
+        said  <- texts(r)
+        // ключа №5 при герое нет — кнопка из чужого экрана ничего не меняет
+        _     <- bag.action(testUser, pick, r)
+        _     <- bag.action(testUser, tap("RackKeyUse", "n" -> "5"), r)
+        h2    <- heroOf(dao)
+        home2 <- homeOf(dao)
+      } yield assertTrue(list.choices.filter(_.id.startsWith(InventoryState.ItemActionPrefix)).map(c => c.id -> c.label) ==
+                List(s"${InventoryState.ItemActionPrefix}11" -> "[Ур.1] Вещь 11",
+                     s"${InventoryState.ItemActionPrefix}73" -> "★ Связка ключей (3)")) &&
+              assertTrue(ring.text.startsWith("★ Связка ключей") && ring.text.contains("на одном кольце: №1, №2, №3.")) &&
+              assertTrue(ring.choices.map(c => (c.id, c.data.get("n"), c.row)) == List(
+                ("RackKeyUse", Some("1"), Some(0)), ("RackKeyUse", Some("2"), Some(0)), ("RackKeyUse", Some("3"), Some(0)),
+                ("InventoryList", None, Some(1)))) &&
+              assertTrue(ring.choices.take(3).map(_.label) == List("🔑 №1", "🔑 №2", "🔑 №3")) &&
+              // повернули №2 — меч на второй стойке, первая и третья пусты
+              assertTrue(h.equipment.weapon.itemType == ItemType.NoItem && home.racks(1).weapon.id == sword.id &&
+                home.racks(0) == Equipment.empty && home.racks(2) == Equipment.empty) &&
+              assertTrue(said.contains("на стойке №2 дома")) &&
+              assertTrue(h2.equipment == h.equipment && home2 == home) &&
+              // один ключ — связки нет: строка и карточка как у ключа
+              assertTrue(InventoryState.keyRing(List(key2)).isEmpty &&
+                InventoryState.listed(List(helmet, key2)) == List(helmet -> 1, key2 -> 1))
+    },
+
     test("нельзя: не по уровню, нечем меняться, сумка не вместит своё без «Тайника»") {
       val heavy  = withRack.copy(racks = List(TestFixtures.emptyEquipment.copy(helmet = gear(20L, ItemType.Helmet, lvl = 15L))))
       val stash  = gear(21L, ItemType.Boots, details = ItemDetails.Passive(PassiveKind.Stash))

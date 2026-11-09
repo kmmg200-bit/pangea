@@ -227,6 +227,20 @@ object MiniAppViewSpec extends ZIOSpecDefault {
       )
     },
 
+    test("сумка: ключи стоек — одной строкой «★ Связка ключей (N)», без счётчика; один ключ — как есть") {
+      import pangea.model.item.QuestItemKind
+      val key2 = QuestItemKind.item(QuestItemKind.RackKey2).copy(id = 92L)
+      val key1 = QuestItemKind.item(QuestItemKind.RackKey1).copy(id = 91L)
+      val city = TestFixtures.hero(UserId(1L), state = StateType.MarketSquare)
+      val two  = MiniAppView.inventory(city, inv(city, List(ruby(5L), key2, key1)), nothing(city), content, _.name, 0L)
+      val one  = MiniAppView.inventory(city, inv(city, List(key2)), nothing(city), content, _.name, 0L)
+      assertTrue(
+        two.items.map(i => (i.id, i.title, i.count)) == List((5L, "Надколотый рубин", 1), (92L, "★ Связка ключей (2)", 1)),
+        two.items.lastOption.exists(i => i.text.startsWith("★ Связка ключей") && i.text.contains("на одном кольце: №1, №2.")),
+        one.items.map(i => (i.title, i.text)) == List(("★ Ключ стойки №2", "Ключ стойки №2"))
+      )
+    },
+
     test("стойки: раздел на каждую стойку оружейной со своим номером — её надевают; старая запись «в кладовой» их не прячет") {
       import pangea.model.hero.Equipment
       import pangea.model.home.Furniture
