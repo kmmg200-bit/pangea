@@ -56,6 +56,16 @@ final class MiniAppRoutes(app: MiniApp) {
     case req @ POST -> Root / "api" / "app" / "equipment" / "take-off" :? SlotParam(slot) =>
       asPlayer(req)(hero => app.gear(hero, GearAct.TakeOff(slot)).flatMap(view => Ok(view.asJson)))
 
+    // Камни и резец надетой вещи. Меняют игру — только POST.
+    case req @ POST -> Root / "api" / "app" / "equipment" / "break-gem" :? SlotParam(slot) +& SocketParam(socket) =>
+      asPlayer(req)(hero => app.gear(hero, GearAct.BreakGem(slot, socket)).flatMap(view => Ok(view.asJson)))
+
+    case req @ POST -> Root / "api" / "app" / "equipment" / "insert-gem" :? SlotParam(slot) +& PlaceFrom(from) +& ItemParam(id) =>
+      asPlayer(req)(hero => app.gear(hero, GearAct.InsertGem(slot, from, id)).flatMap(view => Ok(view.asJson)))
+
+    case req @ POST -> Root / "api" / "app" / "equipment" / "chisel" :? SlotParam(slot) =>
+      asPlayer(req)(hero => app.gear(hero, GearAct.UseChisel(slot)).flatMap(view => Ok(view.asJson)))
+
     // Переложить вещь (или всю стопку) из одного хранилища в другое. Меняет игру — только POST.
     case req @ POST -> Root / "api" / "app" / "storages" / "move" :? PlaceFrom(from) +& PlaceTo(to) +& ItemParam(id) +& AllParam(all) =>
       asPlayer(req)(hero => app.move(hero, from, to, id, all.getOrElse(false)).flatMap(view => Ok(view.asJson)))
@@ -137,6 +147,7 @@ final class MiniAppRoutes(app: MiniApp) {
   private object ItemParam extends QueryParamDecoderMatcher[Long]("item")
   private object LotParam  extends QueryParamDecoderMatcher[Long]("lot")
   private object SlotParam extends QueryParamDecoderMatcher[Int]("slot")
+  private object SocketParam extends QueryParamDecoderMatcher[Int]("socket")
   private object FromParam extends QueryParamDecoderMatcher[Int]("from")
   private object ToParam   extends QueryParamDecoderMatcher[Int]("to")
   private object AtParam   extends QueryParamDecoderMatcher[Int]("at")

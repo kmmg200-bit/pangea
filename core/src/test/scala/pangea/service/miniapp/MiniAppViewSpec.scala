@@ -278,6 +278,32 @@ object MiniAppViewSpec extends ZIOSpecDefault {
       )
     },
 
+    test("камни и резец в слоте: что вставлено и что спросить, есть ли гнездо, чем вставить; без резца — без кнопки") {
+      import pangea.generator.item.MaterialGenerator
+      import pangea.model.artifact.{Artifact, ArtifactKind}
+      import pangea.model.inventory.Inventory.Items
+      import pangea.model.item.MaterialKind
+      val gem    = Gem(GemKind.Ruby, Gem.MinGrade)
+      val helm   = sword.copy(id = 30L, name = "Шлем стража", itemType = ItemType.Helmet, grip = None, sockets = List(Some(gem), None))
+      val hero   = TestFixtures.hero(UserId(1L)).copy(equipment = TestFixtures.emptyEquipment.copy(helmet = helm))
+      val chisel = MaterialGenerator.item(MaterialKind.RuneChisel).copy(id = 900L)
+      val arts   = HeroArtifacts.empty(hero.id).copy(casket = Artifact(ArtifactKind.Casket, 1, 0, Items(List(ruby(6L)))))
+      val stores = nothing(hero).copy(artifacts = arts)
+      val full   = MiniAppView.inventory(hero, inv(hero, List(ruby(5L), chisel)), stores, content, _.name, 0L)
+      val bare   = MiniAppView.inventory(hero, inv(hero, Nil), nothing(hero), content, _.name, 0L)
+      def slot(v: MiniAppView.InventoryView) = v.equipment.find(_.name == "Шлем")
+      assertTrue(
+        slot(full).exists(_.gems == List(MiniAppView.SocketedView(0, gem.displayName, content.format("equipment.breakGemConfirm",
+          "gem" -> gem.displayName, "count" -> gem.dustYield.toString, "dust" -> gem.dust.displayName)))),
+        slot(full).exists(_.freeSocket),
+        slot(full).exists(_.chisel.contains(content.format("inventory.chisel.confirm", "name" -> "Шлем стража",
+          "pattern" -> content.text("inventory.chisel.noPattern")))),
+        full.gemStock.map(g => g.from -> g.item.id) == List("bag" -> 5L, "casket" -> 6L),
+        slot(bare).exists(_.chisel.isEmpty),
+        bare.gemStock.isEmpty
+      )
+    },
+
     test("куда переложить вне города: только между тем, что при себе; в бою — никуда; почему — сказано") {
       import pangea.model.artifact.{Artifact, ArtifactKind}
       import pangea.model.inventory.Inventory.Items

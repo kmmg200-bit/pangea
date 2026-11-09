@@ -12,7 +12,7 @@ import pangea.model.bank.BankVault
 import pangea.model.barrel.Barrel
 import pangea.model.home.HomeData
 import pangea.model.hero.Hero
-import pangea.model.item.Item
+import pangea.model.item.{Chisel, Item, ItemType, MaterialKind}
 import pangea.model.state.StateType
 import pangea.model.top.{TopBoard, TopKind}
 import pangea.model.user.User
@@ -26,7 +26,7 @@ import pangea.repository.item.ItemRepository
 import pangea.repository.user.UserRepository
 import pangea.service.auction.AuctionPurchase
 import pangea.service.cube.AzatCube
-import pangea.service.equipment.Outfit
+import pangea.service.equipment.{GemWork, Outfit}
 import pangea.service.miniapp.MiniAppView.{AuctionActionView, AuctionView, CharacterView, CraftActionView, CraftView,
   InventoryActionView, InventoryView, QuestsView, SquadActionView, SquadView, TopView}
 import pangea.service.payout.Payouts
@@ -134,6 +134,12 @@ object MiniApp {
   object GearAct {
     final case class Wear(slot: Int, itemId: Long) extends GearAct
     final case class TakeOff(slot: Int)            extends GearAct
+    /** Сломать камень из гнезда `socket` надетой вещи. */
+    final case class BreakGem(slot: Int, socket: Int) extends GearAct
+    /** Вставить камень `itemId`, лежащий в `from` (сумка или Ларец), в надетую вещь. */
+    final case class InsertGem(slot: Int, from: String, itemId: Long) extends GearAct
+    /** Переписать резцом узор надетой вещи. */
+    final case class UseChisel(slot: Int) extends GearAct
   }
 
   /** Приказы отряду: переставить союзника (с места на место) или героя,
@@ -219,7 +225,8 @@ object MiniApp {
       } yield new MiniAppLive(config, users, heroes, inventories, lots, heroDao, artifacts, barrels, vaults, content,
         tops, topCache, new AzatCube(heroDao, inventories, items, content),
         new AuctionPurchase(heroDao, inventories, lots, users, bank, payouts, players, content),
-        new Outfit(heroDao, inventories, items, content), new SquadOrders(heroDao, content),
+        new Outfit(heroDao, inventories, items, content), new GemWork(heroDao, inventories, items, content),
+        new SquadOrders(heroDao, content),
         new ItemStore.All(heroDao, inventories, artifactRepo, barrelRepo, bank, content),
         new BarrelRobbery(heroDao, barrelRepo, items, content), lock)
     }
@@ -241,6 +248,7 @@ final class MiniAppLive(
   azatCube:    AzatCube,
   purchase:    AuctionPurchase,
   outfit:      Outfit,
+  gemWork:     GemWork,
   orders:      SquadOrders,
   places:      ItemStore.All,
   robbery:     BarrelRobbery,
@@ -381,6 +389,8 @@ final class MiniAppLive(
       lines <- Ref.make(Vector.empty[String])
       say    = new MiniApp.Collect(lines)
       gone   = say.show(user, Screen(content.text("equipment.wearGone"), Nil))
+      empty  = say.show(user, Screen(content.text("equipment.slotEmpty"), Nil))
+      wornAt = (idx: Int) => EquipmentState.slots.lift(idx).map(_.get(hero.equipment)).filter(_.itemType != ItemType.NoItem)
       _     <- act match {
                  case GearAct.Wear(idx, id) =>
                    EquipmentState.slots.lift(idx) match {
@@ -395,12 +405,41 @@ final class MiniAppLive(
                    }
                  case GearAct.TakeOff(idx) =>
                    EquipmentState.slots.lift(idx) match {
-                     case None       => say.show(user, Screen(content.text("equipment.slotEmpty"), Nil))
+                     case None       => empty
                      case Some(slot) => outfit.takeOff(user, hero, slot, say).unit
+                   }
+                 case GearAct.BreakGem(idx, socket) =>
+                   wornAt(idx) match {
+                     case None => empty
+                     case Some(item) =>
+                       gemWork.breakWorn(user, hero, item, socket, say).flatMap(found =>
+                         ZIO.unless(found)(say.show(user, Screen(content.text("stack.gone"), Nil))).unit)
+                   }
+                 case GearAct.InsertGem(idx, from, id) =>
+                   (wornAt(idx), Place.byId(from).filter(Place.gemSources.contains)) match {
+                     case (Some(target), Some(place)) => insertGem(user, hero, target, places(place), id, say)
+                     case _                           => empty
+                   }
+                 case GearAct.UseChisel(idx) =>
+                   inventories.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
+                     (wornAt(idx).filter(Chisel.fits), inv.items.data.find(_.material.contains(MaterialKind.RuneChisel))) match {
+                       case (Some(item), Some(chisel)) => gemWork.chisel(user, hero, inv, item, worn = true, chisel, say).unit
+                       case _                          => say.show(user, Screen(content.text("inventory.chisel.gone"), Nil))
+                     }
                    }
                }
       said  <- lines.get
     } yield said.mkString("\n\n")
+
+  /** Камень из `store` — в надетую вещь. Слова — те же, что на экране вставки
+    * в боте; Огонь и Холод в оружии рассыпаются молча, как и там. */
+  private def insertGem(user: User, hero: Hero, target: Item, store: ItemStore, id: Long, say: Renderer): Task[Unit] =
+    store.items(hero).flatMap(items => items.find(_.id == id).flatMap(i => i.gem.map(i -> _)) match {
+      case None => say.show(user, Screen(content.text("socketing.gemGone"), Nil))
+      case Some((stone, gem)) =>
+        gemWork.insert(user, hero, target.id, gem, store.remove(hero, stone).unit, say).flatMap(done =>
+          ZIO.unless(done)(say.show(user, Screen(content.text("socketing.noTargets"), Nil))).unit)
+    })
 
   /** Смена комплекта издалека — как ключом из сумки в боте: где угодно, кроме
     * боя, и слова те же. Что не так (не по уровню, сумка не вместит), скажет

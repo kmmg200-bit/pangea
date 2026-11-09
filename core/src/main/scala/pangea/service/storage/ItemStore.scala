@@ -93,6 +93,10 @@ object ItemStore {
       Barrel, Vault, Shelf(HomeShelf.Herbs), Shelf(HomeShelf.Brews), Shelf(HomeShelf.Gems))
 
     def byId(id: String): Option[Place] = all.find(_.id == id)
+
+    /** Откуда приложение берёт камень для гнезда: Ларец сам собирает камни с
+      * добычи, и у его владельцев в сумке их почти нет. */
+    val gemSources: List[Place] = List(Bag, Art(ArtifactKind.Casket))
   }
 
   /** Все хранилища героя по имени — для того, кто переносит между любыми

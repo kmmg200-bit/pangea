@@ -54,7 +54,7 @@ final class GemWork(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemRe
   /** Вставить камень `gem` в надетую вещь `targetId`, в первое свободное гнездо.
     * `spend` убирает камень оттуда, где он лежал. `false` — вещи нет или
     * свободного гнезда в ней нет; камень цел. */
-  def insert(user: User, hero: Hero, targetId: Long, gem: Gem, spend: Task[Unit], renderer: Renderer): Task[Boolean] =
+  def insert(user: User, hero: Hero, targetId: Long, gem: Gem, spend: => Task[Unit], renderer: Renderer): Task[Boolean] =
     ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS)).flatMap { now =>
       hero.equipment.allItems.find(i => i.id == targetId && i.itemType != ItemType.NoItem) match {
         // Огонь и Холод в одном оружии не уживаются: вставляемый камень и
@@ -87,7 +87,7 @@ final class GemWork(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemRe
       hero:     Hero,
       item:     Item,
       inserted: Gem,
-      spend:    Task[Unit],
+      spend:    => Task[Unit],
       nowMs:    Long,
       renderer: Renderer
   ): Task[Unit] = {

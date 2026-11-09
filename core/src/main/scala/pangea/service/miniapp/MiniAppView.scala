@@ -10,7 +10,7 @@ import pangea.model.barrel.Barrel
 import pangea.model.hero.{Achievement, AzatState, CubeStatus, Hero, HeroCard, Knowledge, LoreData}
 import pangea.model.home.{HomeData, HomeRates, House}
 import pangea.model.inventory.Inventory
-import pangea.model.item.{BeltSlot, Bundling, Item, ItemDetails, ItemStack, ItemType, Rarity}
+import pangea.model.item.{BeltSlot, Bundling, Chisel, GemBreaking, Item, ItemDetails, ItemStack, ItemType, MaterialKind, Rarity}
 import pangea.model.squad.AllyRates
 import pangea.model.top.{TopBoard, TopKind}
 import pangea.service.chat.Links
@@ -64,12 +64,23 @@ object MiniAppView {
   /** Набор вещи-кандидата: сколько его надето сейчас, сколько станет и из скольких. */
   final case class SetChangeView(name: String, before: Int, after: Int, max: Int)
 
+  /** Камень в гнезде надетой вещи: `socket` — номер гнезда, `confirm` — что
+    * спросить перед ломкой. */
+  final case class SocketedView(socket: Int, name: String, confirm: String)
+
+  /** Камень, который можно вставить в гнездо: `from` — где лежит (сумка или
+    * Ларец), `item` — стопкой, как в списке. */
+  final case class GemStockView(from: String, item: ItemView)
+
   /** Слот снаряжения: что надето; `busy` — пустой, но занят (левая рука под
     * двуручным: само оружие — в правой); `belt` — что лежит в поясе. `index` —
     * номер слота в [[EquipmentState.slots]]: им приложение говорит, куда
-    * надеть и что снять. */
+    * надеть и что снять. `gems` — камни в гнёздах надетой, `freeSocket` — есть
+    * ли свободное гнездо, `chisel` — что спросить перед резцом; нет — резец
+    * здесь не сработает или его нет в сумке. */
   final case class SlotView(index: Int, name: String, item: Option[ItemView], busy: Option[String],
-                            belt: Option[BeltView], candidates: List[CandidateView])
+                            belt: Option[BeltView], candidates: List[CandidateView],
+                            gems: List[SocketedView], freeSocket: Boolean, chisel: Option[String])
 
   /** Ячейка пояса: что в ней и сколько из скольких. Опустевшая помнит, чем
     * была полна, — `uses` у неё ноль. */
@@ -113,7 +124,8 @@ object MiniAppView {
 
   /** Вещи героя. `gearLocked` — почему снаряжение и комплект со стойки сейчас
     * не сменить: герой в бою; `storesAway` — почему дотянуться удастся не до
-    * всех хранилищ: герой не в городе или в бою. */
+    * всех хранилищ: герой не в городе или в бою; `gemStock` — камни, которые
+    * можно вставить в гнездо. */
   final case class InventoryView(
     hero:       HeroView,
     capacity:   Long,
@@ -123,7 +135,8 @@ object MiniAppView {
     storages:   List[StorageView],
     gearLocked: Option[String],
     storesAway: Option[String],
-    moves:      List[MoveView]
+    moves:      List[MoveView],
+    gemStock:   List[GemStockView]
   )
 
   /** Ответ на «надеть» или «снять»: вещи после этого и что сказать. */
@@ -311,11 +324,13 @@ object MiniAppView {
   implicit val candidateEncoder: Encoder[CandidateView] = deriveEncoder
   implicit val beltCellEncoder:  Encoder[BeltCellView]  = deriveEncoder
   implicit val beltEncoder:      Encoder[BeltView]      = deriveEncoder
+  implicit val socketedEncoder:  Encoder[SocketedView]  = deriveEncoder
   implicit val slotEncoder:      Encoder[SlotView]      = deriveEncoder
   implicit val sectionEncoder:   Encoder[SectionView]   = deriveEncoder
   implicit val countEncoder:     Encoder[CountView]     = deriveEncoder
   implicit val storageEncoder:   Encoder[StorageView]   = deriveEncoder
   implicit val moveEncoder:      Encoder[MoveView]      = deriveEncoder
+  implicit val gemStockEncoder:  Encoder[GemStockView]  = deriveEncoder
   implicit val heroEncoder:      Encoder[HeroView]      = deriveEncoder
   implicit val inventoryEncoder: Encoder[InventoryView] = deriveEncoder
   implicit val inventoryActionEncoder: Encoder[InventoryActionView] = deriveEncoder
@@ -370,14 +385,46 @@ object MiniAppView {
                       item       = Option.when(worn.itemType != ItemType.NoItem)(view(worn, 1, InventoryState.gearBody(worn, Some(h)))),
                       busy       = Option.when(slot.busy(h.equipment))(EquipmentState.LeftBusyText),
                       belt       = belt(worn),
-                      candidates = candidates(h, before, slot, inv.items.data, describe, now)
+                      candidates = candidates(h, before, slot, inv.items.data, describe, now),
+                      gems       = socketed(worn, content),
+                      freeSocket = worn.hasFreeSocket,
+                      chisel     = chiselAsk(worn, inv, content)
                     )
                   },
       storages  = views,
       gearLocked = Option.when(MiniApp.inBattle(h))(content.text("miniapp.equipment.inBattle")),
       storesAway = MiniApp.storesAway(content, h),
-      moves      = moves(h, inv, stores, views)
+      moves      = moves(h, inv, stores, views),
+      gemStock   = gemStock(inv, stores, describe)
     )
+  }
+
+  /** Камни в гнёздах вещи и что спросить перед ломкой — как в боте. */
+  private def socketed(worn: Item, content: SceneContent): List[SocketedView] =
+    GemBreaking.socketed(worn).map { case (i, g) =>
+      SocketedView(i, g.displayName, content.format("equipment.breakGemConfirm",
+        "gem" -> g.displayName, "count" -> g.dustYield.toString, "dust" -> g.dust.displayName))
+    }
+
+  /** Что спросить перед резцом; нет резца в сумке или узор этой вещи ему не по
+    * зубам ([[Chisel.fits]]) — ничего. */
+  private def chiselAsk(worn: Item, inv: Inventory, content: SceneContent): Option[String] =
+    Option.when(Chisel.fits(worn) && inv.items.data.exists(_.material.contains(MaterialKind.RuneChisel)))(
+      content.format("inventory.chisel.confirm", "name" -> worn.name,
+        "pattern" -> Chisel.pattern(worn).getOrElse(content.text("inventory.chisel.noPattern"))))
+
+  /** Камни для гнезда — сумка и Ларец ([[Place.gemSources]]): одинаковые одной
+    * строкой, виды вместе, старшие первыми. */
+  private def gemStock(inv: Inventory, st: Stores, describe: Item => String): List[GemStockView] = {
+    def inside(p: Place): List[Item] = p match {
+      case Place.Art(kind) => st.artifacts.of(kind).items.data
+      case _               => inv.items.data
+    }
+    Place.gemSources.flatMap { p =>
+      ItemStack.grouped(inside(p)).flatMap { case (item, count) =>
+        item.gem.map(g => ((g.kind.entryName, -g.grade), GemStockView(p.id, view(item, count, describe(item)))))
+      }
+    }.sortBy(_._1).map(_._2)
   }
 
   /** Что где лежит и куда его можно переложить: в открытые хранилища, которые
