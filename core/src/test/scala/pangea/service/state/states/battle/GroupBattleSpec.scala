@@ -348,8 +348,8 @@ object GroupBattleSpec extends ZIOSpecDefault {
               assertTrue(screens.contains("2. 🟢 Вы VS 🔴"))
     },
 
-    test("каждый восьмой раунд ряды перемешиваются — никто не пропадает и не двоится") {
-      // Семь раундов без перемен, на восьмом — перемешивание. Три моба с разным
+    test("каждый шестой раунд ряды перемешиваются — никто не пропадает и не двоится") {
+      // Пять раундов без перемен, на шестом — перемешивание. Три моба с разным
       // запасом HP: по нему видно, что после перемешивания это те же трое.
       // Раненый сосед (броня 18 из 100) должен остаться ровно одним и с той же
       // раной — из-за этого и пропал следопыт у игрока.
@@ -357,7 +357,7 @@ object GroupBattleSpec extends ZIOSpecDefault {
       // проверить и случай, когда в пару встал не первый.
       val trio    = group(1000L, 2000L, 3000L)
       val wounded = trio.group.others.head.copy(currentArmor = 18L, currentHp = 1940L)
-      val b = trio.copy(group = trio.group.copy(others = wounded :: trio.group.others.tail, round = 7))
+      val b = trio.copy(group = trio.group.copy(others = wounded :: trio.group.others.tail, round = GroupState.ShufflePeriod - 1))
       def run(seed: Long) =
         for {
           t <- makeState(hero(), b)
