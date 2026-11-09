@@ -22,7 +22,7 @@ import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
-import pangea.service.equipment.Outfit
+import pangea.service.equipment.{GemWork, Outfit}
 import pangea.service.state.states.InventoryState._
 import pangea.service.state.states.home.Racks
 import pangea.service.state.states.marisa.MarisaHuntState
@@ -43,6 +43,9 @@ case class InventoryState(
 
   /** Надеть — общее с карточкой слота и с Mini App. */
   private val outfit = new Outfit(heroDao, inventoryRepo, itemRepository, content)
+
+  /** Резец — общее с Mini App. */
+  private val gemWork = new GemWork(heroDao, inventoryRepo, itemRepository, content)
 
   private val branch = new Branch(
     routes = Map(
@@ -1100,26 +1103,6 @@ case class InventoryState(
     hero.equipment.allItems.filter(Chisel.fits).distinctBy(_.id).map(_ -> true) ++
       bag.filter(Chisel.fits).map(_ -> false)
 
-  /** Как зовётся узор вещи для экрана: умение, пассивка или «узора нет». */
-  private def chiselPattern(item: Item): String =
-    Chisel.pattern(item).getOrElse(content.text("inventory.chisel.noPattern"))
-
-  /** Сколько мест освободить в сумке, чтобы переписать вещь. Резец снимает с
-    * надетой вещи «Тайник» наверняка (нынешний узор в розыгрыш не входит), и
-    * без него сумка может не вместить своего. Резец, уходя, своё место
-    * освобождает. 0 — переписывать можно. */
-  private def chiselShortage(hero: Hero, inv: Inventory, item: Item, worn: Boolean): Long =
-    if (!worn || !item.passive.contains(pangea.model.item.PassiveKind.Stash)) 0L
-    else Chisel.variants(item).headOption.fold(0L) { v =>
-      val capDelta = InventoryState.equipmentStashDelta(hero.equipment, hero.equipment.replacing(v),
-                       hero.runes.brandedPassives.toSet)
-      (inv.occupied - 1L - (inv.maxItems + capDelta)).max(0L)
-    }
-
-  /** Отказ: сначала освободить место — с вещи уйдёт «Тайник». */
-  private def chiselStashLine(item: Item, shortage: Long): String =
-    content.format("inventory.chisel.stashBlocked", "name" -> item.name, "count" -> shortage.toString)
-
   /** Список вещей под резец — по [[InventoryState.ChiselPage]] на страницу.
     * Надетые вещи с «Тайником», которые сейчас не переписать, — под списком
     * строкой о том, сколько мест освободить. */
@@ -1138,15 +1121,15 @@ case class InventoryState(
           val picks = all.slice(page * ChiselPage, (page + 1) * ChiselPage).zipWithIndex.map { case ((item, worn), i) =>
             Choice("ChiselPick",
               Choice.fit(content.format(if (worn) "inventory.chisel.worn" else "inventory.chisel.bag",
-                "name" -> item.name, "pattern" -> chiselPattern(item))),
+                "name" -> item.name, "pattern" -> gemWork.chiselPattern(item))),
               data = Map("item" -> item.id.toString), row = Some(i))
           }
           val nav = List(
             Option.when(page > 0)(Choice("ChiselUse", "◀", data = Map("p" -> (page - 1).toString), row = Some(ChiselPage))),
             Option.when(page < last)(Choice("ChiselUse", "▶", data = Map("p" -> (page + 1).toString), row = Some(ChiselPage)))
           ).flatten
-          val notes = all.collect { case (item, worn) if chiselShortage(hero, inv, item, worn) > 0L =>
-                        chiselStashLine(item, chiselShortage(hero, inv, item, worn)) }
+          val notes = all.collect { case (item, worn) if gemWork.chiselShortage(hero, inv, item, worn) > 0L =>
+                        gemWork.chiselStashLine(item, gemWork.chiselShortage(hero, inv, item, worn)) }
           renderer.show(user, Screen((content.text("inventory.chisel.which") :: notes).mkString("\n"),
             picks ++ nav :+ back)).as(StateType.Inventory)
         }
@@ -1171,11 +1154,11 @@ case class InventoryState(
 
   private def confirmChisel(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     withChiselTarget(user, ua, renderer) { (hero, inv, item, worn, _) =>
-      val shortage = chiselShortage(hero, inv, item, worn)
+      val shortage = gemWork.chiselShortage(hero, inv, item, worn)
       if (shortage > 0L)
-        renderer.show(user, Screen(chiselStashLine(item, shortage), Nil)) *> offerChisel(user, ua, renderer)
+        renderer.show(user, Screen(gemWork.chiselStashLine(item, shortage), Nil)) *> offerChisel(user, ua, renderer)
       else renderer.show(user, Screen(
-        content.format("inventory.chisel.confirm", "name" -> item.name, "pattern" -> chiselPattern(item)),
+        content.format("inventory.chisel.confirm", "name" -> item.name, "pattern" -> gemWork.chiselPattern(item)),
         List(
           Choice("ChiselDo", content.text("inventory.chisel.yes"),
             data = Map("item" -> item.id.toString), color = ChoiceColor.Positive, row = Some(0)),
@@ -1183,32 +1166,12 @@ case class InventoryState(
         ))).as(StateType.Inventory)
     }
 
-  /** Резец сводит узор в случайный другой из тех, что бывают у такой вещи, и
-    * рассыпается. С надетой вещи мог уйти или прийти «Тайник» — вместимость
-    * сумки следует за ним; уйти ему, когда сумка без него переполнится,
-    * нельзя: тогда ничего не трогаем и резец цел. */
+  /** Что сделает резец и что будет с «Тайником» — у [[GemWork]], общего с Mini App. */
   private def doChisel(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     withChiselTarget(user, ua, renderer) { (hero, inv, item, worn, chisel) =>
-      val variants = Chisel.variants(item)
-      Random.nextIntBounded(variants.size).flatMap { i =>
-        val rewritten = variants(i)
-        val done      = content.format("inventory.chisel.done", "name" -> item.name,
-                          "before" -> chiselPattern(item), "after" -> chiselPattern(rewritten))
-        val spend     = inventoryRepo.removeItem(chisel.id, hero.id).mapError(e => new Throwable(e.toString))
-        if (worn) {
-          val newEq    = hero.equipment.replacing(rewritten)
-          val capDelta = InventoryState.equipmentStashDelta(hero.equipment, newEq, hero.runes.brandedPassives.toSet)
-          // Подтвердили до того, как сумка наполнилась (старая кнопка), — та же проверка.
-          val shortage = chiselShortage(hero, inv, item, worn)
-          if (shortage > 0L)
-            renderer.show(user, Screen(chiselStashLine(item, shortage), Nil)) *> offerChisel(user, ua, renderer)
-          else
-            spend *> heroDao.updateEquipment(user.userId, newEq) *>
-              ZIO.when(capDelta != 0)(inventoryRepo.increaseCapacity(hero.id, capDelta).orElse(ZIO.unit)) *>
-              renderer.show(user, Screen(done, Nil)) *> showList(user, renderer)
-        } else
-          inventoryRepo.updateItem(hero.id, rewritten).mapError(e => new Throwable(e.toString)) *> spend *>
-            renderer.show(user, Screen(done, Nil)) *> showList(user, renderer)
+      gemWork.chisel(user, hero, inv, item, worn, chisel, renderer).flatMap {
+        case true  => showList(user, renderer)
+        case false => offerChisel(user, ua, renderer)
       }
     }
 

@@ -5,18 +5,15 @@ import io.circe.{Decoder, Encoder, jawn}
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.hero.{Equipment, Hero}
-import pangea.generator.item.MaterialGenerator
 import pangea.model.item.{GemBreaking, Item, ItemDetails, ItemType}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
-import pangea.service.equipment.Outfit
+import pangea.service.equipment.{GemWork, Outfit}
 import pangea.service.state.states.EquipmentState._
 import pangea.service.state.{BeltContents, ItemMenu, State, UiScene, UserAction}
 import zio.{Task, ZIO}
-
-import java.util.concurrent.TimeUnit
 
 case class EquipmentState(
   heroDao:       HeroDao,
@@ -29,6 +26,9 @@ case class EquipmentState(
 
   /** Надеть и снять — общее с карточкой вещи в сумке и с Mini App. */
   private val outfit = new Outfit(heroDao, inventoryRepo, itemRepo, content)
+
+  /** Сломать камень — общее с Mini App. */
+  private val gemWork = new GemWork(heroDao, inventoryRepo, itemRepo, content)
 
   private val branch = new Branch(
     routes = Map(
@@ -299,33 +299,7 @@ case class EquipmentState(
       case None => showList(user, renderer)
       case Some(idx) =>
         withSelected(user, renderer) { (item, hero) =>
-          GemBreaking.breakSocket(item, idx) match {
-            case None => showList(user, renderer)
-            case Some((emptied, gem)) =>
-              for {
-                now   <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
-                inv   <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
-                count  = gem.dustYield
-                // Рубин уходит из гнезда — максимум здоровья падает, и запасы с ним.
-                broken = hero.reequip(hero.equipment.replacing(emptied), now)
-                free   = inv.freeSlots
-                res <-
-                  if (free < count)
-                    renderer.show(user, Screen(
-                      content.format("equipment.breakGemNoRoom", "count" -> count.toString), Nil)) *>
-                      showList(user, renderer)
-                  else
-                    heroDao.updateEquipmentAndFightStats(user.userId, broken.equipment, broken.fightStats) *>
-                      // Каждая горсть — со своим номером из базы: без него горсти
-                      // разных видов делили −1, и снятие одной убирало из сумки все.
-                      BeltContents.persist(Some(itemRepo), hero.id, List.fill(count)(MaterialGenerator.item(gem.dust)))
-                        .flatMap(ZIO.foreachDiscard(_)(d =>
-                          inventoryRepo.addItem(hero.id, d).mapError(e => new Throwable(e.toString)))) *>
-                      renderer.show(user, Screen(content.format("equipment.breakGemDone",
-                        "gem" -> gem.displayName, "count" -> count.toString, "dust" -> gem.dust.displayName), Nil)) *>
-                      showList(user, renderer)
-              } yield res
-          }
+          gemWork.breakWorn(user, hero, item, idx, renderer) *> showList(user, renderer)
         }
     }
 

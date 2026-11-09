@@ -4,19 +4,16 @@ import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.{Decoder, Encoder, jawn}
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, Renderer, SceneContent, Screen, Target}
-import pangea.model.battle.Element
 import pangea.model.hero.{Equipment, Hero}
-import pangea.generator.item.MaterialGenerator
 import pangea.model.item.{Gem, Item, ItemType}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
+import pangea.service.equipment.GemWork
 import pangea.service.state.states.SocketingState._
 import pangea.service.state.{ItemMenu, State, UiScene, UserAction}
 import zio.{Task, ZIO}
-
-import java.util.concurrent.TimeUnit
 
 /** Экран вставки камня-усилителя в гнездо. Вход из инвентаря: id выбранного камня
  *  кладётся в scene_data ([[Scene]]). Показываем надетое снаряжение со свободным
@@ -34,6 +31,9 @@ case class SocketingState(
   // Пыль от рассыпавшихся камней сохраняется, прежде чем лечь в сумку.
   itemRepository: ItemRepository
 ) extends State {
+
+  /** Вставить камень — общее с Mini App. */
+  private val gemWork = new GemWork(heroDao, inventoryRepo, itemRepository, content)
 
   private val branch = new Branch(
     routes = Map(
@@ -115,108 +115,22 @@ case class SocketingState(
 
   private def insert(user: User, targetId: Long, renderer: Renderer): Task[StateType] =
     for {
-      now  <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
       hero <- getHero(user)
       ctx  <- gemContext(user, hero)
       res <- ctx match {
         case None => showTargets(user, renderer)
         case Some((scene, g)) =>
-          val target = hero.equipment.allItems.find(i => i.id == targetId && i.itemType != ItemType.NoItem)
-          target match {
-            // Огонь и Холод в одном оружии не уживаются: вставляемый камень и
-            // ПРОТИВОПОЛОЖНЫЙ ему обращаются в пыль. Одинаковые стихии при этом
-            // спокойно стакаются — два рубина усиливают друг друга по грейдам.
-            case Some(item) if isWeapon(item) && hasOpposite(item, g) =>
-              annihilate(user, hero, item, g, scene.gemId, now, renderer)
-            case _ =>
-              socketInto(hero.equipment, targetId, g) match {
-                case None => showTargets(user, renderer)
-                // Рубин в надетой вещи поднимает максимум здоровья — запасы держат долю.
-                case Some((newEq, item)) =>
-                  heroDao.updateEquipmentAndFightStats(user.userId, newEq, hero.reequip(newEq, now).fightStats) *>
-                    inventoryRepo.removeItem(scene.gemId, hero.id).mapError(e => new Throwable(e.toString)) *>
-                    renderer.show(user, Screen(
-                      content.format("socketing.done", "gem" -> g.displayName, "item" -> item.name), Nil)) *>
-                    UiScene.clear(heroDao, user.userId, UiScene.Socketing).as(StateType.Inventory)
-              }
+          val spend = inventoryRepo.removeItem(scene.gemId, hero.id).mapError(e => new Throwable(e.toString)).unit
+          gemWork.insert(user, hero, targetId, g, spend, renderer).flatMap {
+            case true  => UiScene.clear(heroDao, user.userId, UiScene.Socketing).as(StateType.Inventory)
+            case false => showTargets(user, renderer)
           }
       }
     } yield res
 
-  /** Огонь и Холод в одном оружии не уживаются: оба камня рассыпаются. От каждого
-    * остаётся РОВНО одна горсть своей пыли — вспышка съедает камни целиком, грейд
-    * тут ничего не добавляет (в отличие от спокойной ломки, см. `GemBreaking`).
-    *
-    * Пыли нужно две ячейки. Считаем их уже после того, как вставляемый камень ушёл
-    * из сумки: он сам освобождает одну. Не хватило — камни всё равно потеряны, но
-    * пыль высыпается мимо сумки, и об этом честно сообщаем. */
-  private def annihilate(
-      user:     User,
-      hero:     Hero,
-      item:     Item,
-      inserted: Gem,
-      gemId:    Long,
-      nowMs:    Long,
-      renderer: Renderer
-  ): Task[StateType] = {
-    val cleaned = removeOpposite(item, inserted)
-    val after   = hero.reequip(hero.equipment.replacing(cleaned), nowMs)
-    val lost    = item.socketedGems.find(isOpposite(_, inserted))
-    val dusts   = (inserted :: lost.toList).map(_.dust)
-    for {
-      _   <- heroDao.updateEquipmentAndFightStats(user.userId, after.equipment, after.fightStats)
-      _   <- inventoryRepo.removeItem(gemId, hero.id).mapError(e => new Throwable(e.toString))
-      inv <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
-      room = inv.freeSlots >= dusts.size
-      // Каждая горсть — со своим номером из базы: без него горсти делили −1, и
-      // снятие одной (в куб, в ячейку) убирало из сумки все.
-      _   <- ZIO.when(room)(ZIO.foreachDiscard(dusts)(kind =>
-               itemRepository.persist(hero.id, MaterialGenerator.item(kind))
-                 .flatMap(d => inventoryRepo.addItem(hero.id, d).mapError(e => new Throwable(e.toString)))))
-      line = if (room)
-               content.format("socketing.annihilate", "dust" -> dusts.map(_.displayName).mkString(", "))
-             else content.text("socketing.annihilateNoRoom")
-      _   <- renderer.show(user, Screen(line, Nil))
-      _   <- UiScene.clear(heroDao, user.userId, UiScene.Socketing)
-    } yield StateType.Inventory
-  }
-
-  private def isWeapon(item: Item): Boolean =
-    item.itemType == ItemType.Weapon || item.itemType == ItemType.AdditionalWeapon
-
-  /** Противоположная стихия: огонь ↔ холод. У остальных стихий пары нет. */
-  private def opposite(e: Element): Option[Element] = e match {
-    case Element.Fire => Some(Element.Cold)
-    case Element.Cold => Some(Element.Fire)
-    case _            => None
-  }
-
-  private def isOpposite(gem: Gem, to: Gem): Boolean =
-    (Element.of(gem.kind), Element.of(to.kind).flatMap(opposite)) match {
-      case (Some(a), Some(b)) => a == b
-      case _                  => false
-    }
-
-  private def hasOpposite(item: Item, gem: Gem): Boolean =
-    item.socketedGems.exists(isOpposite(_, gem))
-
-  // Гасит первый камень противоположной стихии (гнездо становится свободным).
-  private def removeOpposite(item: Item, gem: Gem): Item =
-    item.sockets.indexWhere(_.exists(isOpposite(_, gem))) match {
-      case -1  => item
-      case idx => item.copy(sockets = item.sockets.updated(idx, None))
-    }
-
   // Надетые предметы со свободным гнездом (кроме пустых слотов).
   private def socketableItems(eq: Equipment): List[Item] =
     eq.allItems.filter(i => i.itemType != ItemType.NoItem && i.hasFreeSocket)
-
-  // Вставка камня в предмет `targetId`: возвращает обновлённое снаряжение и предмет.
-  private def socketInto(eq: Equipment, targetId: Long, gem: Gem): Option[(Equipment, Item)] =
-    eq.allItems.find(i => i.id == targetId && i.itemType != ItemType.NoItem && i.hasFreeSocket).map { item =>
-      val updated = item.socketGem(gem)
-      (eq.replacing(updated), updated)
-    }
 
   /** Сцена экрана и сам камень, если он ещё в инвентаре. */
   private def gemContext(user: User, hero: Hero): Task[Option[(Scene, Gem)]] =
