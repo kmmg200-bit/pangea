@@ -80,7 +80,7 @@ object FlowerMeadowSpec extends ZIOSpecDefault {
       } yield assertTrue(scene.exists(s => s.left == 2 && s.nextAt == 150000L)) &&
               assertTrue(tasks.exists(t => t.kind == TaskKind.FlowerMeadow && t.fireAt == 150000L)) &&
               assertTrue(screen.text.contains("поляна шепчет")) &&
-              assertTrue(screen.choices.map(_.id) == List("OpenCharacter", "LeaveMeadow")) &&
+              assertTrue(screen.choices.map(_.id) == List("OpenCharacter", "OpenApp", "LeaveMeadow")) &&
               assertTrue(screen.choices.last.color == pangea.engine.ChoiceColor.Negative) &&
               assertTrue(ask == StateType.FlowerMeadow && confirm.choices.map(_.id) == List("ConfirmLeave", "StayMeadow")) &&
               assertTrue(stay == StateType.FlowerMeadow && !stayed.text.contains("поляна шепчет")) && // описание не повторяется

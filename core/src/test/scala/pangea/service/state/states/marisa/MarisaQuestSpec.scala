@@ -230,6 +230,7 @@ object MarisaQuestSpec extends ZIOSpecDefault {
           _   <- state.enter(testUser, r)
           tasks <- sched.scheduled
           thanks <- texts(r)
+          road  <- r.sentScreens.map(_.lastOption)
           early <- state.action(testUser, UserAction("", None), r)
           _   <- TestClock.adjust(Duration.fromMillis(MarisaHuntState.HuntDurationMs + 1L))
           _   <- TestRandom.feedLongs(7L)
@@ -239,6 +240,8 @@ object MarisaQuestSpec extends ZIOSpecDefault {
           gearItem = loot.items.find(_.itemType != ItemType.Gem).get
         } yield assertTrue(tasks.exists(t => t.kind == TaskKind.MarisaHunt && t.fireAt == MarisaHuntState.HuntDurationMs)) &&
                 assertTrue(thanks.contains("не обманули")) &&
+                // в пути из кнопок — только «📱 Приложение»
+                assertTrue(road.exists(_.choices.map(_.id) == List("OpenApp"))) &&
                 assertTrue(early == StateType.MarisaHunt) &&
                 assertTrue(done == StateType.Loot) &&
                 // сокровище найдено — карта Кельвина и письмо Марисе уходят сразу,

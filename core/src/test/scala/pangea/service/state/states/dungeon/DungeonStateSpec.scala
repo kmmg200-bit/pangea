@@ -452,7 +452,7 @@ object DungeonStateSpec extends ZIOSpecDefault {
       } yield assertTrue(result == StateType.Dungeon) &&
               assertTrue(screens.exists(_.text.contains("миазмы тьмы"))) &&
               // на экране ожидания — только «перестать искать», без обычных действий и без «идти по следу»
-              assertTrue(screens.last.choices.map(_.id) == List("StopTracking")) &&
+              assertTrue(screens.last.choices.map(_.id) == List("OpenApp", "StopTracking")) &&
               // запланирована push-задача пробуждения выслеживания
               assertTrue(scheduled.exists(_.kind == TaskKind.DarknessTracking)) &&
               assertTrue(updatedHero.exists(_.dungeonLevel == 5))
@@ -569,7 +569,7 @@ object DungeonStateSpec extends ZIOSpecDefault {
         screens                      <- r2.sentScreens
       } yield assertTrue(result == StateType.Dungeon) &&
               assertTrue(screens.size == 1) &&
-              assertTrue(screens.head.choices.map(_.id) == List("StopTracking"))
+              assertTrue(screens.head.choices.map(_.id) == List("OpenApp", "StopTracking"))
     }
   )
 }

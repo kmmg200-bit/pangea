@@ -58,7 +58,9 @@ object SilverVeinStateSpec extends ZIOSpecDefault {
               assertTrue(pSched.head.fireAt == 15L * 60L * 1000L && gSched.head.fireAt == 8L * 60L * 1000L) &&
               assertTrue(gScr.head.text.contains("Давай помогу дружище. Вдвоём быстрее управимся!")) &&
               assertTrue(!pScr.exists(_.text.contains("Вдвоём быстрее"))) &&
-              assertTrue(gScr.last.text.contains("8мин"))
+              assertTrue(gScr.last.text.contains("8мин")) &&
+              // пока идёт добыча — «📱 Приложение» рядом с «Уйти»
+              assertTrue(pScr.last.choices.map(_.id) == List("OpenApp", "LeaveVein"))
     },
 
     test("DroppableGemKinds не содержит Череп (Надколотый череп не должен выпадать из жилы)") {

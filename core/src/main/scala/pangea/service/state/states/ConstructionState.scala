@@ -14,7 +14,7 @@ import pangea.model.schedule.TaskKind
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.service.schedule.Scheduler
-import pangea.service.state.{CityExit, LostSquadQuest, NpcQuestLog, QuestOutcomeLog, QuestSupport, State, UserAction}
+import pangea.service.state.{AppButton, CityExit, LostSquadQuest, NpcQuestLog, QuestOutcomeLog, QuestSupport, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -177,9 +177,10 @@ case class ConstructionState(
   private def showWork(user: User, renderer: Renderer): Task[Unit] =
     renderer.show(
       user,
+      // Работа идёт сама — рядом с «Уйти» кнопка приложения, «В город» ниже.
       Screen(
         content.text("construction.work.text"),
-        content.screen("construction.work").choices :+ CityExit.button(content)
+        AppButton.inRow(content, content.screen("construction.work").choices) :+ CityExit.button(content, Some(1))
       )
     )
 

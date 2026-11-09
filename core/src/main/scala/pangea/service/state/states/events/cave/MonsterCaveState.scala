@@ -28,7 +28,7 @@ import pangea.service.schedule.Scheduler
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.events.cave.MonsterCaveState._
 import pangea.model.quest.{BoardKind, Difficulty}
-import pangea.service.state.{BoardProgress, CharacterMenu, HerbLore, InventoryFeedback, ItemMenu, State, UserAction}
+import pangea.service.state.{AppButton, BoardProgress, CharacterMenu, HerbLore, InventoryFeedback, ItemMenu, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -828,13 +828,13 @@ case class MonsterCaveState(
           till  = now + CaveRates.RestMs
           _    <- writeScene(user, scene.copy(restUntil = till, restUsed = true))
           _    <- scheduler.schedule(user.userId, till, TaskKind.CaveRest, StateType.MonsterCave, RestAction)
-          _    <- renderer.show(user, Screen(content.text("cave.rest.start"), Nil, hideKeyboard = true))
+          _    <- renderer.show(user, Screen(content.text("cave.rest.start"), List(AppButton.choice(content))))
         } yield StateType.MonsterCave
     }
 
   private def sleeping(user: User, scene: CaveScene, now: Long, renderer: Renderer): Task[StateType] = {
     val left = ((scene.restUntil - now) / 1000L).max(1L)
-    renderer.show(user, Screen(content.format("cave.rest.waiting", "remaining" -> s"${left}с"), Nil, hideKeyboard = true))
+    renderer.show(user, Screen(content.format("cave.rest.waiting", "remaining" -> s"${left}с"), List(AppButton.choice(content))))
       .as(StateType.MonsterCave)
   }
 

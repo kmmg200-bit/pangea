@@ -88,6 +88,30 @@ object VkRendererSpec extends ZIOSpecDefault {
               assertTrue(kb.exists(_.buttons.forall(_.size <= VkRenderer.MaxButtonsPerRow))) &&
               // ни одной кнопки не потерялось
               assertTrue(kb.exists(_.buttons.map(_.size).sum == many.size))
+    },
+
+    test("кнопка приложения уходит в ВК как open_app: номер числом, без цвета и payload; обычная — как прежде") {
+      val app   = Choice("OpenApp", "📱 Приложение", row = Some(0), app = Some(54870345L))
+      val leave = Choice("Leave", "Уйти", color = pangea.engine.ChoiceColor.Negative, row = Some(0))
+      for {
+        sent <- Ref.make(Option.empty[Keyboard])
+        _    <- new VkRenderer(new CapturingApi(sent)).show(testUser, Screen("текст", List(app, leave)))
+        kb   <- sent.get
+        json  = kb.map(k => io.circe.parser.parse(k.getJson).toOption.get)
+        row   = json.toList.flatMap(_.hcursor.downField("buttons").downN(0).values.toList.flatten)
+        first = row.headOption.map(_.hcursor)
+        last  = row.lift(1).map(_.hcursor)
+      } yield assertTrue(row.size == 2) &&
+              assertTrue(first.exists(_.downField("action").get[String]("type").contains("open_app"))) &&
+              assertTrue(first.exists(_.downField("action").get[Long]("app_id").contains(54870345L))) &&
+              assertTrue(first.exists(_.downField("action").get[String]("label").contains("📱 Приложение"))) &&
+              assertTrue(first.exists(c => c.downField("color").failed && c.downField("action").downField("payload").failed)) &&
+              // обычная кнопка — text с цветом и payload строкой
+              assertTrue(last.exists(_.downField("action").get[String]("type").contains("text"))) &&
+              assertTrue(last.exists(_.get[String]("color").contains("negative"))) &&
+              assertTrue(last.exists(_.downField("action").get[String]("payload").toOption
+                .flatMap(io.circe.parser.parse(_).toOption)
+                .contains(io.circe.Json.obj("action" -> io.circe.Json.fromString("Leave")))))
     }
   )
 }

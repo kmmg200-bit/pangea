@@ -16,7 +16,7 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.artifact.ArtifactIntake
 import pangea.service.schedule.Scheduler
-import pangea.service.state.{InventoryFeedback, State, UserAction}
+import pangea.service.state.{AppButton, InventoryFeedback, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -69,8 +69,11 @@ case class ElementalSearchState(
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     branch.act(user, ua, renderer)
 
-  private def showSearch(user: User, renderer: Renderer): Task[Unit] =
-    renderer.show(user, content.screen("elementalSearch.enter"))
+  /** Находки приходят сами — рядом с «Уйти» кнопка приложения. */
+  private def showSearch(user: User, renderer: Renderer): Task[Unit] = {
+    val screen = content.screen("elementalSearch.enter")
+    renderer.show(user, screen.copy(choices = AppButton.inRow(content, screen.choices)))
+  }
 
   /** Срабатывание таймера: выдаём камень и, если попытки остались, ставим следующий. */
   private def findOne(user: User, renderer: Renderer): Task[StateType] =

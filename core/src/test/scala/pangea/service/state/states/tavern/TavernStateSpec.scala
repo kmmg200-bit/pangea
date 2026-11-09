@@ -111,7 +111,7 @@ object TavernStateSpec extends ZIOSpecDefault {
       } yield assertTrue(result == StateType.Tavern) &&
               assertTrue(updated.exists(_.silver < 500L)) &&
               assertTrue(screens.exists(_.text.contains("сняли комнату"))) &&
-              assertTrue(screens.last.choices.map(_.id) == List("LeaveRoom"))
+              assertTrue(screens.last.choices.map(_.id) == List("OpenApp", "LeaveRoom"))
     },
 
     test("RentRoom без серебра → ошибка, silver не меняется") {

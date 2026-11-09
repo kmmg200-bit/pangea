@@ -54,7 +54,7 @@ object ElementalSearchStateSpec extends ZIOSpecDefault {
               assertTrue(screens.last.text.contains("изучаете окрестности")) &&
               // время до находки не раскрываем ни в тексте, ни в кнопках
               assertTrue(!screens.last.text.contains("мин")) &&
-              assertTrue(screens.last.choices.map(_.id) == List("LeaveSearch"))
+              assertTrue(screens.last.choices.map(_.id) == List("OpenApp", "LeaveSearch"))
     },
 
     test("находка кладёт камень в сумку и ставит следующий таймер") {

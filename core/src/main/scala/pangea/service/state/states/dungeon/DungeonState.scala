@@ -17,7 +17,7 @@ import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.service.schedule.Scheduler
 import pangea.model.quest.NpcQuests
-import pangea.service.state.{CharacterMenu, InstantRest, KillLogData, MurlocQuest, NpcQuestLog, RareQuests, SquadDuty, State,
+import pangea.service.state.{AppButton, CharacterMenu, InstantRest, KillLogData, MurlocQuest, NpcQuestLog, RareQuests, SquadDuty, State,
   UserAction}
 import pangea.service.state.states.events.RaceRevengeState.RevengeScene
 import zio.{Random, Task, ZIO}
@@ -458,15 +458,15 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
       _    <- renderer.show(user, enterScreen(hero, now))
     } yield StateType.Dungeon
 
-  /** Экран ожидания во время выслеживания: единственная кнопка «перестать искать»
-   *  (мгновенный выход, без переспроса). Продвижение делает таймер, не игрок —
-   *  поэтому кнопки «идти по следу» нет. */
+  /** Экран ожидания во время выслеживания: кнопка «перестать искать»
+   *  (мгновенный выход, без переспроса) и приложение. Продвижение делает
+   *  таймер, не игрок — поэтому кнопки «идти по следу» нет. */
   private def trackingScreen: Screen =
     Screen(
       content.text("dungeon.trackingWait"),
-      List(
-        Choice("StopTracking", content.text("dungeon.trackingLeaveBtn"), color = ChoiceColor.Negative, row = Some(0))
-      )
+      AppButton.inRow(content, List(
+        Choice("StopTracking", content.text("dungeon.trackingLeaveBtn"), color = ChoiceColor.Negative)
+      ))
     )
 
   private def readTracking(user: User): Task[Option[TrackingData]] =

@@ -565,7 +565,7 @@ object MonsterCaveSpec extends ZIOSpecDefault {
         again  <- state.action(testUser, tap("CaveRest"), r)
         room   <- r.sentScreens.map(_.last)
       } yield assertTrue(screen.choices.map(_.id).contains("CaveRest")) &&
-              assertTrue(rest == StateType.MonsterCave && asleep.hideKeyboard) &&
+              assertTrue(rest == StateType.MonsterCave && asleep.choices.map(_.id) == List("OpenApp")) &&
               assertTrue(tasks.exists(x => x.kind == TaskKind.CaveRest && x.expectedState == StateType.MonsterCave)) &&
               assertTrue(after.fightStats.hp > 1L && after.fightStats.energy > 0L) &&
               assertTrue(scene.exists(s => s.restUsed && s.restUntil == 0L)) &&

@@ -260,7 +260,7 @@ object SewerSpec extends ZIOSpecDefault {
         scene  <- sceneOf(dao)
         said   <- texts(r)
         cancels <- sched.cancelled
-      } yield assertTrue(start.choices.map(_.id) == List("RoadBack")) &&
+      } yield assertTrue(start.choices.map(_.id) == List("OpenApp", "RoadBack")) &&
               assertTrue(early == StateType.QuestRoad && said.contains("Осталось примерно")) &&
               assertTrue(out == StateType.MonsterCave) &&
               assertTrue(scene.exists(s => s.sewer && s.questLvl == 12L && s.floor == 1 && !s.inside)) &&
@@ -278,7 +278,7 @@ object SewerSpec extends ZIOSpecDefault {
         after   <- dao.readSceneData(userId)
         said    <- texts(r)
         cancels <- sched.cancelled
-      } yield assertTrue(screen.choices.map(_.id) == List("RoadBack")) &&
+      } yield assertTrue(screen.choices.map(_.id) == List("OpenApp", "RoadBack")) &&
               assertTrue(out == StateType.GlobalMap && after.contains(io.circe.Json.Null)) &&
               assertTrue(said.contains("поворачиваете обратно")) &&
               // задачу поллера снимаем: на месте героя уже не ждут

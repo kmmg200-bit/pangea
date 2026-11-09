@@ -3,13 +3,17 @@ package pangea.engine
 /** `row` — индекс ряда кнопок в клавиатуре. Кнопки с одинаковым `row` оказываются
  *  в одной строке клавиатуры; ряды отсортированы по возрастанию `row`. Сами кнопки
  *  внутри ряда — в порядке появления в списке. По умолчанию у всех кнопок `row = 0`,
- *  и каждая кнопка идёт в новой строке (см. VkRenderer для пояснений). */
+ *  и каждая кнопка идёт в новой строке (см. VkRenderer для пояснений).
+ *
+ *  `app` — номер мини-приложения ВК: такая кнопка не шлёт боту действие, а
+ *  открывает приложение прямо в ВК (см. [[pangea.service.state.AppButton]]). */
 case class Choice(
   id:    String,
   label: String,
   data:  Map[String, String] = Map.empty,
   color: ChoiceColor          = ChoiceColor.Primary,
-  row:   Option[Int]          = None
+  row:   Option[Int]          = None,
+  app:   Option[Long]         = None
 )
 
 object Choice {

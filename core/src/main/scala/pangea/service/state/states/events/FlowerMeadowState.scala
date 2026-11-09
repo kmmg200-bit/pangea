@@ -19,7 +19,7 @@ import pangea.repository.artifact.ArtifactRepository
 import pangea.service.artifact.ArtifactIntake
 import pangea.service.state.states.LootState
 import pangea.service.state.states.events.FlowerMeadowState._
-import pangea.service.state.{CharacterMenu, GatherExp, HerbLore, InventoryFeedback, State, UserAction}
+import pangea.service.state.{AppButton, CharacterMenu, GatherExp, HerbLore, InventoryFeedback, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -85,11 +85,13 @@ case class FlowerMeadowState(
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     branch.act(user, ua, renderer)
 
-  /** Описание поляны — только при первом входе; дальше короткое «вы бродите». */
+  /** Описание поляны — только при первом входе; дальше короткое «вы бродите».
+    * Цветы приходят сами — рядом с «Персонажем» кнопка приложения. */
   private def meadowScreen(intro: Boolean): Screen =
     Screen(content.text(if (intro) "flowerMeadow.enter.text" else "flowerMeadow.waiting"), List(
-      content.choice("OpenCharacter", "common.character"),
-      content.choice("LeaveMeadow", "flowerMeadow.leave").copy(color = ChoiceColor.Negative)
+      content.choice("OpenCharacter", "common.character").copy(row = Some(0)),
+      AppButton.choice(content, row = Some(0)),
+      content.choice("LeaveMeadow", "flowerMeadow.leave").copy(color = ChoiceColor.Negative, row = Some(1))
     ))
 
   /** Очередной цветок: ранг 98/2, вид случайный, узнан ли — по знаниям. Каждый

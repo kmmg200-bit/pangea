@@ -200,7 +200,7 @@ object HomeStateSpec extends ZIOSpecDefault {
         said   <- texts(r)
         cancel <- sch.cancelled
       } yield assertTrue(bed.text.contains("продавленным матрасом") && bed.text.contains("Сон — 2 ч")) &&
-              assertTrue(asleep.text.startsWith("Вы спите") && asleep.choices.map(_.id) == List(HomeState.WakeKey)) &&
+              assertTrue(asleep.text.startsWith("Вы спите") && asleep.choices.map(_.id) == List("OpenApp", HomeState.WakeKey)) &&
               assertTrue(timer.exists(s => s.kind == TaskKind.HomeSleep && s.expectedState == StateType.Home &&
                 s.fireAt == 2L * 3600000L && s.action == HomeState.WakeAction)) &&
               assertTrue(still.text.startsWith("Вы спите")) &&
@@ -346,7 +346,7 @@ object HomeStateSpec extends ZIOSpecDefault {
         end     <- texts(r)
         find    <- lootOf(dao)
       } yield assertTrue(working.text.contains("Вы разбираете хлам") && working.text.contains("4 ч 0 мин") &&
-                working.choices.map(_.id) == List(HomeState.CleanStopKey)) &&
+                working.choices.map(_.id) == List("OpenApp", HomeState.CleanStopKey)) &&
               assertTrue(timer.kind == TaskKind.HomeClean && timer.fireAt == 4L * 3600000L &&
                 timer.action == HomeState.CleanStopAction) &&
               assertTrue(locked.text.contains("Вы разбираете хлам")) &&

@@ -22,7 +22,7 @@ import pangea.repository.bank.BankRepository
 import pangea.service.purse.Purse
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState._
-import pangea.service.state.{MarisaQuest, QuestOutcomeLog, QuestSupport, State, UserAction}
+import pangea.service.state.{AppButton, MarisaQuest, QuestOutcomeLog, QuestSupport, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -77,8 +77,11 @@ case class MarisaHuntState(
                    writeProgress(user, p.copy(startedAt = Some(now))) *>
                      scheduler.schedule(user.userId, now + HuntDurationMs, TaskKind.MarisaHunt, StateType.MarisaHunt, HuntDoneAction))
           _   <- ZIO.when(p.withMarisa && p.startedAt.isEmpty)(renderer.show(user, Screen(content.text("marisa.hunt.thanksForHonesty"), Nil)))
+          // В пути кнопок нет, кроме приложения: дорога идёт сама, а прежние
+          // кнопки разговора она заменяет.
           _   <- renderer.show(user, Screen(
-                   content.format("marisa.hunt.enter", "duration" -> formatRemaining(HuntDurationMs - (now - started))), Nil))
+                   content.format("marisa.hunt.enter", "duration" -> formatRemaining(HuntDurationMs - (now - started))),
+                   List(AppButton.choice(content))))
         } yield ()
       case None => renderer.show(user, Screen(content.text("marisa.hunt.enter"), Nil))
     }

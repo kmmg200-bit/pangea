@@ -22,7 +22,7 @@ import pangea.repository.item.ItemRepository
 import pangea.service.purse.Purse
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.{EquipmentState, InventoryState, LootState}
-import pangea.service.state.{AzatData, BeltContents, ItemMenu, SlotChoice, State, UserAction}
+import pangea.service.state.{AppButton, AzatData, BeltContents, ItemMenu, SlotChoice, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -679,7 +679,7 @@ case class HomeState(
       home    <- loadHome(user)
       left     = (HomeRates.ClutterCleanMs - home.cleanedMs - started.fold(0L)(now - _)).max(0L)
       _       <- renderer.show(user, Screen(content.format("home.clean.working", "remaining" -> remaining(left)),
-                   List(Choice(CleanStopKey, content.text("home.clean.stop"), color = ChoiceColor.Negative))))
+                   AppButton.inRow(content, List(Choice(CleanStopKey, content.text("home.clean.stop"), color = ChoiceColor.Negative)))))
     } yield StateType.Home
 
   /** «Прерваться» — и таймер приходит сюда же. Наубиранное копится; хватило
@@ -1039,7 +1039,7 @@ case class HomeState(
                    case _                  => 0L
                  }
       _       <- renderer.show(user, Screen(content.format("home.bed.sleeping", "remaining" -> remaining(left)),
-                   List(Choice(WakeKey, content.text("home.bed.wake"), color = ChoiceColor.Negative))))
+                   AppButton.inRow(content, List(Choice(WakeKey, content.text("home.bed.wake"), color = ChoiceColor.Negative)))))
     } yield StateType.Home
 
   /** Встать: выспался — травмы проходят, силы возвращаются, и ещё «выспался»;

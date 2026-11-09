@@ -207,7 +207,7 @@ object GirlStateSpec extends ZIOSpecDefault {
               assertTrue(result == StateType.GlobalMap && h.guildReputation == 50L + 20L)
     },
 
-    test("уединение: кошелёк худеет на 25–50%, травмы пройдут через 90 минут, свет гаснет на 30 — без кнопок") {
+    test("уединение: кошелёк худеет на 25–50%, травмы пройдут через 90 минут, свет гаснет на 30 — из кнопок только приложение") {
       val wounded = hero.copy(traumaUntil = Some(10L * 60L * 60L * 1000L), traumaNames = List("Хромота"))
       for {
         t <- make(wounded, Some(orcScene(Step.Room)))
@@ -226,7 +226,7 @@ object GirlStateSpec extends ZIOSpecDefault {
       } yield assertTrue(result == StateType.Girl) &&
               assertTrue(h.silver == 600L) &&
               assertTrue(h.traumaUntil.contains(GirlState.HealDelayMs)) &&      // TestClock на нуле
-              assertTrue(dark.text.contains("погас свет") && dark.choices.isEmpty) &&
+              assertTrue(dark.text.contains("погас свет") && dark.choices.map(_.id) == List("OpenApp")) &&
               assertTrue(tasks.exists(s => s.kind == TaskKind.GirlRoom && s.fireAt == GirlState.RoomWaitMs && s.expectedState == StateType.Girl)) &&
               assertTrue(again == StateType.Girl && still.text.contains("погас свет")) &&
               assertTrue(out == StateType.GlobalMap) &&

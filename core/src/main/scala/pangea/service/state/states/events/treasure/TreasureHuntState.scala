@@ -16,7 +16,7 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.LootState.LootData
-import pangea.service.state.{CharacterMenu, HerbLore, State, UserAction}
+import pangea.service.state.{AppButton, CharacterMenu, HerbLore, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -144,9 +144,10 @@ case class TreasureHuntState(
       _        <- heroDao.writeSceneData(user.userId, loot.asJson)
     } yield StateType.Loot
 
-  /** Кнопки в пути: меню персонажа и «Уйти». */
+  /** Кнопки в пути: меню персонажа, приложение и «Уйти». */
   private def roadButtons: List[Choice] = List(
     content.choice("OpenCharacter", "common.character").copy(row = Some(0)),
+    AppButton.choice(content, row = Some(0)),
     Choice("HuntLeave", content.text("treasureHunt.leave"), color = ChoiceColor.Negative, row = Some(0))
   )
 

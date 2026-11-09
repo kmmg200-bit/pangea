@@ -40,13 +40,17 @@ class VkRenderer(api: Api) extends Renderer {
     api.sendMessage(user, screen.text, screen.image.flatMap(Attachment.parse).toList, kbOpt)
   }
 
-  private def toButton(choice: Choice): Button = {
-    val payload = (Map("action" -> choice.id) ++ choice.data).asJson
-    // Подпись длиннее лимита ВК роняет отправку — режем здесь, чтобы ни одна
-    // сцена не могла уронить экран.
-    Button.withAction(VkAction.Text(Choice.fit(choice.label), Some(payload)))
-      .withColor(VkRenderer.toButtonColor(choice.color))
-  }
+  private def toButton(choice: Choice): Button =
+    choice.app match {
+      // Кнопка приложения открывает его прямо в ВК, боту она ничего не шлёт.
+      case Some(appId) => Button.withAction(VkAction.OpenApp(Choice.fit(choice.label), appId))
+      case None =>
+        val payload = (Map("action" -> choice.id) ++ choice.data).asJson
+        // Подпись длиннее лимита ВК роняет отправку — режем здесь, чтобы ни одна
+        // сцена не могла уронить экран.
+        Button.withAction(VkAction.Text(Choice.fit(choice.label), Some(payload)))
+          .withColor(VkRenderer.toButtonColor(choice.color))
+    }
 }
 
 object VkRenderer {

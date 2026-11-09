@@ -84,6 +84,9 @@ object ConstructionStateSpec extends ZIOSpecDefault {
         scene <- d.readSceneData(userId)
       } yield assertTrue(talk == StateType.Construction && crate == StateType.Construction) &&
               assertTrue(s1.text.contains("заняты работой") && s2.text == s1.text) &&
+              // на экране работы — «📱 Приложение» рядом с «Уйти», «В город» ниже
+              assertTrue(s1.choices.map(c => c.id -> c.row) ==
+                List("OpenApp" -> Some(0), "LeaveWork" -> Some(0), "GoToCity" -> Some(1))) &&
               assertTrue(LostSquadQuest.crateOnHands(q) && hero.exists(_.silver == 100L)) &&
               assertTrue(scene.exists(_.hcursor.get[String]("constructionKind").toOption.contains("CarryStone")))
     }

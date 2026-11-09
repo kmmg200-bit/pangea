@@ -23,7 +23,7 @@ import pangea.service.purse.Purse
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.events.GirlState._
 import pangea.service.state.states.tavern.GirlDeal
-import pangea.service.state.{State, UserAction}
+import pangea.service.state.{AppButton, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -205,7 +205,7 @@ case class GirlState(
   // ── Таверна: комната ────────────────────────────────────────────────────────
 
   /** Уединение: кошелёк худеет на 25–50% (скажем в конце), травмы пройдут через
-    * полтора часа, свет гаснет на полчаса — без кнопок. */
+    * полтора часа, свет гаснет на полчаса — из кнопок только приложение. */
   private def intimacy(user: User, renderer: Renderer): Task[StateType] =
     for {
       now   <- nowMs
@@ -220,7 +220,7 @@ case class GirlState(
       _     <- writeScene(user, scene.copy(step = Step.RoomWait, lost = lost, roomStartedAt = Some(now)))
       _     <- scheduler.schedule(user.userId, now + RoomWaitMs, TaskKind.GirlRoom, StateType.Girl, LeaveRoomAction)
       _     <- renderer.show(user, Screen(content.text("girl.intimacy"), Nil))
-      _     <- renderer.show(user, Screen(content.text("girl.lightsOut"), Nil))
+      _     <- renderer.show(user, Screen(content.text("girl.lightsOut"), List(AppButton.choice(content))))
     } yield StateType.Girl
 
   /** Пока полчаса не прошли — тот же тёмный экран; прошли — выход из комнаты. */

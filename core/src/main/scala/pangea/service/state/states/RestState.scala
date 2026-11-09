@@ -9,7 +9,7 @@ import pangea.model.schedule.TaskKind
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.service.schedule.Scheduler
-import pangea.service.state.{AzatData, InstantRest, State, UserAction}
+import pangea.service.state.{AppButton, AzatData, InstantRest, State, UserAction}
 import java.util.concurrent.TimeUnit
 import zio.{Task, ZIO}
 
@@ -55,19 +55,18 @@ case class RestState(heroDao: HeroDao, scheduler: Scheduler, content: SceneConte
       // снимает прежний Revive.
       _            <- scheduler.schedule(user.userId, now + duration, TaskKind.Revive, StateType.Rest, ReviveAction)
       // post-death recovery → отдельный «обморочный» текст; обычный отдых — у костра.
-      // hideKeyboard = true: скрываем прежние кнопки (бой/подземелье), пока герой
-      // в отключке. Если есть мгновенные отдыхи (благословение) и это не обморок —
-      // показываем кнопку мгновенного отдыха (тогда клавиатуру не прячем).
+      // Прежние кнопки (бой/подземелье) заменяет клавиатура отдыха: кнопка
+      // приложения — пока ждёт, игрок может в него заглянуть, — а если есть
+      // мгновенные отдыхи (благословение) и это не обморок, то и мгновенный отдых.
       azat          <- loadAzat(user)
       instantOffer   = !postDeath && azat.instantRests > 0
       enterKey       = if (postDeath) "rest.enterRevive" else "rest.enter.text"
-      choices        = if (instantOffer)
-                         List(Choice("InstantRest", content.format("rest.instantLabel", "n" -> azat.instantRests.toString)))
-                       else content.screen("rest.enter").choices
+      choices        = (if (instantOffer)
+                          List(Choice("InstantRest", content.format("rest.instantLabel", "n" -> azat.instantRests.toString)))
+                        else content.screen("rest.enter").choices) :+ AppButton.choice(content)
       _            <- renderer.show(user, Screen(
                         content.format(enterKey, "duration" -> formatDuration(duration / 1000L)),
-                        choices,
-                        hideKeyboard = !instantOffer))
+                        choices))
     } yield ()
 
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =

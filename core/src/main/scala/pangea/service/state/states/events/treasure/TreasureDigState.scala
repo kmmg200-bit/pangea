@@ -16,7 +16,7 @@ import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.LootState.LootData
-import pangea.service.state.{GatherExp, State, UserAction}
+import pangea.service.state.{AppButton, GatherExp, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -68,7 +68,7 @@ case class TreasureDigState(heroDao: HeroDao, scheduler: Scheduler, content: Sce
       remaining = started.map(s => (total - (now - s)).max(0L)).getOrElse(total)
       _       <- renderer.show(user, Screen(
                    content.format("treasureDig.enter.text", "duration" -> formatRemaining(remaining)),
-                   content.screen("treasureDig.enter").choices))
+                   AppButton.inRow(content, content.screen("treasureDig.enter").choices)))
     } yield ()
 
   // Ручная попытка уйти: до конца раскопок — confirm с остатком; если поллер ещё

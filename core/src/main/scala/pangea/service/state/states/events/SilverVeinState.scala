@@ -13,7 +13,7 @@ import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.LootState.LootData
-import pangea.service.state.{GatherExp, LostSquadQuest, NpcQuestLog, State, UserAction}
+import pangea.service.state.{AppButton, GatherExp, LostSquadQuest, NpcQuestLog, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -68,7 +68,7 @@ case class SilverVeinState(heroDao: HeroDao, scheduler: Scheduler, content: Scen
       remaining = started.map(s => (total - (now - s)).max(0L)).getOrElse(total)
       _       <- renderer.show(user, Screen(
                    content.format("silverVein.enter.text", "duration" -> formatRemaining(remaining)),
-                   content.screen("silverVein.enter").choices))
+                   AppButton.inRow(content, content.screen("silverVein.enter").choices)))
     } yield ()
 
   // Ручная попытка уйти: до конца добычи показываем confirm c остатком времени;

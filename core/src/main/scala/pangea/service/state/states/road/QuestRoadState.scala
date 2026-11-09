@@ -13,7 +13,7 @@ import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.events.thieves.{ThievesScene, ThievesState}
-import pangea.service.state.{State, UserAction}
+import pangea.service.state.{AppButton, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -56,10 +56,12 @@ case class QuestRoadState(heroDao: HeroDao, scheduler: Scheduler, content: Scene
     fallback = Target.Run { (u, _, r) => onTick(u, r) }
   )
 
-  /** Единственная кнопка в пути: повернуть назад. Объявление остаётся взятым —
-    * от доски можно будет выдвинуться снова. */
-  private def backButton: Choice =
-    content.choice("RoadBack", "questRoad.back").copy(color = ChoiceColor.Negative, row = Some(0))
+  /** Кнопки в пути: приложение — пока идёт, игрок может в него заглянуть, — и
+    * «повернуть назад». Объявление остаётся взятым — от доски можно будет
+    * выдвинуться снова. */
+  private def roadButtons: List[Choice] =
+    AppButton.inRow(content, List(
+      content.choice("RoadBack", "questRoad.back").copy(color = ChoiceColor.Negative)))
 
   override def targetStates: Set[StateType] =
     Set(StateType.MonsterCave, StateType.Thieves, StateType.QuestRoad, StateType.GlobalMap)
@@ -70,7 +72,7 @@ case class QuestRoadState(heroDao: HeroDao, scheduler: Scheduler, content: Scene
       road <- readRoad(user)
       left  = road.map(r => (SewerRates.RoadMs - (now - r.startedAt)).max(0L)).getOrElse(SewerRates.RoadMs)
       _    <- renderer.show(user, Screen(
-                content.format("questRoad.enter", "remaining" -> remaining(left)), List(backButton)))
+                content.format("questRoad.enter", "remaining" -> remaining(left)), roadButtons))
     } yield ()
 
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
@@ -85,7 +87,7 @@ case class QuestRoadState(heroDao: HeroDao, scheduler: Scheduler, content: Scene
         case Some(r) if now - r.startedAt >= SewerRates.RoadMs => arrive(user, renderer)
         case Some(r) =>
           renderer.show(user, Screen(content.format("questRoad.wait",
-            "remaining" -> remaining(SewerRates.RoadMs - (now - r.startedAt))), List(backButton)))
+            "remaining" -> remaining(SewerRates.RoadMs - (now - r.startedAt))), roadButtons))
             .as(StateType.QuestRoad)
         case None => lost(user, renderer)
       }

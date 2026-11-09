@@ -7,7 +7,7 @@ import pangea.model.hero.{Achievement, Hero}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
-import pangea.service.state.{AzatData, QuestJournal, SquadDuty, State, UserAction}
+import pangea.service.state.{AppButton, AzatData, QuestJournal, SquadDuty, State, UserAction}
 import zio.{Task, ZIO}
 
 /** Меню «Персонаж». Первая кнопка ведёт в рюкзак, но только тому, кому есть что
@@ -185,7 +185,9 @@ case class HeroStatsState(
       Some(content.choice("OpenQuests", "heroStats.quests").copy(row = Some(2))),
       Some(content.choice("OpenAchievements", "heroStats.achievements").copy(row = Some(2))),
       Some(content.choice("OpenFriendCode", "heroStats.friendCode").copy(row = Some(2))),
-      // «Назад» — отдельным последним рядом: в третьем ряду ему уже тесно.
+      // «Назад» — последним рядом: в третьем ряду ему уже тесно. Рядом с ним —
+      // кнопка приложения.
+      Some(AppButton.choice(content, row = Some(3))),
       Some(content.choice("Back", "heroStats.leave").copy(color = ChoiceColor.Negative, row = Some(3)))
     ).flatten
     Screen(hero.getInfo(nowMs, blessingUntil, instantRests) + traumaLine, choices)

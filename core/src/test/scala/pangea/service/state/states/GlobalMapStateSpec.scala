@@ -38,7 +38,11 @@ object GlobalMapStateSpec extends ZIOSpecDefault {
               // кошелёк целиком: серебро и под ним дублоны
               assertTrue(screens.head.text.endsWith("🪙 Серебро: 500\n🟡 Дублоны: 37")) &&
               assertTrue(screens.head.choices.map(_.id).contains("Tavern")) &&
-              assertTrue(screens.head.choices.map(_.id).contains("ReturnToDungeon"))
+              assertTrue(screens.head.choices.map(_.id).contains("ReturnToDungeon")) &&
+              // «📱 Приложение» — в одном ряду с «Персонажем», сразу за ним
+              assertTrue(screens.head.choices.filter(_.row.contains(2)).map(_.id) ==
+                List("OpenCharacter", "OpenApp", "ReturnToDungeon")) &&
+              assertTrue(pangea.service.state.AppButton.on(screens.head.choices))
     },
 
     test("ReturnToDungeon → переходит в Dungeon") {

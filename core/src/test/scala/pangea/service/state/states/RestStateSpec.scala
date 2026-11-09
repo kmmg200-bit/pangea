@@ -44,7 +44,7 @@ object RestStateSpec extends ZIOSpecDefault {
         screens             <- renderer.sentScreens
         sceneData           <- heroDao.readSceneData(userId)
       } yield assertTrue(screens.nonEmpty) &&
-              assertTrue(screens.head.choices.isEmpty) &&
+              assertTrue(screens.head.choices.map(_.id) == List("OpenApp")) &&
               assertTrue(sceneData.isDefined) &&
               assertTrue(sceneData.flatMap(_.hcursor.get[Long]("restStartedAt").toOption).isDefined)
     },

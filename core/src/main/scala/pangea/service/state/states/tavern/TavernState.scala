@@ -11,7 +11,7 @@ import pangea.model.user.User
 import pangea.service.schedule.Scheduler
 import pangea.repository.bank.BankRepository
 import pangea.service.purse.Purse
-import pangea.service.state.{CharacterMenu, SquadDuty, State, UserAction}
+import pangea.service.state.{AppButton, CharacterMenu, SquadDuty, State, UserAction}
 import zio.{Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -118,10 +118,11 @@ case class TavernState(
                showRoom(user, renderer)
     } yield StateType.Tavern
 
+  /** Комната: травмы лечатся сами — рядом с «Уйти» кнопка приложения. */
   private def showRoom(user: User, renderer: Renderer): Task[Unit] =
     renderer.show(user, Screen(
       content.text("tavern.room.text"),
-      List(content.choice("LeaveRoom", "tavern.room.leaveLabel"))))
+      AppButton.inRow(content, List(content.choice("LeaveRoom", "tavern.room.leaveLabel")))))
 
   // Уйти из комнаты: спустя 3 часа — лечим травмы; раньше — спрашиваем подтверждение.
   private def leaveRoom(user: User, renderer: Renderer): Task[StateType] =

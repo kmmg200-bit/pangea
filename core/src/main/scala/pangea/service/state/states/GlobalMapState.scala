@@ -5,7 +5,7 @@ import pangea.engine.{Branch, ChoiceColor, Renderer, SceneContent, Screen, Targe
 import pangea.model.hero.Hero
 import pangea.model.state.StateType
 import pangea.model.user.User
-import pangea.service.state.{CharacterMenu, State, UserAction}
+import pangea.service.state.{AppButton, CharacterMenu, State, UserAction}
 import zio.{Task, ZIO}
 import java.util.concurrent.TimeUnit
 
@@ -49,6 +49,7 @@ case class GlobalMapState(heroDao: HeroDao, content: SceneContent) extends State
         byId("Guild").copy(color = ChoiceColor.Positive, row = Some(1)),
         byId("Home").copy(color = ChoiceColor.Positive, row = Some(1)),
         byId("OpenCharacter").copy(row = Some(2)),
+        AppButton.choice(content, row = Some(2)),
         byId("ReturnToDungeon").copy(row = Some(2)),
         byId("LeaveCity").copy(color = ChoiceColor.Negative, row = Some(3))
       )

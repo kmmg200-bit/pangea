@@ -62,7 +62,10 @@ object HeroStatsStateSpec extends ZIOSpecDefault {
         screens  <- renderer.sentScreens
       } yield assertTrue(screens.nonEmpty) &&
               assertTrue(screens.head.text.contains("Уровень")) &&
-              assertTrue(screens.head.text.contains("ИНТ"))
+              assertTrue(screens.head.text.contains("ИНТ")) &&
+              // последний ряд: «📱 Приложение» и «Назад»
+              assertTrue(screens.head.choices.filter(_.row.contains(3)).map(_.id) == List("OpenApp", "Back")) &&
+              assertTrue(pangea.service.state.AppButton.on(screens.head.choices))
     },
 
     test("enter с травмой → показывает родное и подебаффленное в скобках (СИЛ 10 (5))") {

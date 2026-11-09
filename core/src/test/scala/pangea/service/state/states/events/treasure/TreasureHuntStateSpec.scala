@@ -36,7 +36,7 @@ object TreasureHuntStateSpec extends ZIOSpecDefault {
 
   override def spec = suite("Поход за сокровищем")(
 
-    test("поход — 7 часов: в пути видно, сколько осталось, и две кнопки — «Персонаж» и «Уйти»") {
+    test("поход — 7 часов: в пути видно, сколько осталось, кнопки «Персонаж», «Приложение» и «Уйти»") {
       for {
         t <- make()
         (state, _, _, _, r) = t
@@ -47,8 +47,8 @@ object TreasureHuntStateSpec extends ZIOSpecDefault {
         later  <- r.sentScreens.map(_.last)
       } yield assertTrue(TreasureHuntState.HuntDurationMs == 7L * 3600000L) &&
               assertTrue(start.text.contains("7 ч 0 мин") && later.text.contains("5 ч 30 мин")) &&
-              assertTrue(start.choices.map(_.id) == List("OpenCharacter", "HuntLeave")) &&
-              assertTrue(later.choices.map(_.id) == List("OpenCharacter", "HuntLeave"))
+              assertTrue(start.choices.map(_.id) == List("OpenCharacter", "OpenApp", "HuntLeave")) &&
+              assertTrue(later.choices.map(_.id) == List("OpenCharacter", "OpenApp", "HuntLeave"))
     },
 
     test("«Персонаж» в пути — меню персонажа, а назад оно вернёт в поход") {

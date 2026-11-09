@@ -63,7 +63,8 @@ object TreasureDigStateSpec extends ZIOSpecDefault {
         progress  <- heroDao.readSceneData(userId).map(_.flatMap(_.as[TreasureDigProgress].toOption))
       } yield assertTrue(progress.isDefined) &&
               assertTrue(scheduled.exists(s => s.kind == TaskKind.SchronDig && s.expectedState == StateType.TreasureDig)) &&
-              assertTrue(screens.head.choices.map(_.id).contains("LeaveDig"))
+              // пока копают — «📱 Приложение» рядом с «Уйти»
+              assertTrue(screens.head.choices.map(_.id) == List("OpenApp", "LeaveDig"))
     },
 
     test("LeaveDig до конца → экран подтверждения, остаётся в TreasureDig") {
