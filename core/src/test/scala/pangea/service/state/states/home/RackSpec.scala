@@ -3,7 +3,7 @@ package pangea.service.state.states.home
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
 import pangea.model.hero.{Equipment, Hero}
-import pangea.model.home.{Furniture, HomeData}
+import pangea.model.home.{Furniture, HomeData, House}
 import pangea.model.item.{Item, ItemDetails, ItemType, PassiveKind, QuestItemKind, Rarity}
 import pangea.model.state.StateType
 import pangea.model.stats.FightStats
@@ -15,7 +15,8 @@ import zio.test._
 import zio.{Task, ZIO}
 
 /** Магическая стойка: целый комплект на стойке, обмен — кнопкой дома или ключом
-  * из сумки; в доме стоек не больше 1 / 2 / 4, к каждой — свой ключ. */
+  * из сумки. Стойки — в оружейной: ячеек 2 / 4 / 10, места обстановки они не
+  * занимают; к каждой — свой ключ. */
 object RackSpec extends ZIOSpecDefault {
 
   private val userId   = UserId(1L)
@@ -51,8 +52,8 @@ object RackSpec extends ZIOSpecDefault {
   private def heroOf(dao: TestHeroDao) = dao.getHeroByUserId(userId).map(_.get)
   private def texts(r: TestRenderer)   = r.sentScreens.map(_.map(_.text).mkString("\n"))
 
-  /** Дом с одной пустой стойкой. */
-  private val withRack = HomeData(tier = 2, metJunona = true, furniture = List("rack"), racks = List(Equipment.empty))
+  /** Дом с одной пустой стойкой в оружейной. */
+  private val withRack = HomeData(tier = 2, metJunona = true, racks = List(Equipment.empty))
 
   override def spec = suite("Магическая стойка")(
 
@@ -73,34 +74,80 @@ object RackSpec extends ZIOSpecDefault {
               assertTrue(h2.equipment.helmet.id == heavy.id && h2.fightStats.armor == 100L && h2.fightStats.atk == 57L)
     },
 
-    test("Юнона: стойка за 100 дублонов, с ключом №1; в домик — не больше одной") {
+    test("Юнона: стойка за 100 дублонов, с ключом; встаёт в оружейную — место обстановки не нужно; в домик — не больше двух") {
+      // оба места обстановки в домике заняты — стойке это не помеха
+      val full = HomeData(tier = 1, metJunona = true, clutterCleared = true,
+        furniture = List(Furniture.ArtisanBench.key, Furniture.Courier.key))
       for {
-        t <- make(hero(), HomeData(tier = 1, metJunona = true, clutterCleared = true))
+        t <- make(hero(), full)
         (state, dao, inv, r, _) = t
         _     <- state.action(testUser, tap("HomeFurnItem", "f" -> "rack"), r)
         card  <- r.sentScreens.map(_.last)
+        _     <- state.action(testUser, tap("HomeFurnBuy", "f" -> "rack"), r)
         _     <- state.action(testUser, tap("HomeFurnBuy", "f" -> "rack"), r)
         home  <- homeOf(dao)
         h     <- heroOf(dao)
         said  <- texts(r)
         _     <- state.action(testUser, tap("HomeFurnBuy", "f" -> "rack"), r)
-        twice <- homeOf(dao)
-        h2    <- heroOf(dao)
+        third <- homeOf(dao)
+        h3    <- heroOf(dao)
         more  <- texts(r)
-      } yield assertTrue(card.text.contains("Магическая стойка держит целый комплект") && card.text.contains("не больше 1 (уже стоит 0)")) &&
-              assertTrue(home.furniture == List("rack") && home.racks == List(Equipment.empty) && h.doubloons == 200L) &&
-              assertTrue(inv.snapshot.flatMap(_.questItem) == List(QuestItemKind.RackKey1)) &&
-              assertTrue(said.contains("магическая стойка №1") && said.contains("ключ стойки №1")) &&
-              // вторая в домик не встанет, хоть место и есть
-              assertTrue(twice.racks.size == 1 && h2.doubloons == 200L && more.contains("Здесь их помещается 1")) &&
-              assertTrue(List(1, 2, 4) == List(1, 2, 3).flatMap(t => HomeData(tier = t).house.map(_.racks)))
+      } yield assertTrue(card.text.contains("Магическая стойка держит целый комплект") &&
+                card.text.contains("стоек помещается 2, уже стоит 0") && card.text.contains("Свободных мест в оружейной: 2.")) &&
+              assertTrue(home.furniture == full.furniture && home.racks == List(Equipment.empty, Equipment.empty) &&
+                h.doubloons == 100L) &&
+              assertTrue(inv.snapshot.flatMap(_.questItem) == List(QuestItemKind.RackKey1, QuestItemKind.RackKey2)) &&
+              assertTrue(said.contains("в оружейной стоит магическая стойка №2") && said.contains("ключ стойки №2") &&
+                !said.contains("Что спрячем")) &&
+              // третья в домик не встанет
+              assertTrue(third.racks.size == 2 && h3.doubloons == 100L && more.contains("Здесь их помещается 2")) &&
+              assertTrue(List(2, 4, 10) == List(1, 2, 3).flatMap(t => HomeData(tier = t).house.map(_.racks))) &&
+              // ключей хватает на самую большую оружейную
+              assertTrue(QuestItemKind.rackKeys.size == House.values.map(_.racks).max &&
+                QuestItemKind.rackOf(QuestItemKind.RackKey10).contains(10))
+    },
+
+    test("оружейная: описание своего дома, ячейки по номерам — стойка, пустая или свободно; кнопки стоек по две в ряд") {
+      val hung = TestFixtures.emptyEquipment.copy(weapon = sword)
+      val town = HomeData(tier = 2, metJunona = true, racks = List(hung, Equipment.empty, hung))
+      val isle = HomeData(tier = 3, metJunona = true, racks = List.fill(10)(Equipment.empty))
+      for {
+        t1 <- make(hero(), town)
+        (s1, _, _, r1, _) = t1
+        _     <- s1.action(testUser, tap("HomeMain"), r1)
+        house <- r1.sentScreens.map(_.last)
+        _     <- s1.action(testUser, tap("HomeArmory"), r1)
+        room  <- r1.sentScreens.map(_.last)
+        t2 <- make(hero(), isle)
+        (s2, _, _, r2, _) = t2
+        _     <- s2.action(testUser, tap("HomeArmory"), r2)
+        hall  <- r2.sentScreens.map(_.last)
+        t3 <- make(hero(), HomeData(tier = 1, metJunona = true))
+        (s3, _, _, r3, _) = t3
+        _     <- s3.action(testUser, tap("HomeArmory"), r3)
+        nook  <- r3.sentScreens.map(_.last)
+      } yield assertTrue(house.choices.exists(c => c.id == "HomeArmory" && c.label == "🛡 Оружейная" && c.row.contains(0))) &&
+              assertTrue(room.text.startsWith("Оружейная — светлая комната") && room.text.contains("🛡 Стоек: 3 из 4.")) &&
+              assertTrue(room.text.contains("1. 🧥 Магическая стойка №1\n2. 🧥 Магическая стойка №2 — пустая\n" +
+                "3. 🧥 Магическая стойка №3\n4. Свободно")) &&
+              assertTrue(room.text.contains("Новую стойку поставит Юнона")) &&
+              assertTrue(room.choices.map(c => c.id -> c.row) == List("HomeRack" -> Some(0), "HomeRack" -> Some(0),
+                "HomeRack" -> Some(1), "HomeFurnish" -> Some(2), "HomeMain" -> Some(2))) &&
+              // на острове зал полон: десять стоек — пять рядов по две, за ними «Назад»; заказывать некуда
+              assertTrue(hall.text.startsWith("Оружейный зал") && hall.text.contains("🛡 Стоек: 10 из 10.") &&
+                !hall.text.contains("Юнона")) &&
+              assertTrue(hall.choices.count(_.id == "HomeRack") == 10 && !hall.choices.exists(_.id == "HomeFurnish") &&
+                hall.choices.flatMap(_.row).max == 5) &&
+              // в домике — чулан, стоек ещё нет
+              assertTrue(nook.text.startsWith("Оружейная — громко сказано") && nook.text.contains("🛡 Стоек: 0 из 2.") &&
+                nook.text.contains("1. Свободно\n2. Свободно") && nook.choices.map(_.id) == List("HomeFurnish", "HomeMain"))
     },
 
     test("дома: «Поменяться» — меч на стойку, герой пуст; ещё раз — меч обратно; атака пересчитана") {
       for {
         t <- make(hero(), withRack)
         (state, dao, _, r, _) = t
-        _     <- state.action(testUser, tap("HomeSlots"), r)
+        _     <- state.action(testUser, tap("HomeArmory"), r)
         slots <- r.sentScreens.map(_.last)
         _     <- state.action(testUser, tap("HomeRack", "n" -> "1"), r)
         empty <- r.sentScreens.map(_.last)
@@ -113,7 +160,7 @@ object RackSpec extends ZIOSpecDefault {
         home2 <- homeOf(dao)
       } yield assertTrue(slots.text.contains("1. 🧥 Магическая стойка №1") && slots.choices.exists(_.id == "HomeRack")) &&
               assertTrue(empty.text.contains("Стойка пуста.") &&
-                empty.choices.map(_.id) == List("HomeRackSwap", "HomeRackPut", "HomeRackOff", "HomeRackTake", "HomeSlots")) &&
+                empty.choices.map(_.id) == List("HomeRackSwap", "HomeRackPut", "HomeRackOff", "HomeRackTake", "HomeArmory")) &&
               assertTrue(h1.equipment.weapon.itemType == ItemType.NoItem && h1.fightStats.atk == 50L) &&
               assertTrue(home1.racks.head.weapon.id == sword.id && shown.text.contains("Правая рука: [Ур.1] Вещь 10")) &&
               assertTrue(h2.equipment.weapon.id == sword.id && h2.fightStats.atk == 57L && home2.racks == List(Equipment.empty))
@@ -181,7 +228,7 @@ object RackSpec extends ZIOSpecDefault {
         stay  <- homeOf(dao)
         said  <- texts(r)
         h     <- heroOf(dao)
-      } yield assertTrue(card.choices.map(_.id) == List("HomeRackSwap", "HomeRackPut", "HomeRackOff", "HomeRackTake", "HomeSlots")) &&
+      } yield assertTrue(card.choices.map(_.id) == List("HomeRackSwap", "HomeRackPut", "HomeRackOff", "HomeRackTake", "HomeArmory")) &&
               assertTrue(list.text.contains("Что надеть на стойку №1?") && list.choices.count(_.id == "HomeRackPick") == 3) &&
               assertTrue(first.racks.head.helmet.id == 11L && bag1 == List(13L, 14L)) &&
               // второй шлем — вместо первого, первый вернулся в сумку

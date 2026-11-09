@@ -86,6 +86,7 @@ case class HomeState(
       "HomeStore"      -> Target.Run { (u, _, r) => store(u, r) },
       "HomeUnstash"    -> Target.Run { (u, ua, r) => unstash(u, ua, r) },
       "HomeSlots"      -> Target.Run { (u, _, r) => slots(u, r) },
+      "HomeArmory"     -> Target.Run { (u, _, r) => armory(u, r) },
       "HomeRack"       -> Target.Run { (u, ua, r) => rack(u, ua, r) },
       "HomeRackSwap"   -> Target.Run { (u, ua, r) => rackSwap(u, ua, r) },
       "HomeRackTake"   -> Target.Run { (u, ua, r) => rackTake(u, ua, r) },
@@ -219,7 +220,7 @@ case class HomeState(
               // В доме просторнее из кладовой встаёт, что спрятано первым, — сколько хватит мест.
               val moved   = home.copy(tier = h.tier, metJunona = true, charges = charges)
               val settled = moved.unpacked
-              val placed  = moved.stored.take(moved.stored.size - settled.stored.size).flatMap(Furniture.byKey)
+              val placed  = moved.storedFurniture.take(moved.storedFurniture.size - settled.storedFurniture.size)
               saveHome(user, settled) *>
                 renderer.show(user, Screen(content.text(s"home.houses.${h.key}.bought"), Nil)) *>
                 ZIO.when(placed.nonEmpty)(say(user, content.format("home.store.unpacked",
@@ -264,11 +265,13 @@ case class HomeState(
       home.house match {
         case None => office(user, renderer)
         case Some(h) =>
-          // Ряд 0 — отдых, чтение и уборка, ряд 1 — хозяйство дома, ряд 2 —
-          // «Разложить всё», дальше — обстановка, Юнона и дверь.
+          // Ряд 0 — отдых, оружейная, чтение и уборка, ряд 1 — хозяйство дома
+          // (на острове он полон: пять кнопок), ряд 2 — «Разложить всё», дальше —
+          // обстановка, Юнона и дверь.
           val second = h.tier >= House.Townhouse.tier
           val buttons = List(
             Some(Choice("HomeBed", content.text("home.house.bed"), color = ChoiceColor.Positive, row = Some(0))),
+            Some(Choice("HomeArmory", content.text("home.house.armory"), row = Some(0))),
             Option.when(second)(Choice("HomeLibrary", content.text("home.house.library"), row = Some(0))),
             Option.when(home.hasClutter)(Choice("HomeClean", content.text("home.house.clean"), row = Some(0))),
             Option.when(home.hasWall)(Choice("HomeWall", content.text("home.house.wall"), row = Some(0))),
@@ -380,49 +383,67 @@ case class HomeState(
       else {
         val clutter = Option.when(home.hasClutter)(content.format("home.slots.clutter",
           "left" -> duration(HomeRates.ClutterCleanMs - home.cleanedMs), "price" -> money(HomeRates.ClutterSilver)))
-        val placed  = placedNames(home)
+        val placed  = home.placed.map(furnName)
         val free    = List.fill(home.slotsFree)(content.text("home.slots.free"))
         val lines   = (clutter.toList ++ placed ++ free).zipWithIndex.map { case (l, i) =>
           content.format("home.slots.line", "n" -> (i + 1).toString, "what" -> l)
         }
-        val stored = Option.when(home.stored.nonEmpty)(
-          "\n\n" + content.format("home.slots.stored", "n" -> home.stored.size.toString)).getOrElse("")
+        val stored = home.storedFurniture.size
+        val storedLine = Option.when(stored > 0)(
+          "\n\n" + content.format("home.slots.stored", "n" -> stored.toString)).getOrElse("")
         val text = content.format("home.slots.text", "used" -> home.slotsUsed.toString,
-          "max" -> home.slotsMax.toString, "lines" -> lines.mkString("\n")) + stored
-        // Стойки, что стоят в доме, — по две в ряд, за ними кладовая и «Назад».
-        val rackButtons = (0 until home.activeRacks).toList.map { i =>
-          Choice("HomeRack", content.format("home.rack.button", "n" -> (i + 1).toString),
-            data = Map("n" -> (i + 1).toString), row = Some(1 + i / 2))
-        }
-        val backRow = 1 + (home.activeRacks + 1) / 2
+          "max" -> home.slotsMax.toString, "lines" -> lines.mkString("\n")) + storedLine
         renderer.show(user, Screen(text, List(
           Option.when(home.hasClutter)(Choice("HomeClean", content.text("home.house.clean"), color = ChoiceColor.Positive, row = Some(0))),
           Some(Choice("HomeFurnish", content.text("home.slots.furnish"), row = Some(0))),
-          Option.when(home.count(Furniture.ArtisanBench) > 0)(Choice("HomeBench", content.text("home.house.bench"), row = Some(0)))
-        ).flatten ++ rackButtons ++
-          Option.when(home.stored.nonEmpty)(Choice("HomeStore",
-            content.format("home.store.button", "n" -> home.stored.size.toString), row = Some(backRow))).toList :+
-          backToHouse.copy(row = Some(backRow)))).as(StateType.Home)
+          Option.when(home.count(Furniture.ArtisanBench) > 0)(Choice("HomeBench", content.text("home.house.bench"), row = Some(0))),
+          Option.when(stored > 0)(Choice("HomeStore", content.format("home.store.button", "n" -> stored.toString), row = Some(1))),
+          Some(backToHouse.copy(row = Some(1)))
+        ).flatten)).as(StateType.Home)
       }
     }
 
-  /** Купленное — по названиям, стойки — с номерами: №1 — первая купленная. */
-  private def placedNames(home: HomeData): List[String] =
-    home.furniture.foldLeft((List.empty[String], 0)) { case ((acc, racksSeen), key) =>
-      Furniture.byKey(key) match {
-        case Some(Furniture.Rack) =>
-          (acc :+ content.format("home.rack.title", "n" -> (racksSeen + 1).toString), racksSeen + 1)
-        case Some(f) => (acc :+ furnName(f), racksSeen)
-        case None    => (acc, racksSeen)
+  // ── Оружейная ───────────────────────────────────────────────────────────────
+
+  /** Оружейная: у каждого дома своя — в домике чулан, в добротном доме светлая
+    * комната, на острове целый зал. Ячеек — [[House.racks]]: в каждой стойка
+    * со своим номером или пусто. Стойки ставит Юнона через «Обустройство»; есть
+    * свободная ячейка — туда и кнопка. Кнопки стоек — по две в ряд. */
+  private def armory(user: User, renderer: Renderer): Task[StateType] =
+    loadHome(user).flatMap { home =>
+      home.house match {
+        case None => office(user, renderer)
+        case Some(h) =>
+          val cells = (1 to home.racksMax).toList.map { n =>
+            val what = home.racks.lift(n - 1).fold(content.text("home.slots.free")) { set =>
+              content.format(if (Racks.real(set.allItems).isEmpty) "home.armory.rackEmpty" else "home.rack.title",
+                "n" -> n.toString)
+            }
+            content.format("home.slots.line", "n" -> n.toString, "what" -> what)
+          }
+          val free = home.racks.size < home.racksMax
+          val text = content.text(s"home.houses.${h.key}.armory") + "\n\n" +
+            content.format("home.armory.count", "used" -> home.racks.size.toString, "max" -> home.racksMax.toString) +
+            "\n" + cells.mkString("\n") +
+            (if (free) "\n\n" + content.text("home.armory.buyHint") else "")
+          val rackButtons = home.racks.indices.toList.map { i =>
+            Choice("HomeRack", content.format("home.rack.button", "n" -> (i + 1).toString),
+              data = Map("n" -> (i + 1).toString), row = Some(i / 2))
+          }
+          val lastRow = (home.racks.size + 1) / 2
+          renderer.show(user, Screen(text, rackButtons ++ List(
+            Option.when(free)(Choice("HomeFurnish", content.text("home.slots.furnish"), row = Some(lastRow))),
+            Some(backToHouse.copy(row = Some(lastRow)))
+          ).flatten)).as(StateType.Home)
       }
-    }._1
+    }
 
   /** Стойка №n: что на ней висит; поменяться, надеть на стойку вещь из сумки,
-    * снять одну вещь или всё в сумку, назад. */
+    * снять одну вещь или всё в сумку, назад — в оружейную. */
   private def rack(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     loadHome(user).flatMap { home =>
       rackNo(ua, home) match {
-        case None => slots(user, renderer)
+        case None => armory(user, renderer)
         case Some(n) =>
           val set   = home.racks(n - 1)
           val lines = EquipmentState.slots.map(s => s.name -> s.get(set)).filter(_._2.itemType != ItemType.NoItem)
@@ -434,7 +455,7 @@ case class HomeState(
             Choice("HomeRackPut", content.text("home.rack.put"), data = data, row = Some(0)),
             Choice("HomeRackOff", content.text("home.rack.off"), data = data, row = Some(1)),
             Choice("HomeRackTake", content.text("home.rack.take"), data = data, row = Some(1)),
-            Choice("HomeSlots", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(2))
+            Choice("HomeArmory", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(2))
           ))).as(StateType.Home)
       }
     }
@@ -443,7 +464,7 @@ case class HomeState(
   private def rackSwap(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     loadHome(user).flatMap { home =>
       rackNo(ua, home) match {
-        case None => slots(user, renderer)
+        case None => armory(user, renderer)
         case Some(n) =>
           racks.swap(user, n, renderer).flatMap {
             case Left(why) => say(user, why, renderer) *> rack(user, ua, renderer)
@@ -459,7 +480,7 @@ case class HomeState(
       home <- loadHome(user)
       inv  <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       res  <- rackNo(ua, home) match {
-        case None => slots(user, renderer)
+        case None => armory(user, renderer)
         case Some(n) =>
           val items = Racks.real(home.racks(n - 1).allItems)
           if (items.isEmpty) say(user, content.text("home.rack.emptyAlready"), renderer) *> rack(user, ua, renderer)
@@ -481,7 +502,7 @@ case class HomeState(
       home <- loadHome(user)
       inv  <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       res  <- rackNo(ua, home) match {
-        case None => slots(user, renderer)
+        case None => armory(user, renderer)
         case Some(n) =>
           val gear = inv.items.data.filter(HomeState.wearable)
           val back = Choice("HomeRack", content.text("home.house.back"), color = ChoiceColor.Negative, data = Map("n" -> n.toString))
@@ -544,7 +565,7 @@ case class HomeState(
             }
           }
         case (Some(_), None) => rackPutList(user, ua, renderer)
-        case _               => slots(user, renderer)
+        case _               => armory(user, renderer)
       }
     } yield res
 
@@ -552,7 +573,7 @@ case class HomeState(
   private def rackOffList(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     loadHome(user).flatMap { home =>
       rackNo(ua, home) match {
-        case None => slots(user, renderer)
+        case None => armory(user, renderer)
         case Some(n) =>
           val set  = home.racks(n - 1)
           val worn = EquipmentState.slots.zipWithIndex.filter { case (s, _) => s.get(set).itemType != ItemType.NoItem }
@@ -588,7 +609,7 @@ case class HomeState(
             s <- rackOffList(user, ua, renderer)
           } yield s
         case (Some(_), None) => rackOffList(user, ua, renderer)
-        case _               => slots(user, renderer)
+        case _               => armory(user, renderer)
       }
     } yield res
 
@@ -656,7 +677,7 @@ case class HomeState(
 
   /** Номер стойки из кнопки — если такая стойка в доме есть. */
   private def rackNo(ua: UserAction, home: HomeData): Option[Int] =
-    payload(ua, "n").flatMap(_.toIntOption).filter(n => n >= 1 && n <= home.activeRacks)
+    payload(ua, "n").flatMap(_.toIntOption).filter(n => n >= 1 && n <= home.racks.size)
 
   /** «Прибраться»: взяться за хлам самому. Как сон — пока убирается, дом его
     * не отпускает; прервался — наубиранное не пропадает. Доделывает таймер. */
@@ -738,13 +759,16 @@ case class HomeState(
       }
     }
 
-  /** Вещь из папки: что даёт, сколько мест свободно, и «Купить за …». */
+  /** Вещь из папки: что даёт, сколько мест свободно (у стойки — ячеек в
+    * оружейной), и «Купить за …». */
   private def furnItem(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     loadHome(user).flatMap { home =>
       furnOf(ua, home) match {
         case None => furnish(user, renderer)
         case Some(f) =>
-          val text = furnText(f, "desc", home) + "\n\n" + content.format("home.furnish.free", "n" -> home.slotsFree.toString)
+          val free = if (f.takesSlot) content.format("home.furnish.free", "n" -> home.slotsFree.toString)
+                     else content.format("home.furnish.freeArmory", "n" -> (home.racksMax - home.racks.size).max(0).toString)
+          val text = furnText(f, "desc", home) + "\n\n" + free
           renderer.show(user, Screen(text, List(
             Choice("HomeFurnBuy", content.format("home.furnish.buy", "price" -> money(f.doubloons)),
               color = ChoiceColor.Positive, data = Map("f" -> f.key), row = Some(0)),
@@ -755,7 +779,8 @@ case class HomeState(
 
   /** Купить: нужны дублоны и место. Места нет — Юнона спрашивает, что спрятать
     * в кладовую ([[stashAsk]]); дублонов нет — до этого вопроса не доходит.
-    * Вещь встаёт в дом сразу. */
+    * Вещь встаёт в дом сразу. Стойке место обстановки не нужно: ей нужна
+    * ячейка оружейной, а её проверяет [[buyRefusal]]. */
   private def furnBuy(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     for {
       hero <- getHero(user)
@@ -764,20 +789,21 @@ case class HomeState(
         case None => furnish(user, renderer)
         case Some(f) =>
           buyRefusal(f, home).orElse(lackOf(hero, f)) match {
-            case Some(why)                   => say(user, why, renderer) *> furnish(user, renderer)
-            case None if home.slotsFree <= 0 => stashAsk(user, home, Goal.Buy(f), renderer)
-            case None                        => place(user, hero, home, f, renderer)
+            case Some(why)                                 => say(user, why, renderer) *> furnish(user, renderer)
+            case None if f.takesSlot && home.slotsFree <= 0 => stashAsk(user, home, Goal.Buy(f), renderer)
+            case None                                      => place(user, hero, home, f, renderer)
           }
       }
     } yield res
 
   /** Почему эту вещь не купить, будь в доме хоть сколько места; `None` —
-    * можно. Верстак и посыльный — по одному, стоек — сколько вмещает дом; то,
-    * что лежит в кладовой, второй раз не продают — его возвращают. */
+    * можно. Верстак и посыльный — по одному, стоек — сколько ячеек в
+    * оружейной; то, что лежит в кладовой, второй раз не продают — его
+    * возвращают. */
   private def buyRefusal(f: Furniture, home: HomeData): Option[String] = f match {
     case Furniture.ArtisanBench if home.count(f) > 0 => Some(content.text("home.furnish.benchHave"))
     case Furniture.Courier if home.count(f) > 0      => Some(content.text("home.furnish.courierHave"))
-    case Furniture.ArtisanBench | Furniture.Courier | Furniture.Rack if home.owned(f) > home.count(f) =>
+    case Furniture.ArtisanBench | Furniture.Courier if home.owned(f) > home.count(f) =>
       Some(content.text("home.furnish.inStore"))
     case Furniture.Rack if home.racks.size >= home.racksMax =>
       Some(content.format("home.furnish.rackMax", "max" -> home.racksMax.toString))
@@ -789,13 +815,14 @@ case class HomeState(
     Option.when(hero.doubloons < f.doubloons)(
       content.format("home.office.lack", "lack" -> priceText(f.doubloons - hero.doubloons, PayDoubloons)))
 
-  /** Списать дублоны и поставить вещь в дом; к стойке — её номерной ключ. */
+  /** Списать дублоны и поставить вещь в дом; стойку — в оружейную, на
+    * следующий номер, и к ней — её номерной ключ. */
   private def place(user: User, hero: Hero, home: HomeData, f: Furniture, renderer: Renderer): Task[StateType] =
     charge(hero, PayDoubloons, f.doubloons).flatMap {
       case Left(lack) =>
         say(user, content.format("home.office.lack", "lack" -> priceText(lack, PayDoubloons)), renderer) *> furnish(user, renderer)
       case Right(_) if f == Furniture.Rack =>
-        val bought = home.copy(furniture = home.furniture :+ f.key, racks = home.racks :+ Equipment.empty)
+        val bought = home.copy(racks = home.racks :+ Equipment.empty)
         val n      = bought.racks.size
         for {
           key <- itemRepo.persist(hero.id, QuestItemKind.item(QuestItemKind.rackKeys(n - 1)))
@@ -812,15 +839,15 @@ case class HomeState(
   // ── Кладовая ────────────────────────────────────────────────────────────────
 
   /** «Что спрячем из текущей обстановки дома?» — мест нет, а вещь хотят купить
-    * или вернуть из кладовой. На выбор — то, что стоит в доме (стойка —
-    * старшая из стоящих); вещь того же рода прятать незачем. Прятать нечего —
-    * значит, мест нет. */
+    * или вернуть из кладовой. На выбор — то, что стоит в доме и занимает
+    * место; вещь того же рода прятать незачем. Прятать нечего — значит, мест
+    * нет. */
   private def stashAsk(user: User, home: HomeData, goal: Goal, renderer: Renderer): Task[StateType] = {
-    val kinds = Furniture.values.filter(k => k != goal.f && home.count(k) > 0)
+    val kinds = Furniture.values.filter(k => k != goal.f && home.placed.contains(k))
     if (kinds.isEmpty) say(user, content.text("home.furnish.noSlot"), renderer) *> backFrom(user, goal, renderer)
     else {
       val buttons = kinds.zipWithIndex.map { case (k, i) =>
-        Choice("HomeStash", ItemMenu.truncate(standingName(k, home)),
+        Choice("HomeStash", ItemMenu.truncate(furnName(k)),
           data = Map("f" -> k.key, "for" -> goal.tag, "t" -> goal.f.key), row = Some(i))
       }
       val back = goal match {
@@ -845,7 +872,7 @@ case class HomeState(
       res  <- goalOf(ua, home) match {
         case None => slots(user, renderer)
         case Some(goal) =>
-          payload(ua, "f").flatMap(Furniture.byKey).filter(f => f != goal.f && home.count(f) > 0) match {
+          payload(ua, "f").flatMap(Furniture.byKey).filter(f => f != goal.f && home.placed.contains(f)) match {
             case None => stashAsk(user, home, goal, renderer)
             case Some(f) =>
               stashRefusal(f, home, azat) match {
@@ -862,7 +889,7 @@ case class HomeState(
                        renderer: Renderer): Task[StateType] = {
     val needed = home.slotsFree <= 0
     val freed  = if (needed) home.hidden(f) else home
-    val hidden = ZIO.when(needed)(say(user, content.format("home.stash.hidden", "name" -> standingName(f, home)), renderer))
+    val hidden = ZIO.when(needed)(say(user, content.format("home.stash.hidden", "name" -> furnName(f)), renderer))
     goal match {
       case Goal.Buy(t) =>
         buyRefusal(t, home).orElse(lackOf(hero, t)) match {
@@ -870,24 +897,19 @@ case class HomeState(
           case None      => saveHome(user, freed) *> hidden *> place(user, hero, freed, t, renderer)
         }
       case Goal.Back(t) =>
-        if (!home.stored.contains(t.key)) store(user, renderer)
+        if (!home.storedFurniture.contains(t)) store(user, renderer)
         else
           saveHome(user, freed.returned(t)) *> hidden *>
-            say(user, content.format("home.store.returned", "name" -> storedName(t, freed)), renderer) *>
+            say(user, content.format("home.store.returned", "name" -> furnName(t)), renderer) *>
             store(user, renderer)
     }
   }
 
-  /** Почему это сейчас не спрятать; `None` — можно. Прячут только пустое: со
-    * стойки снят комплект, в верстаке нет куба, полкам и хранилищу хватает
-    * места и без сундука. */
+  /** Почему это сейчас не спрятать; `None` — можно. Прячут только пустое: в
+    * верстаке нет куба, полкам и хранилищу хватает места и без сундука. */
   private def stashRefusal(f: Furniture, home: HomeData, azat: AzatState): Option[String] = {
     val after = home.hidden(f)
     f match {
-      case Furniture.Rack =>
-        val n = home.activeRacks
-        home.racks.lift(n - 1).filter(r => Racks.real(r.allItems).nonEmpty)
-          .map(_ => content.format("home.stash.rackBusy", "n" -> n.toString))
       case Furniture.ArtisanBench if azat.cubeHome => Some(content.text("home.stash.benchCube"))
       case Furniture.ApothecaryChest if home.herbs.size > after.herbShelves || home.brews.size > after.brewShelves =>
         Some(content.format("home.stash.shelves",
@@ -903,12 +925,12 @@ case class HomeState(
   private def store(user: User, renderer: Renderer): Task[StateType] =
     loadHome(user).flatMap { home =>
       if (!home.owns) office(user, renderer)
-      else if (home.stored.isEmpty) slots(user, renderer)
+      else if (home.storedFurniture.isEmpty) slots(user, renderer)
       else {
-        val lines = storedNames(home).map(n => content.format("home.store.line", "name" -> n))
-        val kinds = Furniture.values.filter(k => home.stored.contains(k.key))
+        val lines = home.storedFurniture.map(f => content.format("home.store.line", "name" -> furnName(f)))
+        val kinds = Furniture.values.filter(home.storedFurniture.contains)
         val buttons = kinds.zipWithIndex.map { case (k, i) =>
-          Choice("HomeUnstash", ItemMenu.truncate(content.format("home.store.return", "name" -> storedName(k, home))),
+          Choice("HomeUnstash", ItemMenu.truncate(content.format("home.store.return", "name" -> furnName(k))),
             data = Map("f" -> k.key), row = Some(i))
         }
         renderer.show(user, Screen(content.format("home.store.text", "lines" -> lines.mkString("\n")), buttons :+
@@ -921,20 +943,21 @@ case class HomeState(
     * спрашивает, что спрятать взамен. */
   private def unstash(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     loadHome(user).flatMap { home =>
-      payload(ua, "f").flatMap(Furniture.byKey).filter(f => home.stored.contains(f.key)) match {
+      payload(ua, "f").flatMap(Furniture.byKey).filter(home.storedFurniture.contains) match {
         case None                           => store(user, renderer)
         case Some(f) if home.slotsFree <= 0 => stashAsk(user, home, Goal.Back(f), renderer)
         case Some(f) =>
           saveHome(user, home.returned(f)) *>
-            say(user, content.format("home.store.returned", "name" -> storedName(f, home)), renderer) *>
+            say(user, content.format("home.store.returned", "name" -> furnName(f)), renderer) *>
             store(user, renderer)
       }
     }
 
   /** Цель из кнопки «спрятать»: что купить (если это продают для этого дома) или
-    * что вернуть из кладовой. */
+    * что вернуть из кладовой. Стойке место обстановки не нужно — ради неё ничего
+    * не прячут (старая кнопка такого не сделает). */
   private def goalOf(ua: UserAction, home: HomeData): Option[Goal] =
-    payload(ua, "t").flatMap(Furniture.byKey).flatMap { t =>
+    payload(ua, "t").flatMap(Furniture.byKey).filter(_.takesSlot).flatMap { t =>
       payload(ua, "for").flatMap {
         case Goal.BuyTag  => Option.when(home.house.exists(_.tier >= t.minTier))(Goal.Buy(t))
         case Goal.BackTag => Some(Goal.Back(t))
@@ -947,27 +970,6 @@ case class HomeState(
     case _: Goal.Buy  => furnish(user, renderer)
     case _: Goal.Back => store(user, renderer)
   }
-
-  /** Название того, что стоит в доме; у стойки — номер старшей из стоящих (её и
-    * прячут). */
-  private def standingName(f: Furniture, home: HomeData): String =
-    if (f == Furniture.Rack) content.format("home.rack.title", "n" -> home.activeRacks.toString) else furnName(f)
-
-  /** Название того, что лежит в кладовой; у стойки — номер младшей из спрятанных
-    * (её и вернут). */
-  private def storedName(f: Furniture, home: HomeData): String =
-    if (f == Furniture.Rack) content.format("home.rack.title", "n" -> (home.activeRacks + 1).toString) else furnName(f)
-
-  /** Всё в кладовой по названиям; стойки — с номерами по порядку. */
-  private def storedNames(home: HomeData): List[String] =
-    home.stored.foldLeft((List.empty[String], home.activeRacks)) { case ((acc, racksSeen), key) =>
-      Furniture.byKey(key) match {
-        case Some(Furniture.Rack) =>
-          (acc :+ content.format("home.rack.title", "n" -> (racksSeen + 1).toString), racksSeen + 1)
-        case Some(f) => (acc :+ furnName(f), racksSeen)
-        case None    => (acc, racksSeen)
-      }
-    }._1
 
   /** Вывезти хлам через Юнону — за серебро (с ячейкой), без уборки руками. */
   private def clutterPay(user: User, renderer: Renderer): Task[StateType] =

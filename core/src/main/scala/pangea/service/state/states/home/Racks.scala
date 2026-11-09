@@ -31,10 +31,8 @@ final case class Racks(heroDao: HeroDao, inventoryRepo: InventoryRepository, con
       hero <- heroDao.getHeroByUserId(user.userId).someOrFail(new Throwable(s"No hero for user ${user.userId}"))
       home <- heroDao.readHomeData(user.userId).map(_.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty))
       inv  <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
-      // Стойки в кладовой — старшие по номеру: ключ от такой ждёт, пока её вернут.
-      res  <- home.racks.lift(n - 1).filter(_ => n <= home.activeRacks) match {
-        case None if n >= 1 && n <= home.racks.size =>
-          ZIO.left(content.format("home.rack.stored", "n" -> n.toString))
+      // Все стойки — в оружейной: ключ работает, пока стойка с его номером есть.
+      res  <- home.racks.lift(n - 1) match {
         case None => ZIO.left(content.text("home.rack.gone"))
         case Some(rack) =>
           Racks.refusal(hero, rack, inv) match {

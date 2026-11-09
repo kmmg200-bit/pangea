@@ -227,16 +227,17 @@ object MiniAppViewSpec extends ZIOSpecDefault {
       )
     },
 
-    test("стойки: раздел на стойку со своим номером — её надевают; убранные в кладовую не видны") {
+    test("стойки: раздел на каждую стойку оружейной со своим номером — её надевают; старая запись «в кладовой» их не прячет") {
       import pangea.model.hero.Equipment
       import pangea.model.home.Furniture
-      // Третья стойка — в кладовой: это старшая по номеру.
+      // Так дом записывала прошлая версия: третья стойка — в кладовой. Теперь
+      // все стойки в оружейной.
       val home = HomeData.empty.copy(tier = House.Townhouse.tier, racks = List.fill(3)(Equipment.empty),
                    stored = List(Furniture.Rack.key))
       val city = TestFixtures.hero(UserId(1L), state = StateType.MarketSquare)
       val view = MiniAppView.inventory(city, inv(city, Nil), nothing(city, home), content, _.name, 0L)
       assertTrue(
-        view.storages.find(_.id == "racks").exists(_.sections.map(_.rack) == List(Some(1), Some(2))),
+        view.storages.find(_.id == "racks").exists(_.sections.map(_.rack) == List(Some(1), Some(2), Some(3))),
         view.storages.filter(_.id != "racks").flatMap(_.sections).forall(_.rack.isEmpty)
       )
     },

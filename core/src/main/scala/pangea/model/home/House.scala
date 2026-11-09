@@ -28,9 +28,10 @@ sealed abstract class House(
   /** Потолок энергии личного алтаря Азата; 0 — алтаря в доме нет. */
   val altarCharges: Int,
   /** Сколько мест под обстановку (см. [[Furniture]]): встроенное — кровать,
-    * алтари, верстак, хранилище — их не занимает. */
+    * алтари, верстак, хранилище, оружейная — их не занимает. */
   val slots: Int,
-  /** Сколько магических стоек можно поставить ([[Furniture.Rack]]). */
+  /** Сколько ячеек в оружейной: столько магических стоек можно поставить
+    * ([[Furniture.Rack]]). Места обстановки стойки не занимают. */
   val racks: Int
 )
 
@@ -38,17 +39,17 @@ object House {
 
   /** Домик в две комнаты: всё нужное и ничего сверх. Сон — 2 часа, «выспался» — 4.
     * Два места под обстановку, одно из них поначалу завалено хламом
-    * ([[HomeData.hasClutter]]). */
-  case object Cottage extends House(1, "cottage", 100L, 2L * 3600000L, 4L * 3600000L, 0, 2, 1)
+    * ([[HomeData.hasClutter]]); в чулане-оружейной — две стойки. */
+  case object Cottage extends House(1, "cottage", 100L, 2L * 3600000L, 4L * 3600000L, 0, 2, 2)
 
   /** Добротный дом: свой алтарь Азата на 100 энергии, верстак травника,
-    * библиотека. Сон — 1,5 часа, «выспался» — 8. */
-  case object Townhouse extends House(2, "townhouse", 800L, 5400000L, 8L * 3600000L, 100, 4, 2)
+    * библиотека, оружейная на четыре стойки. Сон — 1,5 часа, «выспался» — 8. */
+  case object Townhouse extends House(2, "townhouse", 800L, 5400000L, 8L * 3600000L, 100, 4, 4)
 
   /** Дом на парящем острове, куда ведёт ключ-портал; алтарь Азата — на 300
     * энергии, полки верстака шире ([[HomeRates.IslandHerbShelves]]), десять мест
-    * под обстановку. Сон — 1 час, «выспался» — 12. */
-  case object Island extends House(3, "island", 2000L, 3600000L, 12L * 3600000L, 300, 10, 4)
+    * под обстановку, оружейный зал на десять стоек. Сон — 1 час, «выспался» — 12. */
+  case object Island extends House(3, "island", 2000L, 3600000L, 12L * 3600000L, 300, 10, 10)
 
   val values: List[House] = List(Cottage, Townhouse, Island)
 
@@ -69,43 +70,47 @@ object House {
 }
 
 /** Обстановка дома: покупается у Юноны в «Обустройстве» за дублоны и
-  * занимает в доме одно место ([[House.slots]]). При переезде едет вместе с
-  * героем. `minTier` — с какого дома её продают.
+  * занимает в доме одно место ([[House.slots]]) — кроме стойки: та встаёт в
+  * оружейную (`takesSlot` = false). При переезде едет вместе с героем.
+  * `minTier` — с какого дома её продают.
   *
   * Числа — прямо в вариантах (см. заметку у [[House]]). */
 sealed abstract class Furniture(
   /** Ключ: в `HomeData.furniture` и в `scenes.yaml` (`home.furniture.<key>.*`). */
   val key: String,
   val doubloons: Long,
-  val minTier: Int
+  val minTier: Int,
+  /** Занимает ли место под обстановку — а с ним и кладовую, куда прячут, когда
+    * мест нет. */
+  val takesSlot: Boolean
 )
 
 object Furniture {
 
   /** Магическая стойка: держит целый комплект снаряжения, и одной кнопкой (или
     * ключом из сумки — где угодно, кроме боя) надетое меняется местами с тем, что
-    * висит на ней. Стоек в доме — не больше [[House.racks]]; к каждой — свой
-    * номерной ключ. */
-  case object Rack extends Furniture("rack", 100L, 1)
+    * висит на ней. Встаёт в оружейную дома — ячеек там [[House.racks]], — а
+    * места обстановки не занимает; к каждой — свой номерной ключ. */
+  case object Rack extends Furniture("rack", 100L, 1, takesSlot = false)
 
   /** Верстак ремесленника с гнездом под куб Азата: вставил куб — он переехал из
     * Храма домой; работает так же, а всё, что в нём получится, пишется в книгу
     * рецептов ([[HomeData.recipes]]). В доме — один: куб-то один. */
-  case object ArtisanBench extends Furniture("artisan", 100L, 1)
+  case object ArtisanBench extends Furniture("artisan", 100L, 1, takesSlot = true)
 
   /** Личный посыльный: серебро из ячейки Торгового дома он передаст по
     * «Передать» откуда угодно — из лабиринта, с поисков клада, посреди задания.
     * Серебро на руках вне города он не трогает: носит только из ячейки.
     * Покупка разовая: второго не продают, а обстановка из дома не уходит и
     * переезжает вместе с героем. */
-  case object Courier extends Furniture("courier", 100L, 1)
+  case object Courier extends Furniture("courier", 100L, 1, takesSlot = true)
 
   /** Сундук аптекаря — у верстака травника: полки шире на
     * [[HomeRates.ApothecaryHerbs]] трав и [[HomeRates.ApothecaryBrews]] отваров. */
-  case object ApothecaryChest extends Furniture("apothecary", 100L, 2)
+  case object ApothecaryChest extends Furniture("apothecary", 100L, 2, takesSlot = true)
 
   /** Роскошный сундук ювелира — в хранилище камней: шире на [[HomeRates.JewelerGems]]. */
-  case object JewelerChest extends Furniture("jeweler", 100L, 3)
+  case object JewelerChest extends Furniture("jeweler", 100L, 3, takesSlot = true)
 
   val values: List[Furniture] = List(Rack, ArtisanBench, Courier, ApothecaryChest, JewelerChest)
 
@@ -175,9 +180,10 @@ object HomeRates {
   * Обстановка: `furniture` — купленное у Юноны, по месту на вещь (ключи
   * [[Furniture]]); `clutterCleared` — хлам в домике разобран или вывезен;
   * `cleanedMs` — сколько уже наубирано руками (уборку можно прервать);
-  * `racks` — что висит на магических стойках: стойка №N — `racks(N - 1)`;
-  * `recipes` — книга рецептов: что получилось в кубе на верстаке ремесленника
-  * (видна в библиотеке, когда она есть, а пишется и без неё).
+  * `racks` — оружейная: что висит на магических стойках, стойка №N —
+  * `racks(N - 1)`; `recipes` — книга рецептов: что получилось в кубе на
+  * верстаке ремесленника (видна в библиотеке, когда она есть, а пишется и без
+  * неё).
   *
   * На острове — `wall`: Стена трофеев, чьи уникальные трофеи на ней висят
   * (имена именных мобов, без повторов; см. [[NamedTrophy]]).
@@ -185,8 +191,13 @@ object HomeRates {
   * `stored` — кладовая: спрятанная обстановка, ключи [[Furniture]] в том
   * порядке, в каком её прятали. Места она не занимает и не работает; вернуть
   * — когда в доме есть место, а при переезде в дом просторнее она встаёт сама
-  * ([[unpacked]]). Стойки в кладовой — всегда старшие по номеру: ключи от
-  * младших работают как прежде. */
+  * ([[unpacked]]).
+  *
+  * Стойки раньше стояли в обстановке и прятались в кладовую — их записи
+  * («rack») могут лежать в `furniture` и `stored` и сейчас, в том числе
+  * записанные прошлой версией бота, пока при выкладке работают оба. Теперь все
+  * стойки — в оружейной (`racks`), а эти записи ничего не значат: места они не
+  * занимают и в кладовой не видны (см. [[Furniture.takesSlot]]). */
 final case class HomeData(
   tier:      Int               = 0,
   metJunona: Boolean           = false,
@@ -210,10 +221,17 @@ final case class HomeData(
     * переезде остаётся в домике — новый дом чистый. */
   def hasClutter: Boolean = house.contains(House.Cottage) && !clutterCleared
 
-  /** Мест под обстановку всего, занято (хлам тоже занимает) и свободно. */
+  /** Мест под обстановку всего, занято (хлам тоже занимает) и свободно.
+    * Стойки места не занимают — они в оружейной. */
   def slotsMax: Int  = house.fold(0)(_.slots)
-  def slotsUsed: Int = furniture.size + (if (hasClutter) 1 else 0)
+  def slotsUsed: Int = placed.size + (if (hasClutter) 1 else 0)
   def slotsFree: Int = (slotsMax - slotsUsed).max(0)
+
+  /** Обстановка, что стоит в доме и занимает места, — по порядку покупки. */
+  def placed: List[Furniture] = furniture.flatMap(Furniture.byKey).filter(_.takesSlot)
+
+  /** Что лежит в кладовой — по порядку, в каком прятали. */
+  def storedFurniture: List[Furniture] = stored.flatMap(Furniture.byKey).filter(_.takesSlot)
 
   /** Сколько в доме такой обстановки. */
   def count(f: Furniture): Int = furniture.count(_ == f.key)
@@ -221,13 +239,7 @@ final case class HomeData(
   /** Сколько такой обстановки у героя всего — в доме и в кладовой. */
   def owned(f: Furniture): Int = count(f) + stored.count(_ == f.key)
 
-  /** Стоек в кладовой — это старшие по номеру. */
-  def storedRacks: Int = stored.count(_ == Furniture.Rack.key)
-
-  /** Стойки, что стоят в доме: №1..activeRacks. */
-  def activeRacks: Int = (racks.size - storedRacks).max(0)
-
-  /** Убрать в кладовую одну такую вещь; стойку — старшую из стоящих. */
+  /** Убрать в кладовую одну такую вещь (из тех, что занимают место). */
   def hidden(f: Furniture): HomeData = {
     val i = furniture.lastIndexOf(f.key)
     if (i < 0) this else copy(furniture = furniture.patch(i, Nil, 1), stored = stored :+ f.key)
@@ -243,7 +255,7 @@ final case class HomeData(
     * сколько хватит мест. */
   @scala.annotation.tailrec
   final def unpacked: HomeData =
-    stored.headOption.flatMap(Furniture.byKey) match {
+    storedFurniture.headOption match {
       case Some(f) if slotsFree > 0 => returned(f).unpacked
       case _                        => this
     }
@@ -252,7 +264,7 @@ final case class HomeData(
     * кладовую не работает. */
   def hasCourier: Boolean = count(Furniture.Courier) > 0
 
-  /** Сколько стоек можно поставить в этот дом. */
+  /** Сколько ячеек в оружейной этого дома — столько стоек можно поставить. */
   def racksMax: Int = house.fold(0)(_.racks)
 
   /** Книга рецептов с новыми записями — без повторов. */

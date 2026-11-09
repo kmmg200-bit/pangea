@@ -496,8 +496,8 @@ object MiniAppView {
       atHome("wall", isle)(open("wall", "home", None, None,
         counts = TrophyWallState.Races.map(r =>
           CountView(TrophyWallState.raceName(content, r), TrophyWallState.hung(home, r).size.toLong)))),
-      atHome("racks", home.activeRacks > 0)(open("racks", "home", None, None,
-        sections = home.racks.take(home.activeRacks).zipWithIndex.map { case (rack, i) =>
+      atHome("racks", home.racks.nonEmpty)(open("racks", "home", None, None,
+        sections = home.racks.zipWithIndex.map { case (rack, i) =>
           SectionView(Some(content.format("miniapp.storages.racks.rack", "n" -> (i + 1).toString)),
             rack.allItems.filter(_.itemType != ItemType.NoItem).map(it => view(it, 1, EquipmentState.itemStats(it))),
             Some(i + 1))
