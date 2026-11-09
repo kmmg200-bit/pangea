@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { api } from './api'
 import { matches } from './BagTab'
 import { Silver } from './icons'
-import { groupLabels, presentGroups, type Group } from './kinds'
+import { gearKinds, groupLabels, presentGroups, type Group } from './kinds'
 import type { AuctionView, Currency, LotView } from './types'
 import { Chips, Empty, ItemRow, ItemText, num, Sheet, Toolbar } from './ui'
 
@@ -128,10 +128,11 @@ function Buy(props: { lot: LotView; data: AuctionView; onChange: (v: AuctionView
 export function AuctionTab(props: { data: AuctionView; onChange: (v: AuctionView, bought: boolean) => void }) {
   const [view, setView] = useState<'all' | 'mine'>('all')
   const [group, setGroup] = useState<Group | 'all'>('all')
+  // Вид снаряжения: Helmet, Ring… — тип вещи бота.
+  const [kind, setKind] = useState('any')
   const [currency, setCurrency] = useState<Currency | 'any'>('any')
-  // «По уровню» — только то, что герой может надеть: вещь не выше его уровня, как в боте.
-  const [level, setLevel] = useState<'any' | 'mine'>('any')
-  const heroLvl = props.data.hero.lvl
+  // Вещи не выше этого уровня; пусто — любые.
+  const [maxLvl, setMaxLvl] = useState('')
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('new')
   const [open, setOpen] = useState<LotView | null>(null)
@@ -144,13 +145,24 @@ export function AuctionTab(props: { data: AuctionView; onChange: (v: AuctionView
         lots.filter(
           (l) =>
             matches(l.item, group, query) &&
+            (kind === 'any' || l.item.kind === kind) &&
             (currency === 'any' || l.currency === currency) &&
-            (level === 'any' || l.item.lvl <= heroLvl),
+            (maxLvl === '' || l.item.lvl <= Number(maxLvl)),
         ),
         sort,
       ),
-    [lots, group, query, currency, level, heroLvl, sort],
+    [lots, group, kind, query, currency, maxLvl, sort],
   )
+
+  // Вид снаряжения и группа не должны спорить: вид — это всегда «Снаряжение».
+  const pickKind = (k: string) => {
+    setKind(k)
+    if (k !== 'any') setGroup('gear')
+  }
+  const pickGroup = (g: Group | 'all') => {
+    setGroup(g)
+    if (g !== 'gear') setKind('any')
+  }
 
   return (
     <>
@@ -162,7 +174,7 @@ export function AuctionTab(props: { data: AuctionView; onChange: (v: AuctionView
         value={view}
         onChange={(v) => {
           setView(v)
-          setGroup('all')
+          pickGroup('all')
         }}
       />
       {lots.length === 0 ? (
@@ -170,6 +182,27 @@ export function AuctionTab(props: { data: AuctionView; onChange: (v: AuctionView
       ) : (
         <>
           <Toolbar query={query} onQuery={setQuery} sort={sort} sorts={sorts} onSort={setSort} />
+          <div className="toolbar">
+            {(groups.includes('gear') || kind !== 'any') && (
+              <select className="sort sort-wide" value={kind} onChange={(e) => pickKind(e.target.value)} aria-label="Вид снаряжения">
+                <option value="any">Всё снаряжение</option>
+                {gearKinds.map((k) => (
+                  <option key={k.id} value={k.id}>
+                    {k.label}
+                  </option>
+                ))}
+              </select>
+            )}
+            <label className="level-field">
+              Уровень до
+              <input
+                inputMode="numeric"
+                placeholder="любой"
+                value={maxLvl}
+                onChange={(e) => setMaxLvl(e.target.value.replace(/\D/g, '').slice(0, 4))}
+              />
+            </label>
+          </div>
           <Chips
             options={[
               { id: 'any' as const, label: 'Любая монета' },
@@ -179,19 +212,11 @@ export function AuctionTab(props: { data: AuctionView; onChange: (v: AuctionView
             value={currency}
             onChange={setCurrency}
           />
-          <Chips
-            options={[
-              { id: 'any' as const, label: 'Любой уровень' },
-              { id: 'mine' as const, label: `По моему уровню · до ${heroLvl}` },
-            ]}
-            value={level}
-            onChange={setLevel}
-          />
           {groups.length > 1 && (
             <Chips
               options={[{ id: 'all' as const, label: 'Всё' }, ...groups.map((g) => ({ id: g, label: groupLabels[g] }))]}
               value={group}
-              onChange={setGroup}
+              onChange={pickGroup}
             />
           )}
           <div className="list">

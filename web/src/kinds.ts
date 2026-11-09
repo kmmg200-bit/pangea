@@ -49,6 +49,11 @@ const kinds: Record<string, Kind> = {
 
 const unknown: Kind = { label: 'Вещь', icon: 'swap-bag', group: 'other' }
 
+/** Виды снаряжения — для выпадающего списка, в том же порядке. */
+export const gearKinds = Object.entries(kinds)
+  .filter(([, k]) => k.group === 'gear')
+  .map(([id, k]) => ({ id, label: k.label }))
+
 export const kindOf = (item: ItemView): Kind => kinds[item.kind] ?? unknown
 
 /** Значок вещи: по типу, а внутри типа — по подвиду (лук среди оружия, трава и
