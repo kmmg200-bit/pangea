@@ -889,6 +889,21 @@ button.row:active {
   gap: 8px;
 }
 
+.belt-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.belt-cell .meter {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.belt-cell .equip-off {
+  flex: 0 0 auto;
+}
+
 .belt-spent {
   color: var(--muted);
 }
@@ -1234,6 +1249,10 @@ button.row:active {
 .buy-wide {
   width: 100%;
   margin-top: 12px;
+}
+
+.buy-confirm .sheet-note {
+  margin: -4px 0 8px;
 }
 
 .buy-confirm {

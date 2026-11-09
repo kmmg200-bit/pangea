@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { gameIcons, type GameIcon } from './gameIcons'
 import { iconOf, kindOf } from './kinds'
-import type { ItemView, PoolView } from './types'
+import type { BeltView, ItemView, PoolView } from './types'
 
 /** Иконка game-icons.net. Цвет — от текста (currentColor). Разметка — из
   * своего файла gameIcons.ts, не из ответа бота. */
@@ -181,6 +181,22 @@ export function Sheet(props: { onClose: () => void; children: ReactNode }) {
           ✕
         </button>
         {props.children}
+      </div>
+    </div>
+  )
+}
+
+/** Что снять с полного пояса ради новой вещи: вопрос и ячейки — словами бота. */
+export function BeltSwap(props: { ask: string; belt: BeltView; busy: boolean; onPick: (cell: number) => void }) {
+  return (
+    <div className="buy-confirm">
+      <p className="buy-ask">{props.ask}</p>
+      <div className="move-list">
+        {props.belt.cells.map((c, i) => (
+          <button key={i} className="move-to" disabled={props.busy} onClick={() => props.onPick(i)}>
+            {c.swap}
+          </button>
+        ))}
       </div>
     </div>
   )

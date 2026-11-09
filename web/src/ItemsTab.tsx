@@ -2,8 +2,8 @@ import { useMemo, useState } from 'react'
 import { api } from './api'
 import { BagTab } from './BagTab'
 import { Silver } from './icons'
-import type { InventoryActionView, InventoryView, ItemView, StorageView } from './types'
-import { Chips, Empty, ItemRow, ItemText, num, Segment, Sheet, useToast } from './ui'
+import type { BrewAskView, InventoryActionView, InventoryView, ItemView, StorageView } from './types'
+import { BeltSwap, Chips, Empty, ItemRow, ItemText, num, Segment, Sheet, useToast } from './ui'
 
 type Group = StorageView['group']
 
@@ -73,6 +73,88 @@ function MovePanel(props: { data: InventoryView; from: string; item: ItemView; a
         })}
       </div>
       {why}
+    </div>
+  )
+}
+
+/** Вопрос отвара: почему нельзя, на что потратить или тратить ли склянку. Выбор
+  * травмы, рода или фляги сам и есть подтверждение. */
+function BrewQuestion(props: { ask: BrewAskView; busy: boolean; onUse: (arg: string | null) => void; onBack: () => void }) {
+  const { ask, busy } = props
+  if (ask.refusal)
+    return (
+      <div className="buy-confirm">
+        <p className="buy-ask">{ask.refusal}</p>
+      </div>
+    )
+  return (
+    <div className="buy-confirm">
+      <p className="buy-ask">{ask.question}</p>
+      {ask.hint && <p className="sheet-note">{ask.hint}</p>}
+      {ask.options.length > 0 ? (
+        <div className="move-list">
+          {ask.options.map((o) => (
+            <button key={o.id} className="move-to" disabled={busy} onClick={() => props.onUse(o.id)}>
+              {o.label}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="buy-row">
+          <button className="buy-yes" disabled={busy} onClick={() => props.onUse(null)}>
+            {ask.label}
+          </button>
+          <button className="buy-no" onClick={props.onBack}>
+            Передумал
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Что сделать с вещью из сумки — те же кнопки, что на её карточке в боте. */
+function BagActs(props: { data: InventoryView; item: ItemView; acts: Acts; onDone: () => void }) {
+  const { data, item, acts } = props
+  // Открытый вопрос: название действия или `belt` — что снять с полного пояса.
+  const [ask, setAsk] = useState<string | null>(null)
+  const act = data.bagActs.find((a) => a.item === item.id)
+  if (!act) return null
+  const finish = (run: () => Promise<InventoryActionView>) => {
+    acts.run(run)
+    props.onDone()
+  }
+  const brew = act.brew.find((a) => a.action === ask)
+  const belt = data.equipment.find((s) => s.belt)?.belt
+  return (
+    <div className="move">
+      <div className="equip-acts">
+        {act.brew.map((a) => (
+          <button key={a.action} className="equip-off" disabled={acts.busy} onClick={() => setAsk(a.action)}>
+            {a.label}
+          </button>
+        ))}
+        {act.belt && (
+          <button
+            className="equip-off"
+            disabled={acts.busy}
+            onClick={() => (act.beltFull ? setAsk('belt') : finish(() => api.beltPut(item.id, null)))}
+          >
+            На пояс
+          </button>
+        )}
+      </div>
+      {brew && (
+        <BrewQuestion
+          ask={brew}
+          busy={acts.busy}
+          onUse={(arg) => finish(() => api.brewUse(brew.action, item.id, arg))}
+          onBack={() => setAsk(null)}
+        />
+      )}
+      {ask === 'belt' && act.beltFull && belt && (
+        <BeltSwap ask={act.beltFull} belt={belt} busy={acts.busy} onPick={(cell) => finish(() => api.beltPut(item.id, cell))} />
+      )}
     </div>
   )
 }
@@ -156,8 +238,8 @@ function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; a
 /** «Вещи»: при себе, в городе и в доме. Закрытое хранилище видно с замком —
   * нажал, и написано, как его открыть. Вещь из любого хранилища — в любое,
   * которое её возьмёт (из карточки вещи), — в городе; вне города — между тем,
-  * что при себе. Комплект со стойки — на героя, где угодно. В бою — ни то ни
-  * другое. Бот проверит это сам, под тем же замком, что и ходы в чате. Что
+  * что при себе. Комплект со стойки — на героя, отвар и пояс — из карточки вещи
+  * в сумке, где угодно. В бою — ни то ни другое. Бот проверит это сам, под тем же замком, что и ходы в чате. Что
   * сказал бот — всплывает над нижней панелью. */
 export function ItemsTab(props: { data: InventoryView; onChange: (v: InventoryView) => void }) {
   const [group, setGroup] = useState<Group>('self')
@@ -213,6 +295,7 @@ export function ItemsTab(props: { data: InventoryView; onChange: (v: InventoryVi
               {open.from === BAG ? 'В сумке' : 'Здесь'}: {open.item.count} шт.
             </p>
           )}
+          {open.from === BAG && <BagActs data={props.data} item={open.item} acts={acts} onDone={() => setOpen(null)} />}
           <MovePanel data={props.data} from={open.from} item={open.item} acts={acts} onDone={() => setOpen(null)} />
         </Sheet>
       )}

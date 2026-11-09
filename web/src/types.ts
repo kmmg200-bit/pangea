@@ -63,7 +63,33 @@ export interface SlotView {
   * была полна, — `uses` у неё ноль. */
 export interface BeltView {
   capacity: number
-  cells: { name: string; uses: number; max: number }[]
+  /** `swap` — подпись, когда вместо ячейки кладут другое. */
+  cells: { name: string; uses: number; max: number; swap: string }[]
+}
+
+/** Вариант, на что потратить отвар: `id` уходит боту. */
+export interface BrewOptionView {
+  id: string
+  label: string
+}
+
+/** Что можно сделать с отваром. `refusal` — почему сейчас нельзя; есть `options` —
+  * `question` спрашивает, на что тратить; нет — переспрашивает, тратить ли. */
+export interface BrewAskView {
+  action: string
+  label: string
+  question: string
+  hint: string | null
+  options: BrewOptionView[]
+  refusal: string | null
+}
+
+/** Чем можно воспользоваться из сумки. `beltFull` — на поясе нет места, и вот вопрос, что снять. */
+export interface BagActView {
+  item: number
+  brew: BrewAskView[]
+  belt: boolean
+  beltFull: string | null
 }
 
 export interface HeroView {
@@ -91,6 +117,8 @@ export interface InventoryView {
   moves: MoveView[]
   /** Камни, которые можно вставить в гнездо: из сумки и Ларца. */
   gemStock: GemStockView[]
+  /** Отвары и что кладётся на пояс; пусто в бою. */
+  bagActs: BagActView[]
 }
 
 /** Камень в гнезде надетой вещи. */

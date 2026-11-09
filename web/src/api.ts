@@ -74,6 +74,11 @@ export const api = {
   equipInsertGem: (slot: number, from: string, item: number) =>
     post<InventoryActionView>(`equipment/insert-gem?slot=${slot}&from=${from}&item=${item}`),
   equipChisel: (slot: number) => post<InventoryActionView>(`equipment/chisel?slot=${slot}`),
+  beltPut: (item: number, cell: number | null) =>
+    post<InventoryActionView>(`belt/put?item=${item}` + (cell === null ? '' : `&slot=${cell}`)),
+  beltTake: (cell: number) => post<InventoryActionView>(`belt/take?slot=${cell}`),
+  brewUse: (action: string, item: number, arg: string | null) =>
+    post<InventoryActionView>(`brew/${action}?item=${item}` + (arg === null ? '' : `&arg=${encodeURIComponent(arg)}`)),
   rackWear: (n: number) => post<InventoryActionView>(`racks/wear?n=${n}`),
   storeMove: (from: string, to: string, item: number, all: boolean) =>
     post<InventoryActionView>(`storages/move?from=${from}&to=${to}&item=${item}&all=${all}`),

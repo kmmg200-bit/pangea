@@ -11,10 +11,10 @@ import type {
   SocketedView,
   StatChange,
 } from './types'
-import { ItemRow, ItemText, ItemTile, num, Sheet, Tile } from './ui'
+import { BeltSwap, ItemRow, ItemText, ItemTile, num, Sheet, Tile } from './ui'
 
 /** Что в поясе — по ячейкам, со счётом и полоской; свободные — одной строкой. */
-function BeltCard(props: { belt: BeltView }) {
+function BeltCard(props: { belt: BeltView; onTake: ((cell: number) => void) | null; busy: boolean }) {
   const { capacity, cells } = props.belt
   const free = capacity - cells.length
   return (
@@ -25,14 +25,21 @@ function BeltCard(props: { belt: BeltView }) {
       {cells.map((c, i) => {
         const pct = c.max > 0 ? Math.min(100, (c.uses / c.max) * 100) : 0
         return (
-          <div key={i} className="meter">
-            <div className="meter-top">
-              <span className={c.uses === 0 ? 'belt-spent' : undefined}>{c.name}</span>
-              <span className="meter-num">{c.uses === 0 ? 'пусто' : `${num(c.uses)} / ${num(c.max)}`}</span>
+          <div key={i} className="belt-cell">
+            <div className="meter">
+              <div className="meter-top">
+                <span className={c.uses === 0 ? 'belt-spent' : undefined}>{c.name}</span>
+                <span className="meter-num">{c.uses === 0 ? 'пусто' : `${num(c.uses)} / ${num(c.max)}`}</span>
+              </div>
+              <div className="meter-track">
+                <span className="meter-fill tone-energy" style={{ width: `${pct}%` }} />
+              </div>
             </div>
-            <div className="meter-track">
-              <span className="meter-fill tone-energy" style={{ width: `${pct}%` }} />
-            </div>
+            {props.onTake && (
+              <button className="equip-off" disabled={props.busy} onClick={() => props.onTake?.(i)}>
+                Вынуть
+              </button>
+            )}
           </div>
         )
       })}
@@ -98,13 +105,15 @@ function extras(item: ItemView): string[] {
 
 /** Надеть и снять, камни и резец; `busy` — ждём ответа бота. Нет его вовсе
   * (`null`) — герой в бою. `pickGem` открывает список камней для гнезда,
-  * а если вставлять нечего — `null`. */
+  * `pickBelt` — что положить на пояс; если класть нечего — `null`. */
 interface Gear {
   wear: (slot: SlotView, item: ItemView) => void
   takeOff: (slot: SlotView) => void
   breakGem: (slot: SlotView, socket: number) => void
   chisel: (slot: SlotView) => void
   pickGem: ((slot: SlotView) => void) | null
+  beltTake: (slot: SlotView, cell: number) => void
+  pickBelt: ((slot: SlotView) => void) | null
   busy: boolean
 }
 
@@ -118,6 +127,7 @@ function SlotActs(props: { slot: SlotView; gear: Gear }) {
   const { slot, gear } = props
   const [ask, setAsk] = useState<Ask | null>(null)
   const pickGem = gear.pickGem
+  const pickBelt = gear.pickBelt
   const done = (act: () => void) => {
     setAsk(null)
     act()
@@ -145,6 +155,11 @@ function SlotActs(props: { slot: SlotView; gear: Gear }) {
         {slot.chisel && (
           <button className="equip-off" disabled={gear.busy} onClick={() => setAsk({ kind: 'chisel' })}>
             Переписать узор
+          </button>
+        )}
+        {slot.belt && pickBelt && (
+          <button className="equip-off" disabled={gear.busy} onClick={() => pickBelt(slot)}>
+            На пояс из сумки
           </button>
         )}
       </div>
@@ -293,7 +308,11 @@ function SlotRow(props: {
         <div className="erow-body">
           {props.note && <p className="gear-note">{props.note}</p>}
           {/* У пояса описание — его ячейки; у прочих — что вещь даёт, как в боте. */}
-          {slot.belt ? <BeltCard belt={slot.belt} /> : item && <div className="item-text equip-desc">{item.text}</div>}
+          {slot.belt ? (
+            <BeltCard belt={slot.belt} onTake={gear && ((cell) => gear.beltTake(slot, cell))} busy={!!gear?.busy} />
+          ) : (
+            item && <div className="item-text equip-desc">{item.text}</div>
+          )}
           {item && gear && <SlotActs slot={slot} gear={gear} />}
           {slot.candidates.map((c) => (
             <Candidate
@@ -312,13 +331,16 @@ function SlotRow(props: {
 
 /** «Снаряжение»: все слоты подряд, как в боте. Зелёная точка — в сумке есть
   * вещь на этот слот. Надевают, снимают, ломают и вставляют камни, переписывают
-  * узор здесь же — где угодно, только не в бою; бот проверит это сам, под тем
+  * узор и меняют содержимое пояса здесь же — где угодно, только не в бою; бот проверит это сам, под тем
   * же замком, что и ходы в чате. */
 export function EquipmentTab(props: { data: InventoryView; onChange: (v: InventoryView) => void }) {
   const [openSlot, setOpenSlot] = useState<string | null>(null)
   const [sheet, setSheet] = useState<ItemView | null>(null)
   // В какой слот выбираем камень.
   const [gemFor, setGemFor] = useState<SlotView | null>(null)
+  // Пояс: что на него положить и, когда он полон, что снять ради этого.
+  const [beltFor, setBeltFor] = useState<SlotView | null>(null)
+  const [beltSwap, setBeltSwap] = useState<{ slot: SlotView; item: ItemView; ask: string } | null>(null)
   const [busy, setBusy] = useState(false)
   // Что сказал бот — под тем слотом, с которым что-то делали.
   const [note, setNote] = useState<{ slot: number; text: string } | null>(null)
@@ -335,6 +357,11 @@ export function EquipmentTab(props: { data: InventoryView; onChange: (v: Invento
       .finally(() => setBusy(false))
   }
 
+  const offers = props.data.bagActs.flatMap((act) => {
+    const item = act.belt ? props.data.items.find((i) => i.id === act.item) : undefined
+    return item ? [{ item, ask: act.beltFull }] : []
+  })
+
   const gear: Gear | null = props.data.gearLocked
     ? null
     : {
@@ -343,6 +370,8 @@ export function EquipmentTab(props: { data: InventoryView; onChange: (v: Invento
         breakGem: (slot, socket) => run(slot, () => api.equipBreakGem(slot.index, socket)),
         chisel: (slot) => run(slot, () => api.equipChisel(slot.index)),
         pickGem: props.data.gemStock.length > 0 ? setGemFor : null,
+        beltTake: (slot, cell) => run(slot, () => api.beltTake(cell)),
+        pickBelt: offers.length > 0 ? setBeltFor : null,
         busy,
       }
 
@@ -369,6 +398,39 @@ export function EquipmentTab(props: { data: InventoryView; onChange: (v: Invento
       {sheet && (
         <Sheet onClose={() => setSheet(null)}>
           <ItemText item={sheet} />
+        </Sheet>
+      )}
+      {beltFor && (
+        <Sheet onClose={() => setBeltFor(null)}>
+          <div className="sub-title">Что положить на пояс?</div>
+          <div className="list gem-list">
+            {offers.map(({ item, ask }) => (
+              <ItemRow
+                key={item.id}
+                item={item}
+                onOpen={() => {
+                  const slot = beltFor
+                  setBeltFor(null)
+                  if (ask) setBeltSwap({ slot, item, ask })
+                  else run(slot, () => api.beltPut(item.id, null))
+                }}
+              />
+            ))}
+          </div>
+        </Sheet>
+      )}
+      {beltSwap?.slot.belt && (
+        <Sheet onClose={() => setBeltSwap(null)}>
+          <BeltSwap
+            ask={beltSwap.ask}
+            belt={beltSwap.slot.belt}
+            busy={busy}
+            onPick={(cell) => {
+              const { slot, item } = beltSwap
+              setBeltSwap(null)
+              run(slot, () => api.beltPut(item.id, cell))
+            }}
+          />
         </Sheet>
       )}
       {gemFor && (
