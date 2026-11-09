@@ -32,6 +32,9 @@ function sortLots(lots: LotView[], sort: string): LotView[] {
   }
 }
 
+/** Что можно вписать в поле уровня: только цифры, не больше четырёх. */
+const digits = (v: string) => v.replace(/\D/g, '').slice(0, 4)
+
 function left(lot: LotView): string {
   if (lot.unsold) return ' · не продан'
   if (lot.hoursLeft >= 48) return ` · ещё ${Math.floor(lot.hoursLeft / 24)} дн`
@@ -131,7 +134,8 @@ export function AuctionTab(props: { data: AuctionView; onChange: (v: AuctionView
   // Вид снаряжения: Helmet, Ring… — тип вещи бота.
   const [kind, setKind] = useState('any')
   const [currency, setCurrency] = useState<Currency | 'any'>('any')
-  // Вещи не выше этого уровня; пусто — любые.
+  // Границы уровня вещи, включительно; пусто — без границы.
+  const [minLvl, setMinLvl] = useState('')
   const [maxLvl, setMaxLvl] = useState('')
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('new')
@@ -147,11 +151,12 @@ export function AuctionTab(props: { data: AuctionView; onChange: (v: AuctionView
             matches(l.item, group, query) &&
             (kind === 'any' || l.item.kind === kind) &&
             (currency === 'any' || l.currency === currency) &&
+            (minLvl === '' || l.item.lvl >= Number(minLvl)) &&
             (maxLvl === '' || l.item.lvl <= Number(maxLvl)),
         ),
         sort,
       ),
-    [lots, group, kind, query, currency, maxLvl, sort],
+    [lots, group, kind, query, currency, minLvl, maxLvl, sort],
   )
 
   // Вид снаряжения и группа не должны спорить: вид — это всегда «Снаряжение».
@@ -193,15 +198,24 @@ export function AuctionTab(props: { data: AuctionView; onChange: (v: AuctionView
                 ))}
               </select>
             )}
-            <label className="level-field">
-              Уровень до
+            <div className="level-field">
+              Ур.
               <input
                 inputMode="numeric"
-                placeholder="любой"
-                value={maxLvl}
-                onChange={(e) => setMaxLvl(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                placeholder="от"
+                aria-label="Уровень от"
+                value={minLvl}
+                onChange={(e) => setMinLvl(digits(e.target.value))}
               />
-            </label>
+              –
+              <input
+                inputMode="numeric"
+                placeholder="до"
+                aria-label="Уровень до"
+                value={maxLvl}
+                onChange={(e) => setMaxLvl(digits(e.target.value))}
+              />
+            </div>
           </div>
           <Chips
             options={[
