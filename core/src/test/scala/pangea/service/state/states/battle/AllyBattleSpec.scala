@@ -652,7 +652,13 @@ object AllyBattleSpec extends ZIOSpecDefault {
       val b = SoloPveBattle.from(monster(1000L), h, squad = false)
       val g = SoloPveBattle.fromGroup(List(monster(1000L), monster(1000L)), h, Nil, squad = false)
       assertTrue(b.group.allies.isEmpty && b.group.heroPos == 1 && b.group.paired) &&
-      assertTrue(g.group.allies.isEmpty && g.group.heroPos == 1 && g.group.paired && g.group.places == List(2))
+      assertTrue(g.group.allies.isEmpty && g.group.heroPos == 1 && g.group.paired && g.group.places == List(2)) &&
+      // бой помнит, что отряд в него не брали, — пав в нём, герой резерв не теряет
+      assertTrue(!b.squadTaken && !g.squadTaken) &&
+      assertTrue(SoloPveBattle.from(monster(1000L), h).squadTaken &&
+                 SoloPveBattle.fromGroup(List(monster(1000L), monster(1000L)), h, Nil).squadTaken) &&
+      // и помнит это через запись в базе
+      assertTrue(SoloPveBattle.from(monster(1000L), h).asJson.as[SoloPveBattle].exists(_.squadTaken))
     },
 
     test("позиции после боя сохраняются в отряде вместе с позицией героя, найм не сбрасывается") {

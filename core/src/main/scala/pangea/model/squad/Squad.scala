@@ -107,8 +107,9 @@ object Ally {
  *  любое место. В бой строй выходит, съехав к первому месту (см. [[frontShift]]):
  *  союзник на месте N стоит против врага на месте N и достаёт соседние места.
  *  Ушёл союзник — его место просто пустеет. `away` — кто ушёл по свитку и
- *  когда вернётся в таверну (ключ — вид); `offDuty` — кто отработал свой найм и
- *  когда снова сядет за стол. Хранится в `heroes.squad_data`. */
+ *  когда вернётся в таверну (ключ — вид); `offDuty` — кто отработал свой найм
+ *  или ушёл из резерва, когда герой пал (см. [[reserveLeaves]]), и когда снова
+ *  сядет за стол. Хранится в `heroes.squad_data`. */
 final case class Squad(
   heroPos: Int              = 1,
   allies:  List[Ally]       = Nil,
@@ -208,6 +209,19 @@ final case class Squad(
             offDuty = offDuty ++ hired.map(k => k.entryName -> (nowMs + AllyRates.OffDutyMs))), gone)
     }
   }
+
+  /** Герой пал в бою, куда брали отряд, — резерв уходит от него весь, разом.
+    * Наёмник сядет за стол таверны снова только через сутки
+    * ([[AllyRates.AwayMs]], как унесённый свитком), но реплики о свитке ему не
+    * положено: свитка не было, поэтому он в `offDuty`, а не в `away`. Поднятый
+    * рассыпается — ждать его неоткуда. Строй не трогаем. Возвращает отряд и
+    * ушедших. */
+  def reserveLeaves(nowMs: Long): (Squad, List[Ally]) =
+    if (reserve.isEmpty) (this, Nil)
+    else {
+      val hired = reserve.filter(_.undead.isEmpty).map(_.kind)
+      (copy(reserve = Nil, offDuty = offDuty ++ hired.map(k => k.entryName -> (nowMs + AllyRates.AwayMs))), reserve)
+    }
 
   /** Поднятые до того, как у них завёлся срок, получают его с этой минуты:
     * иначе они рассыпались бы все разом при первом же заходе героя. */

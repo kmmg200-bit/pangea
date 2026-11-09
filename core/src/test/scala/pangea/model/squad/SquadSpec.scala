@@ -302,6 +302,22 @@ object SquadSpec extends ZIOSpecDefault {
       assertTrue(leaving.map(_.kind) == List(AllyKind.Murloc) && after.reserve.map(_.name) == List("Поднятый орк")) &&
       assertTrue(after.offDuty.contains(AllyKind.Murloc.entryName)) &&
       assertTrue(newWolf.darkWolves.map(w => w.position -> w.lvlAt(lvl)) == List(2 -> 9L) && newWolf.reserve.isEmpty)
+    },
+
+    test("герой пал — резерв уходит весь: наёмник сядет за стол через сутки, без реплики о свитке, поднятый — насовсем; строй цел") {
+      val orc  = UndeadForm("Поднятый орк", 3L, AllyKind.Human.stats(3L))
+      // Йорген на 2 остаётся в строю, Плюх (3) и орк (4) — в резерве
+      val line = Squad.empty.hire(AllyKind.Human, lvl, now)
+      val s    = line.hire(AllyKind.Murloc, lvl, now).raise(orc, lvl, now).toReserve(3).toReserve(4)
+      val (left, gone) = s.reserveLeaves(now)
+      val back = now + AllyRates.AwayMs
+      assertTrue(s.reserve.size == 2 && gone == s.reserve && gone.map(_.name) == List("Плюх", "Поднятый орк")) &&
+      assertTrue(left.reserve.isEmpty && left.allies == s.allies && left.heroPos == s.heroPos) &&
+      assertTrue(!left.has(AllyKind.Murloc) && left.isAway(AllyKind.Murloc, back - 1L) && !left.isAway(AllyKind.Murloc, back)) &&
+      // поднятый за стол не садится, а свитка не было — встречать некого
+      assertTrue(left.offDuty.keySet == Set(AllyKind.Murloc.entryName) && left.away.isEmpty && left.returned(back).isEmpty) &&
+      // пуст резерв — отряд как был
+      assertTrue(line.reserveLeaves(now) == (line, Nil))
     }
   )
 }

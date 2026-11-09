@@ -150,7 +150,14 @@ case class SoloPveBattle(
   comboUsed: Boolean = false,
   // Сколько брони минибосс уже потерял в этом раунде — пара к `bossTaken`, по
   // ней считается предел брони (см. BossRoundCap).
-  bossArmorTaken: Long = 0L
+  bossArmorTaken: Long = 0L,
+  // Отряд героя взяли в этот бой — пусть даже строй был пуст (см. `from`).
+  // Пав в таком бою, герой теряет и резерв (см. DeathState). В бой один на
+  // один — девица, охота Марисы, хозяин бродячего ларца — отряд не брали: он
+  // оставался дома, и резерв цел. Арена тоже его не берёт — на песке копии.
+  // В записях до этого поля его нет: такой бой читается как бой без отряда —
+  // начат по старым правилам, и резерв из него не уходит.
+  squadTaken: Boolean = false
 ) {
 
   /** Множитель Стены трофеев к урону героя по тому, кто сейчас в полях. */
@@ -933,6 +940,7 @@ object SoloPveBattle {
     // Зеркальный настой выпит до боя — копии входят в бой вместе с героем.
     effects             = BattleEffects(heroMirrors = hero.weaponDust.mirrors),
     monsterCurrentEnergy = monster.fightStats.energy,
+    squadTaken          = squad,
     // Отряд съезжает к месту 1, промежутки между бойцами остаются (герой один —
     // на месте 1, см. Squad.frontShift); в отряде каждый записан под своим
     // местом (`home`) — по нему его там и найдут после боя. Моб обычной встречи
@@ -1041,6 +1049,8 @@ object SoloPveBattle {
       monsterDodgeBonus   <- c.getOrElse[Long]("monsterDodgeBonus")(0L)
       comboUsed           <- c.getOrElse[Boolean]("comboUsed")(false)
       bossArmorTaken      <- c.getOrElse[Long]("bossArmorTaken")(0L)
+      // Бой, начатый до этого поля, — без отряда: резерв из него не уходит.
+      squadTaken          <- c.getOrElse[Boolean]("squadTaken")(false)
     } yield SoloPveBattle(monsterLvl, monsterRace, monsterRarity, monsterStats,
                          monsterCurrentHp, monsterCurrentArmor, heroBattleState, consumableUsed, monsterMarked,
                          monsterUndead,
@@ -1049,7 +1059,7 @@ object SoloPveBattle {
                          noFlee, lootLevel, holyWater, heroBlockPct, monsterBlockPct,
                          heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall,
                          monsterLastAllyHit, heroStruck, roundsFought, secondWindUsed, preyName, preyGone,
-                         monsterDodgeBonus, comboUsed, bossArmorTaken)
+                         monsterDodgeBonus, comboUsed, bossArmorTaken, squadTaken)
 
   /** Номер самого соперника среди «мобов» зеркала арены; его союзники — от
     * единицы (см. `ArenaSide.allies`). */

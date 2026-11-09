@@ -6,7 +6,7 @@ import pangea.dao.hero.HeroDao
 import pangea.dao.quest.QuestOutcomeDao
 import pangea.engine.{Renderer, SceneContent, Screen}
 import pangea.model.battle.SoloPveBattle
-import pangea.model.hero.AzatState
+import pangea.model.hero.{AzatState, Hero}
 import pangea.model.item.ItemStack
 import pangea.model.quest.QuestOutcome
 import pangea.model.state.StateType
@@ -17,8 +17,8 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
-import pangea.service.state.{AzatData, BarrelThievesQuest, HedgeSongQuest, LostSquadQuest, MarisaQuest, MurlocQuest, QuestOutcomeLog, State,
-  StrayCasketQuest, UserAction}
+import pangea.service.state.{AzatData, BarrelThievesQuest, BeltContents, HedgeSongQuest, LostSquadQuest, MarisaQuest, MurlocQuest,
+  QuestOutcomeLog, State, StrayCasketQuest, UserAction}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
 
@@ -103,6 +103,9 @@ case class DeathState(
       _            <- ZIO.unless(fellEarlier)(applyTrauma(user, existingNames, pool, traumaUntil, renderer))
 
       _            <- dropItems(user, hero.id, monsterName, renderer)
+      // Пал в бою, куда брали отряд, — резерв уходит. В бой один на один отряд
+      // не брали: он оставался дома, и резерв цел.
+      _            <- ZIO.when(battle.exists(_.squadTaken))(reserveLeaves(user, hero, now, renderer))
       // Время в мёртвом режиме растёт с уровнем героя и асимптотически
       // стремится к 90 минутам, не достигая их:
       //   deathTimeMinutes = 90 - 89 * exp(-k * (level - 1))
@@ -168,6 +171,17 @@ case class DeathState(
     Random.nextIntBetween(0, 100).flatMap { roll =>
       if (roll >= lossPct) ZIO.none else remove.ignore.as(Some(item))
     }
+
+  /** Резерв уходит от павшего героя весь (см. [[pangea.model.squad.Squad.reserveLeaves]]):
+    * наёмники — на сутки, поднятые — насовсем. Одна строка на всех: одинаковые
+    * имена схлопнуты в «имя ×N». Пуст резерв — ни записи, ни строки. */
+  private def reserveLeaves(user: User, hero: Hero, nowMs: Long, renderer: Renderer): Task[Unit] = {
+    val (squad, gone) = hero.squad.reserveLeaves(nowMs)
+    ZIO.when(gone.nonEmpty)(
+      heroDao.updateSquad(user.userId, squad) *>
+        renderer.show(user, Screen(content.format("death.reserveLeft",
+          "names" -> BeltContents.counted(gone.map(_.name))), Nil))).unit
+  }
 
   private def applyTrauma(
     user:          User,

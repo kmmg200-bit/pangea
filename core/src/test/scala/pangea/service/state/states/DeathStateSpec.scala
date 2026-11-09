@@ -1,9 +1,12 @@
 package pangea.service.state.states
 
+import io.circe.Json
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.model.hero.AzatState
+import pangea.model.battle.SoloPveBattle
+import pangea.model.hero.{AzatState, Hero}
 import pangea.model.item.{Item, ItemType, Rarity}
+import pangea.model.squad.{AllyKind, AllyRates, Squad, UndeadForm}
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestRenderer}
@@ -36,6 +39,20 @@ object DeathStateSpec extends ZIOSpecDefault {
 
   // exp=80 (внутри уровня 1), теряет 10% = 8, newExp=72
   private val richHero = TestFixtures.hero(userId).copy(exp = 80L, silver = 500L)
+
+  private val mob = pangea.model.monster.Monster(0L, 1L, pangea.model.monster.Race.Orc,
+                      pangea.model.monster.Rarity.Common, pangea.model.stats.FightStats(1, 10, 0, 0, 0, 1, 0))
+
+  /** Смерть героя `h` в бою `battle`: отряд после неё и была ли строка о резерве. */
+  private def afterDeath(h: Hero, battle: Json) =
+    for {
+      t <- makeState(h)
+      (state, heroDao, _, renderer) = t
+      _       <- heroDao.writeActiveBattle(userId, battle)
+      _       <- state.enter(testUser, renderer)
+      squad   <- heroDao.getHeroByUserId(userId).map(_.map(_.squad))
+      screens <- renderer.sentScreens.map(_.map(_.text))
+    } yield (squad, screens.filter(_.contains("Резерв")))
 
   override def spec = suite("DeathState")(
 
@@ -245,6 +262,40 @@ object DeathStateSpec extends ZIOSpecDefault {
         _                             <- state.enter(testUser, renderer)
       } yield assertTrue(state.autoAdvance.contains(StateType.Rest)) &&
               assertTrue(invRepo.snapshot.length == 0 || invRepo.snapshot.length == 1)
+    },
+
+    test("пал в бою с отрядом — резерв уходит весь: наёмник на сутки, поднятые насовсем; строй цел") {
+      val orc   = UndeadForm("Поднятый орк", 3L, AllyKind.Human.stats(3L))
+      // Йорген на 2 остаётся в строю; Плюх и двое поднятых — в резерве
+      val squad = Squad.empty.hire(AllyKind.Human, 1L, 0L).hire(AllyKind.Murloc, 1L, 0L)
+                    .raise(orc, 1L, 0L).raise(orc, 1L, 0L).toReserve(3).toReserve(4).toReserve(5)
+      val hero  = richHero.copy(squad = squad)
+      for {
+        res <- afterDeath(hero, SoloPveBattle.from(mob, hero).asJson)
+        (after, lines) = res
+      } yield assertTrue(squad.reserve.size == 3) &&
+              assertTrue(after.exists(s => s.reserve.isEmpty && s.allies == squad.allies)) &&
+              // TestClock стоит на нуле: Плюх сядет за стол ровно через сутки
+              assertTrue(after.exists(s => s.isAway(AllyKind.Murloc, AllyRates.AwayMs - 1L) &&
+                                           !s.isAway(AllyKind.Murloc, AllyRates.AwayMs))) &&
+              assertTrue(lines == List("👣 Резерв не стал ждать, пока вы очнётесь, и разошёлся: Плюх, Поднятый орк ×2."))
+    },
+
+    test("пал один на один — отряд оставался дома, резерв цел; цел он и в бою, начатом до выкладки; пуст — строки нет") {
+      val squad     = Squad.empty.hire(AllyKind.Human, 1L, 0L).hire(AllyKind.Murloc, 1L, 0L).toReserve(3)
+      val hero      = richHero.copy(squad = squad)
+      val noReserve = richHero.copy(squad = Squad.empty.hire(AllyKind.Human, 1L, 0L))
+      // запись боя до пометки: поля squadTaken в ней нет
+      val old       = SoloPveBattle.from(mob, hero).asJson.mapObject(_.remove("squadTaken"))
+      for {
+        alone  <- afterDeath(hero, SoloPveBattle.from(mob, hero, squad = false).asJson)
+        before <- afterDeath(hero, old)
+        empty  <- afterDeath(noReserve, SoloPveBattle.from(mob, noReserve).asJson)
+      } yield assertTrue(squad.reserve.map(_.kind) == List(AllyKind.Murloc)) &&
+              assertTrue(old.hcursor.downField("squadTaken").focus.isEmpty) &&
+              assertTrue(alone == (Some(squad), Nil)) &&
+              assertTrue(before == (Some(squad), Nil)) &&
+              assertTrue(empty == (Some(noReserve.squad), Nil))
     }
   )
 }
