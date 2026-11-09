@@ -16,7 +16,7 @@ import pangea.model.item.QuestItemKind
 import pangea.model.quest.{BoardKind, NpcQuest}
 import pangea.model.item.{BeltSlot, BrewEffect, BrewKind, BrewRates, FlaskEffect, FlaskRates, GripRates, Item, ItemDetails, ItemType, PassiveKind, PotionKind, RefillSource, DivineKind, DivineRates}
 import pangea.model.home.HomeData
-import pangea.model.monster.{MiniBoss, NamedTrophy, Race, Rarity}
+import pangea.model.monster.{BossPercentDamage, MiniBoss, NamedTrophy, Race, Rarity}
 import pangea.model.stats.FightStats
 import pangea.model.stats.{ParamsBuff, StatBoost}
 import pangea.model.trauma.{Trauma, TraumaRoll}
@@ -1344,8 +1344,8 @@ case class BattleState(
             guarded = BattleState.shieldCut(battle.foeBlockPct,
                         (resisted * (1.0 - monsterDefenceCut(hero, battle, buffedEff, nowMs))).toLong.max(1L))
             (armorRaw, hpRaw) = splitElementalDamage(battle.monsterCurrentArmor, guarded, hero)
-            // Предел минибосса за раунд: больше четверти HP и четверти брони он
-            // не теряет, сколько бы герой ни вложил в удар (см. BossRoundCap).
+            // Предел минибосса за раунд: больше 40% HP и 40% брони он не
+            // теряет, сколько бы герой ни вложил в удар (см. BossRoundCap).
             hurt     = battle.hurtActive(armorRaw, hpRaw)
             armorDmg = hurt.armor
             hpDmg    = hurt.hp
@@ -2717,9 +2717,11 @@ case class BattleState(
         b = b.copy(monsterCurrentHp = b.monsterCurrentHp + heal)
         log = log :+ content.format("battle.comboFireAirAbsorbed", "monster" -> b.monsterName, "heal" -> heal.toString)
       } else {
-        // Взрыв снимает 30% HP и больше — минибосс теряет от него не больше
-        // остатка своего предела за раунд (см. BossRoundCap).
-        val hurt = b.hurtActive(0L, dmg)
+        // Взрыв снимает 30% HP и больше — это урон от процентов, и минибосс
+        // получает вдвое меньше (BossPercentDamage), а теряет от него не
+        // больше остатка своего предела за раунд (BossRoundCap). Огненный
+        // выше лечится от полного взрыва: лечение — не урон.
+        val hurt = b.hurtActive(0L, b.pctDamage(dmg))
         b = hurt.battle
         log = log :+ (
           if (hurt.absorbed) content.format("battle.comboFireAirHeld", "monster" -> b.monsterName)
@@ -3295,7 +3297,8 @@ case class BattleState(
     * кровотечение НЕ затухает, горение усиливается ([[Burn.grown]]). Возвращает
     * обновлённый бой и склеенную строку эффектов (пустую, если DoT нет).
     *
-    * Минибосса раны ранят не больше остатка его предела за раунд (см.
+    * Минибосса раны ранят вдвое слабее — это урон от процентов (см.
+    * `BossPercentDamage`) — и не больше остатка его предела за раунд (см.
     * `BossRoundCap`): целиком поглощённый тик молчит, а дошедший до предела
     * договаривает об этом строкой. */
   private def tickMonsterEffects(
@@ -3310,9 +3313,10 @@ case class BattleState(
     var held  = Vector.empty[String]
     var bled  = 0L // урон кровотечения за этот тик — «Упырь» (порог 10) лечит им героя
 
-    // Рана снимает HP; возвращает, сколько сняла на деле.
+    // Рана снимает HP — долю максимума, поэтому с минибосса вдвое меньше;
+    // возвращает, сколько сняла на деле.
     def tick(icon: String, label: String, dmg: Long): Long = {
-      val hurt = cur.hurtActive(0L, dmg)
+      val hurt = cur.hurtActive(0L, battle.pctDamage(dmg))
       cur = hurt.battle
       if (!hurt.absorbed) lines = lines :+ dotTick(icon, label, hurt.hp, monsterName)
       held = held ++ capLine(hurt)
@@ -4995,7 +4999,7 @@ case class BattleState(
     val sweptAllies = fellAllies.foldLeft(withAllies)((b, a) => b.copy(group = b.group.withoutAlly(a.position)))
 
     // ── Чужая сторона ─────────────────────────────────────────────────────────
-    val battle2 = auraOnMonsters(sweptAllies, aura, power)
+    val battle2 = auraOnMonsters(sweptAllies, aura, spent)
     val lines = head ++
       Option.when(heroDelta > 0L)(
         content.format(s"battle.aura.${aura.key}.feeds", "hp" -> heroDelta.toString)).toVector ++
@@ -5006,16 +5010,20 @@ case class BattleState(
   }
 
   /** Аура по чужой стороне: каждому по его природе, павшие уходят в добычу.
-    * Строк не даёт — о себе аура сказала одной на всё поле. Минибосса она жжёт
-    * не больше остатка его предела за раунд (см. `BossRoundCap`) — где бы он ни
-    * стоял. */
-  private def auraOnMonsters(battle: SoloPveBattle, aura: Aura, power: Long => Long): SoloPveBattle = {
-    def healed(cur: Long, maxHp: Long): Long = (cur + power(maxHp)).min(maxHp).max(cur)
+    * Строк не даёт — о себе аура сказала одной на всё поле. Минибосса её доля
+    * от максимума HP жжёт вдвое слабее (см. `BossPercentDamage`; вложенное
+    * героем — как есть), и не больше остатка его предела за раунд (см.
+    * `BossRoundCap`) — где бы он ни стоял. `spent` — сколько энергии в неё
+    * вложено. */
+  private def auraOnMonsters(battle: SoloPveBattle, aura: Aura, spent: Long): SoloPveBattle = {
+    def healed(cur: Long, maxHp: Long): Long = (cur + aura.power(maxHp, spent)).min(maxHp).max(cur)
+    def harm(maxHp: Long, boss: Boolean): Long =
+      (if (boss) BossPercentDamage(aura.pctPart(maxHp)) else aura.pctPart(maxHp)) + spent
     // Активный: его HP живут в полях боя.
     val afterActive = {
       val sign = if (battle.monsterCurrentHp <= 0L) 0 else aura.sign(Nature.of(battle.monsterRace, battle.monsterUndead))
       if (sign > 0) battle.copy(monsterCurrentHp = healed(battle.monsterCurrentHp, battle.monsterStats.hp))
-      else if (sign < 0) battle.hurtActive(0L, power(battle.monsterStats.hp)).battle
+      else if (sign < 0) battle.hurtActive(0L, harm(battle.monsterStats.hp, battle.boss.isDefined)).battle
       else battle
     }
     // Слоты строя: павших убираем с конца, чтобы индексы не плыли.
@@ -5026,7 +5034,7 @@ case class BattleState(
         val next =
           if (sign > 0) b.copy(group = b.group.copy(others = b.group.others.updated(idx,
                           slot.copy(currentHp = healed(slot.currentHp, slot.stats.hp)))))
-          else if (sign < 0) b.hurtSlot(idx, 0L, power(slot.stats.hp))._1
+          else if (sign < 0) b.hurtSlot(idx, 0L, harm(slot.stats.hp, slot.boss.flatMap(MiniBoss.byName).isDefined))._1
           else b
         (next, if (slot.alive && !next.group.others(idx).alive) idx :: gone else gone)
     }
@@ -6323,12 +6331,13 @@ case class BattleState(
     // «Самовосстанавливающийся» (4% макс.брони). Показываем суммарной припиской.
     val maxArmor = hero.effectiveMaxArmor(nowMs)
     // Сводка DoT у HP моба: яд 🟢 / кровотечение 🔴 / горение 🔥 (урон/ход).
+    // С минибосса раны снимают вдвое меньше (BossPercentDamage) — так и пишем.
     val monsterMaxHp = battle.monsterStats.hp
     val monsterPoison = {
       val parts = List(
-        battle.effects.monsterPoison.map(p => s"🟢-${monsterDotDamage(battle, p.damageOn(monsterMaxHp))}"),
-        battle.effects.monsterBleed.map(b => s"🔴-${monsterDotDamage(battle, b.damageOn(monsterMaxHp))}"),
-        battle.effects.monsterBurn.map(bn => s"🔥-${bn.damageOn(monsterMaxHp)}")
+        battle.effects.monsterPoison.map(p => s"🟢-${battle.pctDamage(monsterDotDamage(battle, p.damageOn(monsterMaxHp)))}"),
+        battle.effects.monsterBleed.map(b => s"🔴-${battle.pctDamage(monsterDotDamage(battle, b.damageOn(monsterMaxHp)))}"),
+        battle.effects.monsterBurn.map(bn => s"🔥-${battle.pctDamage(bn.damageOn(monsterMaxHp))}")
       ).flatten
       if (parts.isEmpty) "" else " (" + parts.mkString(" ") + ")"
     }

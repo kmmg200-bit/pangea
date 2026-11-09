@@ -266,7 +266,7 @@ object BossCycleSpec extends ZIOSpecDefault {
               assertTrue(after.exists(a => a.bossRevives == 1 && a.monsterCurrentHp > 0L))
     },
 
-    test("предел минибосса держит и удары союзников: больше четверти HP за раунд он не теряет") {
+    test("предел минибосса держит и удары союзников: больше 40% HP за раунд он не теряет") {
       val h    = hero(behindAlly)
       val base = tough(bossOne(MiniBoss.RatKing, h, turn = 1))
       // союзник бьёт так, что без предела короля бы не стало

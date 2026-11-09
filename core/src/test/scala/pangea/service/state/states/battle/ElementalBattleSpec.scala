@@ -211,7 +211,7 @@ object ElementalBattleSpec extends ZIOSpecDefault {
           attack = 0, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0,
           sockets = gem.map(k => Some(pangea.model.item.Gem(k, 1))).toList)
       def damageWith(w: pangea.model.item.Item) = {
-        // Удар слабее предела минибосса за раунд (четверть HP — 750, см.
+        // Удар слабее предела минибосса за раунд (40% HP — 1200, см.
         // BossRoundCap): иначе и сталь, и холод упёрлись бы в него поровну.
         val h = hero().copy(
           fightStats = hero().fightStats.copy(atk = 400),

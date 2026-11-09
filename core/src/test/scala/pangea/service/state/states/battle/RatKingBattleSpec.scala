@@ -33,6 +33,9 @@ object RatKingBattleSpec extends ZIOSpecDefault {
 
   private val king    = MiniBoss.RatKing
   private val bossLvl = 3L  // герой 10 уровня → BossLvL = (10−1)/3 = 3
+
+  /** Предел за раунд — один для HP и брони (см. BossRoundCap). */
+  private val CapPct = pangea.model.monster.BossRoundCap.HpPct
   private val questLvl = 7L // уровень канализации, по нему считаются призванные
 
   private def weapon: Item =
@@ -185,7 +188,7 @@ object RatKingBattleSpec extends ZIOSpecDefault {
 
     // ── Предел урона за раунд ────────────────────────────────────────────────
 
-    test("за раунд от него отваливается не больше четверти HP и четверти брони — и об этом крыса") {
+    test("за раунд от него отваливается не больше 40% HP и 40% брони — и об этом крыса") {
       val huge  = hero(atk = 1000000L)
       val s     = king.stats(bossLvl)
       for {
@@ -193,13 +196,13 @@ object RatKingBattleSpec extends ZIOSpecDefault {
         (after, log) = t
       } yield assertTrue(log.contains("Одна из крыс короля пала и перестала быть частью короля")) &&
               // такой удар снёс бы его целиком, а он теряет ровно предел — порознь
-              assertTrue(after.exists(_.monsterCurrentArmor == s.armor - s.armor * 25L / 100L)) &&
-              assertTrue(after.exists(_.monsterCurrentHp == s.hp - s.hp * 25L / 100L)) &&
+              assertTrue(after.exists(_.monsterCurrentArmor == s.armor - s.armor * CapPct / 100L)) &&
+              assertTrue(after.exists(_.monsterCurrentHp == s.hp - s.hp * CapPct / 100L)) &&
               // счёт раунда лежит на бою до следующего хода героя
-              assertTrue(after.exists(b => b.bossTaken == s.hp * 25L / 100L && b.bossArmorTaken == s.armor * 25L / 100L))
+              assertTrue(after.exists(b => b.bossTaken == s.hp * CapPct / 100L && b.bossArmorTaken == s.armor * CapPct / 100L))
     },
 
-    test("новый раунд — новый предел: со вторым ходом героя он теряет ещё четверть") {
+    test("новый раунд — новый предел: со вторым ходом героя он теряет ещё 40%") {
       val huge = hero(atk = 1000000L)
       val s    = king.stats(bossLvl)
       for {
@@ -207,8 +210,8 @@ object RatKingBattleSpec extends ZIOSpecDefault {
         (after, _) = t
       } yield
         // прошлый раунд он отдал сполна, но счёт обнулился с новым ходом героя
-        assertTrue(after.exists(_.monsterCurrentHp == s.hp - s.hp * 25L / 100L)) &&
-        assertTrue(after.exists(_.bossTaken == s.hp * 25L / 100L))
+        assertTrue(after.exists(_.monsterCurrentHp == s.hp - s.hp * CapPct / 100L)) &&
+        assertTrue(after.exists(_.bossTaken == s.hp * CapPct / 100L))
     },
 
     test("предел держит всех минибоссов, а обычных мобов не трогает") {
@@ -225,7 +228,7 @@ object RatKingBattleSpec extends ZIOSpecDefault {
         (plainAfter, _) = p
       } yield
         // волк держится и говорит об этом общей строкой — у него нет крыс
-        assertTrue(wolfAfter.exists(_.monsterCurrentHp == stats.hp - stats.hp * 25L / 100L)) &&
+        assertTrue(wolfAfter.exists(_.monsterCurrentHp == stats.hp - stats.hp * CapPct / 100L)) &&
         assertTrue(wolfLog.contains("Белый Волк держится: больше за этот раунд с него не снять")) &&
         // моба с теми же статами, но без босса, такой удар сносит целиком
         assertTrue(plainAfter.isEmpty || plainAfter.exists(_.monsterCurrentHp == 0L))

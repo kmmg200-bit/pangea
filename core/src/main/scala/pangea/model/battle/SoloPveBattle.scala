@@ -809,6 +809,12 @@ case class SoloPveBattle(
   /** Новый раунд героя: предел минибосса считается заново. */
   def freshRound: SoloPveBattle = copy(bossTaken = 0L, bossArmorTaken = 0L)
 
+  /** Урон от процентов (доля максимума HP: раны, взрыв Огня с Воздухом, ауры)
+    * по тому, кто в полях: минибосс получает вдвое меньше (см.
+    * [[pangea.model.monster.BossPercentDamage]]), прочие — как есть. */
+  def pctDamage(damage: Long): Long =
+    if (boss.isDefined) pangea.model.monster.BossPercentDamage(damage) else damage
+
   /** Обновляет эффекты боя, уважая иммунитеты расы моба: элементалю нельзя
    *  навесить яд или кровотечение — ему нечему течь и нечего травить. Все точки,
    *  накладывающие эффекты на моба, идут через этот метод, а не через `copy`,

@@ -248,7 +248,7 @@ object WhiteWolfBattleSpec extends ZIOSpecDefault {
     },
 
     // ── Яд и кровь по волку ───────────────────────────────────────────────────
-    test("яд и кровотечение снимают с волка на 20% больше") {
+    test("яд и кровотечение снимают с волка на 20% больше — от урона, который по минибоссу вдвое меньше") {
       val h    = hero()
       val base = wolfBattle(h, turn = 3)
       val dotted = base.copy(effects = base.effects.copy(monsterPoison = Some(Poison(10)), monsterBleed = Some(Bleed(10))))
@@ -256,7 +256,9 @@ object WhiteWolfBattleSpec extends ZIOSpecDefault {
         r <- strike(h, dotted, seedTurn())
         (_, after, log, _) = r
         maxHp = wolf.stats(bossLvl).hp
-        expected = maxHp * 10L / 100L * 120L / 100L
+        // 10% максимума, у волка на пятую часть больше, а урон от процентов по
+        // минибоссу — вдвое меньше (см. BossPercentDamage)
+        expected = maxHp * 10L / 100L * 120L / 100L * pangea.model.monster.BossPercentDamage.Pct / 100L
       // Яд и кровь говорят одной строкой на двоих — разными остались имя и значок.
       } yield assertTrue(log.contains(s"Яд снимает $expected HP") &&
                          log.contains(s"Кровотечение снимает $expected HP")) &&

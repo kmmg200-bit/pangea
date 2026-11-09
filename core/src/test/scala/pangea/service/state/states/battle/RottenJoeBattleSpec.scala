@@ -27,7 +27,7 @@ object RottenJoeBattleSpec extends ZIOSpecDefault {
   private val bossLvl = 2L // герой 15 уровня → BossLvL = (15−1)/5 = 2
 
   /** Сколько процентов HP у Джо перед ударом, который должен его уронить: меньше
-    * предела минибосса за раунд (четверть, см. BossRoundCap) — с полного HP
+    * предела минибосса за раунд (40%, см. BossRoundCap) — с полного HP
     * одним ударом его теперь не свалить. */
   private val FallPct = 20L
 

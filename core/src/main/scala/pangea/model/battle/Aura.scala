@@ -71,7 +71,11 @@ sealed abstract class Aura(
 
   /** Сколько аура даст или возьмёт у того, у кого столько максимума HP: своя
     * доля плюс всё, что герой в неё вложил. */
-  def power(maxHp: Long, spent: Long): Long = (maxHp * pct / 100L).max(0L) + spent
+  def power(maxHp: Long, spent: Long): Long = pctPart(maxHp) + spent
+
+  /** Своя доля ауры — процент от максимума HP, без вложенного. С минибосса
+    * она снимает вдвое меньше (см. `BossPercentDamage`). */
+  def pctPart(maxHp: Long): Long = (maxHp * pct / 100L).max(0L)
 
   /** Сколько энергии уйдёт на ауру при таком запасе — не меньше единицы. */
   def cost(energy: Long): Long = (energy * energyCostPct / 100L).max(1L)
