@@ -77,7 +77,7 @@ function MovePanel(props: { data: InventoryView; from: string; item: ItemView; a
   )
 }
 
-function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; acts: Acts; racksAway: string | null }) {
+function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; acts: Acts; gearLocked: string | null }) {
   const s = props.storage
   const { acts } = props
   const racks = s.sections.some((sec) => sec.rack !== null)
@@ -111,7 +111,7 @@ function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; a
         </div>
       )}
       {s.note && <section className="card card-warn storage-note">{s.note}</section>}
-      {racks && props.racksAway && <section className="card card-warn storage-note">{props.racksAway}</section>}
+      {racks && props.gearLocked && <section className="card card-warn storage-note">{props.gearLocked}</section>}
       {empty && <Empty>Пусто.</Empty>}
       {s.counts.length > 0 && (
         <div className="list">
@@ -131,7 +131,7 @@ function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; a
             {sec.rack !== null ? (
               <div className="group-label rack-head">
                 <span>{sec.title}</span>
-                {!props.racksAway && (
+                {!props.gearLocked && (
                   <button className="rack-wear" onClick={() => acts.run(() => api.rackWear(sec.rack ?? 0))} disabled={acts.busy}>
                     Надеть
                   </button>
@@ -155,10 +155,10 @@ function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; a
 
 /** «Вещи»: при себе, в городе и в доме. Закрытое хранилище видно с замком —
   * нажал, и написано, как его открыть. Вещь из любого хранилища — в любое,
-  * которое её возьмёт (из карточки вещи), а комплект со стойки — на героя,
-  * но только в городе; вне города — между тем, что при себе, в бою — никак.
-  * Бот проверит это сам, под тем же замком, что и ходы в чате. Что сказал бот
-  * — всплывает над нижней панелью. */
+  * которое её возьмёт (из карточки вещи), — в городе; вне города — между тем,
+  * что при себе. Комплект со стойки — на героя, где угодно. В бою — ни то ни
+  * другое. Бот проверит это сам, под тем же замком, что и ходы в чате. Что
+  * сказал бот — всплывает над нижней панелью. */
 export function ItemsTab(props: { data: InventoryView; onChange: (v: InventoryView) => void }) {
   const [group, setGroup] = useState<Group>('self')
   const [picked, setPicked] = useState<Record<Group, string>>({ self: BAG, city: '', home: '' })
@@ -202,7 +202,7 @@ export function ItemsTab(props: { data: InventoryView; onChange: (v: InventoryVi
           storage={storage}
           onOpen={(item) => setOpen({ item, from: storage.id })}
           acts={acts}
-          racksAway={props.data.racksAway}
+          gearLocked={props.data.gearLocked}
         />
       ) : null}
       {open && (

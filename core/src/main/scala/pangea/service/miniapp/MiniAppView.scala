@@ -111,10 +111,9 @@ object MiniAppView {
     * не дотянуться (почему — `storesAway`). */
   final case class MoveView(from: String, item: Long, to: List[String], far: Boolean)
 
-  /** Вещи героя. `gearLocked` — почему снаряжение сейчас не сменить: герой
-    * в бою; `storesAway` — почему дотянуться удастся не до всех хранилищ:
-    * герой не в городе или в бою; `racksAway` — почему не надеть комплект со
-    * стойки: герой не в городе. */
+  /** Вещи героя. `gearLocked` — почему снаряжение и комплект со стойки сейчас
+    * не сменить: герой в бою; `storesAway` — почему дотянуться удастся не до
+    * всех хранилищ: герой не в городе или в бою. */
   final case class InventoryView(
     hero:       HeroView,
     capacity:   Long,
@@ -124,7 +123,6 @@ object MiniAppView {
     storages:   List[StorageView],
     gearLocked: Option[String],
     storesAway: Option[String],
-    racksAway:  Option[String],
     moves:      List[MoveView]
   )
 
@@ -378,7 +376,6 @@ object MiniAppView {
       storages  = views,
       gearLocked = Option.when(MiniApp.inBattle(h))(content.text("miniapp.equipment.inBattle")),
       storesAway = MiniApp.storesAway(content, h),
-      racksAway  = Option.unless(MiniApp.inCity(h))(content.text("miniapp.storages.racksAway")),
       moves      = moves(h, inv, stores, views)
     )
   }

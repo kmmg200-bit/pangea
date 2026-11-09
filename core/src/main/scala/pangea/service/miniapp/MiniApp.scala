@@ -164,13 +164,13 @@ object MiniApp {
   }
 
   /** Герой в городе — только тогда из приложения можно работать с кубом,
-    * покупать на аукционе, надевать комплект со стойки и трогать хранилища
-    * города и дома, как и передавать вещи. */
+    * покупать на аукционе и трогать хранилища города и дома, как и передавать
+    * вещи. */
   def inCity(hero: Hero): Boolean = StateType.cityStates.contains(hero.state)
 
-  /** Герой в бою — тогда снаряжение и строй из приложения не меняют: ход боя
-    * считается на надетом и на том, кто где стоит. Любой бой — в лабиринте,
-    * сюжетный, на арене — это [[StateType.Battle]]. */
+  /** Герой в бою — тогда снаряжение, комплект со стойки и строй из приложения
+    * не меняют: ход боя считается на надетом и на том, кто где стоит. Любой бой
+    * — в лабиринте, сюжетный, на арене — это [[StateType.Battle]]. */
   def inBattle(hero: Hero): Boolean = hero.state == StateType.Battle
 
   /** До каких хранилищ герой сейчас дотянется: в городе — до всех, вне города
@@ -402,14 +402,15 @@ final class MiniAppLive(
       said  <- lines.get
     } yield said.mkString("\n\n")
 
-  /** Проверки и слова — у [[Racks]], как у кнопки стойки дома: что не так
-    * (не по уровню, сумка не вместит), а вышло — что поменялись. */
+  /** Смена комплекта издалека — как ключом из сумки в боте: где угодно, кроме
+    * боя, и слова те же. Что не так (не по уровню, сумка не вместит), скажет
+    * [[Racks]]. */
   override def rack(hero: Hero, n: Int): Task[InventoryActionView] =
     storesAct(hero) { (user, fresh, say) =>
-      if (!MiniApp.inCity(fresh)) say.show(user, Screen(content.text("miniapp.storages.racksAway"), Nil))
+      if (MiniApp.inBattle(fresh)) say.show(user, Screen(content.text("miniapp.equipment.inBattle"), Nil))
       else racks.swap(user, n, say).flatMap {
         case Left(why) => say.show(user, Screen(why, Nil))
-        case Right(_)  => say.show(user, Screen(content.format("home.rack.swapped", "n" -> n.toString), Nil))
+        case Right(_)  => say.show(user, Screen(content.format("home.rack.keyTurned", "n" -> n.toString), Nil))
       }
     }
 
