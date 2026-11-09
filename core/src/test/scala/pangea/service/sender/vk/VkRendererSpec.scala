@@ -66,6 +66,27 @@ object VkRendererSpec extends ZIOSpecDefault {
       assertTrue(VkRenderer.fit(rows(3)) == rows(3))
     },
 
+    test("в ряду с кнопкой приложения — не больше двух кнопок: лишний ряд ВК отклонял целиком (ошибка 911)") {
+      val app  = Choice("OpenApp", "📱 Приложение", app = Some(54870345L))
+      def b(i: Int) = Choice(s"B$i", s"Кнопка $i")
+      // город до починки: «Персонаж | 📱 Приложение | В лабиринт»
+      val city   = List(List(b(1), b(2), b(3)), List(b(4), app, b(5)), List(b(6)))
+      val fitted = VkRenderer.fit(city)
+      // вдвоём — можно, так и остаётся
+      val pair   = List(List(app, b(1)))
+      // рядов уже десять — выносить некуда: плотно по пять, приложение отдельным рядом в конце
+      val full   = rows(VkRenderer.MaxRows - 1) :+ List(b(90), app, b(91))
+      val packed = VkRenderer.fit(full)
+      def ok(rs: List[List[Choice]]) =
+        rs.forall(r => !r.exists(_.app.isDefined) || r.size <= Choice.MaxAppRowButtons)
+      assertTrue(Choice.MaxAppRowButtons == 2) &&
+      assertTrue(fitted == List(List(b(1), b(2), b(3)), List(b(4), b(5)), List(app), List(b(6)))) &&
+      assertTrue(VkRenderer.fit(pair) == pair) &&
+      assertTrue(ok(fitted) && ok(packed) && packed.size <= VkRenderer.MaxRows) &&
+      assertTrue(packed.flatten.map(_.id).sorted == full.flatten.map(_.id).sorted) &&
+      assertTrue(packed.lastOption.contains(List(app)))
+    },
+
     test("лишние ряды перекладываются плотно, и кнопки не теряются") {
       val many   = rows(14)
       val fitted = VkRenderer.fit(many)

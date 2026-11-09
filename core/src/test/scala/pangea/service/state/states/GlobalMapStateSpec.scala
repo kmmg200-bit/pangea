@@ -39,9 +39,11 @@ object GlobalMapStateSpec extends ZIOSpecDefault {
               assertTrue(screens.head.text.endsWith("🪙 Серебро: 500\n🟡 Дублоны: 37")) &&
               assertTrue(screens.head.choices.map(_.id).contains("Tavern")) &&
               assertTrue(screens.head.choices.map(_.id).contains("ReturnToDungeon")) &&
-              // «📱 Приложение» — в одном ряду с «Персонажем», сразу за ним
+              // «📱 Приложение» — в нижнем ряду, с «За город»: в ряд с ней ВК
+              // пускает не больше двух кнопок, третья роняла весь экран (ошибка 911)
               assertTrue(screens.head.choices.filter(_.row.contains(2)).map(_.id) ==
-                List("OpenCharacter", "OpenApp", "ReturnToDungeon")) &&
+                List("OpenCharacter", "ReturnToDungeon")) &&
+              assertTrue(screens.head.choices.filter(_.row.contains(3)).map(_.id) == List("OpenApp", "LeaveCity")) &&
               assertTrue(pangea.service.state.AppButton.on(screens.head.choices))
     },
 

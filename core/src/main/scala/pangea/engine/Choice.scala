@@ -21,6 +21,12 @@ object Choice {
     * отправки и «зависший» экран у игрока. */
   val MaxLabelLength: Int = 40
 
+  /** Сколько кнопок ВК пускает в ряд с кнопкой приложения (`app`). Больше —
+    * ошибка 911 «of type open_app can contain only 2 button(s)», и сообщение
+    * не уходит целиком. На dev.vk.com такой предел описан только для кнопки
+    * location, но для open_app ВК его тоже проверяет. */
+  val MaxAppRowButtons: Int = 2
+
   /** Подпись, укладывающаяся в лимит: лишнее срезается с многоточием. */
   def fit(label: String): String =
     if (label.length <= MaxLabelLength) label else label.take(MaxLabelLength - 1) + "…"

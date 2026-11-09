@@ -48,7 +48,9 @@ object TreasureHuntStateSpec extends ZIOSpecDefault {
       } yield assertTrue(TreasureHuntState.HuntDurationMs == 7L * 3600000L) &&
               assertTrue(start.text.contains("7 ч 0 мин") && later.text.contains("5 ч 30 мин")) &&
               assertTrue(start.choices.map(_.id) == List("OpenCharacter", "OpenApp", "HuntLeave")) &&
-              assertTrue(later.choices.map(_.id) == List("OpenCharacter", "OpenApp", "HuntLeave"))
+              assertTrue(later.choices.map(_.id) == List("OpenCharacter", "OpenApp", "HuntLeave")) &&
+              // в ряд с кнопкой приложения ВК пускает не больше двух — «Уйти» ниже
+              assertTrue(start.choices.map(_.row) == List(Some(0), Some(0), Some(1)))
     },
 
     test("«Персонаж» в пути — меню персонажа, а назад оно вернёт в поход") {

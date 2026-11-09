@@ -15,10 +15,13 @@ object AppButton {
   def choice(content: SceneContent, row: Option[Int] = None): Choice =
     Choice("OpenApp", content.text("common.openApp"), row = row, app = Some(AppId))
 
-  /** Экран ожидания, где из кнопок только «Уйти» (или ещё одна-две): кнопка
-    * приложения встаёт слева, все — в одном ряду. */
-  def inRow(content: SceneContent, choices: List[Choice]): List[Choice] =
-    choice(content, row = Some(0)) :: choices.map(_.copy(row = Some(0)))
+  /** Экран ожидания, где из кнопок только «Уйти»: кнопка приложения встаёт
+    * слева, в один ряд с ней. Кнопок больше — они рядом ниже: в ряд с кнопкой
+    * приложения ВК пускает не больше двух ([[Choice.MaxAppRowButtons]]). */
+  def inRow(content: SceneContent, choices: List[Choice]): List[Choice] = {
+    val row = if (choices.sizeIs < Choice.MaxAppRowButtons) 0 else 1
+    choice(content, row = Some(0)) :: choices.map(_.copy(row = Some(row)))
+  }
 
   /** Есть ли на экране кнопка приложения — для проверок. */
   def on(choices: List[Choice]): Boolean = choices.exists(_.app.contains(AppId))

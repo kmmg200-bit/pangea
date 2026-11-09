@@ -66,10 +66,31 @@ object VkRenderer {
     * клавиатура, кнопки перекладываются плотно — по пять в ряд. Это страховка:
     * сцены и так считают ряды сами, но одна забытая кнопка не должна ронять
     * экран целиком. Совсем не влезшее (свыше пятидесяти кнопок) отсекается —
-    * лучше показать экран без хвоста, чем не показать ничего. */
-  def fit(rows: List[List[Choice]]): List[List[Choice]] =
-    if (rows.sizeIs <= MaxRows) rows
-    else rows.flatten.grouped(MaxButtonsPerRow).toList.take(MaxRows)
+    * лучше показать экран без хвоста, чем не показать ничего.
+    *
+    * Кнопку приложения, у которой в ряду больше [[Choice.MaxAppRowButtons]]
+    * кнопок, выносим отдельным рядом сразу под ним: такой ряд ВК отклоняет
+    * вместе со всем сообщением. */
+  def fit(rows: List[List[Choice]]): List[List[Choice]] = {
+    val split = appRows(rows)
+    if (split.sizeIs <= MaxRows) split
+    else {
+      // Плотно, по пять в ряд, — а кнопка приложения отдельным рядом в конце.
+      val (apps, rest) = rows.flatten.partition(_.app.isDefined)
+      (rest.grouped(MaxButtonsPerRow).toList ++ apps.map(List(_))).take(MaxRows)
+    }
+  }
+
+  /** Ряд, где рядом с кнопкой приложения больше [[Choice.MaxAppRowButtons]]
+    * кнопок, — без неё, а она сама отдельным рядом следом. */
+  private def appRows(rows: List[List[Choice]]): List[List[Choice]] =
+    rows.flatMap { row =>
+      if (row.sizeIs <= Choice.MaxAppRowButtons || !row.exists(_.app.isDefined)) List(row)
+      else {
+        val (apps, rest) = row.partition(_.app.isDefined)
+        (rest :: apps.map(List(_))).filter(_.nonEmpty)
+      }
+    }
 
   def toButtonColor(color: ChoiceColor): ButtonColor = color match {
     case ChoiceColor.Negative  => ButtonColor.Negative
