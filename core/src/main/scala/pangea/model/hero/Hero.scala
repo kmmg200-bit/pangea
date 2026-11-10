@@ -395,11 +395,15 @@ case class Hero(
   /** Сколько опыта герой на самом деле получит из `amount`: пока опыт
    *  остановлен (`expFrozen`), — ничего; выспался дома — на
    *  [[pangea.model.home.HomeRates.RestedExpPct]]% больше (прибавка вверх, чтобы
-   *  и малый опыт что-то прибавил). Этим числом и говорят игроку «+N опыта». */
+   *  и малый опыт что-то прибавил); «Достигатор» — ещё по 2% за ранг, тоже
+   *  вверх. Этим числом и говорят игроку «+N опыта». */
   def expFrom(amount: Long, nowMs: Long): Long =
     if (expFrozen) 0L
-    else if (rested(nowMs)) amount + (amount * pangea.model.home.HomeRates.RestedExpPct + 99L) / 100L
-    else amount
+    else {
+      val rest = if (rested(nowMs)) amount + (amount * pangea.model.home.HomeRates.RestedExpPct + 99L) / 100L
+                 else amount
+      rest + (rest * Achievement.expPct(this) + 99L) / 100L
+    }
 
   /** Выспался ли дома: действует ли баф «выспался» (см. [[pangea.model.home.House.restedMs]]). */
   def rested(nowMs: Long): Boolean = statBoosts.hasActive(pangea.model.home.HomeRates.RestedBoost, nowMs)

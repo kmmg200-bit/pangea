@@ -49,7 +49,14 @@ object QuestSupport {
     * игрока: уровень и убитые приходят из многих мест, и проверять по самому
     * герою надёжнее, чем помнить о каждом. */
   def grantMilestones(heroDao: HeroDao, content: SceneContent, user: User, hero: Hero, renderer: Renderer): Task[Hero] =
-    ZIO.foldLeft(Achievement.milestonesDue(hero))(hero)((h, a) => grant(heroDao, content, user, h, a, renderer))
+    Achievement.milestonesDue(hero) match {
+      case Nil => ZIO.succeed(hero)
+      // Выданные вехи прибавляют к числу достижений — а по нему «Достигатор»:
+      // проверяем ещё раз, пока выдавать нечего.
+      case due =>
+        ZIO.foldLeft(due)(hero)((h, a) => grant(heroDao, content, user, h, a, renderer))
+          .flatMap(grantMilestones(heroDao, content, user, _, renderer))
+    }
 
   /** Сварены зелья — куб, Живая сумка или верстак; `kinds` — вид каждого,
     * по строке на зелье. Виды идут в счёт «Зельевара I» (по одному каждого

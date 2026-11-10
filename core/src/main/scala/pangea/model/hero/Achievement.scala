@@ -39,6 +39,10 @@ object AchievementRates {
   /** На сколько процентов каждый ранг «Промышленного аптекаря» удлиняет срок
     * отваров: все пять — +50%. */
   val ApothecaryDurationPct: Long = 10L
+
+  /** На сколько процентов больше опыта даёт каждый ранг «Достигатора»: все
+    * пять — +10%. */
+  val AchieverExpPct: Long = 2L
 }
 
 object Achievement extends Enum[Achievement] {
@@ -195,6 +199,24 @@ object Achievement extends Enum[Achievement] {
   case object Apothecary5 extends Achievement("Промышленный аптекарь V",
     s"+${AchievementRates.ApothecaryDurationPct}% к сроку действия отваров")
 
+  // ── Вехи: сколько всего достижений ──────────────────────────────────────────
+  // Считаются все полученные, и сами «Достигаторы» тоже.
+
+  case object Achiever1 extends Achievement("Достигатор I",
+    s"+${AchievementRates.AchieverExpPct}% к получаемому опыту")
+
+  case object Achiever2 extends Achievement("Достигатор II",
+    s"+${AchievementRates.AchieverExpPct}% к получаемому опыту")
+
+  case object Achiever3 extends Achievement("Достигатор III",
+    s"+${AchievementRates.AchieverExpPct}% к получаемому опыту")
+
+  case object Achiever4 extends Achievement("Достигатор IV",
+    s"+${AchievementRates.AchieverExpPct}% к получаемому опыту")
+
+  case object Achiever5 extends Achievement("Достигатор V",
+    s"+${AchievementRates.AchieverExpPct}% к получаемому опыту")
+
   // ── От админа ───────────────────────────────────────────────────────────────
 
   /** Выдаёт «Админ 1» в беседе: «Дать Торопыга» ответом на сообщение игрока
@@ -231,7 +253,20 @@ object Achievement extends Enum[Achievement] {
   def milestonesDue(hero: Hero): List[Achievement] =
     (KillTiers.collect { case (n, a, _) if hero.kills >= n => a } ++
       LevelTiers.collect { case (n, a) if hero.lvl >= n => a } ++
-      BrewTiers.collect { case (n, a) if hero.brews >= n => a }).filterNot(hero.hasAchievement)
+      BrewTiers.collect { case (n, a) if hero.brews >= n => a } ++
+      AchieverTiers.collect { case (n, a) if gotCount(hero) >= n => a }).filterNot(hero.hasAchievement)
+
+  /** Вехи «Достигатора»: сколько достижений надо иметь. */
+  val AchieverTiers: List[(Int, Achievement)] = List(
+    10 -> Achiever1, 20 -> Achiever2, 30 -> Achiever3, 40 -> Achiever4, 50 -> Achiever5
+  )
+
+  /** Сколько достижений у героя. */
+  def gotCount(hero: Hero): Int = values.count(hero.hasAchievement)
+
+  /** +% к опыту от «Достигатора»: +2% за ранг. */
+  def expPct(hero: Hero): Long =
+    AchieverTiers.count { case (_, a) => hero.hasAchievement(a) }.toLong * AchievementRates.AchieverExpPct
 
   /** Срок отвара с учётом «Промышленного аптекаря»: +10% за каждый ранг. */
   def brewMs(hero: Hero, ms: Long): Long =
