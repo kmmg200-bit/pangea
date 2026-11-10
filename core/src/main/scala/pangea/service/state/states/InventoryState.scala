@@ -27,7 +27,8 @@ import pangea.service.state.states.murloc.MurlocVillageState
 import pangea.service.state.states.race.RaceQuestState
 import pangea.service.state.{BarrelThievesQuest, BeltContents, HedgeSongQuest, HerbLore, ItemMenu, MarisaQuest, MurlocQuest, NpcQuestLog, QuestGoods,
   SlotChoice, StackMove, State,
-  StoryBrandQuest, StoryLine, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StrayCasketQuest, UiScene, UserAction}
+  StoryBrandQuest, StoryFaceQuest, StoryLine, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest, StrayCasketQuest,
+  UiScene, UserAction}
 import zio.{Random, Task, ZIO}
 
 case class InventoryState(
@@ -117,6 +118,9 @@ case class InventoryState(
       "StoryMeetGo"       -> Target.Run { (u, _,  r) => goMeeting(u, r) },
       "StorySojkaGo"      -> Target.Run { (u, _,  r) => goSojka(u, r) },
       "StoryBridgeGo"     -> Target.Run { (u, _,  r) => goBridge(u, r) },
+      "StoryArchiveGo"    -> Target.Run { (u, _,  r) => goArchive(u, r) },
+      "StoryBinderyGo"    -> Target.Run { (u, _,  r) => goBindery(u, r) },
+      "StoryGraveyardGo"  -> Target.Run { (u, _,  r) => goGraveyard(u, r) },
       // Трактаты Густаво: читать, пока не осилишь.
       "ReadTreatise"      -> Target.Run { (u, _,  r) => readTreatise(u, r) },
       "IdentifyFlower"    -> Target.Run { (u, _,  r) => identifyFlower(u, r) },
@@ -132,7 +136,8 @@ case class InventoryState(
     Set(StateType.HeroStats, StateType.Backpack, StateType.Inventory, StateType.Socketing,
         StateType.MarisaHunt, StateType.MurlocVillage, StateType.RaceQuest, StateType.NameChange,
         StateType.StrayCasket, StateType.BarrelThieves, StateType.StoryCache, StateType.StoryWarehouse,
-        StateType.StoryMeeting, StateType.StoryBridge, StateType.StorySojka) ++ BackpackOrigins
+        StateType.StoryMeeting, StateType.StoryBridge, StateType.StorySojka, StateType.StoryArchive, StateType.StoryBindery,
+        StateType.StoryGraveyard) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.
@@ -578,6 +583,16 @@ case class InventoryState(
           Some(content.choice("StoryBridgeGo", "story.storyList.card.bridgeLabel").copy(row = Some(0)))
         case Some(QuestItemKind.StoryPage) if StoryListQuest.toConfront(quests) =>
           Some(content.choice("StorySojkaGo", "story.storyList.card.confrontLabel").copy(row = Some(0)))
+        // Ключ от архива: открыть архив (глава берётся здесь), потом — в переплётную днём и ночью.
+        case Some(QuestItemKind.StoryArchiveKey) if StoryFaceQuest.archiveOpen(quests) =>
+          Some(content.choice("StoryArchiveGo", "story.storyFace.card.archiveLabel").copy(row = Some(0)))
+        case Some(QuestItemKind.StoryArchiveKey) if StoryFaceQuest.toFace(quests) =>
+          Some(content.choice("StoryBinderyGo", "story.storyFace.card.faceLabel").copy(row = Some(0)))
+        case Some(QuestItemKind.StoryArchiveKey) if StoryFaceQuest.toRaid(quests) =>
+          Some(content.choice("StoryBinderyGo", "story.storyFace.card.raidLabel").copy(row = Some(0)))
+        // Записка «Э.»: на кладбище — Рубеж I берётся здесь.
+        case Some(QuestItemKind.StoryNote) if StoryToolQuest.open(quests) =>
+          Some(content.choice("StoryGraveyardGo", "story.storyTool.card.goLabel").copy(row = Some(0)))
         case _ => None
       }
       hero   <- getHero(user)
@@ -659,18 +674,42 @@ case class InventoryState(
   /** В порт с карточки шифровки: только из города (как сюжетные карты). Глава
     * берётся здесь, если ещё не взята. */
   private def goPort(user: User, renderer: Renderer): Task[StateType] =
+    beginFromCity(user, renderer, NpcQuest.StoryPowder, StoryPowderQuest.portOpen, "story.storyPowder.card.onlyInCity",
+      StateType.StoryWarehouse)
+
+  /** В архив канцелярии с карточки ключа: только из города. Глава «Лицо из
+    * прошлого» берётся здесь, если ещё не взята. */
+  private def goArchive(user: User, renderer: Renderer): Task[StateType] =
+    beginFromCity(user, renderer, NpcQuest.StoryFace, StoryFaceQuest.archiveOpen, "story.storyFace.card.onlyInCity",
+      StateType.StoryArchive)
+
+  /** В переплётную с карточки ключа — днём или ночью: только из города. */
+  private def goBindery(user: User, renderer: Renderer): Task[StateType] =
+    fromCityStory(user, renderer, StoryFaceQuest.toBindery, "story.storyFace.card.onlyInCity", StateType.StoryBindery)
+
+  /** На кладбище с карточки записки «Э.»: только из города. Рубеж I берётся
+    * здесь, если ещё не взят. */
+  private def goGraveyard(user: User, renderer: Renderer): Task[StateType] =
+    beginFromCity(user, renderer, NpcQuest.StoryTool, StoryToolQuest.open, "story.storyTool.card.onlyInCity",
+      StateType.StoryGraveyard)
+
+  /** Кнопка сюжетной карточки, что начинает главу и ведёт в её сцену: начать
+    * нельзя и не на том шаге — снова карточка; не из города — отказ и
+    * карточка; глава ещё не взята — берётся здесь («Новое задание»). */
+  private def beginFromCity(user: User, renderer: Renderer, chapter: NpcQuest, open: NpcQuests => Boolean,
+                            refusalKey: String, scene: StateType): Task[StateType] =
     for {
       from   <- heroDao.readReturnState(user.userId)
       quests <- NpcQuestLog.load(heroDao, user.userId)
-      res    <- if (!StoryPowderQuest.portOpen(quests)) backToCard(user, renderer)
+      res    <- if (!open(quests)) backToCard(user, renderer)
                 else if (!from.exists(StateType.cityStates.contains))
-                  renderer.show(user, Screen(content.text("story.storyPowder.card.onlyInCity"), Nil)) *> backToCard(user, renderer)
-                else ZIO.when(!quests.isTaken(NpcQuest.StoryPowder))(
-                       ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS)).flatMap(now =>
-                         NpcQuestLog.save(heroDao, user.userId, quests.take(NpcQuest.StoryPowder, now)) *>
-                           renderer.show(user, Screen(StoryLine.takenLine(content, NpcQuest.StoryPowder,
-                             quests.take(NpcQuest.StoryPowder, now)), Nil))))
-                  .as(StateType.StoryWarehouse)
+                  renderer.show(user, Screen(content.text(refusalKey), Nil)) *> backToCard(user, renderer)
+                else ZIO.when(!quests.isTaken(chapter))(
+                       ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS)).flatMap { now =>
+                         val taken = quests.take(chapter, now)
+                         NpcQuestLog.save(heroDao, user.userId, taken) *>
+                           renderer.show(user, Screen(StoryLine.takenLine(content, chapter, taken), Nil))
+                       }).as(scene)
     } yield res
 
   /** На встречу с Сойкой с карточки наброска: только из города. */
@@ -1584,7 +1623,19 @@ object InventoryState {
         s"${item.displayTitle}\n${difficulty(StoryListQuest.Level)}\n\n${QuestItemKind.StoryPage.description}" +
           (if (now.isEmpty) "" else "\n\n" + now)
       case Some(QuestItemKind.StoryArchiveKey) =>
-        s"${item.displayTitle}\n\n${QuestItemKind.StoryArchiveKey.description}"
+        val now = StoryFaceQuest.cardLine(content, quests)
+        s"${item.displayTitle}\n${difficulty(StoryFaceQuest.Level)}\n\n${QuestItemKind.StoryArchiveKey.description}" +
+          (if (now.isEmpty) "" else "\n\n" + now)
+      case Some(QuestItemKind.StoryCopies) =>
+        val now = StoryFaceQuest.cardLine(content, quests)
+        s"${item.displayTitle}\n\n${QuestItemKind.StoryCopies.description}" + (if (now.isEmpty) "" else "\n\n" + now)
+      case Some(QuestItemKind.StoryNote) =>
+        val now = StoryToolQuest.cardLine(content, quests)
+        s"${item.displayTitle}\n${difficulty(StoryToolQuest.Level)}\n\n${QuestItemKind.StoryNote.description}" +
+          (if (now.isEmpty) "" else "\n\n" + now)
+      // Знаки пути с Рубежа I: что дальше — скажет Акт II.
+      case Some(kind @ (QuestItemKind.StoryShadowRing | QuestItemKind.StoryCouncilWrit | QuestItemKind.StoryCellBook)) =>
+        s"${item.displayTitle}\n\n${kind.description}"
       case Some(kind @ (QuestItemKind.KelvinMap | QuestItemKind.RaceCoupon | QuestItemKind.NameCoupon)) =>
         s"${item.displayTitle}\n\n${kind.description}"
       case Some(kind) if QuestItemKind.rackOf(kind).isDefined || HerbLore.isTreatise(kind) =>

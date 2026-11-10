@@ -185,6 +185,11 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   case object StoryBridge extends StateType // засада чистильщиков Братства у Мельничного моста
   case object StorySojka  extends StateType // Сойка за дальним столом: разговор о канцелярии, потом — о предательстве
 
+  // Основная линия, глава «Лицо из прошлого» и Рубеж I «Чьё ты орудие».
+  case object StoryArchive   extends StateType // архив канцелярии ночью: книга отмеченных и рука на её полях
+  case object StoryBindery   extends StateType // переплётная у рыбного рынка: днём — лицо из прошлого, ночью — ячейка
+  case object StoryGraveyard extends StateType // старое кладбище за городской стеной: встреча, бой, выбор пути
+
   // Смена расы: купон из лавки Фета — история расы до пробуждения в новом теле.
   case object RaceQuest extends StateType
 

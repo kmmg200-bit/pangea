@@ -6,6 +6,7 @@ import pangea.engine.SceneContent
 import pangea.model.hero.{Hero, LoreData}
 import pangea.model.quest.{FirstSteps, NpcQuest, NpcQuests}
 import pangea.model.state.StateType
+import pangea.model.user.UserId
 import zio.{Task, ZIO}
 
 /** Основная сюжетная линия — главы после «Встать на ноги». Глава — задание
@@ -35,7 +36,10 @@ object StoryLine {
     Chapter(NpcQuest.StoryMark, firstClue = Some(StateType.StoryCloak)),
     Chapter(NpcQuest.StoryPowder),
     Chapter(NpcQuest.StoryBrand),
-    Chapter(NpcQuest.StoryList)
+    Chapter(NpcQuest.StoryList),
+    Chapter(NpcQuest.StoryFace),
+    // Рубеж I: глава с выбором пути, последняя в Акте I.
+    Chapter(NpcQuest.StoryTool)
   )
 
   /** На каком по счёту исследовании уровня после «Встать на ноги» герой
@@ -101,6 +105,10 @@ object StoryLine {
     case Some("Elf")   => Survivors.Elias
     case _             => Survivors.Both
   }
+
+  /** Кто пережил пролог — по записи героя (нет записи — живы оба). */
+  def survivorsOf(heroDao: HeroDao, userId: UserId): Task[Survivors] =
+    heroDao.readLoreData(userId).map(_.flatMap(_.as[LoreData].toOption).getOrElse(LoreData.empty)).map(survivors)
 
   /** Название главы для игрока. */
   def title(content: SceneContent, q: NpcQuest): String = content.text(s"journal.quests.${q.key}.title")

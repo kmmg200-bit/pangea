@@ -12,6 +12,7 @@ import pangea.model.hero.{AzatState, CubeStatus, Equipment}
 import pangea.model.home.{Furniture, HomeData, HomeRates, House}
 import pangea.model.artifact.ArtifactKind
 import pangea.model.item.{Item, ItemType, QuestItemKind}
+import pangea.model.quest.NpcQuest
 import pangea.model.schedule.TaskKind
 import pangea.model.state.StateType
 import pangea.model.stats.{ParamsBuff, StatBoost}
@@ -23,8 +24,8 @@ import pangea.repository.item.ItemRepository
 import pangea.service.purse.Purse
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.{EquipmentState, InventoryState, LootState}
-import pangea.service.state.{AppButton, AzatData, BeltContents, FirstStepsQuest, ItemMenu, NpcQuestLog, QuestSupport, SlotChoice, State,
-  StoryBrandQuest, StoryPowderQuest, UserAction}
+import pangea.service.state.{AppButton, AzatData, BeltContents, FirstStepsQuest, ItemMenu, NpcQuestDialog, NpcQuestLog, QuestSupport,
+  SlotChoice, State, StoryBrandQuest, StoryFaceQuest, StoryLine, StoryPowderQuest, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -84,6 +85,7 @@ case class HomeState(
       "HomeBuy"     -> Target.Run { (u, ua, r) => buy(u, ua, r) },
       "HomeFurnish" -> Target.Run { (u, _, r) => furnish(u, r) },
       "HomeJunonaStory" -> Target.Run { (u, _, r) => junonaMarked(u, r) },
+      "HomeJunonaFace"  -> Target.Run { (u, _, r) => junonaCopies(u, r) },
       "HomeFurnItem"   -> Target.Run { (u, ua, r) => furnItem(u, ua, r) },
       "HomeFurnBuy"    -> Target.Run { (u, ua, r) => furnBuy(u, ua, r) },
       "HomeClutterPay" -> Target.Run { (u, _, r) => clutterPay(u, r) },
@@ -170,9 +172,12 @@ case class HomeState(
                     color = ChoiceColor.Primary, data = Map("h" -> h.key), row = Some(i))
                 }
       furnish = Choice("HomeFurnish", content.text("home.office.furnish"), color = ChoiceColor.Secondary, row = Some(houses.size))
-      // Основная линия: набросок узора при герое — спросить, кого ещё записал совет.
+      // Основная линия: набросок узора при герое — спросить, кого ещё записал
+      // совет; копии списка отмеченных — показать, кто переплетает книги совета.
       story  <- junonaOpen(user)
-      marked  = Option.when(story)(Choice("HomeJunonaStory", content.text("story.storyBrand.junona.label"), row = Some(houses.size)))
+      copies <- junonaFaceOpen(user)
+      marked  = Option.when(story)(Choice("HomeJunonaStory", content.text("story.storyBrand.junona.label"), row = Some(houses.size))) orElse
+                  Option.when(copies)(Choice("HomeJunonaFace", content.text("story.storyFace.junona.label"), row = Some(houses.size)))
       back    =
         if (current.isDefined) Choice("HomeMain", content.text("home.office.home"), color = ChoiceColor.Negative, row = Some(houses.size + 1))
         else Choice("LeaveHome", content.text("home.office.leave"), color = ChoiceColor.Negative, row = Some(houses.size + 1))
@@ -197,6 +202,42 @@ case class HomeState(
       _      <- ZIO.when(open)(NpcQuestLog.save(heroDao, user.userId, StoryBrandQuest.step(quests, 4)) *>
                   renderer.show(user, Screen(fate + content.text("story.storyBrand.junona.text"), Nil)))
       res    <- office(user, renderer)
+    } yield res
+
+  /** «Лицо из прошлого» на шаге Юноны, и копии списка при герое. */
+  private def junonaFaceOpen(user: User): Task[Boolean] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (!StoryFaceQuest.toJunona(quests)) ZIO.succeed(false)
+      else getHero(user).flatMap(hero => inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)))
+        .map(inv => QuestSupport.hasItem(inv.items.data, QuestItemKind.StoryCopies))
+    }
+
+  /** Юнона узнаёт бумагу совета и обещает стражу; копии остаются у неё, ключ
+    * от архива — тоже. На ступенях канцелярии герою суют записку «Э.»: его
+    * узнали. Глава закрыта: записка — в сумку (зацепка Рубежа I), серебро
+    * совета, опыт. */
+  private def junonaCopies(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      open <- junonaFaceOpen(user)
+      _    <- ZIO.when(open)(for {
+                hero      <- getHero(user)
+                survivors <- StoryLine.survivorsOf(heroDao, user.userId)
+                _         <- QuestSupport.removeItems(inventoryRepo, hero, Set(QuestItemKind.StoryCopies, QuestItemKind.StoryArchiveKey))
+                _         <- QuestSupport.giveItem(inventoryRepo, itemRepo, hero, QuestItemKind.StoryNote)
+                silver     = StoryFaceQuest.silver
+                _         <- heroDao.updateSilver(user.userId, hero.silver + silver)
+                done      <- NpcQuestDialog(heroDao, content, NpcQuest.StoryFace, "StoryFace")
+                               .complete(user, hero.copy(silver = hero.silver + silver), identity)
+                (_, expLine) = done
+                _         <- renderer.show(user, Screen(content.text("story.storyFace.junona.text"), Nil))
+                _         <- renderer.show(user, Screen(
+                               List("story.storyFace.note.arrives", s"story.storyFace.note.with${survivors.suffix}",
+                                 "story.storyFace.note.end").map(k => content.text(k).trim).mkString("\n\n"), Nil))
+                _         <- renderer.show(user, Screen(
+                               content.format("story.storyFace.reward", "silver" -> silver.toString, "exp" -> expLine) +
+                                 "\n\n" + content.text("story.storyFace.questDone"), Nil))
+              } yield ())
+      res  <- office(user, renderer)
     } yield res
 
   /** Дом из списка: рассказ Юноны, особая реплика про зачёт, если дом уже

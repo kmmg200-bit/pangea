@@ -18,6 +18,10 @@ object AchievementRates {
   /** Сколько одной характеристики даёт достижение за малый расовый набор: по два
     * набора на каждую из четырёх, так что все восемь — ровно +2 ко всем. */
   val RaceSetStatBonus: Long = 1L
+
+  /** На сколько процентов достижение за путь, выбранный на рубеже основной
+    * линии, поднимает свой стат. */
+  val PathStatPct: Long = 5L
 }
 
 object Achievement extends Enum[Achievement] {
@@ -49,6 +53,22 @@ object Achievement extends Enum[Achievement] {
 
   /** Своё вернул: нашёл гоблинов, что вскрыли бочку в порту (см. BarrelThievesQuest). */
   case object OwnBack extends Achievement("Своё не отдам", "+1 к ловкости")
+
+  // ── Рубежи основной линии ───────────────────────────────────────────────────
+  // Путь на рубеже — своё достижение. На следующем рубеже путь можно сменить,
+  // но полученное остаётся: достижения — навсегда.
+
+  /** Рубеж I, путь Тени: вошёл в Братство под новым лицом (см. StoryToolQuest). */
+  case object ShadowPath extends Achievement("Тень Братства",
+    s"+${AchievementRates.PathStatPct}% к уклонению")
+
+  /** Рубеж I, путь Щита: сдал ячейку Братства совету и Гильдии. */
+  case object ShieldPath extends Achievement("Щит Кинэта",
+    s"+${AchievementRates.PathStatPct}% к защите")
+
+  /** Рубеж I, путь «Сам по себе»: свёл счёты и забрал тайник ячейки. */
+  case object OwnPath extends Achievement("Ничьё орудие",
+    s"+${AchievementRates.PathStatPct}% к атаке")
 
   // ── Собранные наборы ────────────────────────────────────────────────────────
   // За каждый набор, надетый целиком — все двенадцать вещей разом, — своё
@@ -125,10 +145,14 @@ object Achievement extends Enum[Achievement] {
   private def setPct(hero: Hero, a: Achievement): Long =
     if (hero.hasAchievement(a)) AchievementRates.SetStatPct else 0L
 
-  /** +% к защите, атаке, уклонению и точности от собранных наборов. */
-  def defencePct(hero: Hero): Long  = setPct(hero, StoneGuardSet)
-  def attackPct(hero: Hero): Long   = setPct(hero, WildFlameSet)
-  def evasionPct(hero: Hero): Long  = setPct(hero, GhoulSet)
+  private def pathPct(hero: Hero, a: Achievement): Long =
+    if (hero.hasAchievement(a)) AchievementRates.PathStatPct else 0L
+
+  /** +% к защите, атаке, уклонению и точности от собранных наборов и путей,
+    * выбранных на рубежах. */
+  def defencePct(hero: Hero): Long  = setPct(hero, StoneGuardSet) + pathPct(hero, ShieldPath)
+  def attackPct(hero: Hero): Long   = setPct(hero, WildFlameSet) + pathPct(hero, OwnPath)
+  def evasionPct(hero: Hero): Long  = setPct(hero, GhoulSet) + pathPct(hero, ShadowPath)
   def accuracyPct(hero: Hero): Long = setPct(hero, HunterSet)
 
   /** +% к потолку брони от «Своего среди крыс» — как и у двойки «Крысы», в

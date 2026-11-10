@@ -115,6 +115,9 @@ object HomeAlert {
       StoryMeeting     -> "встреча с Сойкой в таверне",
       StoryBridge      -> "засада у Мельничного моста",
       StorySojka       -> "разговор с Сойкой в таверне",
+      StoryArchive     -> "архив канцелярии ночью",
+      StoryBindery     -> "переплётная у рыбного рынка",
+      StoryGraveyard   -> "старое кладбище за городской стеной",
       RaceQuest        -> "квест смены расы",
       NameChange       -> "смена имени"
     )

@@ -8,8 +8,8 @@ import enumeratum._
   * записям после задания считается, сколько героев прошли его тем же путём.
   *
   * Отслеживаются задания, где выбор и правда разный: «Письмо Марисе»,
-  * «Деревня Мурлоков», «Пропавшая дружина» — и «Встать на ноги»: в каком доме
-  * герой его закончил. */
+  * «Деревня Мурлоков», «Пропавшая дружина», главы основной линии с развилкой и
+  * её рубежи — и «Встать на ноги»: в каком доме герой его закончил. */
 sealed abstract class QuestOutcome(override val entryName: String, val questKey: String) extends EnumEntry {
 
   /** Где в `scenes.yaml` название задания. */
@@ -75,6 +75,17 @@ object QuestOutcome extends Enum[QuestOutcome] {
 
   /** Порвал с Сойкой. */
   case object ListBroke extends QuestOutcome("broke", NpcQuest.StoryList.key)
+
+  // ── Рубеж I «Чьё ты орудие»: какой путь выбрал герой ─────────────────────────
+
+  /** Тень: вошёл в Братство под новым лицом. */
+  case object ToolShadow extends QuestOutcome("shadow", NpcQuest.StoryTool.key)
+
+  /** Щит: сдал ячейку совету и Гильдии. */
+  case object ToolShield extends QuestOutcome("shield", NpcQuest.StoryTool.key)
+
+  /** Сам по себе: свёл счёты и забрал тайник ячейки. */
+  case object ToolAlone extends QuestOutcome("alone", NpcQuest.StoryTool.key)
 
   // ── «Встать на ноги»: в каком доме засчитано (строка — House.key) ─────────────
 

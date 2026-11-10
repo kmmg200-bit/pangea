@@ -18,7 +18,8 @@ import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.{AzatData, BarrelThievesQuest, BeltContents, HedgeSongQuest, LostSquadQuest, MarisaQuest, MurlocQuest,
-  QuestOutcomeLog, State, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StrayCasketQuest, UserAction}
+  QuestOutcomeLog, State, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest, StrayCasketQuest,
+  UserAction}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
 
@@ -74,6 +75,10 @@ case class DeathState(
       // Смерть у Мельничного моста: глава на том же шаге — проснуться в
       // городе, страница поведёт к мосту снова.
       bridge        = battle.exists(_.story.contains(StoryListQuest.FightStory))
+      // Смерть в переплётной и на кладбище: глава на том же шаге — проснуться
+      // в городе, ключ (или записка) поведёт снова.
+      bindery       = battle.exists(_.story.contains(StoryFaceQuest.FightStory))
+      graveyard     = battle.exists(_.story.contains(StoryToolQuest.FightStory))
       // Герой пал раньше, а отряд доигрывал за него и проиграл: травму за этот
       // бой он уже получил, когда упал (см. BattleState) — второй смерть не даёт.
       fellEarlier   = battle.exists(_.group.heroDown)
@@ -152,6 +157,12 @@ case class DeathState(
                       else if (bridge) Json.obj(
                         "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
                         "wakeLines" -> List("story.storyList.bridge.death").asJson)
+                      else if (bindery) Json.obj(
+                        "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
+                        "wakeLines" -> List("story.storyFace.bindery.death").asJson)
+                      else if (graveyard) Json.obj(
+                        "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
+                        "wakeLines" -> List("story.storyTool.graveyard.death").asJson)
                       else Json.obj()
       _            <- heroDao.writeSceneData(user.userId, Json.obj(
                         "restDurationMs" -> deathRestMs.asJson,
