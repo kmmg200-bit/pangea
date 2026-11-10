@@ -190,6 +190,10 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   case object StoryBindery   extends StateType // переплётная у рыбного рынка: днём — лицо из прошлого, ночью — ячейка
   case object StoryGraveyard extends StateType // старое кладбище за городской стеной: встреча, бой, выбор пути
 
+  // Побочная линия Барти.
+  case object BartiMeet  extends StateType // Барти у изгороди: звери, «Ходовой товар», а потом — адрес
+  case object BartiHouse extends StateType // дом Барти на Торговой площади: «Большое дело», товар для каравана
+
   // Смена расы: купон из лавки Фета — история расы до пробуждения в новом теле.
   case object RaceQuest extends StateType
 

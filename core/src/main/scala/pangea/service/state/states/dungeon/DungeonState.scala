@@ -16,9 +16,9 @@ import pangea.model.skill.MonsterEnergy
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.service.schedule.Scheduler
-import pangea.model.quest.NpcQuests
-import pangea.service.state.{AppButton, CharacterMenu, InstantRest, KillLogData, MurlocQuest, NpcQuestLog, RareQuests, SquadDuty, State,
-  StoryLine, UserAction}
+import pangea.model.quest.{NpcQuest, NpcQuests}
+import pangea.service.state.{AppButton, CharacterMenu, HotGoodsQuest, InstantRest, KillLogData, MurlocQuest, NpcQuestLog, RareQuests,
+  SquadDuty, State, StoryLine, UserAction}
 import pangea.service.state.states.events.RaceRevengeState.RevengeScene
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
@@ -61,8 +61,8 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
   )
 
   override def targetStates: Set[StateType] =
-    branch.gotoTargets + StateType.Dungeon + StateType.HeroStats + StateType.MurlocElder + StateType.RottenJoe ++
-      RareQuests.Encounters.map(_._2)
+    branch.gotoTargets + StateType.Dungeon + StateType.HeroStats + StateType.MurlocElder + StateType.RottenJoe +
+      StateType.BartiMeet ++ RareQuests.Encounters.map(_._2)
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     for {
@@ -195,7 +195,13 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
       // Редкое задание лабиринта — своим броском, после обязательных встреч и
       // до пула (см. RareQuests). Встреча уже назначена — не бросаем.
       forced  = gang.isDefined || avengers.isDefined || doomed.isDefined || called || rotten
-      rare   <- if (forced || story.isDefined) ZIO.none else RareQuests.roll(quests, hero.dungeonLevel)
+      // Барти (см. HotGoodsQuest): куб есть и товар в сумке — он сам находит
+      // героя, после зацепки основной линии и раньше редких заданий; задания
+      // ещё не было — встреча наугад, своим броском после редких.
+      bartiDue <- if (forced || story.isDefined) ZIO.succeed(false) else bartiReady(user, hero, quests)
+      rare   <- if (forced || story.isDefined || bartiDue) ZIO.none else RareQuests.roll(quests, hero.dungeonLevel)
+      bartiNew <- if (forced || story.isDefined || bartiDue || rare.isDefined) ZIO.succeed(false)
+                  else HotGoodsQuest.roll(quests, hero.lvl)
       result <- (gang, avengers, doomed) match {
                   case (Some(g), _, _)    => gangTrap(user, hero, g, killLog, renderer)
                   case (_, Some(race), _) => revenge(user, race, killLog)
@@ -207,6 +213,8 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
                       // Встреча начинается с чистого листа: что бы ни осталось
                       // в scene_data от прошлой такой же встречи, оно не её.
                       case Some(scene) => heroDao.writeSceneData(user.userId, io.circe.Json.Null).as(scene)
+                      case None if bartiDue || bartiNew =>
+                        heroDao.writeSceneData(user.userId, io.circe.Json.Null).as(StateType.BartiMeet)
                       case None =>
                         event match {
                           case StateType.Battle => startBattle(user, hero)
@@ -216,6 +224,12 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
                     }
                 }
     } yield result
+
+  /** «Ходовой товар» взят, куб есть и товар в сумке — Барти пора найти героя.
+    * Задание не взято — читать нечего. */
+  private def bartiReady(user: User, hero: Hero, quests: NpcQuests): Task[Boolean] =
+    if (!quests.isTaken(NpcQuest.HotGoods)) ZIO.succeed(false)
+    else HotGoodsQuest.refresh(heroDao, inventoryRepo, user.userId, hero).map(HotGoodsQuest.ready)
 
   /** Раса пришла за расплатой. Долг отмечаем сразу, на входе в событие: оно
     * случилось, чем бы ни кончилось — боем, уговорами или бегством. Следующая

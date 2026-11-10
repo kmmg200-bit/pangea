@@ -118,6 +118,8 @@ object HomeAlert {
       StoryArchive     -> "архив канцелярии ночью",
       StoryBindery     -> "переплётная у рыбного рынка",
       StoryGraveyard   -> "старое кладбище за городской стеной",
+      BartiMeet        -> "встреча с Барти у изгороди",
+      BartiHouse       -> "дом Барти на Торговой площади",
       RaceQuest        -> "квест смены расы",
       NameChange       -> "смена имени"
     )

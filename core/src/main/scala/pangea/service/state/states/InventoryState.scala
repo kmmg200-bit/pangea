@@ -25,8 +25,8 @@ import pangea.service.state.states.home.Racks
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.states.murloc.MurlocVillageState
 import pangea.service.state.states.race.RaceQuestState
-import pangea.service.state.{BarrelThievesQuest, BeltContents, HedgeSongQuest, HerbLore, ItemMenu, MarisaQuest, MurlocQuest, NpcQuestLog, QuestGoods,
-  SlotChoice, StackMove, State,
+import pangea.service.state.{BarrelThievesQuest, BeltContents, BigDealQuest, HedgeSongQuest, HerbLore, HotGoodsQuest, ItemMenu, MarisaQuest,
+  MurlocQuest, NpcQuestLog, QuestGoods, SlotChoice, StackMove, State,
   StoryBrandQuest, StoryFaceQuest, StoryLine, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest, StrayCasketQuest,
   UiScene, UserAction}
 import zio.{Random, Task, ZIO}
@@ -121,6 +121,7 @@ case class InventoryState(
       "StoryArchiveGo"    -> Target.Run { (u, _,  r) => goArchive(u, r) },
       "StoryBinderyGo"    -> Target.Run { (u, _,  r) => goBindery(u, r) },
       "StoryGraveyardGo"  -> Target.Run { (u, _,  r) => goGraveyard(u, r) },
+      "BartiHouseGo"      -> Target.Run { (u, _,  r) => goBartiHouse(u, r) },
       // Трактаты Густаво: читать, пока не осилишь.
       "ReadTreatise"      -> Target.Run { (u, _,  r) => readTreatise(u, r) },
       "IdentifyFlower"    -> Target.Run { (u, _,  r) => identifyFlower(u, r) },
@@ -137,7 +138,7 @@ case class InventoryState(
         StateType.MarisaHunt, StateType.MurlocVillage, StateType.RaceQuest, StateType.NameChange,
         StateType.StrayCasket, StateType.BarrelThieves, StateType.StoryCache, StateType.StoryWarehouse,
         StateType.StoryMeeting, StateType.StoryBridge, StateType.StorySojka, StateType.StoryArchive, StateType.StoryBindery,
-        StateType.StoryGraveyard) ++ BackpackOrigins
+        StateType.StoryGraveyard, StateType.BartiHouse) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.
@@ -532,7 +533,11 @@ case class InventoryState(
 
   private def showPlainQuestItem(user: User, item: Item, renderer: Renderer): Task[StateType] =
     for {
-      quests <- NpcQuestLog.load(heroDao, user.userId)
+      // План Барти: шаг «Ходового товара» — заново по кубу и сумке, чтобы
+      // карточка сказала, что делать сейчас.
+      quests <- if (item.questItem.contains(QuestItemKind.BartiPlan))
+                  getHero(user).flatMap(h => HotGoodsQuest.refresh(heroDao, inventoryRepo, user.userId, h))
+                else NpcQuestLog.load(heroDao, user.userId)
       opened  = quests.of(NpcQuest.Marisa).bonus
       // Бродячий ларец, пока голоден, — кнопка на каждое качество камней при
       // герое, по ряду на кнопку; выход — рядом ниже.
@@ -593,6 +598,9 @@ case class InventoryState(
         // Записка «Э.»: на кладбище — Рубеж I берётся здесь.
         case Some(QuestItemKind.StoryNote) if StoryToolQuest.open(quests) =>
           Some(content.choice("StoryGraveyardGo", "story.storyTool.card.goLabel").copy(row = Some(0)))
+        // Адрес Барти: к нему домой, на Торговую площадь, — «Большое дело».
+        case Some(QuestItemKind.BartiAddress) if BigDealQuest.houseOpen(quests) =>
+          Some(content.choice("BartiHouseGo", "barti.card.houseLabel").copy(row = Some(0)))
         case _ => None
       }
       hero   <- getHero(user)
@@ -661,6 +669,17 @@ case class InventoryState(
 
   /** По следу банды, что вскрыла бочку: только из города (как сюжетные карты)
     * и только когда Ришелье назвал место. */
+  /** К Барти домой с карточки адреса: только из города. */
+  private def goBartiHouse(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      from   <- heroDao.readReturnState(user.userId)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      res    <- if (!BigDealQuest.houseOpen(quests)) backToCard(user, renderer)
+                else if (!from.exists(StateType.cityStates.contains))
+                  renderer.show(user, Screen(content.text("barti.card.onlyInCity"), Nil)) *> backToCard(user, renderer)
+                else ZIO.succeed(StateType.BartiHouse)
+    } yield res
+
   private def followTrail(user: User, renderer: Renderer): Task[StateType] =
     for {
       from   <- heroDao.readReturnState(user.userId)
@@ -1636,6 +1655,14 @@ object InventoryState {
       // Знаки пути с Рубежа I: что дальше — скажет Акт II.
       case Some(kind @ (QuestItemKind.StoryShadowRing | QuestItemKind.StoryCouncilWrit | QuestItemKind.StoryCellBook)) =>
         s"${item.displayTitle}\n\n${kind.description}"
+      case Some(QuestItemKind.BartiPlan) =>
+        val now = HotGoodsQuest.cardLine(content, quests)
+        s"${item.displayTitle}\n${difficulty(HotGoodsQuest.Level)}\n\n${QuestItemKind.BartiPlan.description}" +
+          (if (now.isEmpty) "" else "\n\n" + now)
+      case Some(QuestItemKind.BartiAddress) =>
+        val now = BigDealQuest.cardLine(content, quests)
+        s"${item.displayTitle}\n${difficulty(BigDealQuest.Level)}\n\n${QuestItemKind.BartiAddress.description}" +
+          (if (now.isEmpty) "" else "\n\n" + now)
       case Some(kind @ (QuestItemKind.KelvinMap | QuestItemKind.RaceCoupon | QuestItemKind.NameCoupon)) =>
         s"${item.displayTitle}\n\n${kind.description}"
       case Some(kind) if QuestItemKind.rackOf(kind).isDefined || HerbLore.isTreatise(kind) =>

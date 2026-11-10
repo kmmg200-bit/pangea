@@ -84,6 +84,8 @@ import pangea.model.state.StateType.{
   StoryArchive,
   StoryBindery,
   StoryGraveyard,
+  BartiMeet,
+  BartiHouse,
   RaceQuest,
   NameChange,
   TreasureHunt,
@@ -152,6 +154,7 @@ import pangea.service.state.states.lostsquad.SquadMineState
 import pangea.service.state.states.straycasket.StrayCasketState
 import pangea.service.state.states.hedgesong.HedgeSongState
 import pangea.service.state.states.barrelthieves.{BarrelReturnState, BarrelThievesState}
+import pangea.service.state.states.barti.{BartiHouseState, BartiMeetState}
 import pangea.service.state.states.story.{StoryArchiveState, StoryBinderyState, StoryBridgeState, StoryCacheState, StoryCloakState,
   StoryGraveyardState, StoryMeetingState, StorySojkaState, StoryWarehouseState}
 import pangea.service.state.states.race.RaceQuestState
@@ -353,6 +356,8 @@ object StatesMap {
           StoryArchive      -> StoryArchiveState(heroDao, content),
           StoryBindery      -> StoryBinderyState(heroDao, inventoryRepo, itemRepo, content),
           StoryGraveyard    -> StoryGraveyardState(heroDao, inventoryRepo, itemRepo, content, outcomes),
+          BartiMeet         -> BartiMeetState(heroDao, inventoryRepo, itemRepo, content),
+          BartiHouse        -> BartiHouseState(heroDao, inventoryRepo, content),
           RaceQuest         -> RaceQuestState(heroDao, inventoryRepo, content),
           NameChange        -> NameChangeState(heroDao, inventoryRepo, content),
           Outskirts -> OutskirtsState(

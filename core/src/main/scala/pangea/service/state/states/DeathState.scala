@@ -17,7 +17,7 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
-import pangea.service.state.{AzatData, BarrelThievesQuest, BeltContents, HedgeSongQuest, LostSquadQuest, MarisaQuest, MurlocQuest,
+import pangea.service.state.{AzatData, BarrelThievesQuest, BeltContents, HedgeSongQuest, HotGoodsQuest, LostSquadQuest, MarisaQuest, MurlocQuest,
   QuestOutcomeLog, State, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest, StrayCasketQuest,
   UserAction}
 import zio.{Random, Task, ZIO}
@@ -79,6 +79,9 @@ case class DeathState(
       // в городе, ключ (или записка) поведёт снова.
       bindery       = battle.exists(_.story.contains(StoryFaceQuest.FightStory))
       graveyard     = battle.exists(_.story.contains(StoryToolQuest.FightStory))
+      // Смерть у изгороди, где звери зажали Барти: задание так и не начато —
+      // Барти встретится снова; проснуться в лабиринте.
+      barti         = battle.exists(_.story.contains(HotGoodsQuest.FightStory))
       // Герой пал раньше, а отряд доигрывал за него и проиграл: травму за этот
       // бой он уже получил, когда упал (см. BattleState) — второй смерть не даёт.
       fellEarlier   = battle.exists(_.group.heroDown)
@@ -163,6 +166,7 @@ case class DeathState(
                       else if (graveyard) Json.obj(
                         "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
                         "wakeLines" -> List("story.storyTool.graveyard.death").asJson)
+                      else if (barti) Json.obj("wakeLines" -> List("barti.meet.death").asJson)
                       else Json.obj()
       _            <- heroDao.writeSceneData(user.userId, Json.obj(
                         "restDurationMs" -> deathRestMs.asJson,
