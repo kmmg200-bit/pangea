@@ -25,6 +25,8 @@ export interface ItemView {
   set: string | null
   /** Подвид для значка: `ranged` — лук или арбалет, `herb` — трава, `dust` — пыль. */
   variant: string | null
+  /** Сюжетное — предмет или экипировка: голубая рамка вместо цвета редкости. */
+  story: boolean
 }
 
 /** Прибавка или разница: attack, defence, armor, hp, evasion, accuracy, energy. */

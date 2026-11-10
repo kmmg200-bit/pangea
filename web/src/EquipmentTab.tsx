@@ -11,7 +11,7 @@ import type {
   SocketedView,
   StatChange,
 } from './types'
-import { BeltSwap, ItemRow, ItemText, ItemTile, num, Sheet, Tile } from './ui'
+import { BeltSwap, ItemRow, ItemText, ItemTile, num, Sheet, Tile, tone } from './ui'
 
 /** Что в поясе — по ячейкам, со счётом и полоской; свободные — одной строкой. */
 function BeltCard(props: { belt: BeltView; onTake: ((cell: number) => void) | null; busy: boolean }) {
@@ -217,7 +217,7 @@ function Candidate(props: {
 }) {
   const { item, deltas, set } = props.c
   return (
-    <div className={`cand rarity-${item.rarity}`}>
+    <div className={`cand rarity-${tone(item)}`}>
       <button className="cand-main" onClick={() => props.onOpen(item)}>
         <span className="cand-top">
           <ItemTile item={item} />
@@ -264,7 +264,7 @@ function SlotRow(props: {
   const hasMore = !!item || slot.candidates.length > 0
   const dot = slot.candidates.length > 0 && <span className="dot" title="в сумке есть вещь на этот слот" />
   return (
-    <div className={`erow${item ? ` rarity-${item.rarity}` : ' erow-empty'}${open ? ' erow-open' : ''}`}>
+    <div className={`erow${item ? ` rarity-${tone(item)}` : ' erow-empty'}${open ? ' erow-open' : ''}`}>
       <button className="erow-top" onClick={props.onToggle} disabled={!hasMore} aria-expanded={open}>
         {item ? <ItemTile item={item} /> : <Tile icon={slotIcons[slot.name] ?? 'swap-bag'} />}
         <span className="row-body">

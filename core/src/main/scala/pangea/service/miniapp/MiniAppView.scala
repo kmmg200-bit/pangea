@@ -51,7 +51,10 @@ object MiniAppView {
     sockets:    Int,
     gems:       Int,
     set:        Option[String],
-    variant:    Option[String]
+    variant:    Option[String],
+    // Сюжетное — предмет или экипировка (см. Item.isStoryGear): у него голубая
+    // рамка вместо цвета редкости, а в названии ★.
+    story:      Boolean
   )
 
   /** Прибавка вещи или разница при замене: `key` — `attack`, `defence`,
@@ -829,7 +832,8 @@ object MiniAppView {
       sockets    = item.sockets.size,
       gems       = item.sockets.count(_.isDefined),
       set        = item.set.map(_.label),
-      variant    = variant(shape)
+      variant    = variant(shape),
+      story      = item.isStoryGear || item.isQuestItem
     )
   }
 

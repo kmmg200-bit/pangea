@@ -16,6 +16,8 @@
   --r-Purple: #7c4ddb;
   --r-Violet: #c03ec4;
   --r-Orange: #e0841a;
+  /* Сюжетное — предмет или экипировка: голубой, не путать с синей редкостью. */
+  --r-Story: #38b6e8;
 
   --t-exp: #9a5b1e;
   --t-hp: #c2443a;
@@ -456,6 +458,7 @@ button.row:active {
 .rarity-Purple { --rarity: var(--r-Purple); }
 .rarity-Violet { --rarity: var(--r-Violet); }
 .rarity-Orange { --rarity: var(--r-Orange); }
+.rarity-Story { --rarity: var(--r-Story); }
 
 .empty {
   padding: 32px 8px;

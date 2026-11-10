@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, ApiError } from './api'
 import { iconOf } from './kinds'
 import type { CraftActionView, CraftView, CubeView, ItemView } from './types'
-import { Icon, ItemText, Meter, num, Sheet } from './ui'
+import { Icon, ItemText, Meter, num, Sheet, tone } from './ui'
 import { useDrag, type Zone } from './useDrag'
 
 /** Ячейка куба: вещь — плиткой цвета редкости, пустая — пунктиром. `fresh` —
@@ -19,7 +19,7 @@ function CubeCell(props: {
   if (!item) return <span className="cube-cell cube-cell-empty" />
   const cls = [
     'cube-cell',
-    `rarity-${item.rarity}`,
+    `rarity-${tone(item)}`,
     props.pending && 'cube-cell-pending',
     props.fresh && 'cube-cell-new',
     props.lifted && 'cell-lifted',
@@ -38,7 +38,7 @@ function BagCell(props: { item: ItemView; lifted: boolean; bind: object; onOpen:
   const { item } = props
   return (
     <button
-      className={`bag-cell rarity-${item.rarity}${props.lifted ? ' cell-lifted' : ''}`}
+      className={`bag-cell rarity-${tone(item)}${props.lifted ? ' cell-lifted' : ''}`}
       {...props.bind}
       onClick={props.onOpen}
     >
@@ -196,7 +196,7 @@ export function CraftTab(props: { data: CraftView }) {
         )}
       </section>
       {drag && (
-        <div className={`drag-ghost rarity-${drag.item.rarity}`} style={{ left: drag.x, top: drag.y }} aria-hidden>
+        <div className={`drag-ghost rarity-${tone(drag.item)}`} style={{ left: drag.x, top: drag.y }} aria-hidden>
           <Icon name={iconOf(drag.item)} size={30} />
         </div>
       )}

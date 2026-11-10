@@ -53,7 +53,10 @@ export function Tile(props: { icon: GameIcon; rarity?: string }) {
   )
 }
 
-export const ItemTile = (props: { item: ItemView }) => <Tile icon={iconOf(props.item)} rarity={props.item.rarity} />
+/** Цвет вещи: у сюжетного — голубой (`rarity-Story`), у прочего — цвет редкости. */
+export const tone = (item: ItemView): string => (item.story ? 'Story' : item.rarity)
+
+export const ItemTile = (props: { item: ItemView }) => <Tile icon={iconOf(props.item)} rarity={tone(props.item)} />
 
 export const num = (n: number) => n.toLocaleString('ru-RU')
 
@@ -147,7 +150,7 @@ export function Toolbar(props: {
 export function ItemRow(props: { item: ItemView; aside?: ReactNode; note?: ReactNode; onOpen: () => void }) {
   const kind = kindOf(props.item)
   return (
-    <button className={`row rarity-${props.item.rarity}`} onClick={props.onOpen}>
+    <button className={`row rarity-${tone(props.item)}`} onClick={props.onOpen}>
       <ItemTile item={props.item} />
       <span className="row-body">
         <span className="row-title">{props.item.title}</span>
