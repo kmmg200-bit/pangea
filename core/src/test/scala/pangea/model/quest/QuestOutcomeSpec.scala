@@ -20,14 +20,17 @@ object QuestOutcomeSpec extends ZIOSpecDefault {
         "murloc"    -> "betrayed",
         "lostSquad" -> "ledOut",
         "lostSquad" -> "looted",
+        "storyPowder" -> "killed",
+        "storyPowder" -> "released",
+        "storyPowder" -> "handed",
         "firstSteps" -> "cottage",
         "firstSteps" -> "townhouse",
         "firstSteps" -> "island"
       ))
     },
-    test("отслеживаются только три задания с развилкой: Мариса — пять исходов, мурлоки — три, дружина — два") {
+    test("отслеживаются задания с развилкой: Мариса — пять исходов, мурлоки — три, дружина — два, «Порох у причала» — три") {
       val tracked = NpcQuest.values.filter(q => QuestOutcome.of(q).nonEmpty).toList
-      assertTrue(tracked == List(NpcQuest.Marisa, NpcQuest.Murloc, NpcQuest.LostSquad)) &&
+      assertTrue(tracked == List(NpcQuest.Marisa, NpcQuest.Murloc, NpcQuest.LostSquad, NpcQuest.StoryPowder)) &&
       assertTrue(QuestOutcome.of(NpcQuest.Marisa).size == 5 && QuestOutcome.of(NpcQuest.Murloc).size == 3 &&
         QuestOutcome.of(NpcQuest.LostSquad).size == 2) &&
       // «Встать на ноги» — по дому, строка исхода — ключ дома

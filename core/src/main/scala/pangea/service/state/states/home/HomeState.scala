@@ -23,7 +23,8 @@ import pangea.repository.item.ItemRepository
 import pangea.service.purse.Purse
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.{EquipmentState, InventoryState, LootState}
-import pangea.service.state.{AppButton, AzatData, BeltContents, FirstStepsQuest, ItemMenu, SlotChoice, State, UserAction}
+import pangea.service.state.{AppButton, AzatData, BeltContents, FirstStepsQuest, ItemMenu, NpcQuestLog, QuestSupport, SlotChoice, State,
+  StoryBrandQuest, StoryPowderQuest, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -82,6 +83,7 @@ case class HomeState(
       "HomeOffer"   -> Target.Run { (u, ua, r) => offer(u, ua, r) },
       "HomeBuy"     -> Target.Run { (u, ua, r) => buy(u, ua, r) },
       "HomeFurnish" -> Target.Run { (u, _, r) => furnish(u, r) },
+      "HomeJunonaStory" -> Target.Run { (u, _, r) => junonaMarked(u, r) },
       "HomeFurnItem"   -> Target.Run { (u, ua, r) => furnItem(u, ua, r) },
       "HomeFurnBuy"    -> Target.Run { (u, ua, r) => furnBuy(u, ua, r) },
       "HomeClutterPay" -> Target.Run { (u, _, r) => clutterPay(u, r) },
@@ -168,11 +170,34 @@ case class HomeState(
                     color = ChoiceColor.Primary, data = Map("h" -> h.key), row = Some(i))
                 }
       furnish = Choice("HomeFurnish", content.text("home.office.furnish"), color = ChoiceColor.Secondary, row = Some(houses.size))
+      // Основная линия: набросок узора при герое — спросить, кого ещё записал совет.
+      story  <- junonaOpen(user)
+      marked  = Option.when(story)(Choice("HomeJunonaStory", content.text("story.storyBrand.junona.label"), row = Some(houses.size)))
       back    =
         if (current.isDefined) Choice("HomeMain", content.text("home.office.home"), color = ChoiceColor.Negative, row = Some(houses.size + 1))
         else Choice("LeaveHome", content.text("home.office.leave"), color = ChoiceColor.Negative, row = Some(houses.size + 1))
-      _      <- renderer.show(user, Screen(text, houses ++ List(furnish, back)))
+      _      <- renderer.show(user, Screen(text, houses ++ List(furnish) ++ marked.toList ++ List(back)))
     } yield StateType.Home
+
+  /** «Что горит на груди» на шаге Юноны, и набросок узора при герое. */
+  private def junonaOpen(user: User): Task[Boolean] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (!StoryBrandQuest.toJunona(quests)) ZIO.succeed(false)
+      else getHero(user).flatMap(hero => inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)))
+        .map(inv => QuestSupport.hasItem(inv.items.data, QuestItemKind.StorySketch))
+    }
+
+  /** Юнона о том, кого записывает совет: про Смотрителя — по тому, как с ним
+    * поступили, — и про Сойку; дальше — встреча с ней. */
+  private def junonaMarked(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      open   <- junonaOpen(user)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      fate    = StoryPowderQuest.choice(quests).fold("")(f => content.text(s"story.storyBrand.junona.warden.${f.key}") + "\n\n")
+      _      <- ZIO.when(open)(NpcQuestLog.save(heroDao, user.userId, StoryBrandQuest.step(quests, 4)) *>
+                  renderer.show(user, Screen(fate + content.text("story.storyBrand.junona.text"), Nil)))
+      res    <- office(user, renderer)
+    } yield res
 
   /** Дом из списка: рассказ Юноны, особая реплика про зачёт, если дом уже
     * есть, и цены — кнопками «Подписать за …» (у домика без дома их две, за

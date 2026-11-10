@@ -18,7 +18,7 @@ import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.{AzatData, BarrelThievesQuest, BeltContents, HedgeSongQuest, LostSquadQuest, MarisaQuest, MurlocQuest,
-  QuestOutcomeLog, State, StoryMarkQuest, StrayCasketQuest, UserAction}
+  QuestOutcomeLog, State, StoryMarkQuest, StoryPowderQuest, StrayCasketQuest, UserAction}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
 
@@ -68,6 +68,9 @@ case class DeathState(
       // Смерть у тайника Сороки: штрафы обычные, глава на том же шаге —
       // проснуться в лабиринте, тайник ждёт следующего осмотра.
       cache         = battle.exists(_.story.contains(StoryMarkQuest.FightStory))
+      // Смерть на дегтярном складе: глава на том же шаге — проснуться в
+      // порту, шифровка поведёт на склад снова.
+      warehouse     = battle.exists(_.story.contains(StoryPowderQuest.FightStory))
       // Герой пал раньше, а отряд доигрывал за него и проиграл: травму за этот
       // бой он уже получил, когда упал (см. BattleState) — второй смерть не даёт.
       fellEarlier   = battle.exists(_.group.heroDown)
@@ -140,6 +143,9 @@ case class DeathState(
                         "wakeTo"    -> (StateType.HarborQuarter: StateType).asJson,
                         "wakeLines" -> List("barrelThieves.death").asJson)
                       else if (cache) Json.obj("wakeLines" -> List("story.storyMark.cache.death").asJson)
+                      else if (warehouse) Json.obj(
+                        "wakeTo"    -> (StateType.HarborQuarter: StateType).asJson,
+                        "wakeLines" -> List("story.storyPowder.warehouse.death").asJson)
                       else Json.obj()
       _            <- heroDao.writeSceneData(user.userId, Json.obj(
                         "restDurationMs" -> deathRestMs.asJson,

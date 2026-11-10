@@ -46,7 +46,7 @@ object FirstStepsQuest {
                     stats <- ZIO.foreach(QuestOutcome.find(FirstSteps.Key, h.key))(o =>
                                QuestOutcomeLog.recordAndCount(outcomes, content, hero, o)).map(_.flatten)
                     _     <- renderer.show(user, Screen(
-                               content.text(s"firstSteps.done.${h.key}") + "\n\n" +
+                               content.text(s"firstSteps.done.${h.key}").trim + "\n\n" +
                                  QuestOutcomeLog.withStats(content.text("firstSteps.doneLine"), stats), Nil))
                   } yield ()
                 }

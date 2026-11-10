@@ -111,6 +111,8 @@ object HomeAlert {
       BarrelReturn     -> "возврат украденного в бочку",
       StoryCloak       -> "находка: чёрный плащ у изгороди",
       StoryCache       -> "тайник Сороки у изгороди",
+      StoryWarehouse   -> "дегтярный склад у причала",
+      StoryMeeting     -> "встреча с Сойкой в таверне",
       RaceQuest        -> "квест смены расы",
       NameChange       -> "смена имени"
     )

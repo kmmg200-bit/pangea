@@ -77,6 +77,8 @@ import pangea.model.state.StateType.{
   BarrelReturn,
   StoryCloak,
   StoryCache,
+  StoryWarehouse,
+  StoryMeeting,
   RaceQuest,
   NameChange,
   TreasureHunt,
@@ -145,7 +147,7 @@ import pangea.service.state.states.lostsquad.SquadMineState
 import pangea.service.state.states.straycasket.StrayCasketState
 import pangea.service.state.states.hedgesong.HedgeSongState
 import pangea.service.state.states.barrelthieves.{BarrelReturnState, BarrelThievesState}
-import pangea.service.state.states.story.{StoryCacheState, StoryCloakState}
+import pangea.service.state.states.story.{StoryCacheState, StoryCloakState, StoryMeetingState, StoryWarehouseState}
 import pangea.service.state.states.race.RaceQuestState
 import pangea.service.state.states.name.NameChangeState
 import pangea.service.state.states.merchant.MerchantState
@@ -338,6 +340,8 @@ object StatesMap {
           BarrelReturn      -> BarrelReturnState(heroDao, inventoryRepo, barrelRepo, content),
           StoryCloak        -> StoryCloakState(heroDao, inventoryRepo, itemRepo, content),
           StoryCache        -> StoryCacheState(heroDao, inventoryRepo, itemRepo, content),
+          StoryWarehouse    -> StoryWarehouseState(heroDao, inventoryRepo, itemRepo, content, outcomes),
+          StoryMeeting      -> StoryMeetingState(heroDao, inventoryRepo, itemRepo, content),
           RaceQuest         -> RaceQuestState(heroDao, inventoryRepo, content),
           NameChange        -> NameChangeState(heroDao, inventoryRepo, content),
           Outskirts -> OutskirtsState(

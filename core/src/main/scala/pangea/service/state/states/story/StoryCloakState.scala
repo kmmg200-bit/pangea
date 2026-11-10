@@ -47,7 +47,7 @@ case class StoryCloakState(
                   taken  = quests.take(NpcQuest.StoryMark, now)
                   _     <- NpcQuestLog.save(heroDao, user.userId, taken)
                   _     <- renderer.show(user, Screen(
-                             content.text("story.storyMark.cloak.found") + "\n\n" +
+                             content.text("story.storyMark.cloak.found").trim + "\n\n" +
                                StoryLine.takenLine(content, NpcQuest.StoryMark, taken), List(onward)))
                 } yield ()
     } yield ()

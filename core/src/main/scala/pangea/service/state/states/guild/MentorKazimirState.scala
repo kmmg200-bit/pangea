@@ -11,7 +11,8 @@ import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
 import pangea.service.state.states.InventoryState
 import pangea.service.state.states.merchant.MerchantState
-import pangea.service.state.{CityExit, DailyQuestLog, ItemMenu, NpcQuestDialog, State, UserAction}
+import pangea.service.state.{CityExit, DailyQuestLog, ItemMenu, NpcQuestDialog, NpcQuestLog, QuestSupport, State, StoryBrandQuest,
+  StoryLine, UserAction}
 import zio.{Task, ZIO}
 
 /** Наставник Казимир — руны на теле. Снимает узор руны с вещи из сумки и
@@ -33,6 +34,7 @@ case class MentorKazimirState(heroDao: HeroDao, inventoryRepo: InventoryReposito
     routes = Map(
       "KazimirMenu"        -> Target.Run { (u, _, r) => enter(u, r).as(StateType.MentorKazimir) },
       quest.questAction    -> Target.Run { (u, _, r) => questTalk(u, r) },
+      "KazStory"           -> Target.Run { (u, _, r) => storySketch(u, r) },
       quest.acceptAction   -> Target.Run { (u, _, r) => quest.accept(u, r) *> enter(u, r).as(StateType.MentorKazimir) },
       quest.declineAction  -> Target.Run { (u, _, r) => enter(u, r).as(StateType.MentorKazimir) },
       "Brand"              -> Target.Run { (u, _, r) => brandMenu(u, r) },
@@ -62,15 +64,47 @@ case class MentorKazimirState(heroDao: HeroDao, inventoryRepo: InventoryReposito
   override def targetStates: Set[StateType] = branch.gotoTargets + StateType.MentorKazimir
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
-    quest.load(user).flatMap { quests =>
-      renderer.show(user, Screen(content.text("kazimir.intro"), List(
-        content.choice("Brand", "kazimir.brandLabel").copy(row = Some(0)),
-        content.choice("Deepen", "kazimir.deepenLabel").copy(row = Some(1)),
-        Choice("Runes", content.text("kazimir.runesLabel"), row = Some(2))) ++
-        quest.button(quests).map(_.copy(row = Some(3))).toList ++ List(
-        content.choice("LeaveMentorKazimir", "kazimir.back").copy(row = Some(4)),
-        CityExit.button(content, Some(4)))))
-    }
+    for {
+      quests <- quest.load(user)
+      hero   <- getHero(user)
+      story  <- storyOpen(hero, quests)
+      _      <- renderer.show(user, Screen(content.text("kazimir.intro"), List(
+                  content.choice("Brand", "kazimir.brandLabel").copy(row = Some(0)),
+                  content.choice("Deepen", "kazimir.deepenLabel").copy(row = Some(1)),
+                  Choice("Runes", content.text("kazimir.runesLabel"), row = Some(2))) ++
+                  quest.button(quests).map(_.copy(row = Some(3))).toList ++
+                  // Основная линия: набросок узора при герое — Казимир прочтёт.
+                  Option.when(story)(content.choice("KazStory", "story.storyBrand.kazimir.label").copy(row = Some(3))).toList ++
+                  List(
+                    content.choice("LeaveMentorKazimir", "kazimir.back").copy(row = Some(4)),
+                    CityExit.button(content, Some(4)))))
+    } yield ()
+
+  /** Набросок узора при герое, и глава «Что горит на груди» у Казимира: её
+    * пора начать — или она на его шаге. */
+  private def storyOpen(hero: Hero, quests: pangea.model.quest.NpcQuests): Task[Boolean] =
+    if (!StoryBrandQuest.toKazimir(quests) && !StoryLine.canBegin(quests, NpcQuest.StoryBrand)) ZIO.succeed(false)
+    else inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
+      .map(inv => QuestSupport.hasItem(inv.items.data, pangea.model.item.QuestItemKind.StorySketch))
+
+  /** «Что горит на груди»: Казимир читает набросок и Клеймо — это не руна, это
+    * по части богов; к жрецу. Глава берётся здесь, если ещё не взята. */
+  private def storySketch(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      quests <- quest.load(user)
+      hero   <- getHero(user)
+      open   <- storyOpen(hero, quests)
+      _      <- if (!open) enter(user, renderer)
+                else for {
+                  now  <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
+                  fresh = !quests.isTaken(NpcQuest.StoryBrand)
+                  next  = StoryBrandQuest.step(if (fresh) quests.take(NpcQuest.StoryBrand, now) else quests, 2)
+                  _    <- NpcQuestLog.save(heroDao, user.userId, next)
+                  _    <- renderer.show(user, Screen(content.text("story.storyBrand.kazimir.text").trim +
+                            (if (fresh) "\n\n" + StoryLine.takenLine(content, NpcQuest.StoryBrand, next) else ""), Nil))
+                  _    <- enter(user, renderer)
+                } yield ()
+    } yield StateType.MentorKazimir
 
   // ── «Первый узор» ─────────────────────────────────────────────
 

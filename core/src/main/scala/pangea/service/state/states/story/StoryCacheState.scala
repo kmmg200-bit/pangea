@@ -102,14 +102,14 @@ case class StoryCacheState(
       _      <- QuestSupport.giveItem(inventoryRepo, itemRepo, hero, QuestItemKind.StoryCipher)
       silver  = StoryMarkQuest.silver
       _      <- heroDao.updateSilver(user.userId, hero.silver + silver)
-      // Следующая глава берётся сразу и висит в журнале: что дальше — видно и на карточке шифровки.
+      // Следующая глава берётся сразу: она в журнале, а что делать — на карточке шифровки.
       now    <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
       done   <- chapter.complete(user, hero.copy(silver = hero.silver + silver), _.take(NpcQuest.StoryPowder, now))
       (_, expLine) = done
       next   <- NpcQuestLog.load(heroDao, user.userId)
       _      <- renderer.show(user, Screen(
                   List(content.text("story.storyMark.cache.opened"), content.text("story.storyMark.cipher"),
-                    content.text(StoryMarkQuest.cipherKey(lore))).mkString("\n\n"), Nil))
+                    content.text(StoryMarkQuest.cipherKey(lore))).map(_.trim).mkString("\n\n"), Nil))
       _      <- renderer.show(user, Screen(
                   content.format("story.storyMark.cache.reward", "silver" -> silver.toString, "exp" -> expLine) +
                     "\n\n" + content.text("story.storyMark.questDone") + "\n\n" +

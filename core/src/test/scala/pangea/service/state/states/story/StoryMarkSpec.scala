@@ -120,7 +120,8 @@ object StoryMarkSpec extends ZIOSpecDefault {
       val done = chapter(3).finish(NpcQuest.StoryMark)
       assertTrue(StoryLine.startable(cityDone, LoreData(firstSteps = true)).isEmpty) &&
       assertTrue(StoryLine.startable(cityDone, ready).map(_.quest).contains(NpcQuest.StoryMark)) &&
-      assertTrue(!StoryLine.startable(done, ready).exists(_.quest == NpcQuest.StoryMark) && StoryLine.startable(chapter(1), ready).isEmpty)
+      assertTrue(!StoryLine.startable(done, ready).exists(_.quest == NpcQuest.StoryMark) &&
+        StoryLine.startable(chapter(1), ready).isEmpty)
     },
 
     test("Ришелье: кнопка — только на первом шаге и с плащом при герое; спорол метку — знак Братства, дальше к Горну") {
@@ -263,7 +264,7 @@ object StoryMarkSpec extends ZIOSpecDefault {
               assertTrue(h.silver == 100L + StoryMarkQuest.Level * StoryMarkQuest.SilverPerLvl && h.exp > 0L) &&
               assertTrue(q.isDone(NpcQuest.StoryMark) && StoryLine.active(q).contains(NpcQuest.StoryPowder) && sd.forall(_.isNull)) &&
               assertTrue(said.contains("Квест «Метка под меткой» завершён") && last.choices.map(_.id) == List("CacheLeave")) &&
-              assertTrue(said.contains("📜 Новое задание: «Порох у причала»") && said.contains("дождаться, когда груз Братства придёт в порт")) &&
+              assertTrue(said.contains("📜 Новое задание: «Порох у причала»") && said.contains("пробраться на дегтярный склад у причала")) &&
               // кто пережил пролог: человеком был Элиасом — жив Элорин; эльфом — наоборот; иначе — оба
               assertTrue(said.contains("значит, Элорин") && elf._1.contains("значит, Элиас") &&
                 orc._1.contains("Взрыв пережили оба") && none._1.contains("Взрыв пережили оба"))
@@ -298,7 +299,7 @@ object StoryMarkSpec extends ZIOSpecDefault {
               assertTrue(StoryMarkQuest.toCache(q))
     },
 
-    test("журнал: глава — сюжетным заданием со своим шагом, среди заданий горожан её нет; после неё висит глава 2; карточка шифровки — с текстом") {
+    test("журнал: глава — сюжетным заданием со своим шагом, среди заданий горожан её нет; после неё сразу глава 2; карточка шифровки — с текстом") {
       val hung = chapter(3).finish(NpcQuest.StoryMark).take(NpcQuest.StoryPowder, 0L)
       for {
         c    <- content
@@ -308,10 +309,10 @@ object StoryMarkSpec extends ZIOSpecDefault {
         wait  = InventoryState.questText(c, cipherItem, hung, 6L)
       } yield assertTrue(text.contains("📌 «Метка под меткой»") && text.contains("показать споротую метку Мастеру Горну")) &&
               assertTrue(!text.contains("🧭 «Метка под меткой»") && !done.contains("Метка под меткой")) &&
-              assertTrue(done.contains("📌 «Порох у причала»") && done.contains("откроется с одним из ближайших обновлений") &&
+              assertTrue(done.contains("📌 «Порох у причала»") && done.contains("пробраться на дегтярный склад у причала") &&
                 !done.contains("🧭 «Порох у причала»")) &&
               assertTrue(card.contains("Шифровка Братства") && card.contains("Нужен живым") && !card.contains("🔜")) &&
-              assertTrue(wait.contains("🔜 Глава «Порох у причала» откроется"))
+              assertTrue(wait.contains("Пора наведаться в порт") && !wait.contains("🔜"))
     }
   )
 }

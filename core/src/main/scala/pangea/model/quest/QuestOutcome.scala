@@ -57,6 +57,17 @@ object QuestOutcome extends Enum[QuestOutcome] {
   /** Бросил дружину у фонаря и унёс её груз Гуннару. «Расхититель штолен». */
   case object SquadLooted extends QuestOutcome("looted", NpcQuest.LostSquad.key)
 
+  // ── «Порох у причала»: что герой сделал со Смотрителем ────────────────────────
+
+  /** Добил Смотрителя. */
+  case object PowderKilled extends QuestOutcome("killed", NpcQuest.StoryPowder.key)
+
+  /** Отпустил Смотрителя. */
+  case object PowderReleased extends QuestOutcome("released", NpcQuest.StoryPowder.key)
+
+  /** Сдал Смотрителя совету. */
+  case object PowderHanded extends QuestOutcome("handed", NpcQuest.StoryPowder.key)
+
   // ── «Встать на ноги»: в каком доме засчитано (строка — House.key) ─────────────
 
   /** «Домик в две комнаты». */

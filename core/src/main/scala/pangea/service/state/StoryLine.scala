@@ -33,8 +33,8 @@ object StoryLine {
   /** Главы по порядку. */
   val Chapters: List[Chapter] = List(
     Chapter(NpcQuest.StoryMark, firstClue = Some(StateType.StoryCloak)),
-    // Глава 2 ещё не вышла: висит в журнале с конца главы 1, пройти её пока нельзя.
-    Chapter(NpcQuest.StoryPowder)
+    Chapter(NpcQuest.StoryPowder),
+    Chapter(NpcQuest.StoryBrand)
   )
 
   /** На каком по счёту исследовании уровня после «Встать на ноги» герой
@@ -51,6 +51,15 @@ object StoryLine {
   def startable(quests: NpcQuests, lore: LoreData): Option[Chapter] =
     if (!lore.firstStepsDone || active(quests).isDefined) None
     else Chapters.find(c => !quests.isDone(c.quest))
+
+  /** Главу можно начать с её зацепки: прежняя глава закрыта, эта ещё не
+    * взята и не закрыта, другой в работе нет. Уровень героя не важен. Зацепка
+    * у героя — её проверяет тот, кто начинает (карточка или NPC). */
+  def canBegin(quests: NpcQuests, q: NpcQuest): Boolean = {
+    val i = Chapters.indexWhere(_.quest == q)
+    i >= 0 && Chapters.lift(i - 1).forall(p => quests.isDone(p.quest)) && !quests.isTaken(q) && !quests.isDone(q) &&
+      active(quests).isEmpty
+  }
 
   /** Исследование уровня лабиринта: пока первая зацепка не найдена, каждое
     * считается, и на [[FirstCluePasses]]-м герой выходит на неё — встреча

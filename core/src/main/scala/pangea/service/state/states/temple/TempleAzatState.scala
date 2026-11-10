@@ -5,7 +5,7 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.generator.item.MaterialGenerator
 import pangea.model.hero.{AzatState, Hero, LoreData}
-import pangea.model.item.{Item, ItemSet, ItemType, MaterialKind}
+import pangea.model.item.{Item, ItemSet, ItemType, MaterialKind, QuestItemKind}
 import pangea.model.quest.{NpcQuest, NpcQuests}
 import pangea.model.state.StateType
 import pangea.model.user.User
@@ -14,7 +14,8 @@ import pangea.repository.bank.BankRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.purse.Purse
-import pangea.service.state.{AzatData, CityExit, NpcQuestDialog, QuestGoods, State, UserAction}
+import pangea.service.state.{AzatData, CityExit, NpcQuestDialog, NpcQuestLog, QuestGoods, QuestSupport, State, StoryBrandQuest,
+  UserAction}
 import zio.{Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -48,6 +49,7 @@ case class TempleAzatState(
   private val branch = new Branch(
     routes = Map(
       quest.questAction   -> Target.Run { (u, _, r) => questTalk(u, r) },
+      "PriestStory"       -> Target.Run { (u, _, r) => storyMarked(u, r) },
       quest.acceptAction  -> Target.Run { (u, _, r) => quest.accept(u, r) *> showPriest(u, r) },
       quest.declineAction -> Target.Run { (u, _, r) => showPriest(u, r) },
       // «Письмо Марисе»: Жрец помнит прихожанку и знает её подругу.
@@ -87,7 +89,7 @@ case class TempleAzatState(
 
   /** Меню Жреца: кнопка задания встаёт перед «Назад». */
   private def showPriest(user: User, renderer: Renderer): Task[StateType] =
-    (quest.load(user) <*> readLore(user)).flatMap { case (quests, lore) =>
+    (quest.load(user) <*> readLore(user) <*> storyOpen(user)).flatMap { case (quests, lore, story) =>
       val base    = content.screen("temple.priest")
       val (front, back) = base.choices.partition(_.id != "BackToTemple")
       // О некромантах — когда сюда отправил Трактирщик.
@@ -96,9 +98,30 @@ case class TempleAzatState(
       val holy    = content.choice("HolyWater", "temple.holyWater.label")
       // О Марисе — после того как о ней спросили Трактирщика.
       val marisa  = Option.when(quests.onStep(NpcQuest.Marisa, 2))(content.choice("AskMarisa", "marisa.priest.askLabel"))
+      // Основная линия: набросок узора при герое — спросить об отмеченных.
+      val brand   = Option.when(story)(content.choice("PriestStory", "story.storyBrand.priest.label"))
       renderer.show(user, base.copy(choices =
-        front ++ necro.toList ++ List(holy) ++ marisa.toList ++ quest.button(quests).toList ++ back))
+        front ++ necro.toList ++ List(holy) ++ marisa.toList ++ quest.button(quests).toList ++ brand.toList ++ back))
     }.as(StateType.TempleAzat)
+
+  /** «Что горит на груди» на шаге жреца, и набросок узора при герое. */
+  private def storyOpen(user: User): Task[Boolean] =
+    quest.load(user).flatMap { quests =>
+      if (!StoryBrandQuest.toPriest(quests)) ZIO.succeed(false)
+      else getHero(user).flatMap(hero => inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)))
+        .map(inv => QuestSupport.hasItem(inv.items.data, QuestItemKind.StorySketch))
+    }
+
+  /** Жрец об отмеченных: земля их не принимает; кто метит — не знает; совет
+    * записывает таких — к Юноне. */
+  private def storyMarked(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      open   <- storyOpen(user)
+      quests <- quest.load(user)
+      _      <- ZIO.when(open)(NpcQuestLog.save(heroDao, user.userId, StoryBrandQuest.step(quests, 3)) *>
+                  renderer.show(user, Screen(content.text("story.storyBrand.priest.text"), Nil)))
+      res    <- showPriest(user, renderer)
+    } yield res
 
   /** Рассказ о некромантах: Жрец его не продаёт. */
   private def showNecroLore(user: User, renderer: Renderer): Task[StateType] =
