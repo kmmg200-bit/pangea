@@ -1,7 +1,7 @@
 package pangea.model.hero
 
 import enumeratum._
-import pangea.model.item.ItemSet
+import pangea.model.item.{ItemSet, Rarity}
 
 /** Достижения героя: выдаются сюжетом один раз и навсегда, каждое несёт свой
   * бонус. Хранятся ключами в `heroes.achievements`. */
@@ -46,6 +46,10 @@ object AchievementRates {
 
   /** Сколько каждой из четырёх характеристик даёт «Любимец Проекта». */
   val ProjectFavoriteStatBonus: Long = 1L
+
+  /** На сколько процентов «Весь в золоте» поднимает атаку, защиту, уклонение,
+    * точность и потолок брони. */
+  val AllGoldStatPct: Long = 2L
 }
 
 object Achievement extends Enum[Achievement] {
@@ -234,6 +238,11 @@ object Achievement extends Enum[Achievement] {
   case object ProjectFavorite extends Achievement("Любимец Проекта",
     s"+${AchievementRates.ProjectFavoriteStatBonus} ко всем характеристикам")
 
+  /** Всё надетое — легендарное (см. [[allGold]]). Проверяется при надевании,
+    * как и собранный набор. */
+  case object AllGold extends Achievement("Весь в золоте",
+    s"+${AchievementRates.AllGoldStatPct}% к атаке, защите, уклонению, точности и броне")
+
   /** Какие достижения «Админ 1» выдаёт словом «Дать» в беседе. Остальные — только
     * за свои условия. */
   val ChatGrantable: List[Achievement] = List(Hasty)
@@ -310,16 +319,29 @@ object Achievement extends Enum[Achievement] {
   private def pathPct(hero: Hero, a: Achievement): Long =
     if (hero.hasAchievement(a)) AchievementRates.PathStatPct else 0L
 
-  /** +% к защите, атаке, уклонению и точности от собранных наборов и путей,
-    * выбранных на рубежах. */
-  def defencePct(hero: Hero): Long  = setPct(hero, StoneGuardSet) + pathPct(hero, ShieldPath)
-  def attackPct(hero: Hero): Long   = setPct(hero, WildFlameSet) + pathPct(hero, OwnPath)
-  def evasionPct(hero: Hero): Long  = setPct(hero, GhoulSet) + pathPct(hero, ShadowPath)
-  def accuracyPct(hero: Hero): Long = setPct(hero, HunterSet)
+  private def goldPct(hero: Hero): Long =
+    if (hero.hasAchievement(AllGold)) AchievementRates.AllGoldStatPct else 0L
 
-  /** +% к потолку брони от «Своего среди крыс» — как и у двойки «Крысы», в
-    * потолок, иначе прибавку срезала бы первая же починка. */
-  def armorPct(hero: Hero): Long = setPct(hero, RatSet)
+  /** Надето ли легендарное везде: все одиннадцать мест на теле и обе руки
+    * (двуручное закрывает обе). Доп. слот не в счёт. */
+  def allGold(equipment: Equipment): Boolean = {
+    val body = List(equipment.helmet, equipment.shoulderPads, equipment.chestPlate, equipment.bracelets,
+      equipment.gloves, equipment.pants, equipment.boots, equipment.amulet, equipment.firstRing,
+      equipment.secondRing, equipment.belt, equipment.weapon)
+    val hands = if (equipment.leftBusy) Nil else List(equipment.leftHand)
+    (body ++ hands).forall(_.rarity == Rarity.Orange)
+  }
+
+  /** +% к защите, атаке, уклонению и точности от собранных наборов, путей,
+    * выбранных на рубежах, и «Всего в золоте». */
+  def defencePct(hero: Hero): Long  = setPct(hero, StoneGuardSet) + pathPct(hero, ShieldPath) + goldPct(hero)
+  def attackPct(hero: Hero): Long   = setPct(hero, WildFlameSet) + pathPct(hero, OwnPath) + goldPct(hero)
+  def evasionPct(hero: Hero): Long  = setPct(hero, GhoulSet) + pathPct(hero, ShadowPath) + goldPct(hero)
+  def accuracyPct(hero: Hero): Long = setPct(hero, HunterSet) + goldPct(hero)
+
+  /** +% к потолку брони от «Своего среди крыс» и «Всего в золоте» — как и у
+    * двойки «Крысы», в потолок, иначе прибавку срезала бы первая же починка. */
+  def armorPct(hero: Hero): Long = setPct(hero, RatSet) + goldPct(hero)
 
   /** +% к интеллекту от «Повелителя мёртвых». */
   def intPct(hero: Hero): Long = setPct(hero, NecromancerSet)

@@ -40,7 +40,9 @@ object QuestSupport {
     * Зовётся после всякого надевания: только надевание и может собрать набор. */
   def grantFullSets(heroDao: HeroDao, content: SceneContent, user: User, hero: Hero, renderer: Renderer): Task[Hero] =
     ZIO.foldLeft(ItemSet.values.toList.filter(s => hero.sets.pieces(s) >= Achievement.FullSetPieces)
-                   .flatMap(Achievement.forSet))(hero) {
+                   .flatMap(Achievement.forSet) ++
+                   // «Весь в золоте» — тоже только надеванием: всё надетое легендарное.
+                   Option.when(Achievement.allGold(hero.equipment))(Achievement.AllGold))(hero) {
       (h, a) => grant(heroDao, content, user, h, a, renderer)
     }
 
