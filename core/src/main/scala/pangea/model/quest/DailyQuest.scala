@@ -272,10 +272,11 @@ final case class DailyTask(
 
   /** Что из сумки уйдёт горожанину за одну сдачу: сколько не хватает, не
     * больше. Отдаём худшее из подходящего — просят «любое», и лишаться из-за
-    * этого лучшего клинка герою незачем. */
+    * этого лучшего клинка герою незачем. Сюжетная экипировка (см.
+    * `Item.isStoryGear`) по поручениям не уходит. */
   def toGive(items: List[Item]): List[Item] =
     bring.fold(List.empty[Item])(b =>
-      items.filter(b.accepts(_, pick))
+      items.filter(i => !i.isStoryGear && b.accepts(i, pick))
         .sortBy(i => (Rarity.order(i.rarity), i.lvl, i.gem.map(_.grade).getOrElse(0)))
         .take(left.toInt))
 }

@@ -194,7 +194,8 @@ case class DeathState(
   // максимум), новую не выдаёт, лишь продлевает таймер снятия на 8 часов и
   // показывает соответствующее сообщение.
   /** Что лежит в артефактах и может пропасть вместе с сумкой — с шансом
-    * потери, который зависит от ступени артефакта (см. [[DeathState.stashLossPct]]). */
+    * потери, который зависит от ступени артефакта (см. [[DeathState.stashLossPct]]).
+    * Сюжетное не пропадает и оттуда. */
   private def stashItems(heroId: pangea.model.hero.HeroId): Task[List[(ArtifactKind, Int, pangea.model.item.Item)]] =
     artifacts match {
       case None => ZIO.succeed(Nil)
@@ -203,7 +204,7 @@ case class DeathState(
           case Right(all) =>
             ArtifactKind.values.toList.filterNot(_.safeFromDeath).flatMap { kind =>
               val a = all.of(kind)
-              a.items.data.filterNot(_.isQuestItem).map(item => (kind, DeathState.stashLossPct(a.tier), item))
+              a.items.data.filterNot(i => i.isQuestItem || i.isStoryGear).map(item => (kind, DeathState.stashLossPct(a.tier), item))
             }
           case Left(_) => Nil
         }
@@ -252,8 +253,8 @@ case class DeathState(
       inventory <- inventoryRepo.get(heroId).orElse(ZIO.succeed(
                      pangea.model.inventory.Inventory(0L, heroId, 0L,
                        pangea.model.inventory.Inventory.Items(Nil))))
-      // Сюжетные предметы при смерти не теряются.
-      realItems  = inventory.items.data.filter(i => i.id != 0L && !i.isQuestItem)
+      // Сюжетные предметы и сюжетная экипировка при смерти не теряются.
+      realItems  = inventory.items.data.filter(i => i.id != 0L && !i.isQuestItem && !i.isStoryGear)
       // Ларец и Живая сумка от смерти не спасают, но берегут: чем выше ступень,
       // тем реже из них что-то пропадает. Прячет целиком только Миниатюрный
       // шкаф (см. `ArtifactKind`).

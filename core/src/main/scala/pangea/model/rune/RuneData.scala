@@ -85,9 +85,10 @@ final case class RuneData(
     item.runeStone.map(d => burnsStones(d.size)).getOrElse(burnsGear(item))
 
   /** Вещь — не рунный камень: по редкости, а вещь набора — ещё и по своему
-    * переключателю. */
+    * переключателю. Сюжетная экипировка «всё разом» в огонь не идёт: её
+    * сжигают только поштучно (см. `Item.isStoryGear`). */
   def burnsGear(item: pangea.model.item.Item): Boolean =
-    burns(item.rarity) && (burnSets || item.set.isEmpty)
+    !item.isStoryGear && burns(item.rarity) && (burnSets || item.set.isEmpty)
 
   def burnsStones(size: RuneStoneSize): Boolean = burnStones.contains(size.entryName)
 

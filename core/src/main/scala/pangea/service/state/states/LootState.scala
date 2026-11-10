@@ -14,9 +14,13 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.repository.artifact.ArtifactRepository
 import pangea.service.artifact.{ArtifactIntake, Intake}
+import pangea.service.parcel.Parcels
 import pangea.service.state.states.LootState.LootData
-import pangea.service.state.{InventoryFeedback, ItemMenu, QuestSupport, SlotChoice, State, TakeAndEquip, UserAction}
+import pangea.service.state.{InventoryFeedback, ItemMenu, QuestSupport, SlotChoice, State, StoryGearPost, TakeAndEquip,
+  UserAction}
 import zio.{Task, ZIO}
+
+import java.util.concurrent.TimeUnit
 
 /**
  * Промежуточный экран добычи после победы. `BattleState.victory` уже прокатал лут
@@ -34,6 +38,10 @@ import zio.{Task, ZIO}
  *
  * Над «Оставить» — «🎒 Рюкзак»: заглянуть в сумку, освободить место и вернуться
  * к той же добыче (см. [[openBackpack]]).
+ *
+ * Сюжетную экипировку (см. `Item.isStoryGear`) не теряют: не влезла в сумку —
+ * уходит посылкой (`parcels`, см. [[StoryGearPost]]), а «Оставить» её не
+ * бросает — она идёт с героем, как при «Забрать».
  */
 case class LootState(
   heroDao:             HeroDao,
@@ -41,7 +49,8 @@ case class LootState(
   itemRepository:      ItemRepository,
   journal:             Journal,
   content:             SceneContent,
-  artifacts:           Option[ArtifactRepository] = None
+  artifacts:           Option[ArtifactRepository] = None,
+  parcels:             Option[Parcels] = None
 ) extends State {
 
   private val branch = new Branch(
@@ -251,15 +260,19 @@ case class LootState(
         case (item, Intake.ToInventory)             => itemLine(item)
         case (item, Intake.ToArtifact(kind, free))  => ArtifactIntake.line(content, item, kind, free)
       }
+      // Сюжетная экипировка, что не влезла, — посылкой: её не теряют.
+      posted    <- post(hero, results.collect { case (item, Intake.Refused) if item.isStoryGear => item })
       // У каждой непринятой вещи своя причина: сумка полна или пыли уже сотня.
-      lostLines  = results.collect { case (item, Intake.Refused) => InventoryFeedback.refusalLine(content, item) }.distinct
+      lostLines  = results.collect {
+                     case (item, Intake.Refused) if !posted.sent(item) => InventoryFeedback.refusalLine(content, item)
+                   }.distinct
       slots     <- InventoryFeedback.freeSlotsLine(inventoryRepository, content, hero.id)
       taken      = if (takenLines.isEmpty) content.text("loot.empty")
                    else content.text("loot.claimed") + "\n\n" + takenLines.mkString("\n")
       wornLine   = if (wornItems.isEmpty) ""
                    else "\n\n" + content.format("loot.worn", "names" -> wornItems.map(_.name).mkString(", ")) +
                      TakeAndEquip.takenOffLine(content, worn)
-      full       = if (lostLines.isEmpty) "" else "\n\n" + lostLines.mkString("\n")
+      full       = (if (lostLines.isEmpty) "" else "\n\n" + lostLines.mkString("\n")) + posted.line.fold("")("\n\n" + _)
       // Добыча разобрана — до показа: ВК может не принять сообщение и после
       // повторов, ход тогда обрывается здесь, а герой остаётся на экране добычи.
       // Повторное «Забрать» выдало бы те же вещи ещё раз; с пустой добычей оно
@@ -274,15 +287,50 @@ case class LootState(
   private def payload(ua: UserAction, key: String): Option[String] =
     ua.payload.flatMap(p => io.circe.jawn.decode[Map[String, String]](p).toOption.flatMap(_.get(key)))
 
-  // «Оставить»: предметы выбрасываются (серебро уже забрано в enter).
+  // «Оставить»: предметы выбрасываются (серебро уже забрано в enter). Сюжетную
+  // экипировку не бросают: она идёт с героем — в сумку, а не влезла — посылкой.
   private def leaveLoot(user: User, renderer: Renderer): Task[StateType] =
     for {
       loot <- readLoot(user)
+      hero <- getHero(user)
+      (story, left) = loot.items.partition(_.isStoryGear)
       _    <- journal.append(GameEvent(user.userId, "loot_left",
-                Json.obj("silver" -> loot.silvers.sum.asJson, "items" -> loot.items.map(_.name).asJson)))
-      _    <- renderer.show(user, Screen(content.text("loot.left"), Nil))
+                Json.obj("silver" -> loot.silvers.sum.asJson, "items" -> left.map(_.name).asJson)))
+      kept <- keepStory(user, hero, loot, story)
+      _    <- renderer.show(user, Screen((content.text("loot.left") :: kept).mkString("\n\n"), Nil))
       next <- finish(user, loot, renderer)
     } yield next
+
+  /** Сюжетная экипировка с оставленной добычи: в сумку, не влезла — посылкой.
+    * Добыча разобрана до показа, как и в [[claim]]: повторное «Оставить» её
+    * второй раз не выдаст. Строки — что куда легло. */
+  private def keepStory(user: User, hero: Hero, loot: LootData, story: List[Item]): Task[List[String]] =
+    if (story.isEmpty) ZIO.succeed(Nil)
+    else
+      for {
+        persisted <- ZIO.foreach(story)(itemRepository.persist(hero.id, _))
+        results   <- ZIO.foreach(persisted)(item =>
+                       ArtifactIntake.accept(artifacts, inventoryRepository, hero.id, item).map(item -> _))
+        posted    <- post(hero, results.collect { case (item, Intake.Refused) => item })
+        _         <- heroDao.writeSceneData(user.userId, loot.copy(items = Nil).asJson)
+        bagged     = results.collect { case (item, Intake.ToInventory) => item.displayTitle }
+        lost       = results.collect {
+                       case (item, Intake.Refused) if !posted.sent(item) => InventoryFeedback.refusalLine(content, item)
+                     }.distinct
+      } yield Option.when(bagged.nonEmpty)(content.format("loot.storyKept", "items" -> bagged.mkString(", "))).toList ++
+        lost ++ posted.line.toList
+
+  /** Сюжетную экипировку, что не влезла в сумку, — посылкой (см.
+    * [[StoryGearPost]]). Без почты (в тестах) отправить нечем — вещь тогда
+    * пропадает, как и прочая добыча, что не влезла. */
+  private def post(hero: Hero, items: List[Item]): Task[LootState.Posted] =
+    parcels match {
+      case Some(p) if items.nonEmpty =>
+        ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+          .flatMap(now => StoryGearPost.send(p, hero, content.text("loot.storyFrom"), items, now))
+          .map(line => LootState.Posted(items.map(_.id).toSet, line))
+      case _ => ZIO.succeed(LootState.Posted(Set.empty, None))
+    }
 
   private def readLoot(user: User): Task[LootData] =
     heroDao.readSceneData(user.userId).map(_.flatMap(_.as[LootData].toOption).getOrElse(LootData(Nil, Nil)))
@@ -306,6 +354,11 @@ case class LootState(
 }
 
 object LootState {
+
+  /** Что из сюжетной экипировки ушло посылкой (номера) и строка о том, куда. */
+  final case class Posted(ids: Set[Long], line: Option[String]) {
+    def sent(item: Item): Boolean = ids.contains(item.id)
+  }
   // Содержимое scene_data между victory и экраном добычи: непросохранённые предметы
   // (id = -1) и список серебряных выпадений. Плюс обобщённый «роутинг»:
   //   - doubloons   — дублоны к выдаче (премиум-валюта схрона);

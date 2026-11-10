@@ -75,6 +75,17 @@ object DeathStateSpec extends ZIOSpecDefault {
               assertTrue(log.contains("×2"))
     },
 
+    test("сюжетная экипировка при смерти не теряется: броска на неё нет") {
+      val story = testItem.copy(id = 43L, name = "Клинок старого мурлока").asStoryGear
+      for {
+        t <- makeState(richHero, List(story, testItem))
+        (state, _, invRepo, renderer) = t
+        // Первый бросок — выбор травмы, второй — на обычный меч, и тот пропадает.
+        _ <- TestRandom.feedInts(1, 0)
+        _ <- state.enter(testUser, renderer)
+      } yield assertTrue(invRepo.snapshot.map(_.id) == List(43L))
+    },
+
     test("ларец и сумка смерти не помеха, а шкаф — помеха: бросок трясёт и артефакты") {
       import pangea.model.artifact.ArtifactKind
       import pangea.test.TestArtifactRepository

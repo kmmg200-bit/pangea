@@ -41,6 +41,10 @@ class ParcelDaoLive(xa: Transactor[Task]) extends ParcelDao {
 
   private val columns = fr"id, hero_id, from_name, item, sent_at, mailed_at"
 
+  /** Сюжетная экипировка на почте не сгорает (см. `Item.isStoryGear`): её нет
+    * ни среди сжигаемого, ни в счёте, с какого дня почта горит. */
+  private val burnable = fr"coalesce(item->>'story', '') <> 'true'"
+
   override def add(heroId: HeroId, fromName: String, item: Item, now: Long): Task[Parcel] =
     sql"""insert into parcels(hero_id, from_name, item, sent_at)
           values(${heroId.value}, $fromName, $item, $now)"""
@@ -65,7 +69,7 @@ class ParcelDaoLive(xa: Transactor[Task]) extends ParcelDao {
       case None => ZIO.succeed(false)
       case Some(nel) =>
         (for {
-          since <- sql"select min(mailed_at) from parcels where hero_id = ${heroId.value}"
+          since <- (fr"select min(mailed_at) from parcels where hero_id = ${heroId.value} and" ++ burnable)
                      .query[Option[Long]].unique
           moved <- (fr"update parcels set mailed_at = ${since.getOrElse(now)}" ++
                      fr"where hero_id = ${heroId.value} and mailed_at is null and" ++ Fragments.in(fr"id", nel))
@@ -75,8 +79,8 @@ class ParcelDaoLive(xa: Transactor[Task]) extends ParcelDao {
 
   // Сгорает почта целиком: срок у всех вещей на ней общий — по первой легшей.
   override def burn(heroId: HeroId, before: Long): Task[List[Parcel]] =
-    (fr"delete from parcels where hero_id = ${heroId.value} and mailed_at is not null" ++
-      fr"and (select min(mailed_at) from parcels where hero_id = ${heroId.value}) <= $before" ++
+    (fr"delete from parcels where hero_id = ${heroId.value} and mailed_at is not null and" ++ burnable ++
+      fr"and (select min(mailed_at) from parcels where hero_id = ${heroId.value} and" ++ burnable ++ fr") <= $before" ++
       fr"returning" ++ columns)
       .query[Parcel].to[List].transact(xa)
 
@@ -91,7 +95,7 @@ class ParcelDaoLive(xa: Transactor[Task]) extends ParcelDao {
 
   override def expired(before: Long): Task[List[(HeroId, UserId)]] =
     sql"""select p.hero_id, h.user_id from parcels p join heroes h on h.id = p.hero_id
-          where p.mailed_at is not null
+          where p.mailed_at is not null and coalesce(p.item->>'story', '') <> 'true'
           group by p.hero_id, h.user_id
           having min(p.mailed_at) <= $before"""
       .query[(HeroId, UserId)].to[List].transact(xa)

@@ -145,7 +145,8 @@ case class UnassumingBarrelState(
       inv    <- inventoryRepo.get(hero.id).mapError(asThrowable)
       barrel <- getBarrel(user)
       scene  <- readScene(user)
-      items   = inv.items.data.filterNot(_.isQuestItem) // сюжетное в бочку не кладётся
+      // сюжетное в бочку не кладётся: бочку вскрывают воры, а сюжетную экипировку не теряют
+      items   = inv.items.data.filterNot(i => i.isQuestItem || i.isStoryGear)
       _ <- if (items.isEmpty)
              renderer.show(user, Screen(StackMove.withNote(note, content.text("barrel.emptyInventory")), backRow))
            else {
@@ -295,7 +296,7 @@ case class UnassumingBarrelState(
     for {
       hero <- getHero(user)
       inv  <- inventoryRepo.get(hero.id).mapError(asThrowable)
-      _ <- inv.items.data.find(i => i.id == itemId && !i.isQuestItem) match {
+      _ <- inv.items.data.find(i => i.id == itemId && !i.isQuestItem && !i.isStoryGear) match {
         case None => showDepositItems(user, renderer)
         case Some(item) =>
           depositOne(hero, item).flatMap {
@@ -326,7 +327,7 @@ case class UnassumingBarrelState(
     for {
       hero  <- getHero(user)
       inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
-      items  = inv.items.data.filterNot(_.isQuestItem)
+      items  = inv.items.data.filterNot(i => i.isQuestItem || i.isStoryGear)
       _ <- items.find(_.id == itemId) match {
         case None => showDepositItems(user, renderer)
         case Some(item) =>

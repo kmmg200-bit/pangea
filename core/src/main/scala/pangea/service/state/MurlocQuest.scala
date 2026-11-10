@@ -95,7 +95,9 @@ object MurlocQuest {
   /** Что старейшина берёт: оружие и нагрудники — из сумки (надетое он не трогает). */
   val GearTypes: Set[ItemType] = Set(ItemType.Weapon, ItemType.ChestPlate)
 
-  def gear(items: List[Item]): List[Item] = items.filter(i => GearTypes.contains(i.itemType))
+  /** Сдают только «всё разом» по цветам — поэтому сюжетная экипировка (см.
+    * `Item.isStoryGear`) старейшине не уходит. */
+  def gear(items: List[Item]): List[Item] = items.filter(i => GearTypes.contains(i.itemType) && !i.isStoryGear)
 
   /** Кнопки сдачи: по цветам и всё разом. Обе фиолетовые редкости — одна
     * кнопка, оранжевое (легендарное) — только через «всё». */
@@ -122,12 +124,13 @@ object MurlocQuest {
       .take(remaining.max(0L).toInt)
 
   /** Клинок старого мурлока: легендарное оружие ближнего боя ровно уровня
-    * героя, со своим именем. Хват — из [[BladeGrips]]; двуручный клинок так и
-    * называется. */
+    * героя, со своим именем, — сюжетная экипировка (см. `Item.isStoryGear`).
+    * Выданные раньше клинки остаются обычными. Хват — из [[BladeGrips]];
+    * двуручный клинок так и называется. */
   def blade(hero: Hero, rng: Rng): Item = {
     val (grip, next) = rng.pick(BladeGrips)
     val item = ItemGenerator.createItemOfType(ItemType.Weapon, hero.lvl, BladeRarity, next, Some(grip))._1
-    item.copy(name = if (item.twoHanded) TwoHandedBladeName else BladeName)
+    item.copy(name = if (item.twoHanded) TwoHandedBladeName else BladeName).asStoryGear
   }
 
   // ── Налёт ───────────────────────────────────────────────────────────────────

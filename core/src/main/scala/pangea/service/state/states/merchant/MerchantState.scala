@@ -819,7 +819,8 @@ object MerchantState {
     * них ничего осмысленного не значил бы. Способности у трофеев не бывают,
     * поэтому их защита трофеев тоже не касается. */
   def isJunk(item: Item, s: JunkSaleSettings): Boolean =
-    if (item.isQuestItem || item.isNamedTrophy) false
+    // Сюжетную экипировку продают только поштучно, своей рукой (см. `Item.isStoryGear`).
+    if (item.isQuestItem || item.isNamedTrophy || item.isStoryGear) false
     else if (item.itemType == ItemType.Trophy) s.trophies
     // Руны уходят только по своему переключателю: редкости у камня нет.
     else if (item.itemType == ItemType.RuneStone) s.runes

@@ -77,8 +77,10 @@ object ItemStore {
       def accepts(item: Item): Boolean = kind.accepts(item) && !item.isQuestItem
     }
 
+    /** Бочку вскрывают воры — сюжетную экипировку туда не кладут: её не
+      * теряют (см. `Item.isStoryGear`). */
     case object Barrel extends Place("barrel", carried = false) {
-      def accepts(item: Item): Boolean = !item.isQuestItem
+      def accepts(item: Item): Boolean = !item.isQuestItem && !item.isStoryGear
     }
 
     case object Vault extends Place("vault", carried = false) {

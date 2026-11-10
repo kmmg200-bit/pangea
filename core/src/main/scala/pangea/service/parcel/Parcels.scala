@@ -83,11 +83,13 @@ final case class Parcels(dao: ParcelDao, bank: BankRepository, content: SceneCon
   /** Что сказать герою о раскладке: что сгорело, что легло в ячейку, что — на
     * почту. Про срок почты — только если он пошёл с этих вещей. */
   def report(landed: Parcels.Landing): Option[String] = {
+    val (story, plain) = landed.mailed.partition(_.item.isStoryGear)
     val lines = List(
       Option.when(landed.burned.nonEmpty)(burnedText(landed.burned)),
       Option.when(landed.delivered.nonEmpty)(content.format("parcel.delivered", "items" -> titles(landed.delivered))),
-      Option.when(landed.mailed.nonEmpty)(content.format(
-        if (landed.started) "parcel.mailed" else "parcel.mailedMore", "items" -> titles(landed.mailed)))
+      Option.when(plain.nonEmpty)(content.format(
+        if (landed.started) "parcel.mailed" else "parcel.mailedMore", "items" -> titles(plain))),
+      Option.when(story.nonEmpty)(content.format("parcel.mailedStory", "items" -> titles(story)))
     ).flatten
     Option.when(lines.nonEmpty)(lines.mkString("\n\n"))
   }
@@ -101,7 +103,10 @@ final case class Parcels(dao: ParcelDao, bank: BankRepository, content: SceneCon
     for {
       delivered <- ZIO.foreach(parcels)(toVault(heroId, _)).map(_.flatten)
       mailed     = parcels.filter(p => p.mailedAt.isEmpty && !delivered.exists(_.id == p.id))
-      started   <- dao.toMail(heroId, mailed.map(_.id), now)
+      // Сюжетная экипировка не сгорает: срока почты она не начинает.
+      (story, plain) = mailed.partition(_.item.isStoryGear)
+      started   <- dao.toMail(heroId, plain.map(_.id), now)
+      _         <- dao.toMail(heroId, story.map(_.id), now)
     } yield Parcels.Landing(Nil, delivered, mailed, started)
 
   /** «Меч (Иван), Щит (Пётр)». Сгореть может и больше, чем умещается в
@@ -139,9 +144,10 @@ object Parcels {
   final case class Landing(burned: List[Parcel], delivered: List[Parcel], mailed: List[Parcel], started: Boolean)
 
   /** Когда сгорит почта: срок у неё общий — от первой легшей вещи. `None` —
-    * на почте пусто (посылки в пути не в счёт). */
+    * на почте пусто (посылки в пути не в счёт) или лежит одна сюжетная
+    * экипировка: она не сгорает (см. `Item.isStoryGear`). */
   def burnsAt(parcels: List[Parcel]): Option[Long] =
-    parcels.flatMap(_.mailedAt).minOption.map(_ + ShelfMs)
+    parcels.filterNot(_.item.isStoryGear).flatMap(_.mailedAt).minOption.map(_ + ShelfMs)
 
   /** Сколько ещё хранит почта: «6д 23ч», «5ч 20мин», «40мин» — как у
     * благословения и наёмников в отлучке (см. [[TimeLeft]]). */

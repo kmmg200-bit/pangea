@@ -40,16 +40,18 @@ final case class Transfers(
 
   private val purse = Purse(heroDao, Some(bank))
 
-  /** Что вообще можно передать: вещь занимает место, не сюжетная и не трофей.
-    * Трофеи — личная добыча: обычные сдают в Гильдии, уникальные вешают на
-    * Стену трофеев, а не передают друг другу. Стопка место занимает — её
-    * передают целиком, даже если в ней пыль (см. `Bundling`). */
+  /** Что вообще можно передать: вещь занимает место, не сюжетная (ни предмет,
+    * ни экипировка — см. `Item.isStoryGear`) и не трофей. Трофеи — личная
+    * добыча: обычные сдают в Гильдии, уникальные вешают на Стену трофеев, а не
+    * передают друг другу. Стопка место занимает — её передают целиком, даже
+    * если в ней пыль (см. `Bundling`). */
   def sendable(item: Item): Boolean =
-    !item.isQuestItem && !item.weightless && item.itemType != ItemType.Trophy && !item.isNamedTrophy
+    !item.isQuestItem && !item.isStoryGear && !item.weightless && item.itemType != ItemType.Trophy && !item.isNamedTrophy
 
   /** Под запрос ничего не подошло — и на то есть особая причина, о которой
     * стоит сказать, иначе «ничего не нашлось» сбивает с толку: подошли только
-    * трофеи (про обычные и уникальные — разный текст) или вещь лежит в стопке,
+    * трофеи (про обычные и уникальные — разный текст), сюжетная экипировка или
+    * вещь лежит в стопке,
     * а слово «стопку» не сказали. Ключ текста отказа; в тексте может быть
     * `{query}` — сам запрос. */
   def refusal(items: List[Item], query: String): Option[String] = {
@@ -57,6 +59,7 @@ final case class Transfers(
     if (matching(items, query).nonEmpty) None
     else if (found(_.itemType == ItemType.Trophy)) Some("transfer.noTrophies")
     else if (found(_.isNamedTrophy)) Some("transfer.noNamedTrophies")
+    else if (found(_.isStoryGear)) Some("transfer.noStoryGear")
     else if (!ChatCommand.bundleQuery(query)._1 &&
              matching(items, s"${ChatCommand.BundleWords.head} $query").nonEmpty) Some("transfer.bundleWord")
     else None

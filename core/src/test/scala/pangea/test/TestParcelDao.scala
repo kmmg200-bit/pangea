@@ -36,7 +36,7 @@ class TestParcelDao(private var parcels: List[Parcel] = Nil) extends ParcelDao {
 
   def toMail(heroId: HeroId, ids: List[Long], now: Long): Task[Boolean] =
     ZIO.succeed {
-      val since = parcels.filter(_.heroId == heroId).flatMap(_.mailedAt).minOption
+      val since = parcels.filter(p => p.heroId == heroId && !p.item.isStoryGear).flatMap(_.mailedAt).minOption
       val moved = parcels.filter(p => p.heroId == heroId && p.mailedAt.isEmpty && ids.contains(p.id)).map(_.id)
       parcels = parcels.map(p => if (moved.contains(p.id)) p.copy(mailedAt = Some(since.getOrElse(now))) else p)
       since.isEmpty && moved.nonEmpty
@@ -44,7 +44,8 @@ class TestParcelDao(private var parcels: List[Parcel] = Nil) extends ParcelDao {
 
   def burn(heroId: HeroId, before: Long): Task[List[Parcel]] =
     ZIO.succeed {
-      val mailed = parcels.filter(p => p.heroId == heroId && p.mailedAt.isDefined)
+      // Сюжетная экипировка на почте не сгорает — как в ParcelDaoLive.
+      val mailed = parcels.filter(p => p.heroId == heroId && p.mailedAt.isDefined && !p.item.isStoryGear)
       if (!mailed.flatMap(_.mailedAt).minOption.exists(_ <= before)) Nil
       else { parcels = parcels.filterNot(mailed.contains); mailed }
     }
@@ -55,7 +56,8 @@ class TestParcelDao(private var parcels: List[Parcel] = Nil) extends ParcelDao {
   /** Хозяин героя — по номеру: в тестах у героя N игрок N. */
   def expired(before: Long): Task[List[(HeroId, UserId)]] =
     ZIO.succeed(parcels.groupBy(_.heroId).toList.collect {
-      case (heroId, mine) if mine.flatMap(_.mailedAt).minOption.exists(_ <= before) => heroId -> UserId(heroId.value)
+      case (heroId, mine) if mine.filterNot(_.item.isStoryGear).flatMap(_.mailedAt).minOption.exists(_ <= before) =>
+        heroId -> UserId(heroId.value)
     }.sortBy(_._1.value))
 
   def stranded(before: Long): Task[List[(HeroId, UserId, Long)]] =

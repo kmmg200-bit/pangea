@@ -39,6 +39,10 @@ object CubeCraft {
     def tryMatch(pool: List[Item], rng: Rng): Option[(List[Item], Item, Rng)]
     /** Сколько одинаковых результатов даёт одно применение. */
     def portions: Int = 1
+    /** Берёт ли рецепт сюжетную экипировку (см. `Item.isStoryGear`). Из рецептов
+      * куба она идёт только в смену набора: прочие её съели бы или пересобрали
+      * в новую, уже не сюжетную вещь. */
+    def takesStoryGear: Boolean = false
     /** То же, но с оглядкой на результат: у отваров число склянок своё
       * (из редких трав выходит одна, из простых — две). */
     def portionsFor(@annotation.unused result: Item): Int = portions
@@ -203,6 +207,8 @@ object CubeCraft {
   private object SetInfusion extends Recipe {
     val size = 2
 
+    override def takesStoryGear: Boolean = true
+
     /** Ингредиент → набор, в который он переводит вещь. */
     private def setOf(i: Item): Option[ItemSet] =
       i.material.flatMap(m => MiniBoss.values.find(_.ingredient == m).flatMap(_.set))
@@ -220,7 +226,9 @@ object CubeCraft {
                         i != ingredient && ItemType.settable.contains(i.itemType) && !i.set.contains(set) && i.divine.isEmpty)
       } yield {
         val (name, r2) = ItemNameGenerator.setName(target.itemType, target.rarity, set, rng, target.grip)
-        (List(target, ingredient), target.copy(name = name, set = Some(set)), r2)
+        // Сюжетная экипировка меняет только набор: имя и ★ остаются её собственными.
+        val result = if (target.isStoryGear) target.copy(set = Some(set)) else target.copy(name = name, set = Some(set))
+        (List(target, ingredient), result, r2)
       }
 
     override def describe(consumed: List[Item], result: Item): (List[String], String) =
@@ -408,7 +416,8 @@ object CubeCraft {
     recipes.foreach { recipe =>
       var continue = true
       while (continue && remaining > 0) {
-        recipe.tryMatch(pool, r) match {
+        val usable = if (recipe.takesStoryGear) pool else pool.filterNot(_.isStoryGear)
+        recipe.tryMatch(usable, r) match {
           case Some((consumed, result, r2)) =>
             pool = removeEach(pool, consumed)
             results = results ++ List.fill(recipe.portionsFor(result))(result)

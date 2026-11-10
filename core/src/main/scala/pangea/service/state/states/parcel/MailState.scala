@@ -57,8 +57,10 @@ case class MailState(
                  data = Map("id" -> p.id.toString), row = Some(i))
              }
              // Срок у почты общий — через сколько сгорит всё, что на ней лежит.
+             // Сюжетная экипировка не сгорает — об этом так и говорим.
+             val burnsKey = if (items.exists(_.item.isStoryGear)) "mail.burnsInStory" else "mail.burnsIn"
              val burns = Parcels.burnsAt(items)
-               .map(at => "\n" + content.format("mail.burnsIn", "left" -> Parcels.left(at - now)))
+               .map(at => "\n" + content.format(burnsKey, "left" -> Parcels.left(at - now)))
                .getOrElse("")
              val text = content.format("mail.header", "free" -> inv.freeSlots.toString) + burns + "\n" +
                page.map(line).mkString("\n")

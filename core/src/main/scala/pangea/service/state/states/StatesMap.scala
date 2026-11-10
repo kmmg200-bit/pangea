@@ -302,7 +302,7 @@ object StatesMap {
           TempleAzat -> TempleAzatState(heroDao, inventoryRepo, itemRepo, content, artifacts, bank),
           HallAzat   -> HallAzatState(heroDao, content, bank, artifacts),
           Cube       -> CubeState(heroDao, inventoryRepo, itemRepo, content, bank),
-          Loot -> LootState(heroDao, inventoryRepo, itemRepo, journal, content, artifacts),
+          Loot -> LootState(heroDao, inventoryRepo, itemRepo, journal, content, artifacts, Some(parcels)),
           Merchant -> MerchantState(heroDao, inventoryRepo, itemRepo, content, bank),
           Gustavo  -> GustavoState(heroDao, inventoryRepo, content, Some(itemRepo), artifacts),
           GustavoHerbs    -> GustavoHerbsState(heroDao, inventoryRepo, itemRepo, content, bank),

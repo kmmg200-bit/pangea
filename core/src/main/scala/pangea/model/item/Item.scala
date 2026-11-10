@@ -31,9 +31,25 @@ case class Item(
   // Хват оружия (см. [[Grip]]): в одну руку или в обе. Option по той же
   // причине, что и набор: у вещей, сохранённых раньше, этого поля нет, а у
   // прочих типов его нет вовсе. Оружие без хвата — одноручное.
-  grip: Option[Grip] = None
+  grip: Option[Grip] = None,
+  // Сюжетная экипировка (см. [[isStoryGear]]): награда сюжета и заданий.
+  // Option по той же причине, что и набор: у вещей, сохранённых раньше, поля
+  // нет — они обычные.
+  story: Option[Boolean] = None
 ) {
   def withId(id: Long): Item = copy(id = id)
+
+  /** Сюжетная экипировка — награда сюжета и заданий. Носится и считается по
+    * своей редкости, но в списках вместо кружка редкости — ★, как у сюжетных
+    * предметов. Её не передают (ни из рук в руки, ни посылкой, ни через
+    * аукцион), не продают хламом и не отдают ничем «всё разом», не кладут в
+    * бочку, не выбрасывают и не теряют при смерти; на почте она не сгорает.
+    * Продать её можно Ришелье — поштучно, своей рукой. В кубе — только смена
+    * набора, и та без нового имени. */
+  def isStoryGear: Boolean = story.contains(true)
+
+  /** Та же вещь — сюжетной экипировкой. */
+  def asStoryGear: Item = copy(story = Some(true))
 
   /** Двуручное оружие: его держат обеими руками, и левая занята им же. */
   def twoHanded: Boolean = grip.exists(_.twoHanded)
@@ -188,6 +204,8 @@ case class Item(
   def displayTitle: String =
     if (isBundle) bundleTitle
     else if (isQuestItem) s"${Item.QuestMark} $name" // сюжетный предмет: звёздочка вместо редкости и уровня
+    // сюжетная экипировка: звёздочка вместо кружка редкости, уровень — как у всех
+    else if (isStoryGear) s"${Item.QuestMark} [Ур.$lvl] ${name.stripPrefix(s"${rarity.emoji} ")}"
     else if (isNamedTrophy) s"${Item.NamedTrophyMark} $name" // уникальный трофей: кубок вместо уровня
     else if (isTreasureMap || itemType == ItemType.Gem || itemType == ItemType.Material ||
         itemType == ItemType.Flask || itemType == ItemType.Brew || itemType == ItemType.RuneStone ||
@@ -312,8 +330,12 @@ object Item {
     * слоте. Единый для всех экранов сравнения (дроп, находка, инвентарь). */
   val ComparisonSeparator: String = "➖➖➖➖➖"
 
-  /** Значок сюжетного предмета перед именем — в списке сумки и на карточке. */
+  /** Значок сюжетного предмета перед именем — в списке сумки и на карточке. Он
+    * же у сюжетной экипировки — вместо кружка редкости (см. [[Item.isStoryGear]]). */
   val QuestMark: String = "★"
+
+  /** Строка на карточке сюжетной экипировки. */
+  val StoryGearNote: String = "★ Сюжетная вещь: её не передать, не выбросить и не потерять. Продать можно Ришелье."
 
   /** Значок уникального трофея именного моба. */
   val NamedTrophyMark: String = "🏆"

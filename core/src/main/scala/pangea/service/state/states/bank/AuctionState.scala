@@ -245,15 +245,17 @@ case class AuctionState(
            }
     } yield ()
 
-  /** Что можно выставить: не сюжетное, не трофей и занимающее место (пыль и
-    * малые руны места не занимают, поэтому на торги не идут). Стопка место
-    * занимает — её выставляют целиком, даже если в ней пыль (см. `Bundling`).
+  /** Что можно выставить: не сюжетное (ни предмет, ни экипировка — см.
+    * `Item.isStoryGear`), не трофей и занимающее место (пыль и малые руны места
+    * не занимают, поэтому на торги не идут). Стопка место занимает — её
+    * выставляют целиком, даже если в ней пыль (см. `Bundling`).
     *
-    * Трофеи — личная добыча: их сдают в Гильдии за репутацию, а не продают
-    * друг другу, — ровно по той же причине, по которой их не передают из рук
-    * в руки (см. [[pangea.service.parcel.Transfers.sendable]]). */
+    * Трофеи и сюжетная экипировка — личное: трофеи сдают в Гильдии за
+    * репутацию, сюжетную экипировку носят сами или продают Ришелье, а не
+    * продают друг другу, — ровно по той же причине, по которой их не передают
+    * из рук в руки (см. [[pangea.service.parcel.Transfers.sendable]]). */
   private def sellable(item: Item): Boolean =
-    !item.isQuestItem && !item.weightless && item.itemType != ItemType.Trophy && !item.isNamedTrophy
+    !item.isQuestItem && !item.isStoryGear && !item.weightless && item.itemType != ItemType.Trophy && !item.isNamedTrophy
 
   private def turnSellPage(user: User, renderer: Renderer, delta: Int): Task[Unit] =
     for {

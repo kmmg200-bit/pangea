@@ -200,7 +200,8 @@ case class MonsterCaveState(
       chosen = inv.items.data.find(i => i.id == itemId && !i.isBundle)
       res <- chosen match {
         case None                       => showSupplies(user, scene, renderer).as(StateType.MonsterCave)
-        case Some(item) if item.isQuestItem =>
+        // Сюжетное — и предмет, и экипировка (см. Item.isStoryGear) — здесь не тратят.
+        case Some(item) if item.isQuestItem || item.isStoryGear =>
           renderer.show(user, Screen(content.format("cave.supply.quest", "name" -> item.displayTitle), Nil)) *>
             showSupplies(user, scene, renderer).as(StateType.MonsterCave)
         case Some(item) if atAltar(scene) => offer(user, hero, scene, item, renderer)

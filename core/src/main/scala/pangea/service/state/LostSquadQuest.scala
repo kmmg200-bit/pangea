@@ -163,13 +163,15 @@ object LostSquadQuest {
 
   // ── Дары дружины ────────────────────────────────────────────────────────────
 
-  /** Шлем старшины: пурпурный, ровно уровня героя. Точность в нём есть всегда:
+  /** Шлем старшины: пурпурный, ровно уровня героя, — сюжетная экипировка (см.
+    * `Item.isStoryGear`): ★ вместо кружка редкости, поэтому и в имени кружка
+    * нет. Выданные раньше шлемы остаются обычными. Точность в нём есть всегда:
     * не выпала — встаёт по ставке лёгкой вещи (половина ставки редкости на
     * уровень, см. ItemGenerator). */
   def helmet(hero: Hero, rng: Rng): Item = {
     val raw      = ItemGenerator.createItemOfType(ItemType.Helmet, hero.lvl, HelmetRarity, rng)._1
     val accuracy = if (raw.accuracy > 0L) raw.accuracy else (HelmetRarity.factorR * 0.5 * raw.lvl).toLong.max(1L)
-    raw.copy(accuracy = accuracy).withName(s"${HelmetRarity.emoji} $HelmetName")
+    raw.copy(accuracy = accuracy).withName(HelmetName).asStoryGear
   }
 
   /** Четыре куска от дружины: каждый — вечно огненное железо или магический

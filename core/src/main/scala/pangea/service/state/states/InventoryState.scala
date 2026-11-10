@@ -262,9 +262,10 @@ case class InventoryState(
             // У отвара своя карточка и своя такая же кнопка (см. showBrew).
             Option.when(BeltSlot.of(item).isDefined)(
               content.choice("BeltPut", "inventory.beltPut").copy(color = ChoiceColor.Positive, row = Some(0))),
-            Some(content.choice("Drop", "inventory.drop").copy(color = ChoiceColor.Negative, row = Some(0))),
+            // Сюжетную экипировку не выбрасывают: её не теряют (см. Item.isStoryGear).
+            Option.when(!item.isStoryGear)(content.choice("Drop", "inventory.drop").copy(color = ChoiceColor.Negative, row = Some(0))),
             packChoice(item, count),
-            dropAllChoice(count),
+            if (item.isStoryGear) None else dropAllChoice(count),
             Some(content.choice("InventoryList", "inventory.exit").copy(row = Some(1), color = ChoiceColor.Negative))
           ).flatten
           writeScene(user, scene.copy(selectedId = Some(item.id))) *>
@@ -1028,7 +1029,8 @@ case class InventoryState(
 
   private def dropSelected(user: User, renderer: Renderer): Task[StateType] =
     withSelected(user, renderer) { (item, hero) =>
-      inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)) *>
+      if (item.isStoryGear) backToCard(user, renderer, Some(content.text("inventory.storyNoDrop")))
+      else inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)) *>
         backToCard(user, renderer, Some(content.format("inventory.dropped", "name" -> item.name)))
     }
 
@@ -1067,6 +1069,7 @@ case class InventoryState(
                  .flatMap(_.get("n")).flatMap(_.toIntOption).getOrElse(1)
       res   <- scene.selectedId.flatMap(id => inv.items.data.find(_.id == id)) match {
                  case None => showList(user, renderer)
+                 case Some(item) if item.isStoryGear => backToCard(user, renderer, Some(content.text("inventory.storyNoDrop")))
                  case Some(item) =>
                    val gone = stackOf(inv.items.data, item).takeRight(limit)
                    inventoryRepo.removeItems(gone.map(_.id).toSet, hero.id).mapError(e => new Throwable(e.toString)) *>
@@ -1892,7 +1895,9 @@ object InventoryState {
         if (cur.itemType == ItemType.NoItem) ""
         else s"\n$sep\n${equipped("Сейчас надет", cur)}"
     }
-    s"${item.displayTitle}\n${gearBody(item, hero)}$slotInfo"
+    // Сюжетная экипировка: что с ней можно и чего нельзя — строкой под статами.
+    val story = if (item.isStoryGear) s"\n\n${Item.StoryGearNote}" else ""
+    s"${item.displayTitle}\n${gearBody(item, hero)}$story$slotInfo"
   }
 
   /** Что вещь даёт сама по себе: статы и описания умения и пассивки — без

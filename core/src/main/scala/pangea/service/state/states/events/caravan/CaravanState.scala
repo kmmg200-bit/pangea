@@ -230,7 +230,8 @@ case class CaravanState(
       item  = carried(hero, inv.items.data).find(_.id == itemId)
       res <- item match {
         case None => showSupplies(user, scene, renderer).as(StateType.Caravan)
-        case Some(it) if it.isQuestItem =>
+        // Сюжетное — и предмет, и экипировка (см. Item.isStoryGear) — здесь не тратят.
+        case Some(it) if it.isQuestItem || it.isStoryGear =>
           say(user, scene, content.format("caravan.supply.quest", "name" -> it.displayTitle), renderer)
         case Some(it) if it.divine.isDefined => frighten(user, hero, scene, it, renderer)
         case Some(it) => dope(user, scene, it, renderer)(takeFrom(hero, it, CaveSupply.charged(it)))
