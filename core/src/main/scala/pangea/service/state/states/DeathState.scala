@@ -17,9 +17,9 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
-import pangea.service.state.{AzatData, BarrelThievesQuest, BeltContents, HedgeSongQuest, HotGoodsQuest, LostSquadQuest, MarisaQuest, MurlocQuest,
-  QuestOutcomeLog, State, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest, StrayCasketQuest,
-  UserAction}
+import pangea.service.state.{AzatData, BarrelThievesQuest, BeltContents, BigDealQuest, HedgeSongQuest, HotGoodsQuest, LostSquadQuest, MarisaQuest,
+  MurlocQuest, QuestOutcomeLog, State, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest,
+  StrayCasketQuest, UserAction}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
 
@@ -82,6 +82,9 @@ case class DeathState(
       // Смерть у изгороди, где звери зажали Барти: задание так и не начато —
       // Барти встретится снова; проснуться в лабиринте.
       barti         = battle.exists(_.story.contains(HotGoodsQuest.FightStory))
+      // Смерть в засаде у каравана: «Большое дело» всё равно закрыто — каджиты
+      // отбились сами и заплатили меньше; Барти расскажет, когда герой очнётся.
+      ambush        = battle.exists(_.story.contains(BigDealQuest.AmbushStory))
       // Герой пал раньше, а отряд доигрывал за него и проиграл: травму за этот
       // бой он уже получил, когда упал (см. BattleState) — второй смерть не даёт.
       fellEarlier   = battle.exists(_.group.heroDown)
@@ -136,6 +139,11 @@ case class DeathState(
       fellStats    <- if (collector) MarisaQuest.finish(heroDao, inventoryRepo, content, user.userId, hero) *>
                         QuestOutcomeLog.recordAndCount(outcomes, content, hero, QuestOutcome.MarisaFell)
                       else ZIO.none
+      // Засада у каравана: плата, опыт и «Квест завершён» — готовым текстом
+      // (`wakeNote`), после рассказа Барти. Опыт ложится поверх штрафа за смерть.
+      dealNote     <- if (ambush) BigDealQuest.pay(heroDao, inventoryRepo, content, user,
+                        hero.copy(exp = newExp, silver = newSilver), BigDealQuest.FallenDoubloons, "barti.caravan.fallenReward")
+                      else ZIO.none
       wake          = if (collector) Json.obj(
                         "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
                         "wakeLines" -> List(
@@ -167,6 +175,10 @@ case class DeathState(
                         "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
                         "wakeLines" -> List("story.storyTool.graveyard.death").asJson)
                       else if (barti) Json.obj("wakeLines" -> List("barti.meet.death").asJson)
+                      else if (ambush) Json.obj(
+                        "wakeTo"    -> (StateType.MarketSquare: StateType).asJson,
+                        "wakeLines" -> List("barti.caravan.fallen").asJson,
+                        "wakeNote"  -> dealNote.asJson)
                       else Json.obj()
       _            <- heroDao.writeSceneData(user.userId, Json.obj(
                         "restDurationMs" -> deathRestMs.asJson,

@@ -151,6 +151,15 @@ object AllyKind extends Enum[AllyKind] {
     hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
     accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
 
+  /** Капитан каджитского каравана из «Большого дела»: когда на сделку пришёл
+    * собрат-каджит, двое капитанов встают рядом с ним против ночной стражи — по
+    * силе редкий каджит уровня задания. Имя, уровень и статы лежат на самом
+    * союзнике ([[UndeadForm]], см. BigDealQuest.captain); нанять негде, после
+    * боя в отряд не встаёт. Стихии нет. */
+  case object CaravanKhajiit extends AllyKind("Каджит-капитан", Race.Khajiit, None, maxLvl = 150L,
+    hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
+    accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
+
   val values: IndexedSeq[AllyKind] = findValues
 
   /** Кого можно нанять за столом таверны. Нежить и крысы туда не садятся. */

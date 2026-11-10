@@ -120,6 +120,7 @@ object HomeAlert {
       StoryGraveyard   -> "старое кладбище за городской стеной",
       BartiMeet        -> "встреча с Барти у изгороди",
       BartiHouse       -> "дом Барти на Торговой площади",
+      BartiCaravan     -> "каджитский караван у Сухого колодца",
       RaceQuest        -> "квест смены расы",
       NameChange       -> "смена имени"
     )

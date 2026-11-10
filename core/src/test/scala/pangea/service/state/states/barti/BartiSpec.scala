@@ -214,7 +214,7 @@ object BartiSpec extends ZIOSpecDefault {
               assertTrue(BigDealQuest.collecting(q) && last.choices.map(_.id) == List("BartiLeave"))
     },
 
-    test("Барти берёт товар хоть по одной склянке и не больше, чем нужно; собрано всё — ниже 11-го «рано», с 11-го — ждёт караван") {
+    test("Барти берёт товар хоть по одной склянке и не больше, чем нужно; собрано всё — ниже 11-го «рано», с 11-го — караван пришёл") {
       val almost = BigDealQuest.withStock(goodsDone.take(NpcQuest.BigDeal, 0L), Stock(19, 18))
       def give(lvl: Long, q: NpcQuests, bag: List[Item]) =
         for {
@@ -243,7 +243,7 @@ object BartiSpec extends ZIOSpecDefault {
                 early._4.count(_.brew.contains(BrewKind.Schnapps)) == 1 && early._4.count(_.brew.contains(BrewKind.LivingWater)) == 1 &&
                 early._4.exists(_.brew.contains(BrewKind.Moonshine))) &&
               assertTrue(early._2.contains("Не-е. Рано") && !early._2.contains("🔜")) &&
-              assertTrue(late._2.contains("Караван ещё не пришёл") && late._2.contains("🔜"))
+              assertTrue(late._2.contains("Караван стоит на Западной дороге") && BigDealQuest.toCaravan(late._3))
     },
 
     test("сколько у Барти — одним числом в счётчике задания; журнал «Большого дела» — без чисел") {

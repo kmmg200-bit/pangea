@@ -18,8 +18,9 @@ import java.util.concurrent.TimeUnit
   * нужны шнапс и живая вода, платят они золотом; задание взято. Дальше Барти
   * принимает товар хоть по одной склянке («📦 Отдать товар» берёт из сумки
   * всё, что ему ещё нужно) и складывает у себя. Собрано всё — ждать каравана:
-  * пока героя не видно силы, Барти говорит «рано»; каравана в игре пока нет —
-  * он ждёт его у окна. «Уйти» — на Торговую площадь. */
+  * пока герой ниже уровня задания, Барти говорит «рано, караван не пришёл»
+  * (для этого задания так решил пользователь); дорос — караван пришёл, и
+  * задание ведёт к нему. «Уйти» — на Торговую площадь. */
 case class BartiHouseState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
@@ -44,7 +45,8 @@ case class BartiHouseState(
       _      <- if (BigDealQuest.canBegin(quests) && QuestSupport.hasItem(items, QuestItemKind.BartiAddress))
                   begin(user, quests, items, renderer)
                 else if (BigDealQuest.collecting(quests)) renderer.show(user, stockScreen(None, quests, items))
-                else if (BigDealQuest.waiting(quests)) renderer.show(user, Screen(gateText(hero), List(leave)))
+                else if (BigDealQuest.waiting(quests)) gate(user, hero, quests, None, renderer)
+                else if (BigDealQuest.toCaravan(quests)) renderer.show(user, Screen(content.text("barti.house.arrived").trim, List(leave)))
                 else renderer.show(user, Screen(content.text("barti.house.closed"), List(leave)))
     } yield ()
 
@@ -96,16 +98,19 @@ case class BartiHouseState(
                   _     <- NpcQuestLog.save(heroDao, user.userId, saved)
                   said   = content.format("barti.house.given", "schnapps" -> next.schnapps.toString, "water" -> next.water.toString)
                   left   = items.filterNot(i => take.exists(_.id == i.id))
-                  _     <- if (next.full) renderer.show(user, Screen(said + "\n\n" + gateText(hero), List(leave)))
+                  _     <- if (next.full) gate(user, hero, saved, Some(said), renderer)
                            else renderer.show(user, stockScreen(Some(said), saved, left))
                 } yield ()
     } yield StateType.BartiHouse
 
-  /** Товар собран, а каравана нет: ниже уровня задания — «рано» (так решил
-    * пользователь для этого задания), иначе — Барти ждёт караван у окна. */
-  private def gateText(hero: Hero): String =
-    if (hero.lvl < BigDealQuest.Level.toLong) content.text("barti.house.early").trim
-    else content.text("barti.house.waiting")
+  /** Товар собран: ниже уровня задания — «рано, караван не пришёл» (так решил
+    * пользователь для этого задания); дорос — караван пришёл, задание ведёт к
+    * нему. `lead` — что сказать перед этим. */
+  private def gate(user: User, hero: Hero, quests: NpcQuests, lead: Option[String], renderer: Renderer): Task[Unit] =
+    if (!BigDealQuest.arrives(hero))
+      renderer.show(user, Screen((lead.toList :+ content.text("barti.house.early").trim).mkString("\n\n"), List(leave)))
+    else NpcQuestLog.save(heroDao, user.userId, BigDealQuest.step(quests, 3)) *>
+      renderer.show(user, Screen((lead.toList :+ content.text("barti.house.arrived").trim).mkString("\n\n"), List(leave)))
 
   private def bag(hero: Hero): Task[List[Item]] =
     inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)).map(_.items.data)

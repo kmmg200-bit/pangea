@@ -122,6 +122,7 @@ case class InventoryState(
       "StoryBinderyGo"    -> Target.Run { (u, _,  r) => goBindery(u, r) },
       "StoryGraveyardGo"  -> Target.Run { (u, _,  r) => goGraveyard(u, r) },
       "BartiHouseGo"      -> Target.Run { (u, _,  r) => goBartiHouse(u, r) },
+      "BartiCaravanGo"    -> Target.Run { (u, _,  r) => goBartiCaravan(u, r) },
       // Трактаты Густаво: читать, пока не осилишь.
       "ReadTreatise"      -> Target.Run { (u, _,  r) => readTreatise(u, r) },
       "IdentifyFlower"    -> Target.Run { (u, _,  r) => identifyFlower(u, r) },
@@ -138,7 +139,7 @@ case class InventoryState(
         StateType.MarisaHunt, StateType.MurlocVillage, StateType.RaceQuest, StateType.NameChange,
         StateType.StrayCasket, StateType.BarrelThieves, StateType.StoryCache, StateType.StoryWarehouse,
         StateType.StoryMeeting, StateType.StoryBridge, StateType.StorySojka, StateType.StoryArchive, StateType.StoryBindery,
-        StateType.StoryGraveyard, StateType.BartiHouse) ++ BackpackOrigins
+        StateType.StoryGraveyard, StateType.BartiHouse, StateType.BartiCaravan) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.
@@ -601,6 +602,9 @@ case class InventoryState(
         // Адрес Барти: к нему домой, на Торговую площадь, — «Большое дело».
         case Some(QuestItemKind.BartiAddress) if BigDealQuest.houseOpen(quests) =>
           Some(content.choice("BartiHouseGo", "barti.card.houseLabel").copy(row = Some(0)))
+        // Караван пришёл: ночью к нему, к Сухому колодцу.
+        case Some(QuestItemKind.BartiAddress) if BigDealQuest.toCaravan(quests) =>
+          Some(content.choice("BartiCaravanGo", "barti.card.caravanLabel").copy(row = Some(0)))
         case _ => None
       }
       hero   <- getHero(user)
@@ -678,6 +682,17 @@ case class InventoryState(
                 else if (!from.exists(StateType.cityStates.contains))
                   renderer.show(user, Screen(content.text("barti.card.onlyInCity"), Nil)) *> backToCard(user, renderer)
                 else ZIO.succeed(StateType.BartiHouse)
+    } yield res
+
+  /** К каравану с карточки адреса: только из города. */
+  private def goBartiCaravan(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      from   <- heroDao.readReturnState(user.userId)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      res    <- if (!BigDealQuest.toCaravan(quests)) backToCard(user, renderer)
+                else if (!from.exists(StateType.cityStates.contains))
+                  renderer.show(user, Screen(content.text("barti.card.caravanOnlyInCity"), Nil)) *> backToCard(user, renderer)
+                else ZIO.succeed(StateType.BartiCaravan)
     } yield res
 
   private def followTrail(user: User, renderer: Renderer): Task[StateType] =
