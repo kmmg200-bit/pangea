@@ -11,6 +11,10 @@ import pangea.model.home.HomeData
   * заданиям горожан. Взятым его отмечает `LoreData.firstSteps`. */
 object FirstSteps {
 
+  /** Ключ задания там, где оно стоит рядом с заданиями горожан (исходы в
+    * `quest_outcomes`). */
+  val Key: String = "firstSteps"
+
   /** Окрепнуть — дойти до этого уровня. */
   val TargetLvl: Long = 5L
 

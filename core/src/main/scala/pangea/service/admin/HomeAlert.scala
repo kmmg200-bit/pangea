@@ -109,6 +109,8 @@ object HomeAlert {
       HedgeSong        -> "эльф поёт изгороди",
       BarrelThieves    -> "склад у причала: воры бочки",
       BarrelReturn     -> "возврат украденного в бочку",
+      StoryCloak       -> "находка: чёрный плащ у изгороди",
+      StoryCache       -> "тайник Сороки у изгороди",
       RaceQuest        -> "квест смены расы",
       NameChange       -> "смена имени"
     )

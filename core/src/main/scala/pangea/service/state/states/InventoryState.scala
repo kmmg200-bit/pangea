@@ -27,7 +27,7 @@ import pangea.service.state.states.murloc.MurlocVillageState
 import pangea.service.state.states.race.RaceQuestState
 import pangea.service.state.{BarrelThievesQuest, BeltContents, HedgeSongQuest, HerbLore, ItemMenu, MarisaQuest, MurlocQuest, NpcQuestLog, QuestGoods,
   SlotChoice, StackMove, State,
-  StrayCasketQuest, UiScene, UserAction}
+  StoryMarkQuest, StrayCasketQuest, UiScene, UserAction}
 import zio.{Random, Task, ZIO}
 
 case class InventoryState(
@@ -112,6 +112,7 @@ case class InventoryState(
       "StrayGo"           -> Target.Run { (u, _,  r) => goStray(u, r) },
       // «Вскрытая бочка»: по следу банды, что вскрыла бочку, — только из города.
       "BarrelTrail"       -> Target.Run { (u, _,  r) => followTrail(u, r) },
+      "StoryCacheGo"      -> Target.Run { (u, _,  r) => goCache(u, r) },
       // Трактаты Густаво: читать, пока не осилишь.
       "ReadTreatise"      -> Target.Run { (u, _,  r) => readTreatise(u, r) },
       "IdentifyFlower"    -> Target.Run { (u, _,  r) => identifyFlower(u, r) },
@@ -126,7 +127,7 @@ case class InventoryState(
   override def targetStates: Set[StateType] =
     Set(StateType.HeroStats, StateType.Backpack, StateType.Inventory, StateType.Socketing,
         StateType.MarisaHunt, StateType.MurlocVillage, StateType.RaceQuest, StateType.NameChange,
-        StateType.StrayCasket, StateType.BarrelThieves) ++ BackpackOrigins
+        StateType.StrayCasket, StateType.BarrelThieves, StateType.StoryCache) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.
@@ -556,6 +557,9 @@ case class InventoryState(
         // Улика из бочки, место известно: «Идти по следу».
         case Some(QuestItemKind.BarrelClue) if BarrelThievesQuest.onTrail(quests) =>
           Some(content.choice("BarrelTrail", "barrelThieves.trailLabel").copy(row = Some(0)))
+        // Чёрный плащ, Сорока назван: «Искать тайник Сороки».
+        case Some(QuestItemKind.StoryCloak) if StoryMarkQuest.toCache(quests) =>
+          Some(content.choice("StoryCacheGo", "story.storyMark.card.searchLabel").copy(row = Some(0)))
         case _ => None
       }
       hero   <- getHero(user)
@@ -632,6 +636,23 @@ case class InventoryState(
                 else if (!from.exists(StateType.cityStates.contains))
                   renderer.show(user, Screen(content.text("barrelThieves.onlyInCity"), Nil)) *> backToCard(user, renderer)
                 else ZIO.succeed(StateType.BarrelThieves)
+    } yield res
+
+  /** Искать тайник Сороки с карточки плаща: только в лабиринте («Персонаж»
+    * открыт из него) и не ближе пятого поворота. */
+  private def goCache(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      from   <- heroDao.readReturnState(user.userId)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      hero   <- getHero(user)
+      res    <- if (!StoryMarkQuest.toCache(quests)) backToCard(user, renderer)
+                else if (!from.contains(StateType.Dungeon))
+                  renderer.show(user, Screen(content.text("story.storyMark.card.onlyInLabyrinth"), Nil)) *>
+                    backToCard(user, renderer)
+                else if (!StoryMarkQuest.deepEnough(hero.dungeonLevel))
+                  renderer.show(user, Screen(content.format("story.storyMark.card.tooShallow",
+                    "level" -> StoryMarkQuest.CacheLevel.toString), Nil)) *> backToCard(user, renderer)
+                else ZIO.succeed(StateType.StoryCache)
     } yield res
 
   /** Повернуть ключ стойки: магия меняет надетое местами с тем, что висит на
@@ -1477,6 +1498,14 @@ object InventoryState {
           else ""
         s"${item.displayTitle}\n${difficulty(heroLvl.toInt)}\n\n${QuestItemKind.BarrelClue.description}" +
           (if (now.isEmpty) "" else "\n\n" + now)
+      case Some(QuestItemKind.StoryCloak) =>
+        val now = StoryMarkQuest.cardLine(content, quests)
+        s"${item.displayTitle}\n${difficulty(StoryMarkQuest.Level)}\n\n${QuestItemKind.StoryCloak.description}" +
+          (if (now.isEmpty) "" else "\n\n" + now)
+      case Some(QuestItemKind.StoryCipher) =>
+        // Глава 2 висит в журнале, а пройти её пока нельзя — на карточке так и сказано.
+        s"${item.displayTitle}\n\n${QuestItemKind.StoryCipher.description}\n\n${content.text("story.storyMark.cipher")}" +
+          (if (quests.isTaken(NpcQuest.StoryPowder)) "\n\n" + content.text("story.storyPowder.card.wait") else "")
       case Some(kind @ (QuestItemKind.KelvinMap | QuestItemKind.RaceCoupon | QuestItemKind.NameCoupon)) =>
         s"${item.displayTitle}\n\n${kind.description}"
       case Some(kind) if QuestItemKind.rackOf(kind).isDefined || HerbLore.isTreatise(kind) =>

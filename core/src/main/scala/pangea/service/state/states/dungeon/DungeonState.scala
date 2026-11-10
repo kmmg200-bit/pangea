@@ -18,7 +18,7 @@ import pangea.model.user.User
 import pangea.service.schedule.Scheduler
 import pangea.model.quest.NpcQuests
 import pangea.service.state.{AppButton, CharacterMenu, InstantRest, KillLogData, MurlocQuest, NpcQuestLog, RareQuests, SquadDuty, State,
-  UserAction}
+  StoryLine, UserAction}
 import pangea.service.state.states.events.RaceRevengeState.RevengeScene
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
@@ -189,10 +189,13 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
       pool    = StateType.eventsAt(hero.dungeonLevel, hero.passives.battleEncounterFactor)
       idx    <- Random.nextIntBounded(pool.size)
       event   = pool(idx)
+      // Первая зацепка основной линии — встреча назначена (см. StoryLine):
+      // после обязательных встреч и раньше редких заданий и пула.
+      story  <- StoryLine.firstClueDue(heroDao, hero, quests)
       // Редкое задание лабиринта — своим броском, после обязательных встреч и
       // до пула (см. RareQuests). Встреча уже назначена — не бросаем.
       forced  = gang.isDefined || avengers.isDefined || doomed.isDefined || called || rotten
-      rare   <- if (forced) ZIO.none else RareQuests.roll(quests, hero.dungeonLevel)
+      rare   <- if (forced || story.isDefined) ZIO.none else RareQuests.roll(quests, hero.dungeonLevel)
       result <- (gang, avengers, doomed) match {
                   case (Some(g), _, _)    => gangTrap(user, hero, g, killLog, renderer)
                   case (_, Some(race), _) => revenge(user, race, killLog)
@@ -200,7 +203,7 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
                   case _ if called        => wolfOnCall(user, hero, renderer)
                   case _ if rotten        => joeOnCall(user, hero, renderer)
                   case _ =>
-                    rare match {
+                    story.orElse(rare) match {
                       // Встреча начинается с чистого листа: что бы ни осталось
                       // в scene_data от прошлой такой же встречи, оно не её.
                       case Some(scene) => heroDao.writeSceneData(user.userId, io.circe.Json.Null).as(scene)

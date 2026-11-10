@@ -5,7 +5,7 @@ import io.circe.syntax.EncoderOps
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.model.hero.{Hero, MasterHornBoosts}
-import pangea.model.item.Rarity
+import pangea.model.item.{QuestItemKind, Rarity}
 import pangea.model.quest.NpcQuest
 import pangea.model.state.StateType
 import pangea.model.user.User
@@ -13,7 +13,8 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.bank.BankRepository
 import pangea.service.purse.Purse
 import pangea.model.quest.{DailyKind, DailyNpc, DailyRates}
-import pangea.service.state.{CityExit, DailyDialog, DailyQuestLog, NpcQuestDialog, State, UserAction}
+import pangea.service.state.{CityExit, DailyDialog, DailyQuestLog, NpcQuestDialog, NpcQuestLog, QuestSupport, State, StoryMarkQuest,
+  UserAction}
 import zio.{Task, ZIO}
 
 /**
@@ -61,6 +62,7 @@ case class MasterHornState(
       daily.takeAction       -> Target.Run { (u, _, r) => takeDaily(u, r) },
       daily.handAction       -> Target.Run { (u, _, r) => handDaily(u, r) },
       "HornDailyBack"        -> Target.Run { (u, _, r) => enter(u, r).as(StateType.MasterHorn) },
+      "HornStory"            -> Target.Run { (u, _, r) => storyLedger(u, r) },
       CityExit.route
     ),
     fallback = Target.Run { (u, _, r) => enter(u, r).as(StateType.MasterHorn) }
@@ -79,10 +81,30 @@ case class MasterHornState(
           now  <- nowMs
           hero <- getHero(user)
           work <- daily.today(hero, now)
+          // Основная линия: споротая метка с плаща при герое — Горн сверит номер с учётом.
+          cloak <- hasCloak(hero)
+          story  = Option.when(StoryMarkQuest.toHorn(quests) && cloak)(content.choice("HornStory", "story.storyMark.horn.label"))
           _    <- renderer.show(user, CityExit.on(base.copy(
-                    choices = front ++ quest.button(quests).toList ++ daily.button(work).toList ++ back), content))
+                    choices = front ++ quest.button(quests).toList ++ daily.button(work).toList ++ story.toList ++ back), content))
         } yield ()
       }
+
+  /** «Метка под меткой»: Горн сверяет номер со споротой метки с учётом —
+    * плащ носил Ульф Сорока, которого нашли на пятом повороте без вещей, а
+    * тайник его так и не нашли. Не тот шаг или плаща при герое нет — меню. */
+  private def storyLedger(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      quests <- quest.load(user)
+      hero   <- getHero(user)
+      cloak  <- hasCloak(hero)
+      _      <- if (!StoryMarkQuest.toHorn(quests) || !cloak) enter(user, renderer)
+                else NpcQuestLog.save(heroDao, user.userId, StoryMarkQuest.logged(quests)) *>
+                  renderer.show(user, Screen(content.text("story.storyMark.horn.text"), Nil)) *> enter(user, renderer)
+    } yield StateType.MasterHorn
+
+  private def hasCloak(hero: Hero): Task[Boolean] =
+    inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
+      .map(inv => QuestSupport.hasItem(inv.items.data, QuestItemKind.StoryCloak))
 
   // ── Наказ на день ──────────────────────────────────────────────────────────
 

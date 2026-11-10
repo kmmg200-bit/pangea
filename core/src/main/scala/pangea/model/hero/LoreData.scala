@@ -28,7 +28,11 @@ import io.circe.{Decoder, Encoder, HCursor}
  *  самоучку с купленной книгой считает своим учеником; `brewed` — какие отвары
  *  герой уже варил (за полный набор — достижение «Зельевар I»).
  *  `firstSteps` — взято ли задание «Встать на ноги», которое герой ставит себе
- *  сам, очнувшись в лабиринте (см. [[pangea.model.quest.FirstSteps]]). */
+ *  сам, очнувшись в лабиринте (см. [[pangea.model.quest.FirstSteps]]).
+ *  `firstStepsDone` — «Встать на ноги» засчитано: герой вошёл домой, когда все
+ *  пункты были выполнены, и увидел сцену в доме (см. FirstStepsQuest).
+ *  `cluePasses` — сколько раз после этого герой исследовал уровень лабиринта:
+ *  на пятом его ждёт первая зацепка основной линии (см. StoryLine). */
 final case class LoreData(
   metElemental:   Boolean           = false,
   elementalLore:  Boolean           = false,
@@ -47,7 +51,9 @@ final case class LoreData(
   bookFailures:   Map[String, Int]  = Map.empty,
   boughtBooks:    List[String]      = Nil,
   brewed:         List[String]      = Nil,
-  firstSteps:     Boolean           = false
+  firstSteps:     Boolean           = false,
+  firstStepsDone: Boolean           = false,
+  cluePasses:     Int               = 0
 ) {
   /** Запомнить сваренные отвары (без повторов). */
   def brewedAlso(kinds: List[String]): LoreData =
@@ -108,7 +114,10 @@ object LoreData {
       bought        <- c.getOrElse[List[String]]("boughtBooks")(Nil)
       brewed        <- c.getOrElse[List[String]]("brewed")(Nil)
       firstSteps    <- c.getOrElse[Boolean]("firstSteps")(false)
+      stepsDone     <- c.getOrElse[Boolean]("firstStepsDone")(false)
+      cluePasses    <- c.getOrElse[Int]("cluePasses")(0)
     } yield LoreData(metElemental, elementalLore, metJoe, joeLore, metWolf, wolfLore,
                      metRatKing, ratKingLore, metNecro, necroSent,
-                     branch, knowledge, selfTaught, cooldowns, failures, bought, brewed, firstSteps)
+                     branch, knowledge, selfTaught, cooldowns, failures, bought, brewed, firstSteps,
+                     stepsDone, cluePasses)
 }

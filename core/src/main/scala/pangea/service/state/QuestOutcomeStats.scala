@@ -20,15 +20,15 @@ object QuestOutcomeStats {
   def render(content: SceneContent, mine: QuestOutcome, tally: Map[QuestOutcome, Long]): String = {
     val counts = if (tally.getOrElse(mine, 0L) > 0L) tally else tally.updated(mine, 1L)
     val total  = counts.values.sum
-    val title  = content.text(s"journal.quests.${mine.quest.key}.title")
+    val title  = content.text(mine.titleKey)
     if (total < MinHeroes) content.format("questStats.first", "title" -> title)
     else {
-      val rows = QuestOutcome.of(mine.quest)
+      val rows = QuestOutcome.of(mine.questKey)
         .flatMap(o => counts.get(o).filter(_ > 0L).map(o -> _))
         .sortBy { case (o, n) => (-n, QuestOutcome.indexOf(o)) }
       val lines = rows.map { case (o, n) =>
         content.format(if (o == mine) "questStats.mine" else "questStats.line",
-          "pct" -> pct(content, n, total), "label" -> content.text(s"questStats.${o.quest.key}.${o.entryName}"))
+          "pct" -> pct(content, n, total), "label" -> content.text(s"questStats.${o.questKey}.${o.entryName}"))
       }
       (content.format("questStats.header", "title" -> title) :: lines).mkString("\n")
     }
@@ -45,7 +45,7 @@ object QuestOutcomeStats {
   /** Подсчёт из базы — и текст. Без хранилища исходов или при ошибке базы —
     * ничего: статистика не должна мешать развязке. */
   def text(outcomes: Option[QuestOutcomeDao], content: SceneContent, mine: QuestOutcome): Task[Option[String]] =
-    ZIO.foreach(outcomes)(_.tally(mine.quest).map(render(content, mine, _)))
+    ZIO.foreach(outcomes)(_.tally(mine.questKey).map(render(content, mine, _)))
       .catchAll(e => ZIO.logWarning(
-        s"Статистика исходов не посчитана: ${mine.quest.key}: ${e.getMessage}").as(None))
+        s"Статистика исходов не посчитана: ${mine.questKey}: ${e.getMessage}").as(None))
 }

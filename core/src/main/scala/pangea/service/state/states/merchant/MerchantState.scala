@@ -19,7 +19,7 @@ import pangea.service.purse.Purse
 import pangea.service.state.states.merchant.MerchantState._
 import pangea.model.quest.{DailyKind, DailyNpc, DailyRates}
 import pangea.service.state.{BarrelThievesQuest, CharacterMenu, CityExit, DailyDialog, DailyQuestLog, InventoryFeedback, ItemMenu,
-  NpcQuestDialog, NpcQuestLog, QuestSupport, SlotChoice, StackMove, State, TakeAndEquip, UserAction}
+  NpcQuestDialog, NpcQuestLog, QuestSupport, SlotChoice, StackMove, State, StoryMarkQuest, TakeAndEquip, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -55,6 +55,7 @@ case class MerchantState(
       quest.declineAction -> Target.Run { (u, _, r) => showMenu(u, r).as(StateType.Merchant) },
       // «Вскрытая бочка»: улика из вскрытой бочки — Ришелье знает, чья работа.
       "RichClue"        -> Target.Run { (u, _, r) => showClue(u, r) },
+      "RichStory"       -> Target.Run { (u, _, r) => showCloak(u, r) },
       "Buy"             -> Target.Run { (u, ua, r) => confirmBuy(u, ua, r) },
       "ConfirmBuy"      -> Target.Run { (u, ua, r) => doBuy(u, ua, r, wear = false) },
       "ConfirmBuyWear"  -> Target.Run { (u, ua, r) => doBuy(u, ua, r, wear = true) },
@@ -563,7 +564,10 @@ case class MerchantState(
       has   <- hasClue(hero)
       clue   = Option.when(BarrelThievesQuest.askAround(q) && has)(
                  content.choice("RichClue", "barrelThieves.richelieu.showLabel"))
-      _     <- renderer.show(user, menuScreen(data, hero, quest.button(q), daily.button(work), clue))
+      // Основная линия: чёрный плащ при герое — Ришелье спорет метку.
+      cloak <- hasItem(hero, QuestItemKind.StoryCloak)
+      story  = Option.when(StoryMarkQuest.toRichelieu(q) && cloak)(content.choice("RichStory", "story.storyMark.richelieu.label"))
+      _     <- renderer.show(user, menuScreen(data, hero, quest.button(q), daily.button(work), clue.toList ++ story.toList))
     } yield ()
 
   /** Улика из бочки: Ришелье узнаёт гоблинскую работу и говорит, где сидит
@@ -581,8 +585,22 @@ case class MerchantState(
                   showMenu(user, renderer)
     } yield StateType.Merchant
 
+  /** «Метка под меткой»: Ришелье спарывает с чёрного плаща гильдейскую метку
+    * — под ней знак Братства; чей номер на метке, знает Горн. Не тот шаг или
+    * плаща при герое нет — меню. */
+  private def showCloak(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      quests <- quest.load(user)
+      hero   <- getHero(user)
+      cloak  <- hasItem(hero, QuestItemKind.StoryCloak)
+      _      <- if (!StoryMarkQuest.toRichelieu(quests) || !cloak) showMenu(user, renderer)
+                else NpcQuestLog.save(heroDao, user.userId, StoryMarkQuest.shown(quests)) *>
+                  renderer.show(user, Screen(content.text("story.storyMark.richelieu.text"), Nil)) *>
+                  showMenu(user, renderer)
+    } yield StateType.Merchant
+
   private def menuScreen(data: MerchantData, hero: Hero, questBtn: Option[Choice],
-                         dailyBtn: Option[Choice], clueBtn: Option[Choice]): Screen = {
+                         dailyBtn: Option[Choice], extraBtns: List[Choice]): Screen = {
     val lines = data.items.zipWithIndex.map { case (mi, i) =>
       if (mi.bought) content.format("merchant.boughtLine", "n" -> (i + 1).toString, "name" -> mi.item.name)
       else saleLine(mi, i, hero)
@@ -605,9 +623,10 @@ case class MerchantState(
     val junk = List(
       content.choice("SellJunk",     "merchant.sellJunkLabel").copy(row = Some(2)),
       content.choice("JunkSettings", "merchant.junk.settingsLabel").copy(row = Some(2)))
-    // Задание, уговор и улика из бочки — в одном ряду: сегодня их два, завтра
-    // может не быть ни одного, и остальные кнопки от этого не разъезжаются.
-    val work = (questBtn.toList ++ dailyBtn.toList ++ clueBtn.toList).map(_.copy(row = Some(3)))
+    // Задание, уговор, улика из бочки и глава основной линии — в одном ряду:
+    // сегодня их два, завтра может не быть ни одного, и остальные кнопки от
+    // этого не разъезжаются.
+    val work = (questBtn.toList ++ dailyBtn.toList ++ extraBtns).map(_.copy(row = Some(3)))
     val rest = List(
       content.choice("OpenCharacter", "common.character").copy(row = Some(4)),
       content.choice("Back",          "merchant.backLabel").copy(row = Some(5)),
@@ -687,9 +706,12 @@ case class MerchantState(
     item.material.map(_.doubloonPrice).getOrElse(0L)
 
   /** Улика из бочки в сумке: сюжетное `inventoryItems` не показывает. */
-  private def hasClue(hero: Hero): Task[Boolean] =
+  private def hasClue(hero: Hero): Task[Boolean] = hasItem(hero, QuestItemKind.BarrelClue)
+
+  /** Сюжетный предмет при герое — по сумке целиком: в списке на продажу их нет. */
+  private def hasItem(hero: Hero, kind: QuestItemKind): Task[Boolean] =
     inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
-      .map(inv => QuestSupport.hasItem(inv.items.data, QuestItemKind.BarrelClue))
+      .map(inv => QuestSupport.hasItem(inv.items.data, kind))
 
   /** Вещи на продажу: сюжетные предметы и травы Ришелье не берёт — травы несут
     * Густаво, — а крысиное добро из канализации не берёт никто. Уникальный

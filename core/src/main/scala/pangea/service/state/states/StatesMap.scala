@@ -75,6 +75,8 @@ import pangea.model.state.StateType.{
   HedgeSong,
   BarrelThieves,
   BarrelReturn,
+  StoryCloak,
+  StoryCache,
   RaceQuest,
   NameChange,
   TreasureHunt,
@@ -143,6 +145,7 @@ import pangea.service.state.states.lostsquad.SquadMineState
 import pangea.service.state.states.straycasket.StrayCasketState
 import pangea.service.state.states.hedgesong.HedgeSongState
 import pangea.service.state.states.barrelthieves.{BarrelReturnState, BarrelThievesState}
+import pangea.service.state.states.story.{StoryCacheState, StoryCloakState}
 import pangea.service.state.states.race.RaceQuestState
 import pangea.service.state.states.name.NameChangeState
 import pangea.service.state.states.merchant.MerchantState
@@ -296,7 +299,7 @@ object StatesMap {
           GustavoSupplies -> GustavoSuppliesState(heroDao, content),
           GustavoBelt     -> GustavoBeltState(heroDao, content, bank),
           Tavern          -> TavernState(heroDao, scheduler, content, bank),
-          Home            -> HomeState(heroDao, scheduler, content, inventoryRepo, itemRepo, bank, artifacts),
+          Home            -> HomeState(heroDao, scheduler, content, inventoryRepo, itemRepo, bank, artifacts, outcomes),
           RuneAltar       -> RuneAltarState(heroDao, inventoryRepo, itemRepo, content),
           HerbWorkbench   -> HerbWorkbenchState(heroDao, inventoryRepo, itemRepo, content, artifacts),
           GemVault        -> GemVaultState(heroDao, inventoryRepo, itemRepo, content, artifacts),
@@ -333,6 +336,8 @@ object StatesMap {
           HedgeSong         -> HedgeSongState(heroDao, inventoryRepo, itemRepo, content),
           BarrelThieves     -> BarrelThievesState(heroDao, content),
           BarrelReturn      -> BarrelReturnState(heroDao, inventoryRepo, barrelRepo, content),
+          StoryCloak        -> StoryCloakState(heroDao, inventoryRepo, itemRepo, content),
+          StoryCache        -> StoryCacheState(heroDao, inventoryRepo, itemRepo, content),
           RaceQuest         -> RaceQuestState(heroDao, inventoryRepo, content),
           NameChange        -> NameChangeState(heroDao, inventoryRepo, content),
           Outskirts -> OutskirtsState(

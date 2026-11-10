@@ -19,7 +19,7 @@ object QuestOutcomeLog {
       ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
         .flatMap(now => dao.record(hero.id, outcome, now))
         .catchAll(e => ZIO.logWarning(
-          s"Исход задания не записан: герой ${hero.id.value}, ${outcome.quest.key}/${outcome.entryName}: ${e.getMessage}"))
+          s"Исход задания не записан: герой ${hero.id.value}, ${outcome.questKey}/${outcome.entryName}: ${e.getMessage}"))
     }
 
   /** Записать исход и сказать, как задание закончили другие (см.

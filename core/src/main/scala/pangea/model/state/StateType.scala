@@ -173,6 +173,10 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   case object BarrelThieves extends StateType // склад у причала: гоблины, что вскрыли бочку, и бой с ними
   case object BarrelReturn  extends StateType // украденное — обратно в бочку, награда; дальше — сама бочка
 
+  // Основная линия, глава «Метка под меткой».
+  case object StoryCloak extends StateType // первая зацепка: чёрный плащ у изгороди
+  case object StoryCache extends StateType // тайник Ульфа Сороки у изгороди: меченые звери, шифровка Братства
+
   // Смена расы: купон из лавки Фета — история расы до пробуждения в новом теле.
   case object RaceQuest extends StateType
 

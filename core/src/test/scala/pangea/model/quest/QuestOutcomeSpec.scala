@@ -8,7 +8,7 @@ object QuestOutcomeSpec extends ZIOSpecDefault {
 
   override def spec = suite("Исходы заданий")(
     test("строки исходов — те, что уже лежат в quest_outcomes (переименовывать нельзя)") {
-      val names = QuestOutcome.values.map(o => o.quest.key -> o.entryName).toList
+      val names = QuestOutcome.values.map(o => o.questKey -> o.entryName).toList
       assertTrue(names == List(
         "marisa"    -> "saved",
         "marisa"    -> "abandoned",
@@ -19,14 +19,21 @@ object QuestOutcomeSpec extends ZIOSpecDefault {
         "murloc"    -> "raided",
         "murloc"    -> "betrayed",
         "lostSquad" -> "ledOut",
-        "lostSquad" -> "looted"
+        "lostSquad" -> "looted",
+        "firstSteps" -> "cottage",
+        "firstSteps" -> "townhouse",
+        "firstSteps" -> "island"
       ))
     },
     test("отслеживаются только три задания с развилкой: Мариса — пять исходов, мурлоки — три, дружина — два") {
       val tracked = NpcQuest.values.filter(q => QuestOutcome.of(q).nonEmpty).toList
       assertTrue(tracked == List(NpcQuest.Marisa, NpcQuest.Murloc, NpcQuest.LostSquad)) &&
       assertTrue(QuestOutcome.of(NpcQuest.Marisa).size == 5 && QuestOutcome.of(NpcQuest.Murloc).size == 3 &&
-        QuestOutcome.of(NpcQuest.LostSquad).size == 2)
+        QuestOutcome.of(NpcQuest.LostSquad).size == 2) &&
+      // «Встать на ноги» — по дому, строка исхода — ключ дома
+      assertTrue(QuestOutcome.of(FirstSteps.Key).map(_.entryName) == pangea.model.home.House.values.map(_.key) &&
+        QuestOutcome.FirstStepsIsland.titleKey == "firstSteps.title" &&
+        QuestOutcome.MarisaSaved.titleKey == "journal.quests.marisa.title")
     },
     test("исход по записи из базы: задание и строка; чужая строка или чужое задание — ничего") {
       assertTrue(QuestOutcome.find(NpcQuest.Murloc, "betrayed").contains(QuestOutcome.MurlocBetrayed)) &&

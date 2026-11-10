@@ -4,7 +4,7 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.SceneContent
 import pangea.model.hero.{Hero, LoreData}
 import pangea.model.home.HomeData
-import pangea.model.quest.{BoardDesk, DailyNpc, DailyQuests, DailyRates, FirstSteps, NpcQuest, NpcQuests}
+import pangea.model.quest.{BoardDesk, DailyNpc, DailyQuests, DailyRates, NpcQuest, NpcQuests}
 import pangea.service.state.states.guild.QuestBoardState
 import zio.Task
 
@@ -53,9 +53,13 @@ object QuestJournal {
 
   def journal(content: SceneContent, hero: Hero, lore: LoreData, quests: NpcQuests, daily: DailyQuests,
               board: Option[BoardDesk], nowMs: Long, home: HomeData = HomeData.empty): Journal = {
-    val story = Option.when(lore.firstSteps && !FirstSteps.progress(hero, quests, home).done)(
+    // Сюжет: «Встать на ноги», пока не засчитано дома, а дальше — глава
+    // основной линии в работе (см. StoryLine). Главы — не задания горожан: в
+    // их список они не идут.
+    val story = Option.when(lore.firstSteps && !lore.firstStepsDone)(
       Story(content.text("firstSteps.title"), FirstStepsQuest.objectives(content, hero, quests, home)))
-    val npcs = NpcQuest.values.toList.filter(quests.isTaken).map(npc(content, _, quests))
+      .orElse(StoryLine.active(quests).map(q => Story(StoryLine.title(content, q), StoryLine.step(content, q, quests))))
+    val npcs = NpcQuest.values.toList.filter(q => quests.isTaken(q) && !StoryLine.isChapter(q)).map(npc(content, _, quests))
     val today = DailyRates.dayOf(nowMs)
     val dailies = DailyNpc.values.toList.flatMap { npc =>
       daily.today(npc, today).filter(t => t.taken && !t.done).map { t =>

@@ -3,6 +3,7 @@ package pangea.service.state.states.home
 import io.circe.syntax.EncoderOps
 import io.circe.{Json, jawn}
 import pangea.dao.hero.HeroDao
+import pangea.dao.quest.QuestOutcomeDao
 import pangea.domain.Rng
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.generator.item.ItemGenerator
@@ -22,7 +23,7 @@ import pangea.repository.item.ItemRepository
 import pangea.service.purse.Purse
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.{EquipmentState, InventoryState, LootState}
-import pangea.service.state.{AppButton, AzatData, BeltContents, ItemMenu, SlotChoice, State, UserAction}
+import pangea.service.state.{AppButton, AzatData, BeltContents, FirstStepsQuest, ItemMenu, SlotChoice, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -60,7 +61,9 @@ case class HomeState(
   itemRepo:      ItemRepository,
   bank:          Option[BankRepository] = None,
   // Живая сумка и Ларец: «Разложить всё» берёт травы и камни и из них.
-  artifacts:     Option[ArtifactRepository] = None
+  artifacts:     Option[ArtifactRepository] = None,
+  // «Встать на ноги» засчитано здесь — в каком доме, идёт в подсчёт исходов.
+  outcomes:      Option[QuestOutcomeDao] = None
 ) extends State {
   import HomeState._
 
@@ -126,7 +129,11 @@ case class HomeState(
     busy(user).flatMap {
       case (Some(_), _) => showSleeping(user, renderer).unit
       case (_, Some(_)) => showCleaning(user, renderer).unit
-      case _            => loadHome(user).flatMap(home => (if (home.owns) showHouse(user, renderer) else office(user, renderer)).unit)
+      // Вошёл в свой дом — и «Встать на ноги», если все пункты выполнены,
+      // засчитывается здесь (см. FirstStepsQuest.completeAtHome).
+      case _            => loadHome(user).flatMap(home =>
+                             (if (home.owns) FirstStepsQuest.completeAtHome(heroDao, content, user, home, renderer, outcomes) *> showHouse(user, renderer)
+                              else office(user, renderer)).unit)
     }
 
   /** Пока герой спит, работают только кнопки пробуждения, пока убирается —
