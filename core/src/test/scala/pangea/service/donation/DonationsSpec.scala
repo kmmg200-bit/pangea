@@ -2,6 +2,7 @@ package pangea.service.donation
 
 import io.circe.{Json, JsonObject}
 import pangea.client.tbank._
+import pangea.engine.SceneContent
 import pangea.model.payment.{DonationSku, PaymentStatus}
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.test.{TestApi, TestJournal, TestPaymentDao, TestUserRepository}
@@ -80,7 +81,8 @@ object DonationsSpec extends ZIOSpecDefault {
       users    <- TestUserRepository.withUser(user)
       journal  <- TestJournal.make
       cfg       = config(dailyLimit)
-    } yield Kit(DonationsLive(cfg, bank, payments, api, users, journal), payments, bank, api, journal)
+      content  <- ZIO.attempt(SceneContent.load())
+    } yield Kit(DonationsLive(cfg, bank, payments, api, users, journal, content), payments, bank, api, journal)
 
   /** Нотификация с настоящей подписью — как от банка. */
   private def notification(orderId: String, status: String, amount: Long = pack.price): Json = {
@@ -304,7 +306,7 @@ object DonationsSpec extends ZIOSpecDefault {
                 assertTrue(!stuck.granted) &&
                 assertTrue(stuck.status == PaymentStatus.Confirmed) &&
                 assertTrue(after == 100L) &&
-                assertTrue(sent.size == 1)
+                assertTrue(sent.size == 1 && sent.head._1.startsWith("✨ Оплата прошла") && !sent.head._1.contains("Любимец"))
       },
 
       test("сверка добирает потерянную нотификацию через GetState") {
@@ -315,7 +317,7 @@ object DonationsSpec extends ZIOSpecDefault {
           _     <- k.donations.reconcile(now + Donations.ReconcileAfterMs + 1L)
           after <- k.payments.doubloonsOf(userId)
           sent  <- k.api.sentMessages
-        } yield assertTrue(after == 100L) && assertTrue(sent.size == 1)
+        } yield assertTrue(after == 100L) && assertTrue(sent.size == 1 && sent.head._1.startsWith("✨ Оплата прошла") && !sent.head._1.contains("Любимец"))
       },
 
       test("свежий заказ сверка не трогает: нотификация ещё в пути") {

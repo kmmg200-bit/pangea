@@ -161,6 +161,13 @@ object Queries {
     sql"select exists(select 1 from $tableName where lower(name) = lower($name) and user_id <> $userId)"
 
   // Достижения хранятся как trauma_names — строкой через запятую.
+  /** Дописать достижение, если его ещё нет, — одним запросом: список не
+    * переписывается целиком, и выданное в этот же миг из другого места (донат
+    * приходит вне хода игрока) не затирается. */
+  def addAchievement(userId: UserId, key: String): Fragment =
+    sql"""update $tableName set achievements = ${appendAchievement(key)}
+          where user_id = $userId and not ($key = any(string_to_array(achievements, ',')))"""
+
   def updateAchievements(userId: UserId, achievements: List[String]): Fragment =
     sql"update $tableName set achievements = $achievements where user_id = $userId"
 
@@ -219,4 +226,11 @@ object Queries {
 
   def readNpcQuests(userId: UserId): Fragment =
     sql"select npc_quests from $tableName where user_id = $userId"
+
+  /** SQL-выражение для `achievements`: тот же список с `key` в конце, если его
+    * там ещё нет. Ключи лежат строкой через запятую. */
+  def appendAchievement(key: String): Fragment =
+    fr0"""case when $key = any(string_to_array(achievements, ',')) then achievements
+             when achievements = '' then $key
+             else achievements || ',' || $key end"""
 }

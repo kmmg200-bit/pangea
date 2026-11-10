@@ -43,6 +43,9 @@ object AchievementRates {
   /** На сколько процентов больше опыта даёт каждый ранг «Достигатора»: все
     * пять — +10%. */
   val AchieverExpPct: Long = 2L
+
+  /** Сколько каждой из четырёх характеристик даёт «Любимец Проекта». */
+  val ProjectFavoriteStatBonus: Long = 1L
 }
 
 object Achievement extends Enum[Achievement] {
@@ -224,6 +227,13 @@ object Achievement extends Enum[Achievement] {
   case object Hasty extends Achievement("Торопыга",
     s"+${AchievementRates.HastyStatBonus} ко всем характеристикам")
 
+  /** Купил хоть раз каждую из семи сумм доната (`DonationTiers`). Ставит его сама
+    * выдача дублонов — той же транзакцией, что и начисление (см.
+    * `PaymentDaoLive.grantOnce`), поэтому не теряется, даже если оплата пришла
+    * посреди чужого хода. */
+  case object ProjectFavorite extends Achievement("Любимец Проекта",
+    s"+${AchievementRates.ProjectFavoriteStatBonus} ко всем характеристикам")
+
   /** Какие достижения «Админ 1» выдаёт словом «Дать» в беседе. Остальные — только
     * за свои условия. */
   val ChatGrantable: List[Achievement] = List(Hasty)
@@ -333,9 +343,10 @@ object Achievement extends Enum[Achievement] {
     (if (hero.hasAchievement(Brewer1)) BrewerIntBonus else 0L) + raceSets(hero, QuietGroveSet, DeepMotherSet) +
       hasty(hero)
 
-  /** «Торопыга» — по +1 к каждой из четырёх характеристик. */
+  /** «Торопыга» и «Любимец Проекта» — по +1 к каждой из четырёх характеристик. */
   private def hasty(hero: Hero): Long =
-    if (hero.hasAchievement(Hasty)) AchievementRates.HastyStatBonus else 0L
+    (if (hero.hasAchievement(Hasty)) AchievementRates.HastyStatBonus else 0L) +
+      (if (hero.hasAchievement(ProjectFavorite)) AchievementRates.ProjectFavoriteStatBonus else 0L)
 
   /** Плоская прибавка к ловкости от достижений героя. */
   def agiBonus(hero: Hero): Long =

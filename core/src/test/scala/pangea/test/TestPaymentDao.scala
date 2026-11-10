@@ -59,6 +59,9 @@ class TestPaymentDao(
         .sum
     )
 
+  override def grantedAmounts(userId: UserId): Task[List[Long]] =
+    rowsRef.get.map(_.values.filter(p => p.userId == userId && p.granted).map(_.amountKopecks).toList)
+
   override def grantOnce(orderId: OrderId, userId: UserId, doubloons: Long, updatedAt: Long): Task[GrantResult] =
     rowsRef.get.map(_.get(orderId.value)).flatMap {
       case None                    => ZIO.succeed(GrantResult.AlreadyGranted)

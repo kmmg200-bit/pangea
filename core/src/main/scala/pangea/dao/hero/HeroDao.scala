@@ -47,6 +47,8 @@ trait HeroDao {
   def unnamedUserIds: Task[List[UserId]]
   /** Достижения героя — ключи [[pangea.model.hero.Achievement]]. */
   def updateAchievements(userId: UserId, achievements: List[String]): Task[Unit]
+  /** Дописать одно достижение, если его нет; `true` — дописали. */
+  def addAchievement(userId: UserId, key: String): Task[Boolean]
   /** Отряд героя (см. [[pangea.model.squad.Squad]]). */
   def updateSquad(userId: UserId, squad: pangea.model.squad.Squad): Task[Unit]
 

@@ -19,7 +19,8 @@ class TestDonations(
   startRef:        Ref[Donations.Start],
   settleRef:       Ref[Donations.Settle],
   announcedRef:    Ref[List[Payment]],
-  startedRef:      Ref[List[DonationSku]]
+  startedRef:      Ref[List[DonationSku]],
+  storyRef:        Ref[Option[String]]
 ) extends Donations {
 
   override def pending(userId: UserId): Task[List[Payment]] = pendingRef.get
@@ -40,6 +41,8 @@ class TestDonations(
 
   override def announce(payment: Payment): Task[Unit] = announcedRef.update(_ :+ payment)
 
+  override def story(payment: Payment): Task[Option[String]] = storyRef.get
+
   override def reconcile(now: Long): Task[Unit] = ZIO.unit
 
   /** За какие пакеты игрок пытался заплатить. */
@@ -53,6 +56,9 @@ class TestDonations(
   def refreshed: Task[List[Payment]] = refreshedRef.get
 
   def setSettle(settle: Donations.Settle): Task[Unit] = settleRef.set(settle)
+
+  /** Что Ришелье допишет под «Оплата прошла». */
+  def setStory(story: Option[String]): Task[Unit] = storyRef.set(story)
 }
 
 object TestDonations {
@@ -71,6 +77,7 @@ object TestDonations {
     override def refresh(payment: Payment, now: Long) = ZIO.succeed(Donations.Settle.Pending)
     override def notified(body: Json, now: Long)      = ZIO.succeed(Donations.Notified.Accepted)
     override def announce(payment: Payment)           = ZIO.unit
+    override def story(payment: Payment)              = ZIO.none
     override def reconcile(now: Long)                 = ZIO.unit
   }
 
@@ -90,11 +97,12 @@ object TestDonations {
       settleRef    <- Ref.make(settle)
       announcedRef <- Ref.make(List.empty[Payment])
       startedRef   <- Ref.make(List.empty[DonationSku])
+      storyRef     <- Ref.make(Option.empty[String])
     } yield new TestDonations(
       enabled     = true,
       packs       = packs,
       offerUrl    = "https://example.test/offer",
       linkMinutes = 60,
-      pendingRef, refreshedRef, startRef, settleRef, announcedRef, startedRef
+      pendingRef, refreshedRef, startRef, settleRef, announcedRef, startedRef, storyRef
     )
 }

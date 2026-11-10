@@ -124,6 +124,12 @@ class TestHeroDao(
       if (taken) ZIO.succeed(false)
       else heroRef.update(m => m.get(userId).fold(m)(h => m.updated(userId, h.copy(name = Some(name))))).as(true))
 
+  def addAchievement(userId: UserId, key: String): Task[Boolean] =
+    heroRef.modify(m => m.get(userId) match {
+      case Some(h) if !h.achievements.contains(key) => (true, m.updated(userId, h.copy(achievements = h.achievements :+ key)))
+      case _                                        => (false, m)
+    })
+
   def updateAchievements(userId: UserId, achievements: List[String]): Task[Unit] =
     heroRef.update(m => m.get(userId).fold(m)(h => m.updated(userId, h.copy(achievements = achievements))))
 

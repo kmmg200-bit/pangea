@@ -362,9 +362,13 @@ case class TradeHouseState(
 
         case Some(payment) =>
           donations.refresh(payment, now).flatMap {
+            // «Оплата прошла» — и тем же экраном история Ришелье, последней
+            // строкой «Любимец Проекта», если донат первый.
             case Donations.Settle.Granted(doubloons) =>
-              renderer.show(user, Screen(content.format("bank.tradeHouse.doubloonsPaid",
-                "doubloons" -> doubloons.toString, "email" -> payment.receiptEmail), backRow))
+              donations.story(payment).flatMap(tail =>
+                renderer.show(user, Screen(content.format("bank.tradeHouse.doubloonsPaid",
+                  "doubloons" -> doubloons.toString, "email" -> payment.receiptEmail) + tail.fold("")("\n\n" + _),
+                  backRow)))
             case Donations.Settle.AlreadyGranted =>
               renderer.show(user, Screen(content.text("bank.tradeHouse.doubloonsAlready"), backRow))
             case Donations.Settle.Pending =>

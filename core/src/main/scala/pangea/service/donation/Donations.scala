@@ -3,7 +3,7 @@ package pangea.service.donation
 import io.circe.Json
 import pangea.client.tbank.{TBankClient, TBankConfig}
 import pangea.dao.payment.PaymentDao
-import pangea.engine.Journal
+import pangea.engine.{Journal, SceneContent}
 import pangea.model.payment.{DonationSku, OrderId, Payment}
 import pangea.model.user.{User, UserId}
 import pangea.repository.user.UserRepository
@@ -56,6 +56,12 @@ trait Donations {
   /** Сообщить игроку о зачислении. Отдельно от выдачи: кнопка «Проверить
     * оплату» рисует свой экран, а вебхуку и сверке нужно именно письмо. */
   def announce(payment: Payment): Task[Unit]
+
+  /** История Ришелье о том, откуда деньги (см. [[DonationStory]]), — тем же
+    * сообщением, что и «Оплата прошла», под ним: его дописывают [[announce]] и
+    * экран «Проверить оплату». Пусто — дописывать нечего. Не прочиталось —
+    * тоже пусто: зачисление важнее истории. */
+  def story(payment: Payment): Task[Option[String]]
 
   /** Один проход сверки: добрать потерянные нотификации и застрявшие выдачи. */
   def reconcile(now: Long): Task[Unit]
@@ -119,9 +125,9 @@ object Donations {
   val ReconcileBatch: Int = 32
 
   val live: ZLayer[
-    TBankConfig with TBankClient with PaymentDao with Api with UserRepository with Journal,
+    TBankConfig with TBankClient with PaymentDao with Api with UserRepository with Journal with SceneContent,
     Nothing,
     Donations
   ] =
-    ZLayer.fromFunction(DonationsLive(_, _, _, _, _, _))
+    ZLayer.fromFunction(DonationsLive(_, _, _, _, _, _, _))
 }

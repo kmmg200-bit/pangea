@@ -6,7 +6,9 @@ import doobie.free.{connection => FC}
 import doobie.implicits._
 import doobie.util.fragment.Fragment
 import doobie.util.transactor.Transactor
-import pangea.model.payment.{OrderId, Payment, PaymentStatus}
+import pangea.dao.hero.queries.Queries
+import pangea.model.hero.Achievement
+import pangea.model.payment.{DonationTiers, OrderId, Payment, PaymentStatus}
 import pangea.model.user.UserId
 import zio.interop.catz._
 import zio.{Task, ZIO}
@@ -70,6 +72,10 @@ class PaymentDaoLive(xa: Transactor[Task]) extends PaymentDao {
           where user_id = ${userId.value} and created_at >= $since and status = 'Confirmed'"""
       .query[Long].unique.transact(xa)
 
+  override def grantedAmounts(userId: UserId): Task[List[Long]] =
+    sql"""select amount_kopecks from payments where user_id = ${userId.value} and granted"""
+      .query[Long].to[List].transact(xa)
+
   /** Флаг выдачи и начисление — одной транзакцией.
     *
     * Тянуться из платёжного DAO в `heroes` некрасиво, но альтернатива хуже:
@@ -95,6 +101,19 @@ class PaymentDaoLive(xa: Transactor[Task]) extends PaymentDao {
       sql"""update heroes set doubloons = doubloons + $doubloons
             where user_id = ${userId.value}""".update.run
 
+    // «Любимец Проекта» — когда выдана хоть раз каждая из семи сумм; этот
+    // заказ уже отмечен выданным и идёт в счёт. Той же транзакцией, чтобы не
+    // разойтись с выдачей; у кого достижение уже есть, список не меняется.
+    val favorite: ConnectionIO[Int] = NonEmptyList.fromList(DonationTiers.Amounts) match {
+      case None => FC.pure(0)
+      case Some(tiers) =>
+        (sql"""update heroes set achievements = ${Queries.appendAchievement(Achievement.ProjectFavorite.entryName)}
+               where user_id = ${userId.value}
+                 and (select count(distinct amount_kopecks) from payments
+                      where user_id = ${userId.value} and granted and """ ++
+          Fragments.in(fr"amount_kopecks", tiers) ++ fr") = ${tiers.size}").update.run
+    }
+
     val tx =
       mark.flatMap {
         case 0 => FC.pure[GrantResult](GrantResult.AlreadyGranted)
@@ -102,7 +121,7 @@ class PaymentDaoLive(xa: Transactor[Task]) extends PaymentDao {
           credit.flatMap {
             // Героя нет — рвём транзакцию, чтобы снялась и отметка.
             case 0 => FC.raiseError[GrantResult](PaymentDaoLive.NoHero)
-            case _ => FC.pure[GrantResult](GrantResult.Granted)
+            case _ => favorite.map(_ => GrantResult.Granted: GrantResult)
           }
       }
 

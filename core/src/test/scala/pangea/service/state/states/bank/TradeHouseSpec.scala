@@ -319,8 +319,10 @@ object TradeHouseSpec extends ZIOSpecDefault {
           // отводим их вперёд, иначе любой опрос выглядит слишком частым.
           _    <- TestClock.adjust(10.seconds)
           dons <- TestDonations.on(pending = List(payment), settle = Donations.Settle.Granted(100L))
+          _    <- dons.setStory(Some("💬 Ришелье:\nИстория"))
           t    <- house(heroSilver = 0L, donations = dons)
           (state, _, _, renderer, _) = t
+          before <- renderer.sentScreens.map(_.size)
           _      <- state.action(testUser, tap("DonCheck"), renderer)
           paid   <- renderer.sentScreens
           _      <- dons.setSettle(Donations.Settle.Pending)
@@ -331,6 +333,8 @@ object TradeHouseSpec extends ZIOSpecDefault {
           _      <- state.action(testUser, tap("DonCheck"), renderer)
           often  <- renderer.sentScreens
         } yield assertTrue(paid.last.text.contains("Зачислено")) &&
+                // История Ришелье — тем же экраном, под «Зачислено», а не отдельным.
+                assertTrue(paid.size == before + 1 && paid.last.text.endsWith("\n\n💬 Ришелье:\nИстория")) &&
                 assertTrue(waited.last.text.contains("Оплата ещё не прошла")) &&
                 assertTrue(often.last.text.contains("Не части"))
       },

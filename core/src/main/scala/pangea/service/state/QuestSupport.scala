@@ -79,15 +79,18 @@ object QuestSupport {
       } yield ()
     }.unit
 
-  /** Достижение — один раз; строка о нём показывается сразу. */
+  /** Достижение — один раз; строка о нём показывается сразу. В базу —
+    * дописыванием одного ключа, а не всего списка: снимок героя мог отстать
+    * (донат дописывает своё вне хода), и целый список затёр бы новое. Не
+    * дописалось — значит, уже было: строки нет. */
   def grant(heroDao: HeroDao, content: SceneContent, user: User, hero: Hero, a: Achievement, renderer: Renderer): Task[Hero] =
     if (hero.hasAchievement(a)) ZIO.succeed(hero)
     else {
       val updated = hero.withAchievement(a)
       val line    = content.format("marisa.achievement", "title" -> a.title, "bonus" -> a.bonusLine)
       val note    = Notes.get(a).map(key => "\n\n" + content.text(key)).getOrElse("")
-      heroDao.updateAchievements(user.userId, updated.achievements) *>
-        renderer.show(user, Screen(line + note, Nil)).as(updated)
+      heroDao.addAchievement(user.userId, a.entryName).flatMap(added =>
+        ZIO.when(added)(renderer.show(user, Screen(line + note, Nil))).as(updated))
     }
 
   /** Достижения, у которых под строкой о получении — своя приписка. */

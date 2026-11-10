@@ -3,7 +3,7 @@ package pangea.service.donation
 import io.circe.Json
 import pangea.client.tbank.{InitRequest, TBankClient, TBankConfig}
 import pangea.dao.payment.{GrantResult, PaymentDao}
-import pangea.engine.Journal
+import pangea.engine.{Journal, SceneContent}
 import pangea.model.GameEvent
 import pangea.model.payment.{DonationSku, OrderId, Payment, PaymentStatus}
 import pangea.model.user.{User, UserId, VkId}
@@ -18,7 +18,8 @@ final case class DonationsLive(
   payments: PaymentDao,
   api:      Api,
   users:    UserRepository,
-  journal:  Journal
+  journal:  Journal,
+  content:  SceneContent
 ) extends Donations {
 
   override def enabled: Boolean      = config.enabled
@@ -213,14 +214,23 @@ final case class DonationsLive(
     users.getUserById(payment.userId).flatMap {
       case None => ZIO.logWarning(s"donation: некому сообщить о ${payment.orderId.value}")
       case Some(user) =>
-        api
-          .sendMessage(user, DonationsLive.granted(payment), List.empty, None)
-          .catchAll(err =>
-            // Дублоны уже на руках; недоставленное письмо само попадёт в
-            // `send_failures`, и терять из-за него ответ банку нельзя.
-            ZIO.logWarning(s"donation: письмо о ${payment.orderId.value} не ушло: ${err.getMessage}")
-          )
+        // Одним сообщением: «Оплата прошла», под ним история Ришелье и
+        // последней строкой — «Любимец Проекта», если донат первый.
+        story(payment).flatMap(tail =>
+          api
+            .sendMessage(user, DonationsLive.granted(payment) + tail.fold("")("\n\n" + _), List.empty, None)
+            .catchAll(err =>
+              // Дублоны уже на руках; недоставленное письмо само попадёт в
+              // `send_failures`, и терять из-за него ответ банку нельзя.
+              ZIO.logWarning(s"donation: письмо о ${payment.orderId.value} не ушло: ${err.getMessage}")
+            ))
     }
+
+  override def story(payment: Payment): Task[Option[String]] =
+    payments.grantedAmounts(payment.userId)
+      .map(DonationStory.text(content, payment.amountKopecks, _))
+      .catchAll(err =>
+        ZIO.logWarning(s"donation: история о ${payment.orderId.value} не собралась: ${err.getMessage}").as(None))
 
   // ── Письмо админам ────────────────────────────────────────────────────────
 
