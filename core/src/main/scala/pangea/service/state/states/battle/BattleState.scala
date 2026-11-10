@@ -36,7 +36,7 @@ import pangea.service.state.states.arena.ArenaBattle
 import pangea.service.state.states.battle.BattleState.{ArenaOwnActions, Victim}
 import pangea.service.schedule.Scheduler
 import pangea.service.state.{AzatData, BarrelThievesQuest, BeltContents, BoardProgress, HedgeSongQuest, LostSquadQuest, MarisaQuest, NpcQuestLog,
-  State, StoryMarkQuest, StoryPowderQuest, UserAction, KillLogData}
+  State, StoryListQuest, StoryMarkQuest, StoryPowderQuest, UserAction, KillLogData}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
 
@@ -6591,12 +6591,12 @@ object BattleState {
   /** Сюжетные бои, которые награждаются как обычные: опыт и добыча с каждого
     * павшего (налёт на мурлоков, бой у завала, волны орков у поющего эльфа,
     * банда гоблинов, вскрывшая бочку, меченые звери у тайника Сороки, люди
-    * Смотрителя на дегтярном складе).
+    * Смотрителя на дегтярном складе, чистильщики у Мельничного моста).
     * Сбежали или ничья — роутинг добычи у них стирается: развязки «после боя»
     * не будет. Прочие сюжетные бои — без добычи по таблицам. */
   val RaidStories: Set[String] =
     Set(MurlocQuest.RaidStory, LostSquadQuest.EscortStory, HedgeSongQuest.WaveStory, BarrelThievesQuest.FightStory,
-      StoryMarkQuest.FightStory, StoryPowderQuest.FightStory)
+      StoryMarkQuest.FightStory, StoryPowderQuest.FightStory, StoryListQuest.FightStory)
 
   /** Умение союзника, выбранное на ход. Удар несёт свою цель: без цели его
     * в выборе просто нет, и доставать её потом неоткуда. */

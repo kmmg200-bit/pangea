@@ -122,6 +122,13 @@ object NpcQuest extends Enum[NpcQuest] {
     * 3 — Юнона; 4 — встреча с Сойкой. Закрыта — в сумке страница списка. */
   case object StoryBrand extends NpcQuest("storyBrand")
 
+  /** Глава 4, «Список» (задание 17-го уровня): ведёт страница списка отмеченных.
+    * Шаги: 1 — Рахадим (глава берётся у него и сразу идёт дальше); 2 —
+    * рассказать Сойке; 3 — Мельничный мост (засада чистильщиков); 4 — найти
+    * Сойку, развилка. Закрыта — `counter` хранит выбор (см.
+    * StoryListQuest.SojkaFate); в сумке — ключ от архива канцелярии. */
+  case object StoryList extends NpcQuest("storyList")
+
   def byKey(key: String): Option[NpcQuest] = values.find(_.key == key)
 
   /** Сколько репутации Горн просит набрать трофеями. */

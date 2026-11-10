@@ -19,7 +19,8 @@ import pangea.model.item.{Item, MaterialKind}
 import pangea.model.quest.{DailyNpc, NpcQuest}
 import pangea.model.payment.{DonationSku, OrderId, Payment}
 import pangea.service.donation.Donations
-import pangea.service.state.{CityExit, DailyDialog, NpcQuestDialog, State, UserAction}
+import pangea.service.state.{CityExit, DailyDialog, NpcQuestDialog, NpcQuestLog, QuestSupport, State, StoryLine, StoryListQuest,
+  UserAction}
 import zio.{Task, ZIO}
 
 /** Торговый дом на Торговой площади: банкир Рахадим продаёт ячейки хранилища, меняет
@@ -63,6 +64,7 @@ case class TradeHouseState(
       "Mail"            -> Target.Goto(StateType.Mail),
       "LeaveTradeHouse" -> Target.Goto(StateType.MarketSquare),
       quest.questAction   -> Target.Run { (u, _, r) => questTalk(u, r) },
+      "RakStory"          -> Target.Run { (u, _, r) => storyPaper(u, r) },
       quest.acceptAction  -> Target.Run { (u, _, r) => quest.accept(u, r) *> showMenu(u, r).as(StateType.TradeHouse) },
       quest.declineAction -> Target.Run { (u, _, r) => showMenu(u, r).as(StateType.TradeHouse) },
       daily.openAction  -> Target.Run { (u, _, r) => showDaily(u, r) },
@@ -167,11 +169,41 @@ case class TradeHouseState(
       // Счётная книга: у банкира на каждый день своя просьба.
       task  <- daily.today(hero, now)
       quests <- quest.load(user)
-      _     <- renderer.show(user, menuScreen(vault, mail, daily.button(task), quest.button(quests)))
+      // Основная линия: страница списка при герое — Рахадим узнает бумагу.
+      paper <- storyOpen(hero, quests)
+      chap   = Option.when(paper)(content.choice("RakStory", "story.storyList.rakhadim.label"))
+      _     <- renderer.show(user, menuScreen(vault, mail, daily.button(task), quest.button(quests), chap))
     } yield ()
 
+  /** Страница списка при герое, и глава «Список» у Рахадима: её можно начать
+    * (уровень героя не важен) — или она на его шаге. */
+  private def storyOpen(hero: Hero, quests: pangea.model.quest.NpcQuests): Task[Boolean] =
+    if (!StoryListQuest.toRakhadim(quests) && !StoryLine.canBegin(quests, NpcQuest.StoryList)) ZIO.succeed(false)
+    else inventoryRepo.get(hero.id).mapError(asThrowable)
+      .map(inv => QuestSupport.hasItem(inv.items.data, pangea.model.item.QuestItemKind.StoryPage))
+
+  /** «Список»: Рахадим узнаёт бумагу — гербовые книги Торгового дома идут
+    * только в канцелярию совета. Глава берётся здесь, если ещё не взята, и
+    * сразу идёт дальше — к Сойке. */
+  private def storyPaper(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      quests <- quest.load(user)
+      hero   <- getHero(user)
+      open   <- storyOpen(hero, quests)
+      _      <- if (!open) showMenu(user, renderer)
+                else for {
+                  now  <- nowMs
+                  fresh = !quests.isTaken(NpcQuest.StoryList)
+                  next  = StoryListQuest.step(if (fresh) quests.take(NpcQuest.StoryList, now) else quests, 2)
+                  _    <- NpcQuestLog.save(heroDao, user.userId, next)
+                  _    <- renderer.show(user, Screen(content.text("story.storyList.rakhadim.text").trim +
+                            (if (fresh) "\n\n" + StoryLine.takenLine(content, NpcQuest.StoryList, next) else ""), Nil))
+                  _    <- showMenu(user, renderer)
+                } yield ()
+    } yield StateType.TradeHouse
+
   private def menuScreen(vault: BankVault, mail: Long = 0L, work: Option[Choice] = None,
-                         story: Option[Choice] = None): Screen = {
+                         story: Option[Choice] = None, chapter: Option[Choice] = None): Screen = {
     // Ряд на две кнопки: покупка ячейки и вход в хранилище (если есть что открывать).
     val buy = Choice("BuyCell",
       Choice.fit(content.format("bank.tradeHouse.buyCell", "price" -> vault.nextCellPrice.toString)),
@@ -190,7 +222,8 @@ case class TradeHouseState(
         content.format("bank.tradeHouse.mailLabel", "count" -> mail.toString),
         color = ChoiceColor.Positive, row = Some(3))) ++
       work.map(_.copy(row = Some(3))) ++
-      story.map(_.copy(row = Some(3))) :+
+      story.map(_.copy(row = Some(3))) ++
+      chapter.map(_.copy(row = Some(3))) :+
       Choice("LeaveTradeHouse", content.text("bank.tradeHouse.leave"), color = ChoiceColor.Negative, row = Some(4)) :+
       CityExit.button(content, Some(4))
     val text = content.format("bank.tradeHouse.menu",

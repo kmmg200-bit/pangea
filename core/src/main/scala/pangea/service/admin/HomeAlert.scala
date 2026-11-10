@@ -113,6 +113,8 @@ object HomeAlert {
       StoryCache       -> "тайник Сороки у изгороди",
       StoryWarehouse   -> "дегтярный склад у причала",
       StoryMeeting     -> "встреча с Сойкой в таверне",
+      StoryBridge      -> "засада у Мельничного моста",
+      StorySojka       -> "разговор с Сойкой в таверне",
       RaceQuest        -> "квест смены расы",
       NameChange       -> "смена имени"
     )

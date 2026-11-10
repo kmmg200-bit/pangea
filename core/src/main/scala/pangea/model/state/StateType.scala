@@ -181,6 +181,10 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   case object StoryWarehouse extends StateType // дегтярный склад у причала: Смотритель, бой, его судьба
   case object StoryMeeting   extends StateType // встреча с Сойкой за дальним столом таверны
 
+  // Основная линия, глава «Список».
+  case object StoryBridge extends StateType // засада чистильщиков Братства у Мельничного моста
+  case object StorySojka  extends StateType // Сойка за дальним столом: разговор о канцелярии, потом — о предательстве
+
   // Смена расы: купон из лавки Фета — история расы до пробуждения в новом теле.
   case object RaceQuest extends StateType
 

@@ -34,7 +34,8 @@ object StoryLine {
   val Chapters: List[Chapter] = List(
     Chapter(NpcQuest.StoryMark, firstClue = Some(StateType.StoryCloak)),
     Chapter(NpcQuest.StoryPowder),
-    Chapter(NpcQuest.StoryBrand)
+    Chapter(NpcQuest.StoryBrand),
+    Chapter(NpcQuest.StoryList)
   )
 
   /** На каком по счёту исследовании уровня после «Встать на ноги» герой

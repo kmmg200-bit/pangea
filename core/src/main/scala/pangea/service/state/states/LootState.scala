@@ -81,7 +81,7 @@ case class LootState(
     Set(StateType.Dungeon, StateType.GlobalMap, StateType.TreasureMobsFight, StateType.TreasureSchron, StateType.Loot, StateType.Girl,
         StateType.MarisaHunt, StateType.FlowerMeadow, StateType.MonsterCave, StateType.Caravan,
         StateType.MurlocElder, StateType.MurlocVillage, StateType.Home, StateType.SquadMine, StateType.StrayCasket,
-        StateType.HedgeSong, StateType.BarrelReturn, StateType.StoryCache, StateType.StoryWarehouse,
+        StateType.HedgeSong, StateType.BarrelReturn, StateType.StoryCache, StateType.StoryWarehouse, StateType.StoryBridge,
         StateType.Construction,
         StateType.Inventory)
 

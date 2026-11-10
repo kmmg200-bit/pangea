@@ -27,7 +27,7 @@ import pangea.service.state.states.murloc.MurlocVillageState
 import pangea.service.state.states.race.RaceQuestState
 import pangea.service.state.{BarrelThievesQuest, BeltContents, HedgeSongQuest, HerbLore, ItemMenu, MarisaQuest, MurlocQuest, NpcQuestLog, QuestGoods,
   SlotChoice, StackMove, State,
-  StoryBrandQuest, StoryLine, StoryMarkQuest, StoryPowderQuest, StrayCasketQuest, UiScene, UserAction}
+  StoryBrandQuest, StoryLine, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StrayCasketQuest, UiScene, UserAction}
 import zio.{Random, Task, ZIO}
 
 case class InventoryState(
@@ -115,6 +115,8 @@ case class InventoryState(
       "StoryCacheGo"      -> Target.Run { (u, _,  r) => goCache(u, r) },
       "StoryPortGo"       -> Target.Run { (u, _,  r) => goPort(u, r) },
       "StoryMeetGo"       -> Target.Run { (u, _,  r) => goMeeting(u, r) },
+      "StorySojkaGo"      -> Target.Run { (u, _,  r) => goSojka(u, r) },
+      "StoryBridgeGo"     -> Target.Run { (u, _,  r) => goBridge(u, r) },
       // Трактаты Густаво: читать, пока не осилишь.
       "ReadTreatise"      -> Target.Run { (u, _,  r) => readTreatise(u, r) },
       "IdentifyFlower"    -> Target.Run { (u, _,  r) => identifyFlower(u, r) },
@@ -130,7 +132,7 @@ case class InventoryState(
     Set(StateType.HeroStats, StateType.Backpack, StateType.Inventory, StateType.Socketing,
         StateType.MarisaHunt, StateType.MurlocVillage, StateType.RaceQuest, StateType.NameChange,
         StateType.StrayCasket, StateType.BarrelThieves, StateType.StoryCache, StateType.StoryWarehouse,
-        StateType.StoryMeeting) ++ BackpackOrigins
+        StateType.StoryMeeting, StateType.StoryBridge, StateType.StorySojka) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.
@@ -569,6 +571,13 @@ case class InventoryState(
         // Набросок узора, Юнона назвала Сойку: «Идти на встречу».
         case Some(QuestItemKind.StorySketch) if StoryBrandQuest.toMeeting(quests) =>
           Some(content.choice("StoryMeetGo", "story.storyBrand.card.goLabel").copy(row = Some(0)))
+        // Страница списка: рассказать Сойке о канцелярии, потом — к мосту, потом — снова к ней.
+        case Some(QuestItemKind.StoryPage) if StoryListQuest.toSojka(quests) =>
+          Some(content.choice("StorySojkaGo", "story.storyList.card.tellLabel").copy(row = Some(0)))
+        case Some(QuestItemKind.StoryPage) if StoryListQuest.toBridge(quests) =>
+          Some(content.choice("StoryBridgeGo", "story.storyList.card.bridgeLabel").copy(row = Some(0)))
+        case Some(QuestItemKind.StoryPage) if StoryListQuest.toConfront(quests) =>
+          Some(content.choice("StorySojkaGo", "story.storyList.card.confrontLabel").copy(row = Some(0)))
         case _ => None
       }
       hero   <- getHero(user)
@@ -673,6 +682,29 @@ case class InventoryState(
                 else if (!from.exists(StateType.cityStates.contains))
                   renderer.show(user, Screen(content.text("story.storyBrand.card.onlyInCity"), Nil)) *> backToCard(user, renderer)
                 else ZIO.succeed(StateType.StoryMeeting)
+    } yield res
+
+  /** К Сойке с карточки страницы — рассказать о канцелярии или спросить за
+    * засаду: только из города. */
+  private def goSojka(user: User, renderer: Renderer): Task[StateType] =
+    fromCityStory(user, renderer, q => StoryListQuest.toSojka(q) || StoryListQuest.toConfront(q),
+      "story.storyList.card.onlyInCity", StateType.StorySojka)
+
+  /** К Мельничному мосту с карточки страницы: только из города. */
+  private def goBridge(user: User, renderer: Renderer): Task[StateType] =
+    fromCityStory(user, renderer, StoryListQuest.toBridge, "story.storyList.card.onlyInCity", StateType.StoryBridge)
+
+  /** Кнопка сюжетной карточки, что ведёт из города в сцену главы: шаг не тот —
+    * снова карточка; не из города — отказ и карточка. */
+  private def fromCityStory(user: User, renderer: Renderer, onStep: NpcQuests => Boolean, refusalKey: String,
+                            scene: StateType): Task[StateType] =
+    for {
+      from   <- heroDao.readReturnState(user.userId)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      res    <- if (!onStep(quests)) backToCard(user, renderer)
+                else if (!from.exists(StateType.cityStates.contains))
+                  renderer.show(user, Screen(content.text(refusalKey), Nil)) *> backToCard(user, renderer)
+                else ZIO.succeed(scene)
     } yield res
 
   /** Искать тайник Сороки с карточки плаща: только в лабиринте («Персонаж»
@@ -1548,7 +1580,11 @@ object InventoryState {
         s"${item.displayTitle}\n${difficulty(StoryBrandQuest.Level)}\n\n${QuestItemKind.StorySketch.description}" +
           (if (now.isEmpty) "" else "\n\n" + now)
       case Some(QuestItemKind.StoryPage) =>
-        s"${item.displayTitle}\n\n${QuestItemKind.StoryPage.description}"
+        val now = StoryListQuest.cardLine(content, quests)
+        s"${item.displayTitle}\n${difficulty(StoryListQuest.Level)}\n\n${QuestItemKind.StoryPage.description}" +
+          (if (now.isEmpty) "" else "\n\n" + now)
+      case Some(QuestItemKind.StoryArchiveKey) =>
+        s"${item.displayTitle}\n\n${QuestItemKind.StoryArchiveKey.description}"
       case Some(kind @ (QuestItemKind.KelvinMap | QuestItemKind.RaceCoupon | QuestItemKind.NameCoupon)) =>
         s"${item.displayTitle}\n\n${kind.description}"
       case Some(kind) if QuestItemKind.rackOf(kind).isDefined || HerbLore.isTreatise(kind) =>

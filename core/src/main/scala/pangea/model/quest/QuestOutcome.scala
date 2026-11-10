@@ -68,6 +68,14 @@ object QuestOutcome extends Enum[QuestOutcome] {
   /** Сдал Смотрителя совету. */
   case object PowderHanded extends QuestOutcome("handed", NpcQuest.StoryPowder.key)
 
+  // ── «Список»: что герой сделал с Сойкой после засады у моста ──────────────────
+
+  /** Простил Сойку. */
+  case object ListForgave extends QuestOutcome("forgave", NpcQuest.StoryList.key)
+
+  /** Порвал с Сойкой. */
+  case object ListBroke extends QuestOutcome("broke", NpcQuest.StoryList.key)
+
   // ── «Встать на ноги»: в каком доме засчитано (строка — House.key) ─────────────
 
   /** «Домик в две комнаты». */
