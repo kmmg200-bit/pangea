@@ -58,6 +58,9 @@ object AchievementRates {
   /** Сколько каждой из четырёх характеристик даёт каждый ранг «Артефактора»:
     * все пять — +5. */
   val ArtificerStatBonus: Long = 1L
+
+  /** Сколько интеллекта даёт «Зельевар II». */
+  val Brewer2IntBonus: Long = 3L
 }
 
 object Achievement extends Enum[Achievement] {
@@ -71,6 +74,10 @@ object Achievement extends Enum[Achievement] {
 
   /** Сварил в кубе хотя бы по разу каждый отвар первого ранга. */
   case object Brewer1 extends Achievement("Зельевар I", "+2 к интеллекту")
+
+  /** Сварил хотя бы по разу каждый отвар второго ранга (`BrewKind.rank2`). */
+  case object Brewer2 extends Achievement("Зельевар II",
+    s"+${AchievementRates.Brewer2IntBonus} к интеллекту")
 
   /** Довёз в деревню мурлоков двадцать единиц снаряжения. */
   case object MurlocFavorite extends Achievement("Любимец Мурлоков", "+1 к ловкости")
@@ -408,7 +415,9 @@ object Achievement extends Enum[Achievement] {
 
   /** Плоская прибавка к интеллекту от достижений героя. */
   def intBonus(hero: Hero): Long =
-    (if (hero.hasAchievement(Brewer1)) BrewerIntBonus else 0L) + raceSets(hero, QuietGroveSet, DeepMotherSet) +
+    (if (hero.hasAchievement(Brewer1)) BrewerIntBonus else 0L) +
+      (if (hero.hasAchievement(Brewer2)) AchievementRates.Brewer2IntBonus else 0L) +
+      raceSets(hero, QuietGroveSet, DeepMotherSet) +
       hasty(hero)
 
   /** «Торопыга», «Любимец Проекта» и каждый ранг «Артефактора» — по +1 к

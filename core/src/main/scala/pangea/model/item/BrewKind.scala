@@ -435,6 +435,14 @@ object BrewKind extends Enum[BrewKind] {
   val rank1: IndexedSeq[BrewKind] =
     values.filter(k => k.base.isEmpty && k.recipe.forall(m => m.isHerb && m.herbRank <= 1))
 
+  /** Отвары второго ранга — из одних трав, и хотя бы одна из них редкая
+   *  (второго ранга); за полный набор сваренных даётся «Зельевар II» (см.
+   *  Achievement.Brewer2). Перегонка и то, что варят не из трав (гнилой зов),
+   *  сюда не входят — как и в первый ранг. */
+  val rank2: IndexedSeq[BrewKind] =
+    values.filter(k => k.base.isEmpty && k.recipe.forall(m => m.isHerb && m.herbRank <= 2) &&
+                       k.recipe.exists(_.herbRank == 2))
+
   /** Боевые отвары — те, что носят в ячейке пояса (см. [[BrewKind.combat]]). */
   val combatBrews: IndexedSeq[BrewKind] = values.filter(_.combat)
 

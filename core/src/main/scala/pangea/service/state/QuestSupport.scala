@@ -61,8 +61,8 @@ object QuestSupport {
     }
 
   /** Сварены зелья — куб, Живая сумка или верстак; `kinds` — вид каждого,
-    * по строке на зелье. Виды идут в счёт «Зельевара I» (по одному каждого
-    * отвара первого ранга), число — в `heroes.brews`, по которому
+    * по строке на зелье. Виды идут в счёт «Зельевара» I и II (по одному каждого
+    * отвара своего ранга), число — в `heroes.brews`, по которому
     * «Промышленный аптекарь». Героя перечитываем: вызывающий мог держать его
     * снимок до того, как ему выдали что-то ещё. */
   def brewed(heroDao: HeroDao, content: SceneContent, user: User, kinds: List[String], renderer: Renderer): Task[Unit] =
@@ -73,10 +73,12 @@ object QuestSupport {
         _      <- HerbLore.writeLore(heroDao, user.userId, updated)
         _      <- heroDao.addBrews(user.userId, kinds.size.toLong)
         hero   <- heroDao.getHeroByUserId(user.userId)
+        // «Зельевар» I и II — за полный набор отваров своего ранга.
+        ranks   = List(BrewKind.rank1 -> Achievement.Brewer1, BrewKind.rank2 -> Achievement.Brewer2)
+                    .collect { case (kinds, a) if kinds.forall(k => updated.brewed.contains(k.entryName)) => a }
         _      <- ZIO.foreachDiscard(hero) { h =>
-                    (if (BrewKind.rank1.forall(k => updated.brewed.contains(k.entryName)))
-                       grant(heroDao, content, user, h, Achievement.Brewer1, renderer)
-                     else ZIO.succeed(h)).flatMap(grantMilestones(heroDao, content, user, _, renderer))
+                    ZIO.foldLeft(ranks)(h)((acc, a) => grant(heroDao, content, user, acc, a, renderer))
+                      .flatMap(grantMilestones(heroDao, content, user, _, renderer))
                   }
       } yield ()
     }.unit
