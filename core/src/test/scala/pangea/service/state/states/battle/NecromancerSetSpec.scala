@@ -2,10 +2,10 @@ package pangea.service.state.states.battle
 
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.model.battle.{BattleEffects, BattlePrefs, Bleed, Formation, Poison, SlainMonster, SoloPveBattle}
+import pangea.model.battle.{BattleEffects, BattlePrefs, Bleed, Burn, Formation, Poison, SlainMonster, SoloPveBattle}
 import pangea.model.hero.Hero
 import pangea.model.item.{Item, ItemDetails, ItemSet, ItemType, Rarity => ItemRarity}
-import pangea.model.monster.{MiniBoss, Race, Rarity}
+import pangea.model.monster.{MiniBoss, Monster, Race, Rarity}
 import pangea.model.skill.Skill
 import pangea.model.squad.{Ally, AllyKind, AllyRates, Squad, UndeadForm}
 import pangea.model.stats.FightStats
@@ -68,6 +68,19 @@ object NecromancerSetSpec extends ZIOSpecDefault {
                                      evasion = 0, accuracy = 1, energy = 0),
     monsterCurrentHp    = hp,
     monsterCurrentArmor = 0L)
+
+  /** Огненный элементаль, при котором горение на герое за раунд меняет только
+    * его собственный тик: без энергии нет всплеска, без брони — шипов, а
+    * скованный холодом он ударом не поджигает. */
+  private def quietFireElemental(h: Hero): SoloPveBattle = {
+    val stats = MiniBoss.FireElemental.stats(2L)
+    val b     = SoloPveBattle.from(Monster(0L, 2L, Race.Elemental, Rarity.Legendary, stats), h)
+    b.copy(
+      bossKind             = Some(MiniBoss.FireElemental.entryName),
+      monsterCurrentEnergy = 0L,
+      monsterCurrentArmor  = 0L,
+      effects              = b.effects.copy(chilledTurns = 5))
+  }
 
   /** Поднятый без запаса энергии: умений он не применяет, и ход читается ровно. */
   private def undeadAlly(pos: Int, hp: Long = 400L): Ally =
@@ -153,6 +166,28 @@ object NecromancerSetSpec extends ZIOSpecDefault {
               // и это видно в профиле
               assertTrue(hero(10).raceName.startsWith("Нежить-") && hero(8).raceName == hero(8).race.toString) &&
               assertTrue(hero(10).sets.fireTakenMult > 1.0 && hero(10).sets.heroBurnGrowthMult == 2L)
+    },
+
+    test("порог 10: горение от огненного элементаля — наценка огня по нежити одна, а не дважды") {
+      // +25% огня по нежити кладёт урон элементаля (bossDamageTaken); тик горения
+      // раньше умножал ещё раз — выходило ×1,25 × 1,25 ≈ +56%.
+      val h     = hero(10)
+      val base  = quietFireElemental(h)
+      val b     = base.copy(effects = base.effects.copy(heroBurn = Some(Burn(10))))
+      val once  = (Burn(10).damageOn(h.effectiveMaxHp(0L)) * h.sets.fireTakenMult).toLong
+      for {
+        t <- makeState(h, b)
+        (state, _, r) = t
+        _     <- state.enter(testUser, r)
+        shown <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+        _     <- allPass
+        _     <- state.action(testUser, tap("Attack"), r)
+        said  <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(h.sets.fireTakenMult == 1.25) &&
+              // прогноз у HP героя обещает ровно это…
+              assertTrue(shown.contains(s"🔥-$once)")) &&
+              // …и тик в конце раунда ровно столько и снимает
+              assertTrue(said.contains(s"Пламя снимает с вас $once HP"))
     },
 
     test("порог 10: миазмы тратят энергию, лечат нежить и гноят живых") {

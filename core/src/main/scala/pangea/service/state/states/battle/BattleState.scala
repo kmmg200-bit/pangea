@@ -3216,9 +3216,16 @@ case class BattleState(
     TurnResult(endOfRoundHero(hero, nowMs), battle.tickBuffs(skip), log, Outcome.Victory)
 
   /** Сколько снимет с героя один тик горения. По нему же экран боя пишет
-    * прогноз у HP героя (🔥-N): что обещано, то тик и снимет. */
-  private def heroBurnDamage(hero: Hero, battle: SoloPveBattle, burn: Burn, nowMs: Long): Long =
-    (bossDamageTaken(hero, battle, burn.damageOn(hero.effectiveMaxHp(nowMs))) * hero.sets.fireTakenMult).toLong
+    * прогноз у HP героя (🔥-N): что обещано, то тик и снимет.
+    *
+    * Наценка огня по нежити («Некромант», порог 10) — ровно одна. Против
+    * огненного элементаля её уже кладёт [[bossDamageTaken]]: весь его урон и
+    * есть огонь. Прочее горение (огненный порошок) берёт её здесь. */
+  private def heroBurnDamage(hero: Hero, battle: SoloPveBattle, burn: Burn, nowMs: Long): Long = {
+    val dealt = bossDamageTaken(hero, battle, burn.damageOn(hero.effectiveMaxHp(nowMs)))
+    if (battle.boss.contains(MiniBoss.FireElemental)) dealt
+    else (dealt * hero.sets.fireTakenMult).toLong
+  }
 
   /** Сколько снимет с героя один тик яда — с поправкой «Крысы» (порог 10).
     * Его же показывает прогноз у HP героя (🟢-N). */
