@@ -10,6 +10,7 @@ import pangea.model.quest.{DailyQuests, Difficulty, FirstSteps, NpcQuest, NpcQue
 import pangea.model.state.StateType
 import pangea.model.stats.FightStats
 import pangea.model.user.{TelegramId, User, UserId, VkId}
+import pangea.service.parcel.Parcels
 import pangea.service.state.StoryListQuest.SojkaFate
 import pangea.service.state.StoryPowderQuest.WardenFate
 import pangea.service.state.StoryToolQuest.Path
@@ -159,14 +160,40 @@ object StoryToolSpec extends ZIOSpecDefault {
               assertTrue(shadow._2.contains("Знак своего") && shadow._2.contains("Знака они не дождутся") &&
                 shield._2.contains("Свои не бьют ножом под рёбра") && shield._2.contains("Теперь я — его щит") &&
                 alone._2.contains("Две мести") && alone._2.contains("Ничьё — своё")) &&
+              assertTrue(shield._2.contains("Под вечер следующего дня по приказу Юноны") &&
+                alone._2.contains("Её я тоже беру себе") && !shadow._2.contains("Под вечер следующего дня")) &&
+              assertTrue(!shadow._5.exists(_.questItem.contains(QuestItemKind.StoryShadowRing))) &&
               assertTrue(List(shadow, shield, alone).forall { case (_, said, q, h, bag, mine, path) =>
                 said.contains("Рубеж «Чьё ты орудие» пройден") && said.contains(path.achievement.title) &&
                   said.contains("Вы — среди первых, кто закончил «Чьё ты орудие»") &&
                   q.isDone(NpcQuest.StoryTool) && StoryToolQuest.choice(q).contains(path) &&
-                  bag.exists(_.questItem.contains(path.token)) && !bag.exists(_.questItem.contains(QuestItemKind.StoryNote)) &&
+                  path.token.forall(t => bag.exists(_.questItem.contains(t))) && !bag.exists(_.questItem.contains(QuestItemKind.StoryNote)) &&
+                  bag.filter(_.isStoryGear).map(_.name) == path.gear.map(_.name) &&
+                  bag.filter(_.isStoryGear).forall(i => i.lvl == StoryToolQuest.GearLvl && i.rarity == StoryToolQuest.GearRarity) &&
+                  bag.filter(_.isStoryGear).map(_.itemType) == path.gear.map(_.itemType) &&
+                  said.contains(s"🎁 ★ [Ур.25] ${path.gear.map(_.name).headOption.getOrElse("")}") &&
                   h.silver == 100L + StoryToolQuest.silver && h.exp > 0L && h.hasAchievement(path.achievement) &&
                   mine.contains(path.outcome) && StoryLine.active(q).isEmpty
               })
+    },
+
+    test("снаряжение пути не влезло в сумку — уходит посылкой, на почте не сгорает; знак пути — в сумку всё равно") {
+      val inv = TestInventoryRepository.full
+      inv.put(noteItem)
+      for {
+        d     <- dao(hero(), tool(1), None)
+        o     <- TestQuestOutcomeDao.make
+        r     <- TestRenderer.make
+        c     <- content
+        post   = TestParcelDao.empty
+        st     = StoryGraveyardState(d, inv, TestItemRepository.make, c, Some(o), Some(Parcels(post, TestBankRepository.empty, c)))
+        _     <- d.writeSceneData(userId, StoryGraveyardState.WonMark.asJson)
+        _     <- st.enter(testUser, r)
+        _     <- st.action(testUser, tap("GraveShield"), r)
+        said  <- texts(r)
+      } yield assertTrue(post.snapshot.map(_.item.name) == Path.Shield.gear.map(_.name) && post.snapshot.forall(_.item.isStoryGear)) &&
+              assertTrue(inv.snapshot.exists(_.questItem.contains(QuestItemKind.StoryCouncilWrit)) && !inv.snapshot.exists(_.isStoryGear)) &&
+              assertTrue(said.contains("Сюжетное на почте не сгорает") && said.contains("(совет Кинэта)"))
     },
 
     test("достижения путей — свой стат: Тень — уклонение, Щит — защита, сам по себе — атака; рубежи их не отнимают") {

@@ -356,7 +356,7 @@ object StatesMap {
           StorySojka        -> StorySojkaState(heroDao, inventoryRepo, itemRepo, content, outcomes),
           StoryArchive      -> StoryArchiveState(heroDao, content),
           StoryBindery      -> StoryBinderyState(heroDao, inventoryRepo, itemRepo, content),
-          StoryGraveyard    -> StoryGraveyardState(heroDao, inventoryRepo, itemRepo, content, outcomes),
+          StoryGraveyard    -> StoryGraveyardState(heroDao, inventoryRepo, itemRepo, content, outcomes, Some(parcels)),
           BartiMeet         -> BartiMeetState(heroDao, inventoryRepo, itemRepo, content),
           BartiHouse        -> BartiHouseState(heroDao, inventoryRepo, content),
           BartiCaravan      -> BartiCaravanState(heroDao, inventoryRepo, content),
