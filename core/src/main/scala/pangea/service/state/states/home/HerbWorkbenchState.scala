@@ -26,7 +26,8 @@ import zio.{Random, Task, ZIO}
   * сундуками аптекаря полки шире.
   *
   * Травы ложатся на полки одной кнопкой — из сумки и из Живой сумки, пока есть
-  * место. Траву с полки можно бросить в котелок или забрать в сумку. Котелок
+  * место. Траву с полки можно бросить в котелок или забрать в сумку — по одной
+  * кнопкой или сразу сколько написано числом. Котелок
   * варит, как магия Живой сумки (`CubeCraft.brewHerbs`: отвары из трав и
   * перегонка склянки с травами), и тратит энергию дома — по одной на каждую
   * варку. Сваренное встаёт на полку отваров, что не поместилось — ждёт в
@@ -38,8 +39,8 @@ import zio.{Random, Task, ZIO}
   * куб Азата, Живая сумка) и что варится на верстаке. Выбрал отвар — пишет
   * числом, сколько приготовить: хватает трав на полках и энергии — варится
   * сразу, нет — верстак говорит, чего и сколько не хватает. Чего верстак ждёт
-  * числом — сварить отвар или забрать его с полки, — лежит в `scene_data`
-  * ([[HerbWorkbenchState.WbScene]]). */
+  * числом — сварить отвар, забрать траву с полок или отвар с полки, — лежит в
+  * `scene_data` ([[HerbWorkbenchState.WbScene]]). */
 case class HerbWorkbenchState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
@@ -69,7 +70,8 @@ case class HerbWorkbenchState(
       "WbRecipe"    -> Target.Run { (u, ua, r) => recipeOf(u, ua, r) },
       "LeaveWb"     -> Target.Goto(StateType.Home)
     ),
-    // Текст — число отваров, если сейчас выбран изученный; иначе — к верстаку.
+    // Текст — число, если верстак его ждёт (сварить изученный, забрать с полок);
+    // иначе — к верстаку.
     fallback = Target.Run { (u, ua, r) => onText(u, ua, r) }
   )
 
@@ -79,8 +81,9 @@ case class HerbWorkbenchState(
     clearPending(user) *> menu(user, 0, renderer).unit
 
   /** Любая кнопка, кроме выбора отвара, снимает ожидание числа: иначе число,
-    * написанное потом у полок, сварило бы отвар, о котором уже забыли. Экран
-    * стопки на полке отваров ставит ожидание заново, когда показывается. */
+    * написанное потом у полок, сварило бы отвар, о котором уже забыли. Экраны
+    * стопок — на полках трав и на полке отваров — ставят ожидание заново,
+    * когда показываются. */
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     ZIO.when(ua.payload.isDefined && !payload(ua, "action").contains("WbRecipe"))(clearPending(user)) *>
       branch.act(user, ua, renderer)
@@ -109,15 +112,62 @@ case class HerbWorkbenchState(
   private def herb(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     withWorkbench(user) { home =>
       itemOf(home.herbs, ua) match {
-        case None => menu(user, page(ua), renderer)
-        case Some(it) =>
-          val data = Map("id" -> it.id.toString, "p" -> page(ua).toString)
-          renderer.show(user, Screen(content.format("home.workbench.herb", "name" -> it.name, "n" -> same(home.herbs, it).toString), List(
-            Choice("WbHerbPot", content.text("home.workbench.toPot"), color = ChoiceColor.Positive, data = data, row = Some(0)),
-            Choice("WbHerbBag", content.text("home.workbench.toBag"), data = data, row = Some(0)),
-            Choice("WbMenu", content.text("home.house.back"), color = ChoiceColor.Negative, data = Map("p" -> page(ua).toString), row = Some(1))
-          ))).as(StateType.HerbWorkbench)
+        case None     => menu(user, page(ua), renderer)
+        case Some(it) => herbScreen(user, home, it, page(ua), renderer)
       }
+    }
+
+  /** Трава на полках: сколько её, «В котелок» и «В сумку» по одной. Её больше
+    * одной — ждём ещё и числа: сколько забрать в сумку разом (см.
+    * [[takeHerbs]]). */
+  private def herbScreen(user: User, home: HomeData, it: Item, p: Int, renderer: Renderer): Task[StateType] = {
+    val n    = same(home.herbs, it)
+    val data = Map("id" -> it.id.toString, "p" -> p.toString)
+    val text = content.format("home.workbench.herb", "name" -> it.name, "n" -> n.toString) +
+      (if (n > 1) "\n" + content.text("home.workbench.herbAsk") else "")
+    val pending = it.material.filter(_ => n > 1) match {
+      case Some(kind) => writeScene(user, HerbWorkbenchState.WbScene(herb = Some(kind.entryName), page = p))
+      case None       => clearPending(user)
+    }
+    pending *> renderer.show(user, Screen(text, List(
+      Choice("WbHerbPot", content.text("home.workbench.toPot"), color = ChoiceColor.Positive, data = data, row = Some(0)),
+      Choice("WbHerbBag", content.text("home.workbench.toBag"), data = data, row = Some(0)),
+      Choice("WbMenu", content.text("home.house.back"), color = ChoiceColor.Negative, data = Map("p" -> p.toString), row = Some(1))
+    ))).as(StateType.HerbWorkbench)
+  }
+
+  /** Стопка этой травы — если на полках она ещё есть; нет — сам верстак. */
+  private def herbOf(user: User, kind: MaterialKind, p: Int, renderer: Renderer): Task[StateType] =
+    withWorkbench(user) { home =>
+      home.herbs.findLast(_.material.contains(kind)) match {
+        case None     => menu(user, p, renderer)
+        case Some(it) => herbScreen(user, home, it, p, renderer)
+      }
+    }
+
+  /** Забрать с полок в сумку `asked` трав этого вида — сколько написали числом.
+    * Больше, чем лежит, — сколько есть; в сумке тесно — сколько влезет, прочее
+    * ждёт на полках. Берём с конца стопки, как и по одной: показанная трава
+    * уходит последней. */
+  private def takeHerbs(user: User, kind: MaterialKind, asked: Int, p: Int, renderer: Renderer): Task[StateType] =
+    withWorkbench(user) { home =>
+      val stack = home.herbs.filter(_.material.contains(kind))
+      if (stack.isEmpty) say(user, content.text("stack.gone"), renderer) *> menu(user, p, renderer)
+      else for {
+        hero  <- getHero(user)
+        inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
+        want   = asked.min(stack.size)
+        taken <- addToBag(hero, stack.takeRight(want.min(inv.freeSlots.toInt.max(0))))
+        ids    = taken.map(_.id).toSet
+        _     <- ZIO.when(taken.nonEmpty)(saveHome(user, home.copy(herbs = home.herbs.filterNot(i => ids.contains(i.id)))))
+        _     <- say(user,
+                   if (taken.isEmpty) content.text("home.workbench.bagFull")
+                   else content.format("home.workbench.herbTaken", "name" -> kind.displayName, "n" -> taken.size.toString) +
+                     (if (taken.size < want) "\n" + content.format("home.workbench.herbTakenShort", "n" -> (want - taken.size).toString)
+                      else ""),
+                   renderer)
+        s     <- if (stack.size > taken.size) herbOf(user, kind, p, renderer) else menu(user, p, renderer)
+      } yield s
     }
 
   private def herbToPot(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
@@ -408,20 +458,27 @@ case class HerbWorkbenchState(
     }
 
   /** Написанное у верстака: число — для того, чего верстак ждёт (сварить
-    * изученный отвар или забрать отвары с полки); ждать нечего — сам верстак. */
+    * изученный отвар, забрать отвары с полки или травы с полок); ждать нечего —
+    * сам верстак. */
   private def onText(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     readScene(user).flatMap { scene =>
       val number = ua.text.filterNot(_.isWhitespace).toIntOption.filter(_ > 0)
-      (scene.recipe.flatMap(BrewKind.withNameOption), scene.take.flatMap(BrewKind.withNameOption)) match {
-        case (Some(kind), _) =>
+      (scene.recipe.flatMap(BrewKind.withNameOption), scene.take.flatMap(BrewKind.withNameOption),
+       scene.herb.flatMap(MaterialKind.withNameOption)) match {
+        case (Some(kind), _, _) =>
           number match {
             case None    => say(user, content.text("home.workbench.notNumber"), renderer) *> recipe(user, kind, scene.page, renderer)
             case Some(n) => craft(user, kind, n, scene.page, renderer)
           }
-        case (None, Some(kind)) =>
+        case (None, Some(kind), _) =>
           number match {
             case None    => say(user, content.text("home.workbench.takeNotNumber"), renderer) *> brewOf(user, kind, scene.page, renderer)
             case Some(n) => takeBrews(user, kind, n, scene.page, renderer)
+          }
+        case (None, None, Some(kind)) =>
+          number match {
+            case None    => say(user, content.text("home.workbench.herbNotNumber"), renderer) *> herbOf(user, kind, scene.page, renderer)
+            case Some(n) => takeHerbs(user, kind, n, scene.page, renderer)
           }
         case _ => menu(user, 0, renderer)
       }
@@ -480,7 +537,8 @@ case class HerbWorkbenchState(
   /** Снять ожидание числа — если оно было: лишней записи не делаем. */
   private def clearPending(user: User): Task[Unit] =
     readScene(user).flatMap(s =>
-      ZIO.when(s.recipe.isDefined || s.take.isDefined)(UiScene.clear(heroDao, user.userId, UiScene.Workbench)).unit)
+      ZIO.when(s.recipe.isDefined || s.take.isDefined || s.herb.isDefined)(
+        UiScene.clear(heroDao, user.userId, UiScene.Workbench)).unit)
 
   // ── Вспомогательное ─────────────────────────────────────────────────────────
 
@@ -573,11 +631,13 @@ case class HerbWorkbenchState(
 
 object HerbWorkbenchState {
 
-  /** Чего верстак ждёт числом: сварить изученный отвар (`recipe`) или забрать
-    * с полки в сумку отвары этого вида (`take`) — оба `entryName`, — и с какой
-    * страницы списка их выбрали: туда ведёт «Назад». В записях до `take` его
-    * нет — значит, забирать ничего не ждут. */
-  final case class WbScene(recipe: Option[String] = None, page: Int = 0, take: Option[String] = None)
+  /** Чего верстак ждёт числом: сварить изученный отвар (`recipe`), забрать с
+    * полки в сумку отвары этого вида (`take`) или с полок траву этого вида
+    * (`herb`) — все `entryName`, — и с какой страницы списка их выбрали: туда
+    * ведёт «Назад». В записях постарше `take` и `herb` нет — значит, забирать
+    * ничего не ждут. */
+  final case class WbScene(recipe: Option[String] = None, page: Int = 0, take: Option[String] = None,
+                           herb: Option[String] = None)
   object WbScene {
     implicit val encoder: Encoder[WbScene] = deriveEncoder
     implicit val decoder: Decoder[WbScene] = (c: HCursor) =>
@@ -585,7 +645,8 @@ object HerbWorkbenchState {
         recipe <- c.getOrElse[Option[String]]("recipe")(None)
         page   <- c.getOrElse[Int]("page")(0)
         take   <- c.getOrElse[Option[String]]("take")(None)
-      } yield WbScene(recipe, page, take)
+        herb   <- c.getOrElse[Option[String]]("herb")(None)
+      } yield WbScene(recipe, page, take, herb)
   }
 
   /** Изученные отвары, которые варятся на верстаке: всё, что герой уже варил,
