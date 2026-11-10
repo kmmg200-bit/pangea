@@ -34,14 +34,16 @@ object StoryToolQuest {
   /** Ключ сюжетного боя на кладбище: награда как за обычный бой, без «Сбежать». */
   val FightStory: String = "storyGraveyard"
 
-  /** Люди ячейки — люди, уровня задания. Один выживший — мифический, при нём
-    * трое; двое — оба редкие, при них двое: сила боя та же. */
-  val GuardRace: Race         = Race.Human
-  val GuardRarity: Rarity     = Rarity.Uncommon
-  val SoloRarity: Rarity      = Rarity.Mythical
-  val SoloGuards: Int         = 3
-  val PairRarity: Rarity      = Rarity.Rare
-  val PairGuards: Int         = 2
+  /** Выжившие — легендарные именные враги: и один, и двое. Люди ячейки —
+    * люди, уровня задания: при одном выжившем — трое редких, при двоих — двое
+    * необычных. */
+  val GuardRace: Race            = Race.Human
+  val SoloRarity: Rarity         = Rarity.Legendary
+  val SoloGuards: Int            = 3
+  val SoloGuardRarity: Rarity    = Rarity.Rare
+  val PairRarity: Rarity         = Rarity.Legendary
+  val PairGuards: Int            = 2
+  val PairGuardRarity: Rarity    = Rarity.Uncommon
 
   /** Элорин — эльф, Элиас — человек (см. StoryLine.survivors). */
   val ElorinRace: Race = Race.Elf
@@ -116,12 +118,12 @@ object StoryToolQuest {
   def foes(survivors: Survivors, content: SceneContent): List[Monster] = {
     def named(race: Race, rarity: Rarity, key: String) =
       MonsterGenerator.generateOfRaceAndRarity(Level, race, rarity, Some(content.text(s"story.storyTool.names.$key")))
-    def guards(n: Int) = List.fill(n)(MonsterGenerator.generateOfRaceAndRarity(Level, GuardRace, GuardRarity))
+    def guards(n: Int, rarity: Rarity) = List.fill(n)(MonsterGenerator.generateOfRaceAndRarity(Level, GuardRace, rarity))
     survivors match {
-      case Survivors.Elorin => named(ElorinRace, SoloRarity, "elorin") :: guards(SoloGuards)
-      case Survivors.Elias  => named(EliasRace, SoloRarity, "elias") :: guards(SoloGuards)
+      case Survivors.Elorin => named(ElorinRace, SoloRarity, "elorin") :: guards(SoloGuards, SoloGuardRarity)
+      case Survivors.Elias  => named(EliasRace, SoloRarity, "elias") :: guards(SoloGuards, SoloGuardRarity)
       case Survivors.Both   =>
-        named(ElorinRace, PairRarity, "elorin") :: named(EliasRace, PairRarity, "elias") :: guards(PairGuards)
+        named(ElorinRace, PairRarity, "elorin") :: named(EliasRace, PairRarity, "elias") :: guards(PairGuards, PairGuardRarity)
     }
   }
 

@@ -105,7 +105,7 @@ object StoryToolSpec extends ZIOSpecDefault {
                 StoryToolQuest.toGraveyard(q) && StoryLine.active(q).contains(NpcQuest.StoryTool))
     },
 
-    test("встреча: тот, кто пережил пролог, и его сделка; бой — без бегства, уровня задания; один — мифический при троих, двое — редкие") {
+    test("встреча: тот, кто пережил пролог, и его сделка; бой — без бегства, уровня задания; выжившие — легендарные: один — при троих редких, двое — при двоих необычных") {
       def meet(branch: Option[String]) =
         for {
           d     <- dao(hero(), tool(1), branch)
@@ -125,10 +125,12 @@ object StoryToolSpec extends ZIOSpecDefault {
               assertTrue(elorin.text.contains(Difficulty.render(StoryToolQuest.Level)) &&
                 elorin.choices.map(_.id) == List("GraveFight", "GraveLeave")) &&
               assertTrue(solo._1 == StateType.Battle && solo._2.exists(b => b.story.contains(StoryToolQuest.FightStory) &&
-                b.cantFlee && b.monsterName.contains("Элорин") && b.monsterRarity == Rarity.Mythical.entryName &&
-                b.monsterLvl == StoryToolQuest.Level.toLong && b.group.others.size == 3)) &&
-              assertTrue(pair._2.exists(b => b.monsterName.contains("Элорин") && b.monsterRarity == Rarity.Rare.entryName &&
-                b.group.others.size == 3 && b.group.others.exists(_.customName.contains("Элиас")))) &&
+                b.cantFlee && b.monsterName.contains("Элорин") && b.monsterRarity == Rarity.Legendary.entryName &&
+                b.monsterLvl == StoryToolQuest.Level.toLong && b.group.others.size == 3 &&
+                b.group.others.forall(_.rarity == Rarity.Rare.entryName))) &&
+              assertTrue(pair._2.exists(b => b.monsterName.contains("Элорин") && b.monsterRarity == Rarity.Legendary.entryName &&
+                b.group.others.size == 3 && b.group.others.exists(m => m.customName.contains("Элиас") && m.rarity == Rarity.Legendary.entryName) &&
+                b.group.others.count(_.rarity == Rarity.Uncommon.entryName) == 2)) &&
               assertTrue(solo._3.exists(_.returnState.contains(StateType.StoryGraveyard)) &&
                 BattleState.RaidStories.contains(StoryToolQuest.FightStory))
     },
