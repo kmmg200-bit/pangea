@@ -1,7 +1,7 @@
 package pangea.model.skill
 
 import enumeratum._
-import pangea.model.battle.{Poison, SoloPveBattle}
+import pangea.model.battle.{Poison, SoloPveBattle, Ward}
 import pangea.model.hero.Hero
 import pangea.model.monster.Race
 import pangea.service.state.states.battle.BattleState
@@ -171,6 +171,9 @@ object MonsterSkill extends Enum[MonsterSkill] {
     val DamageFactor: Double = 0.6
     val PoisonPct: Int       = Poison.OnHit
 
+    /** Строка удара, когда яд не взялся: героя бережёт змеиная сыворотка. */
+    val WardedTemplate: String = "{name} делает грязную атаку на {} урона! Но змеиная сыворотка не даёт яду взяться."
+
     override val races: Set[Race]   = Set(Race.Murloc)
     override val costFactor: Double = MonsterEnergy.RacialCostFactor
 
@@ -184,10 +187,14 @@ object MonsterSkill extends Enum[MonsterSkill] {
       // «−% защиты игрока»: защита режет удар процентно, но не в ноль.
       val damage  = blocked(battle, (raw * (100L - defence.min(90L)) / 100L).max(1L))
       val (newHp, newArmor) = applyPhysicalDamage(battle, hero, damage, nowMs)
-      val poisoned = battle.effects.copy(heroPoison = Some(
-        battle.effects.heroPoison.map(p => Poison(p.pct + PoisonPct)).getOrElse(Poison(PoisonPct))))
+      // Змеиная сыворотка: удар доходит, а яд — нет, и строка о том же.
+      val warded   = battle.effects.warded(Ward.Poison)
+      val poisoned =
+        if (warded) battle.effects
+        else battle.effects.copy(heroPoison = Some(
+          battle.effects.heroPoison.map(p => Poison(p.pct + PoisonPct)).getOrElse(Poison(PoisonPct))))
       Cast(battle.copy(effects = poisoned), newHp, newArmor,
-        template.replace("{name}", battle.monsterName).replace("{}", damage.toString))
+        (if (warded) WardedTemplate else template).replace("{name}", battle.monsterName).replace("{}", damage.toString))
     }
   }
 

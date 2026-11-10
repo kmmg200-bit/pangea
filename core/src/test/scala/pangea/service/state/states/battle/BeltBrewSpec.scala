@@ -2,7 +2,7 @@ package pangea.service.state.states.battle
 
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.model.battle.{BattleAlly, Formation, SoloPveBattle}
+import pangea.model.battle.{BattleAlly, Bleed, Burn, Formation, Poison, SoloPveBattle, Ward}
 import pangea.model.hero.Hero
 import pangea.model.squad.AllyKind
 import pangea.model.item.{BeltSlot, BrewKind, BrewRates, FlaskKind, Item, ItemDetails, ItemType, MaterialKind, Rarity => ItemRarity}
@@ -377,6 +377,49 @@ object BeltBrewSpec extends ZIOSpecDefault {
       } yield // четвёртое и шестое одинаково близко — встаёт правее
               assertTrue(after.group.heroPos == 6) &&
               assertTrue(log.contains("Место 5 заняли"))
+    },
+
+    test("защитные отвары: снимают своё с героя и держат до конца боя; вторая склянка того же толка не тратится") {
+      val h  = hero(BeltSlot.Brew(BrewKind.SnakeSerum), BeltSlot.Brew(BrewKind.SnakeSerum))
+      val b0 = battle(h, 100000L)
+      val b  = b0.copy(effects = b0.effects.copy(heroPoison = Some(Poison(6))))
+      for {
+        t <- makeState(h, b)
+        (state, dao, r) = t
+        _      <- state.action(testUser, useSlot(0), r)
+        mid    <- battleOf(dao)
+        // следующий раунд: бьём, чтобы раунд закрылся, — и пробуем вторую склянку
+        _      <- state.action(testUser, tap("Attack"), r)
+        _      <- state.action(testUser, useSlot(1), r)
+        after  <- dao.getHeroByUserId(userId).map(_.get)
+        fight  <- battleOf(dao)
+        log    <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(mid.effects.heroPoison.isEmpty) &&
+              assertTrue(mid.effects.warded(Ward.Poison) && !mid.effects.warded(Ward.Bleed)) &&
+              assertTrue(log.contains("яд отступает")) &&
+              assertTrue(log.contains("и так на вас")) &&
+              assertTrue(slots(after) == List(BeltSlot.Brew(BrewKind.SnakeSerum, 0), BeltSlot.Brew(BrewKind.SnakeSerum))) &&
+              assertTrue(fight.effects.warded(Ward.Poison))
+    },
+
+    test("каждая защита снимает своё: огонь, холод, кровь") {
+      val fx = pangea.model.battle.BattleEffects(heroPoison = Some(Poison(6)), heroBurn = Some(Burn(5)),
+                 heroColdDefenceCut = 10, heroBleed = Some(Bleed(4)))
+      assertTrue(fx.withWard(Ward.Fire).heroBurn.isEmpty && fx.withWard(Ward.Fire).heroPoison.isDefined) &&
+      assertTrue(fx.withWard(Ward.Cold).heroColdDefenceCut == 0 && !fx.withWard(Ward.Cold).coldOnHero) &&
+      assertTrue(fx.withWard(Ward.Bleed).heroBleed.isEmpty) &&
+      // защиты копятся, и при смене пары остаются при герое
+      assertTrue(fx.withWard(Ward.Fire).withWard(Ward.Cold).heroWards.contains(Set[Ward](Ward.Fire, Ward.Cold))) &&
+      assertTrue(fx.withWard(Ward.Bleed).heroPart.warded(Ward.Bleed)) &&
+      // все четыре — боевые, из пояса, на редкой траве: по одной склянке за рецепт
+      assertTrue(List(BrewKind.SnakeSerum, BrewKind.FireproofBrew, BrewKind.WarmBlood, BrewKind.ClotBrew)
+        .forall(k => k.combat && k.beltable && !k.drinkable && k.portions == 1))
+    },
+
+    test("бой, записанный до защит, читается: защит нет") {
+      val h    = hero()
+      val json = battle(h, 1000L).asJson.hcursor.downField("effects").downField("heroWards").delete.top.get
+      assertTrue(json.as[SoloPveBattle].toOption.exists(_.effects.heroWards.isEmpty))
     },
 
     test("мерцающий настой: пригвождённому с места не сойти — склянка цела, и раунд тоже") {

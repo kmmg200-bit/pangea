@@ -7,7 +7,7 @@ import pangea.domain.Rng
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.generator.loot.LootGenerator
 import pangea.generator.monster.MonsterGenerator
-import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Element, Formation, GroupState, HealedWounds, MonsterSlot, Nature, Poison, RaceTactics, Regen, SlainMonster, SoloPveBattle, SkillSlotState, TimedDefenceDebuff}
+import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Element, Formation, GroupState, HealedWounds, MonsterSlot, Nature, Poison, RaceTactics, Regen, SlainMonster, SoloPveBattle, SkillSlotState, TimedDefenceDebuff, Ward}
 import pangea.model.cave.CaveGenerator
 import pangea.model.item.ItemSet
 import pangea.model.squad.AllySkill
@@ -1742,6 +1742,7 @@ case class BattleState(
         val thawed = battle.effects.coldOnHero
         val burned =
           if (thawed) battle.copy(effects = battle.effects.copy(heroColdDefenceCut = 0))
+          else if (battle.effects.warded(Ward.Fire)) battle
           else battle.copy(effects = battle.effects.copy(heroBurn = Some(
             battle.effects.heroBurn.map(_.reignited).getOrElse(Burn(MiniBoss.FireElemental.ThornsBurnPct)))))
         (hurt, burned, content.format("battle.elemental.thorns", "damage" -> thorns.toString) +
@@ -2501,6 +2502,8 @@ case class BattleState(
     * самого. Яд копится, как и у героя: повторный приём складывает проценты. */
   private def poisonVictim(v: Victim, battle: SoloPveBattle, pct: Int): SoloPveBattle =
     v match {
+      // Змеиная сыворотка: яд на героя не ложится до конца боя.
+      case Victim.Hero if battle.effects.warded(Ward.Poison) => battle
       case Victim.Hero =>
         val grown = battle.effects.heroPoison.map(p => Poison(p.pct + pct)).getOrElse(Poison(pct))
         battle.copy(effects = battle.effects.copy(heroPoison = Some(grown)))
@@ -2511,6 +2514,8 @@ case class BattleState(
 
   private def bleedVictim(v: Victim, battle: SoloPveBattle, pct: Int): SoloPveBattle =
     v match {
+      // Запирающий отвар: раны героя не кровят до конца боя.
+      case Victim.Hero if battle.effects.warded(Ward.Bleed) => battle
       case Victim.Hero =>
         val grown = battle.effects.heroBleed.map(b => Bleed(b.pct + pct)).getOrElse(Bleed(pct))
         battle.copy(effects = battle.effects.copy(heroBleed = Some(grown)))
@@ -2525,6 +2530,8 @@ case class BattleState(
     v match {
       case Victim.Hero if battle.effects.coldOnHero =>
         (battle.copy(effects = battle.effects.copy(heroColdDefenceCut = 0)), true)
+      // Несгораемый настой: пламя на героя не ложится до конца боя.
+      case Victim.Hero if battle.effects.warded(Ward.Fire) => (battle, false)
       case Victim.Hero =>
         val fire = battle.effects.heroBurn.map(_.reignited).getOrElse(Burn(pct))
         (battle.copy(effects = battle.effects.copy(heroBurn = Some(fire))), false)
@@ -2951,20 +2958,28 @@ case class BattleState(
             thawed   = ignites && battle.effects.coldOnHero
             quenched = mobProc && procElement.contains(Element.Cold) &&
                          (battle.effects.heroBurn.isDefined || (ignites && !thawed))
+            // Защитные отвары: что выпито, то до конца боя на героя не ложится —
+            // и в лог идёт «не взяло», а не «подожгли».
+            fireWarded   = ignites && !thawed && battle.effects.warded(Ward.Fire)
+            poisonWarded = poisons && battle.effects.warded(Ward.Poison)
+            coldWarded   = mobProc && procElement.contains(Element.Cold) && !quenched &&
+                             battle.effects.warded(Ward.Cold)
             effectsAfterHit = {
               val burned =
                 if (!ignites) battle.effects
                 else if (thawed) battle.effects.copy(heroColdDefenceCut = 0)
+                else if (fireWarded) battle.effects
                 else battle.effects.copy(heroBurn = Some(
                   battle.effects.heroBurn.map(_.reignited).getOrElse(Burn(burnPct))))
               val poisonedE =
-                if (!poisons) burned
+                if (!poisons || poisonWarded) burned
                 else burned.copy(heroPoison = Some(
                   burned.heroPoison.map(p => Poison(p.pct + Poison.OnHit)).getOrElse(Poison.onHit)))
               // Холод обгрызает защиту героя (накопительно, не затухает), воздух
               // поднимает мобу точность и уклонение на несколько ходов.
               (if (mobProc) procElement else None) match {
                 case Some(Element.Cold) if quenched => poisonedE.copy(heroBurn = None)
+                case Some(Element.Cold) if coldWarded => poisonedE
                 case Some(Element.Cold) =>
                   poisonedE.copy(heroColdDefenceCut =
                     poisonedE.heroColdDefenceCut + Element.Cold.DefenceReductionCut)
@@ -2988,11 +3003,14 @@ case class BattleState(
               capLine(thorned),
               // Из минибоссов поджигает только огненный элементаль; остальные —
               // мобы с огнём на оружии (демоны), у них строка без элементаля.
-              Option.when(ignites && !thawed)(content.text(
+              Option.when(ignites && !thawed && !fireWarded)(content.text(
                 if (battle.boss.isDefined) "battle.elemental.ignites" else "battle.mobIgnites")),
+              Option.when(fireWarded)(content.text("battle.ward.fire")),
               Option.when(thawed)(content.text("battle.elements.thawHero")),
-              Option.when(poisons)(content.text("battle.mobPoisons")),
-              Option.when(mobProc && procElement.contains(Element.Cold) && !quenched)(content.text("battle.mobColdBite")),
+              Option.when(poisons && !poisonWarded)(content.text("battle.mobPoisons")),
+              Option.when(poisonWarded)(content.text("battle.ward.poison")),
+              Option.when(mobProc && procElement.contains(Element.Cold) && !quenched && !coldWarded)(content.text("battle.mobColdBite")),
+              Option.when(coldWarded)(content.text("battle.ward.cold")),
               Option.when(quenched)(content.text("battle.elements.quenchHero")),
               Option.when(mobProc && procElement.contains(Element.Air))(content.text("battle.mobAirBoost"))
             ).flatten
@@ -4541,6 +4559,9 @@ case class BattleState(
         Some(content.text("battle.belt.shimmerPinned"))
       case BrewEffect.Shift if battle.group.freeHeroPlaces.isEmpty =>
         Some(content.text("battle.belt.noPlace"))
+      // Защита того же толка уже держит до конца боя — второй склянке делать нечего.
+      case BrewEffect.Ward(w) if battle.effects.warded(w) =>
+        Some(content.text("battle.belt.wardAlready"))
       case _ => None
     }
 
@@ -4641,6 +4662,11 @@ case class BattleState(
             done(hero, battle.copy(group = battle.group.copy(pendingShift = Some(p))),
               Vector(content.format("battle.belt.shimmer", "n" -> p.toString)))
         }
+
+      // Защитный отвар: снимает своё и держит до конца боя.
+      case BrewEffect.Ward(w) =>
+        done(hero, battle.copy(effects = battle.effects.withWard(w)),
+          Vector(content.format(s"battle.belt.ward.${w.entryName}", "brew" -> kind.label)))
 
       // Зеркальный настой: копии встают тут же, в этом бою.
       case BrewEffect.Mirror(copies) =>

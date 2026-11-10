@@ -228,7 +228,10 @@ case class BattleEffects(
   // Сколько ходов не может двинуться сам герой: ни шагнуть, ни отпрыгнуть, ни
   // сойти с места Тараном. Пока его ставит только арена — соперник пригвоздил
   // (см. `ArenaSide.rooted`); тикает там же, на стороне боя.
-  heroRootedTurns:      Int                        = 0
+  heroRootedTurns:      Int                        = 0,
+  // От чего героя до конца боя бережёт выпитый защитный отвар (см. Ward). Option —
+  // чтобы бои, записанные до защит, читались: без ключа это None.
+  heroWards:            Option[Set[Ward]]          = None
 ) {
 
   /** Только то, что висит на МОБЕ: яд, кровь, огонь, дебафы. Геройская
@@ -268,7 +271,8 @@ case class BattleEffects(
     heroBleedCoatTurns   = heroBleedCoatTurns,
     heroSmokeTurns       = heroSmokeTurns,
     heroMirrors          = heroMirrors,
-    heroRootedTurns      = heroRootedTurns
+    heroRootedTurns      = heroRootedTurns,
+    heroWards            = heroWards
   )
 
   /** Своя геройская половина плюс мобовая половина другого набора. */
@@ -326,6 +330,21 @@ case class BattleEffects(
 
   /** Пригвождён ли герой: двинуться он сейчас не может. */
   def heroRooted: Boolean = heroRootedTurns > 0
+
+  /** Бережёт ли героя защитный отвар от этого. */
+  def warded(w: Ward): Boolean = heroWards.exists(_.contains(w))
+
+  /** Защитный отвар выпит: что этого толка уже висело на герое, снято, а новое
+    * до конца боя не ляжет. */
+  def withWard(w: Ward): BattleEffects = {
+    val cleared = w match {
+      case Ward.Poison => copy(heroPoison = None)
+      case Ward.Fire   => copy(heroBurn = None)
+      case Ward.Cold   => copy(heroColdDefenceCut = 0)
+      case Ward.Bleed  => copy(heroBleed = None)
+    }
+    cleared.copy(heroWards = Some(heroWards.getOrElse(Set.empty) + w))
+  }
 }
 
 object BattleEffects {

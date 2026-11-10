@@ -44,6 +44,9 @@ object BrewEffect {
   /** Мерцание: герой выбирает свободное место своего строя и в конце раунда
     * встаёт туда; место заняли — на ближайшее свободное. Только из пояса. */
   case object Shift extends BrewEffect
+  /** Защита до конца боя: снимает с героя то, что этого толка уже висит, и не
+    * даёт лечь новому (см. [[pangea.model.battle.Ward]]). Только из пояса. */
+  final case class Ward(ward: pangea.model.battle.Ward) extends BrewEffect
 }
 
 /** Отвары: три травы в кубе Азата → порции ([[portions]]). Из трав первого
@@ -82,8 +85,8 @@ sealed abstract class BrewKind(
     * склянку (см. [[BrewEffect.Potion]]), и мерцающий настой — переходить с
     * места на место можно только в строю. */
   def combat: Boolean = effect match {
-    case BrewEffect.Potion(_) | BrewEffect.Shift => true
-    case _                                       => false
+    case BrewEffect.Potion(_) | BrewEffect.Shift | BrewEffect.Ward(_) => true
+    case _                                                            => false
   }
 
   /** Отвар, который идёт в рецепт вместе с травами: перегонка берёт готовую
@@ -364,6 +367,33 @@ object BrewKind extends Enum[BrewKind] {
     List(ShimmerFlower, Valerian, Sage),
     "Свет в склянке то вспыхивает, то гаснет, и вместе с ним будто пропадает сама склянка. Выпивший начинает мерцать так же: выбирает любое свободное место в своём строю и к концу раунда проявляется там. Займут его раньше — проявится на ближайшем свободном.",
     BrewEffect.Shift)
+
+  // ── Защитные отвары на редких травах: до конца боя яд, огонь, холод или
+  // кровотечение героя не берут ─────────────────────────────────────────────
+
+  case object SnakeSerum extends BrewKind(
+    "Змеиная сыворотка",
+    List(SnakeRoot, Sage, Wormwood),
+    "Мутная, горькая до оскомины, с запахом сырой земли. Змеи обходят стороной тех, кто её пил, — и яд тоже: что уже в крови, отступает, а новый до конца боя не берёт.",
+    BrewEffect.Ward(pangea.model.battle.Ward.Poison))
+
+  case object FireproofBrew extends BrewKind(
+    "Несгораемый настой",
+    List(SalamanderLeaf, Chamomile, Calendula),
+    "Красноватый и холодный, сколько его ни держи в руке. Пламя на коже от него гаснет с шипением, а новое до конца боя не занимается.",
+    BrewEffect.Ward(pangea.model.battle.Ward.Fire))
+
+  case object WarmBlood extends BrewKind(
+    "Тёплая кровь",
+    List(FrostBloom, Nettle, Belladonna),
+    "Тягучая, жжётся на языке, как крапива, а по жилам идёт жаром, будто сидишь у очага. Иней с доспеха сходит, и до конца боя холод не крадёт вашу защиту.",
+    BrewEffect.Ward(pangea.model.battle.Ward.Cold))
+
+  case object ClotBrew extends BrewKind(
+    "Запирающий отвар",
+    List(IronFern, Nettle, Calendula),
+    "Бурый, густой, отдаёт ржавчиной и кузней. Раны под ним стягиваются коркой: кровь унимается, а новые раны до конца боя не кровят.",
+    BrewEffect.Ward(pangea.model.battle.Ward.Bleed))
 
   val values: IndexedSeq[BrewKind] = findValues
 

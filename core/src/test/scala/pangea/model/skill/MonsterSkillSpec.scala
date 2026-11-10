@@ -1,6 +1,6 @@
 package pangea.model.skill
 
-import pangea.model.battle.SoloPveBattle
+import pangea.model.battle.{Poison, SoloPveBattle, Ward}
 import pangea.model.monster.{Race, Rarity}
 import pangea.model.stats.FightStats
 import pangea.test.TestFixtures
@@ -82,6 +82,16 @@ object MonsterSkillSpec extends ZIOSpecDefault {
         assertTrue(cast.heroHp == 70L) &&
         assertTrue(cast.heroArmor == 9999L) &&
         assertTrue(cast.line.contains("30"))
+      },
+
+      test("DirtyStrike: травит; под змеиной сывороткой удар доходит, а яд — нет") {
+        val b      = battle(mobAtk = 100)
+        val h      = hero(hp = 100, armor = 0)
+        val plain  = MonsterSkill.DirtyStrike.cast(b, h, 0L)
+        val warded = MonsterSkill.DirtyStrike.cast(b.copy(effects = b.effects.withWard(Ward.Poison)), h, 0L)
+        assertTrue(plain.battle.effects.heroPoison.contains(Poison(MonsterSkill.DirtyStrike.PoisonPct))) &&
+        assertTrue(warded.battle.effects.heroPoison.isEmpty && warded.heroHp == plain.heroHp) &&
+        assertTrue(warded.line.contains("змеиная сыворотка") && !warded.line.contains("растекается"))
       },
 
       test("HealingFlask: восстанавливает 20% от max, не выше max") {
