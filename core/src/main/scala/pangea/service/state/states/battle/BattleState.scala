@@ -4609,7 +4609,7 @@ case class BattleState(
 
       // Часовой баф: складывается с зельями Густаво, как и выпитый до боя.
       case BrewEffect.Boost(name, buff, label) =>
-        boosted(name, buff, nowMs + BrewRates.BoostDurationMs,
+        boosted(name, buff, nowMs + Achievement.brewMs(hero, BrewRates.BoostDurationMs),
           content.format("battle.belt.boosted", "brew" -> kind.label,
             "pct" -> BrewRates.BoostPct.toString, "stat" -> label))
 
@@ -4629,12 +4629,12 @@ case class BattleState(
 
       // Волчий зов: запах держится час и сгорит на ближайшей встрече.
       case BrewEffect.WolfCall =>
-        boosted(BrewRates.WolfCallBoost, ParamsBuff.zero, nowMs + BrewRates.WolfCallMs,
+        boosted(BrewRates.WolfCallBoost, ParamsBuff.zero, nowMs + Achievement.brewMs(hero, BrewRates.WolfCallMs),
           content.text("battle.belt.wolfCall"))
 
       // Гнилой зов — узелок: смрад ведёт к Гнилому Джо, ближайшая встреча — он.
       case BrewEffect.RotCall =>
-        boosted(BrewRates.RotCallBoost, ParamsBuff.zero, nowMs + BrewRates.RotCallMs,
+        boosted(BrewRates.RotCallBoost, ParamsBuff.zero, nowMs + Achievement.brewMs(hero, BrewRates.RotCallMs),
           content.text("battle.belt.rotCall"))
 
       // Пузырь: срока у плёнки нет — она ждёт смерти, сколько бы её ни ждать.

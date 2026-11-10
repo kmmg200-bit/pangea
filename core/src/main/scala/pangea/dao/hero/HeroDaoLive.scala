@@ -108,6 +108,9 @@ class HeroDaoLive(xa: Transactor[Task]) extends HeroDao {
   override def updateKills(userId: UserId, kills: Long): Task[Unit] =
     Queries.updateKills(userId, kills).update.run.transact(xa).unit
 
+  override def addBrews(userId: UserId, n: Long): Task[Unit] =
+    Queries.addBrews(userId, n).update.run.transact(xa).unit
+
   override def updateExpFrozen(userId: UserId, frozen: Boolean): Task[Unit] =
     Queries.updateExpFrozen(userId, frozen).update.run.transact(xa).unit
 

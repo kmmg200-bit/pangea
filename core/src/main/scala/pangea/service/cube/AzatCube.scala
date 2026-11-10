@@ -5,13 +5,13 @@ import pangea.dao.hero.HeroDao
 import pangea.domain.Rng
 import pangea.engine.{Renderer, SceneContent, Screen}
 import pangea.generator.item.CubeCraft
-import pangea.model.hero.{Achievement, AzatState, Hero}
+import pangea.model.hero.{AzatState, Hero}
 import pangea.model.home.{HomeData, RecipeNote}
-import pangea.model.item.{BrewKind, Item}
+import pangea.model.item.Item
 import pangea.model.user.{User, UserId}
 import pangea.repository.inventory.{InventoryRepoError, InventoryRepository}
 import pangea.repository.item.ItemRepository
-import pangea.service.state.{AzatData, HerbLore, InventoryFeedback, MarisaQuest, StackMove}
+import pangea.service.state.{AzatData, InventoryFeedback, QuestSupport, StackMove}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -93,17 +93,9 @@ final class AzatCube(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemR
              loadHome(user.userId).flatMap(h => saveHome(user.userId, h.noted(result.applied.map(AzatCube.note)))))
       msgKey = if (result.anyApplied) "cube.activated" else "cube.nothing"
       _ <- renderer.show(user, Screen(content.text(msgKey), Nil))
-      // Сваренные отвары идут в счёт «Зельевара I»: по одному каждого — достижение.
-      brewedNow = result.items.filter(_.id <= 0L).flatMap(_.brew).map(_.entryName)
-      _ <- ZIO.when(brewedNow.nonEmpty) {
-             for {
-               lore   <- HerbLore.readLore(heroDao, user.userId)
-               updated = lore.brewedAlso(brewedNow)
-               _      <- HerbLore.writeLore(heroDao, user.userId, updated)
-               _      <- ZIO.when(BrewKind.rank1.forall(k => updated.brewed.contains(k.entryName)))(
-                           MarisaQuest.grant(heroDao, content, user, hero, Achievement.Brewer1, renderer))
-             } yield ()
-           }
+      // Сваренные отвары — в счёт «Зельевара I» и «Промышленного аптекаря».
+      _ <- QuestSupport.brewed(heroDao, content, user,
+             result.items.filter(_.id <= 0L).flatMap(_.brew).map(_.entryName), renderer)
     } yield persisted.collect { case (item, true) => item }
 
   def loadAzat(userId: UserId): Task[AzatState] =

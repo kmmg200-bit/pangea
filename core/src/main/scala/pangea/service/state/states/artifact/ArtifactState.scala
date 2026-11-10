@@ -7,15 +7,15 @@ import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Scree
 import pangea.domain.Rng
 import pangea.generator.item.CubeCraft
 import pangea.model.artifact.{Artifact, ArtifactKind, HeroArtifacts}
-import pangea.model.hero.{Achievement, Hero}
-import pangea.model.item.{BrewKind, Item, ItemStack}
+import pangea.model.hero.Hero
+import pangea.model.item.{Item, ItemStack}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.state.states.artifact.ArtifactState._
-import pangea.service.state.{HerbLore, InventoryFeedback, ItemMenu, MarisaQuest, NpcQuestLog, StackMove, State, UiScene, UserAction}
+import pangea.service.state.{InventoryFeedback, ItemMenu, NpcQuestLog, QuestSupport, StackMove, State, UiScene, UserAction}
 import pangea.service.storage.ItemStore
 import zio.{Random, Task, ZIO}
 
@@ -258,23 +258,16 @@ case class ArtifactState(
              artifacts.applyMagic(hero.id, kind, persisted, result.chargesUsed).mapError(asThrowable) *>
                renderer.show(user, Screen(content.format(s"artifact.$key.magicDone",
                  "count" -> result.chargesUsed.toString), Nil)) *>
-               brewedAchievement(user, hero, result.items, renderer) *>
+               brewedAchievement(user, result.items, renderer) *>
                showMenu(user, renderer)
     } yield ()
 
-  /** Сваренное в сумке идёт в тот же счёт «Зельевара I», что и сваренное в кубе. */
-  private def brewedAchievement(user: User, hero: Hero, made: List[pangea.model.item.Item], renderer: Renderer): Task[Unit] = {
-    val brewed = made.filter(_.id <= 0L).flatMap(_.brew).map(_.entryName)
-    ZIO.when(kind == ArtifactKind.LivingBag && brewed.nonEmpty) {
-      for {
-        lore   <- HerbLore.readLore(heroDao, user.userId)
-        updated = lore.brewedAlso(brewed)
-        _      <- HerbLore.writeLore(heroDao, user.userId, updated)
-        _      <- ZIO.when(BrewKind.rank1.forall(k => updated.brewed.contains(k.entryName)))(
-                    MarisaQuest.grant(heroDao, content, user, hero, Achievement.Brewer1, renderer))
-      } yield ()
-    }.unit
-  }
+  /** Сваренное в сумке идёт в тот же счёт «Зельевара I» и «Промышленного
+    * аптекаря», что и сваренное в кубе. */
+  private def brewedAchievement(user: User, made: List[pangea.model.item.Item], renderer: Renderer): Task[Unit] =
+    ZIO.when(kind == ArtifactKind.LivingBag)(
+      QuestSupport.brewed(heroDao, content, user, made.filter(_.id <= 0L).flatMap(_.brew).map(_.entryName), renderer)
+    ).unit
 
   // ── Вспомогательное ────────────────────────────────────────────────────────
 

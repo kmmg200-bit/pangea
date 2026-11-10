@@ -3,7 +3,7 @@ package pangea.service.state
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Renderer, SceneContent, Screen}
 import pangea.model.hero.{Achievement, Hero}
-import pangea.model.item.{Item, ItemSet, QuestItemKind}
+import pangea.model.item.{BrewKind, Item, ItemSet, QuestItemKind}
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
@@ -50,6 +50,27 @@ object QuestSupport {
     * герою надёжнее, чем помнить о каждом. */
   def grantMilestones(heroDao: HeroDao, content: SceneContent, user: User, hero: Hero, renderer: Renderer): Task[Hero] =
     ZIO.foldLeft(Achievement.milestonesDue(hero))(hero)((h, a) => grant(heroDao, content, user, h, a, renderer))
+
+  /** Сварены зелья — куб, Живая сумка или верстак; `kinds` — вид каждого,
+    * по строке на зелье. Виды идут в счёт «Зельевара I» (по одному каждого
+    * отвара первого ранга), число — в `heroes.brews`, по которому
+    * «Промышленный аптекарь». Героя перечитываем: вызывающий мог держать его
+    * снимок до того, как ему выдали что-то ещё. */
+  def brewed(heroDao: HeroDao, content: SceneContent, user: User, kinds: List[String], renderer: Renderer): Task[Unit] =
+    ZIO.when(kinds.nonEmpty) {
+      for {
+        lore   <- HerbLore.readLore(heroDao, user.userId)
+        updated = lore.brewedAlso(kinds)
+        _      <- HerbLore.writeLore(heroDao, user.userId, updated)
+        _      <- heroDao.addBrews(user.userId, kinds.size.toLong)
+        hero   <- heroDao.getHeroByUserId(user.userId)
+        _      <- ZIO.foreachDiscard(hero) { h =>
+                    (if (BrewKind.rank1.forall(k => updated.brewed.contains(k.entryName)))
+                       grant(heroDao, content, user, h, Achievement.Brewer1, renderer)
+                     else ZIO.succeed(h)).flatMap(grantMilestones(heroDao, content, user, _, renderer))
+                  }
+      } yield ()
+    }.unit
 
   /** Достижение — один раз; строка о нём показывается сразу. */
   def grant(heroDao: HeroDao, content: SceneContent, user: User, hero: Hero, a: Achievement, renderer: Renderer): Task[Hero] =

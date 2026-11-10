@@ -3,7 +3,7 @@ package pangea.service.equipment
 import io.circe.syntax.EncoderOps
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Renderer, SceneContent, Screen}
-import pangea.model.hero.{Hero, WeaponCoat}
+import pangea.model.hero.{Achievement, Hero, WeaponCoat}
 import pangea.model.item.{BrewEffect, BrewRates, Item}
 import pangea.model.monster.Race
 import pangea.model.stats.{ParamsBuff, StatBoost}
@@ -58,7 +58,7 @@ final class BrewWork(heroDao: HeroDao, inventoryRepo: InventoryRepository, conte
         for {
           at  <- now
           _   <- heroDao.updateStatBoosts(user.userId, hero.statBoosts.add(
-                   StatBoost(BrewRates.WolfCallBoost, ParamsBuff.zero, at + BrewRates.WolfCallMs), at))
+                   StatBoost(BrewRates.WolfCallBoost, ParamsBuff.zero, at + Achievement.brewMs(hero, BrewRates.WolfCallMs)), at))
           res <- spend(user, item, hero, content.text("brew.wolfCall"), renderer)
         } yield res
       // Гнилой зов — узелок: так же час, только смрад ведёт к Гнилому Джо.
@@ -66,14 +66,14 @@ final class BrewWork(heroDao: HeroDao, inventoryRepo: InventoryRepository, conte
         for {
           at  <- now
           _   <- heroDao.updateStatBoosts(user.userId, hero.statBoosts.add(
-                   StatBoost(BrewRates.RotCallBoost, ParamsBuff.zero, at + BrewRates.RotCallMs), at))
+                   StatBoost(BrewRates.RotCallBoost, ParamsBuff.zero, at + Achievement.brewMs(hero, BrewRates.RotCallMs)), at))
           res <- spend(user, item, hero, content.text("brew.rotCall"), renderer)
         } yield res
       case Some(BrewEffect.Boost(name, buff, label)) =>
         for {
           at  <- now
           _   <- heroDao.updateStatBoosts(user.userId,
-                   hero.statBoosts.add(StatBoost(name, buff, at + BrewRates.BoostDurationMs), at))
+                   hero.statBoosts.add(StatBoost(name, buff, at + Achievement.brewMs(hero, BrewRates.BoostDurationMs)), at))
           res <- spend(user, item, hero, content.format("brew.boosted",
                    "brew" -> item.name, "pct" -> BrewRates.BoostPct.toString, "stat" -> label), renderer)
         } yield res
@@ -88,7 +88,7 @@ final class BrewWork(heroDao: HeroDao, inventoryRepo: InventoryRepository, conte
         at  <- now
         _   <- heroDao.updateStatBoosts(user.userId, hero.statBoosts.add(
                  StatBoost(BrewRates.SentenceBoost + race.entryName, ParamsBuff.zero,
-                   at + BrewRates.SentenceMs), at))
+                   at + Achievement.brewMs(hero, BrewRates.SentenceMs)), at))
         res <- spend(user, item, hero, content.format("brew.sentenced", "race" -> race.toString), renderer)
       } yield res
 

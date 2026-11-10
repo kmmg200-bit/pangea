@@ -35,6 +35,10 @@ object AchievementRates {
 
   /** Сколько каждой из четырёх характеристик даёт «Торопыга». */
   val HastyStatBonus: Long = 1L
+
+  /** На сколько процентов каждый ранг «Промышленного аптекаря» удлиняет срок
+    * отваров: все пять — +50%. */
+  val ApothecaryDurationPct: Long = 10L
 }
 
 object Achievement extends Enum[Achievement] {
@@ -173,6 +177,24 @@ object Achievement extends Enum[Achievement] {
   case object Level150 extends Achievement("Вершина",
     s"+${AchievementRates.LevelHpBonus} к HP")
 
+  // ── Вехи: сваренные зелья ───────────────────────────────────────────────────
+  // Счёт — `heroes.brews`: каждое зелье из куба, Живой сумки и с верстака.
+
+  case object Apothecary1 extends Achievement("Промышленный аптекарь I",
+    s"+${AchievementRates.ApothecaryDurationPct}% к сроку действия отваров")
+
+  case object Apothecary2 extends Achievement("Промышленный аптекарь II",
+    s"+${AchievementRates.ApothecaryDurationPct}% к сроку действия отваров")
+
+  case object Apothecary3 extends Achievement("Промышленный аптекарь III",
+    s"+${AchievementRates.ApothecaryDurationPct}% к сроку действия отваров")
+
+  case object Apothecary4 extends Achievement("Промышленный аптекарь IV",
+    s"+${AchievementRates.ApothecaryDurationPct}% к сроку действия отваров")
+
+  case object Apothecary5 extends Achievement("Промышленный аптекарь V",
+    s"+${AchievementRates.ApothecaryDurationPct}% к сроку действия отваров")
+
   // ── От админа ───────────────────────────────────────────────────────────────
 
   /** Выдаёт «Админ 1» в беседе: «Дать Торопыга» ответом на сообщение игрока
@@ -198,12 +220,23 @@ object Achievement extends Enum[Achievement] {
     100L -> Level100, 125L -> Level125, 150L -> Level150
   )
 
+  /** Вехи сваренных зелий. */
+  val BrewTiers: List[(Long, Achievement)] = List(
+    10L -> Apothecary1, 100L -> Apothecary2, 250L -> Apothecary3, 500L -> Apothecary4, 1000L -> Apothecary5
+  )
+
   /** Вехи, до которых герой уже дошёл, а достижения за них ещё нет, — по
     * порядку. Порог проверяется по самому герою, поэтому неважно, откуда
-    * пришли уровень или убитые. */
+    * пришли уровень, убитые или зелья. */
   def milestonesDue(hero: Hero): List[Achievement] =
     (KillTiers.collect { case (n, a, _) if hero.kills >= n => a } ++
-      LevelTiers.collect { case (n, a) if hero.lvl >= n => a }).filterNot(hero.hasAchievement)
+      LevelTiers.collect { case (n, a) if hero.lvl >= n => a } ++
+      BrewTiers.collect { case (n, a) if hero.brews >= n => a }).filterNot(hero.hasAchievement)
+
+  /** Срок отвара с учётом «Промышленного аптекаря»: +10% за каждый ранг. */
+  def brewMs(hero: Hero, ms: Long): Long =
+    ms * (100L + BrewTiers.count { case (_, a) => hero.hasAchievement(a) }.toLong *
+      AchievementRates.ApothecaryDurationPct) / 100L
 
   /** Достижение за набор, собранный целиком. */
   def forSet(set: ItemSet): Option[Achievement] = set match {

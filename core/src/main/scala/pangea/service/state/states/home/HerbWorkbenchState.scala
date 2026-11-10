@@ -8,7 +8,7 @@ import pangea.domain.Rng
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.generator.item.CubeCraft
 import pangea.model.artifact.ArtifactKind
-import pangea.model.hero.{Achievement, Hero, LoreData}
+import pangea.model.hero.{Hero, LoreData}
 import pangea.model.home.{HomeData, HomeRates, House}
 import pangea.model.item.{BrewKind, Item, ItemStack, MaterialKind}
 import pangea.model.state.StateType
@@ -16,7 +16,7 @@ import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
-import pangea.service.state.{HerbLore, ItemMenu, MarisaQuest, StackMove, State, UiScene, UserAction}
+import pangea.service.state.{HerbLore, ItemMenu, QuestSupport, StackMove, State, UiScene, UserAction}
 import pangea.service.storage.ItemStore
 import zio.{Random, Task, ZIO}
 
@@ -196,7 +196,7 @@ case class HerbWorkbenchState(
                                  "items" -> StackMove.names(made)) +
                                  (if (queued.nonEmpty) "\n" + content.format("home.workbench.cookedWait", "n" -> queued.size.toString) else ""),
                                  renderer)
-                      _     <- brewedAchievement(user, hero, made, renderer)
+                      _     <- brewedAchievement(user, made, renderer)
                       s     <- pot(user, renderer)
                     } yield s
                   }
@@ -385,7 +385,7 @@ case class HerbWorkbenchState(
                         "portions" -> per.toString, "n" -> total.toString, "asked" -> asked.toString)),
                       Option.when(queued.nonEmpty)(content.format("home.workbench.cookedWait", "n" -> queued.size.toString))
                     ).flatten.mkString("\n"), renderer)
-            _    <- brewedAchievement(user, hero, made, renderer)
+            _    <- brewedAchievement(user, made, renderer)
             s    <- recipe(user, kind, p, renderer)
           } yield s
         case lacks =>
@@ -476,19 +476,10 @@ case class HerbWorkbenchState(
 
   private def isHerb(it: Item): Boolean = HomeStow.isHerb(it)
 
-  /** Сваренное в котелке идёт в тот же счёт «Зельевара I», что и в кубе. */
-  private def brewedAchievement(user: User, hero: Hero, made: List[Item], renderer: Renderer): Task[Unit] = {
-    val brewed = made.flatMap(_.brew).map(_.entryName)
-    ZIO.when(brewed.nonEmpty) {
-      for {
-        lore   <- HerbLore.readLore(heroDao, user.userId)
-        updated = lore.brewedAlso(brewed)
-        _      <- HerbLore.writeLore(heroDao, user.userId, updated)
-        _      <- ZIO.when(BrewKind.rank1.forall(k => updated.brewed.contains(k.entryName)))(
-                    MarisaQuest.grant(heroDao, content, user, hero, Achievement.Brewer1, renderer))
-      } yield ()
-    }.unit
-  }
+  /** Сваренное в котелке идёт в тот же счёт «Зельевара I» и «Промышленного
+    * аптекаря», что и в кубе. */
+  private def brewedAchievement(user: User, made: List[Item], renderer: Renderer): Task[Unit] =
+    QuestSupport.brewed(heroDao, content, user, made.flatMap(_.brew).map(_.entryName), renderer)
 
   private def say(user: User, text: String, renderer: Renderer): Task[Unit] =
     renderer.show(user, Screen(text, Nil))

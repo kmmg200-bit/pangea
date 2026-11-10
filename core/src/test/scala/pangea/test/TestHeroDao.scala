@@ -106,6 +106,9 @@ class TestHeroDao(
   def updateKills(userId: UserId, kills: Long): Task[Unit] =
     heroRef.update(m => m.get(userId).fold(m)(h => m.updated(userId, h.copy(kills = kills))))
 
+  def addBrews(userId: UserId, n: Long): Task[Unit] =
+    heroRef.update(m => m.get(userId).fold(m)(h => m.updated(userId, h.copy(brews = h.brews + n))))
+
   def updateExpFrozen(userId: UserId, frozen: Boolean): Task[Unit] =
     heroRef.update(m => m.get(userId).fold(m)(h => m.updated(userId, h.copy(expFrozen = frozen))))
 
