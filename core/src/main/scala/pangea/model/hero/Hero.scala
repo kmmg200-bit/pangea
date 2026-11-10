@@ -300,10 +300,12 @@ case class Hero(
     val base        = effectiveVit * 24L
     val subtotal    = (base * (1.0 - p.vitPct) * (1.0 - p.hpPct) * statBoosts.vitFactor(nowMs)).toLong.max(1L) +
       equipment.allHp
-    // Рубины в снаряжении и наборы (порог 8): плоские прибавки + % к макс. HP.
+    // Рубины в снаряжении и наборы (порог 8): плоские прибавки + % к макс. HP;
+    // процент от достижений («Добейте меня...») — туда же.
     val g = gems
     val s = sets
-    (subtotal + g.flatHp + s.flatHp + Achievement.hpBonus(this)) * (100L + g.maxHpBonusPct + s.maxHpBonusPct) / 100L
+    (subtotal + g.flatHp + s.flatHp + Achievement.hpBonus(this)) *
+      (100L + g.maxHpBonusPct + s.maxHpBonusPct + Achievement.hpPct(this)) / 100L
   }
 
   def traumaRemainingText(nowMs: Long): Option[String] =

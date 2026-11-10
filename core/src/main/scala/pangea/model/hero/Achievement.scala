@@ -2,6 +2,7 @@ package pangea.model.hero
 
 import enumeratum._
 import pangea.model.item.{ItemSet, Rarity}
+import pangea.model.trauma.Trauma
 
 /** Достижения героя: выдаются сюжетом один раз и навсегда, каждое несёт свой
   * бонус. Хранятся ключами в `heroes.achievements`. */
@@ -50,6 +51,9 @@ object AchievementRates {
   /** На сколько процентов «Весь в золоте» поднимает атаку, защиту, уклонение,
     * точность и потолок брони. */
   val AllGoldStatPct: Long = 2L
+
+  /** На сколько процентов «Добейте меня...» поднимает максимум HP. */
+  val BatteredHpPct: Long = 1L
 }
 
 object Achievement extends Enum[Achievement] {
@@ -243,6 +247,12 @@ object Achievement extends Enum[Achievement] {
   case object AllGold extends Achievement("Весь в золоте",
     s"+${AchievementRates.AllGoldStatPct}% к атаке, защите, уклонению, точности и броне")
 
+  /** На герое разом все травмы, что есть в игре (`Trauma.all`). Копятся они по
+    * тирам — лёгкие, средние, тяжёлые, — так что «получил все» и «все разом»
+    * здесь одно. Веха: проверяется после каждого хода. */
+  case object Battered extends Achievement("Добейте меня...",
+    s"+${AchievementRates.BatteredHpPct}% к HP")
+
   /** Какие достижения «Админ 1» выдаёт словом «Дать» в беседе. Остальные — только
     * за свои условия. */
   val ChatGrantable: List[Achievement] = List(Hasty)
@@ -273,7 +283,16 @@ object Achievement extends Enum[Achievement] {
     (KillTiers.collect { case (n, a, _) if hero.kills >= n => a } ++
       LevelTiers.collect { case (n, a) if hero.lvl >= n => a } ++
       BrewTiers.collect { case (n, a) if hero.brews >= n => a } ++
-      AchieverTiers.collect { case (n, a) if gotCount(hero) >= n => a }).filterNot(hero.hasAchievement)
+      AchieverTiers.collect { case (n, a) if gotCount(hero) >= n => a } ++
+      Option.when(allTraumas(hero))(Battered)).filterNot(hero.hasAchievement)
+
+  /** Все травмы игры на герое разом. Имена после срока не стираются до новой
+    * травмы, но собраны они всё равно были. */
+  def allTraumas(hero: Hero): Boolean = Trauma.all.forall(t => hero.traumaNames.contains(t.name))
+
+  /** +% к максимуму HP от «Добейте меня...». */
+  def hpPct(hero: Hero): Long =
+    if (hero.hasAchievement(Battered)) AchievementRates.BatteredHpPct else 0L
 
   /** Вехи «Достигатора»: сколько достижений надо иметь. */
   val AchieverTiers: List[(Int, Achievement)] = List(
