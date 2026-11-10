@@ -136,7 +136,7 @@ object BenchSpec extends ZIOSpecDefault {
               assertTrue(book.text.contains("• Ромашка + Календула + Крапива → Костоправный отвар ×2"))
     },
 
-    test("куб в Храме: «Назад» — в зал Азата, книга рецептов не пишется") {
+    test("куб в Храме: «Назад» — в зал Азата, книга рецептов пишется и здесь") {
       for {
         t <- make(withBench, active.copy(cubeItems = boneSet))
         (_, cube, _, dao, r) = t
@@ -144,7 +144,8 @@ object BenchSpec extends ZIOSpecDefault {
         home <- homeOf(dao)
         a    <- azatOf(dao)
         back <- cube.action(testUser, tap("LeaveCube"), r)
-      } yield assertTrue(home.recipes.isEmpty && a.cubeCharges == 9) &&
+      } yield assertTrue(home.recipes == List(RecipeNote(List("Ромашка", "Календула", "Крапива"), "Костоправный отвар", 2))) &&
+              assertTrue(a.cubeCharges == 9) &&
               assertTrue(back == StateType.HallAzat) &&
               assertTrue(RecipeNote(List("Череп", "Череп", "Череп"), "Расколотый череп", 1).line == "Череп ×3 → Расколотый череп")
     }

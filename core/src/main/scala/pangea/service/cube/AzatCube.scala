@@ -88,11 +88,14 @@ final class AzatCube(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemR
              case Power.Own(n) =>
                saveAzat(user.userId, azat.copy(cubeItems = kept, cubeCharges = n - result.chargesUsed))
            }
-      // Дома всё, что получилось, — в книгу рецептов (пишется и без библиотеки).
-      _ <- ZIO.when(azat.cubeHome && result.applied.nonEmpty)(
-             loadHome(user.userId).flatMap(h => saveHome(user.userId, h.noted(result.applied.map(AzatCube.note)))))
+      // Всё, что получилось, — в книгу рецептов: и дома, и в Храме, и без
+      // библиотеки (листать её — в библиотеке). По ней и «Артефактор».
+      book <- if (result.applied.isEmpty) loadHome(user.userId)
+              else loadHome(user.userId).map(_.noted(result.applied.map(AzatCube.note)))
+                     .tap(h => saveHome(user.userId, h))
       msgKey = if (result.anyApplied) "cube.activated" else "cube.nothing"
       _ <- renderer.show(user, Screen(content.text(msgKey), Nil))
+      _ <- QuestSupport.grantArtificer(heroDao, content, user, book.recipes.size, renderer)
       // Сваренные отвары — в счёт «Зельевара I» и «Промышленного аптекаря».
       _ <- QuestSupport.brewed(heroDao, content, user,
              result.items.filter(_.id <= 0L).flatMap(_.brew).map(_.entryName), renderer)

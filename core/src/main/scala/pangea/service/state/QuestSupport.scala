@@ -81,6 +81,18 @@ object QuestSupport {
       } yield ()
     }.unit
 
+  /** «Артефактор» по книге рецептов из `known` записей: недостающие ранги —
+    * по порядку, следом вехи (по числу достижений — «Достигатор»). */
+  def grantArtificer(heroDao: HeroDao, content: SceneContent, user: User, known: Int, renderer: Renderer): Task[Unit] =
+    heroDao.getHeroByUserId(user.userId).flatMap(ZIO.foreachDiscard(_) { hero =>
+      Achievement.artificerDue(hero, known) match {
+        case Nil => ZIO.unit
+        case due =>
+          ZIO.foldLeft(due)(hero)((h, a) => grant(heroDao, content, user, h, a, renderer))
+            .flatMap(grantMilestones(heroDao, content, user, _, renderer)).unit
+      }
+    })
+
   /** Достижение — один раз; строка о нём показывается сразу. В базу —
     * дописыванием одного ключа, а не всего списка: снимок героя мог отстать
     * (донат дописывает своё вне хода), и целый список затёр бы новое. Не

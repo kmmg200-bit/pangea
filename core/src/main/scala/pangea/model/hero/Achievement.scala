@@ -54,6 +54,10 @@ object AchievementRates {
 
   /** На сколько процентов «Добейте меня...» поднимает максимум HP. */
   val BatteredHpPct: Long = 1L
+
+  /** Сколько каждой из четырёх характеристик даёт каждый ранг «Артефактора»:
+    * все пять — +5. */
+  val ArtificerStatBonus: Long = 1L
 }
 
 object Achievement extends Enum[Achievement] {
@@ -253,6 +257,19 @@ object Achievement extends Enum[Achievement] {
   case object Battered extends Achievement("Добейте меня...",
     s"+${AchievementRates.BatteredHpPct}% к HP")
 
+  /** «Артефактор» I–V: разных рецептов куба Азата в книге рецептов — 10, 25,
+    * 50, 100, 150 (см. [[ArtificerTiers]]). */
+  case object Artificer1 extends Achievement("Артефактор I",
+    s"+${AchievementRates.ArtificerStatBonus} ко всем характеристикам")
+  case object Artificer2 extends Achievement("Артефактор II",
+    s"+${AchievementRates.ArtificerStatBonus} ко всем характеристикам")
+  case object Artificer3 extends Achievement("Артефактор III",
+    s"+${AchievementRates.ArtificerStatBonus} ко всем характеристикам")
+  case object Artificer4 extends Achievement("Артефактор IV",
+    s"+${AchievementRates.ArtificerStatBonus} ко всем характеристикам")
+  case object Artificer5 extends Achievement("Артефактор V",
+    s"+${AchievementRates.ArtificerStatBonus} ко всем характеристикам")
+
   /** Какие достижения «Админ 1» выдаёт словом «Дать» в беседе. Остальные — только
     * за свои условия. */
   val ChatGrantable: List[Achievement] = List(Hasty)
@@ -293,6 +310,16 @@ object Achievement extends Enum[Achievement] {
   /** +% к максимуму HP от «Добейте меня...». */
   def hpPct(hero: Hero): Long =
     if (hero.hasAchievement(Battered)) AchievementRates.BatteredHpPct else 0L
+
+  /** Вехи «Артефактора»: сколько разных рецептов куба записано в книге. */
+  val ArtificerTiers: List[(Int, Achievement)] = List(
+    10 -> Artificer1, 25 -> Artificer2, 50 -> Artificer3, 100 -> Artificer4, 150 -> Artificer5
+  )
+
+  /** Ранги «Артефактора», до которых дошла книга из `known` рецептов, а у героя
+    * их ещё нет. */
+  def artificerDue(hero: Hero, known: Int): List[Achievement] =
+    ArtificerTiers.collect { case (n, a) if known >= n => a }.filterNot(hero.hasAchievement)
 
   /** Вехи «Достигатора»: сколько достижений надо иметь. */
   val AchieverTiers: List[(Int, Achievement)] = List(
@@ -384,10 +411,12 @@ object Achievement extends Enum[Achievement] {
     (if (hero.hasAchievement(Brewer1)) BrewerIntBonus else 0L) + raceSets(hero, QuietGroveSet, DeepMotherSet) +
       hasty(hero)
 
-  /** «Торопыга» и «Любимец Проекта» — по +1 к каждой из четырёх характеристик. */
+  /** «Торопыга», «Любимец Проекта» и каждый ранг «Артефактора» — по +1 к
+    * каждой из четырёх характеристик. */
   private def hasty(hero: Hero): Long =
     (if (hero.hasAchievement(Hasty)) AchievementRates.HastyStatBonus else 0L) +
-      (if (hero.hasAchievement(ProjectFavorite)) AchievementRates.ProjectFavoriteStatBonus else 0L)
+      (if (hero.hasAchievement(ProjectFavorite)) AchievementRates.ProjectFavoriteStatBonus else 0L) +
+      ArtificerTiers.count { case (_, a) => hero.hasAchievement(a) }.toLong * AchievementRates.ArtificerStatBonus
 
   /** Плоская прибавка к ловкости от достижений героя. */
   def agiBonus(hero: Hero): Long =
