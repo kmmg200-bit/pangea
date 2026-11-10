@@ -4,6 +4,7 @@ import io.circe.Json
 import pangea.metrics.GameMetrics
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Choice, ChoiceColor, Renderer, Screen}
+import pangea.model.hero.Achievement
 import pangea.model.home.HomeData
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
@@ -158,6 +159,47 @@ class StateHandler(
         lock.withLock(sender.userId) {
           userRepo.checkAndRecordEvent(sender.userId, eventId).flatMap(fresh => ZIO.when(fresh)(reply).unit)
         }
+    }
+  }
+
+  /** «Дать Торопыга» из беседы ответом на сообщение игрока: достижение — тому,
+    * на чьё сообщение ответили. Давать вправе только «Админ 1»; от прочих
+    * команду молча пропускаем. Ответ — в ту же беседу, игроку в личку — строка
+    * о достижении. Локи берём по очереди: сперва написавшего (защита от
+    * повтора), потом получателя. */
+  def grantFromChat(senderVk: VkId, targetVk: VkId, a: Achievement, eventId: Long, chatPeerId: Long): Task[Unit] =
+    userRepo.getUserByVkId(senderVk).flatMap {
+      case None => ZIO.unit
+      case Some(sender) =>
+        for {
+          fresh   <- lock.withLock(sender.userId)(userRepo.checkAndRecordEvent(sender.userId, eventId))
+          allowed <- if (fresh) admin.canGrant(sender.userId) else ZIO.succeed(false)
+          _       <- ZIO.when(allowed)(grantTo(targetVk, a, chatPeerId))
+        } yield ()
+    }
+
+  private def grantTo(targetVk: VkId, a: Achievement, chatPeerId: Long): Task[Unit] = {
+    val chat = ChatTarget.Peer(chatPeerId)
+    userRepo.getUserByVkId(targetVk).flatMap {
+      case None => api.sendToChat(chat, content.text("chat.grant.noHero"))
+      case Some(target) =>
+        for {
+          outcome <- lock.withLock(target.userId) {
+                       heroDao.getHeroByUserId(target.userId).flatMap {
+                         case None                                 => ZIO.succeed(Option.empty[Boolean])
+                         case Some(hero) if hero.hasAchievement(a) => ZIO.succeed(Option(false))
+                         case Some(hero) =>
+                           QuestSupport.grant(heroDao, content, target, hero, a, VkRenderer(api)).as(Option(true))
+                       }
+                     }
+          name    <- players.getDisplayName(target).orElse(ZIO.succeed(StateHandler.TransferSomeone))
+          _       <- api.sendToChat(chat, outcome match {
+                       case None        => content.text("chat.grant.noHero")
+                       case Some(true)  => content.format("chat.grant.done", "name" -> name, "title" -> a.title,
+                                             "bonus" -> a.bonusLine)
+                       case Some(false) => content.format("chat.grant.already", "name" -> name, "title" -> a.title)
+                     })
+        } yield ()
     }
   }
 

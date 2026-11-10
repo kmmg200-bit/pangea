@@ -83,6 +83,9 @@ trait AdminPanel {
 
   /** Кому пересылать /home игрока `except`: всем «Админ 1», кроме него самого. */
   def homeWatchers(except: UserId): Task[List[VkId]]
+
+  /** Вправе ли игрок выдавать достижения словом «Дать» в беседе: только «Админ 1». */
+  def canGrant(userId: UserId): Task[Boolean]
 }
 
 class AdminPanelLive(
@@ -110,6 +113,9 @@ class AdminPanelLive(
 
   override def homeWatchers(except: UserId): Task[List[VkId]] =
     adminDao.withLevel(Level1).map(_.collect { case (id, vk) if id != except => vk })
+
+  override def canGrant(userId: UserId): Task[Boolean] =
+    adminDao.level(userId).map(_ >= Level1)
 
   // ── Вход ──────────────────────────────────────────────────────────────────
 
@@ -500,6 +506,8 @@ object AdminPanel {
     def intercept(user: User, hero: Hero, action: UserAction, renderer: Renderer): Task[Boolean] =
       ZIO.succeed(false)
     def homeWatchers(except: UserId): Task[List[VkId]] = ZIO.succeed(Nil)
+    // Панель выключена — давать некому.
+    def canGrant(userId: UserId): Task[Boolean] = ZIO.succeed(false)
   }
 
   private[admin] def noSessions: UIO[Ref[Map[UserId, AdminScreen]]] = Ref.make(Map.empty[UserId, AdminScreen])

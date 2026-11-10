@@ -32,6 +32,9 @@ object AchievementRates {
 
   /** Сколько HP даёт каждое достижение за уровень героя. */
   val LevelHpBonus: Long = 100L
+
+  /** Сколько каждой из четырёх характеристик даёт «Торопыга». */
+  val HastyStatBonus: Long = 1L
 }
 
 object Achievement extends Enum[Achievement] {
@@ -170,6 +173,17 @@ object Achievement extends Enum[Achievement] {
   case object Level150 extends Achievement("Вершина",
     s"+${AchievementRates.LevelHpBonus} к HP")
 
+  // ── От админа ───────────────────────────────────────────────────────────────
+
+  /** Выдаёт «Админ 1» в беседе: «Дать Торопыга» ответом на сообщение игрока
+    * (см. [[ChatGrantable]]). Других путей нет. */
+  case object Hasty extends Achievement("Торопыга",
+    s"+${AchievementRates.HastyStatBonus} ко всем характеристикам")
+
+  /** Какие достижения «Админ 1» выдаёт словом «Дать» в беседе. Остальные — только
+    * за свои условия. */
+  val ChatGrantable: List[Achievement] = List(Hasty)
+
   /** Вехи убитых: сколько надо убить и сколько силы даёт достижение. */
   val KillTiers: List[(Long, Achievement, Long)] = List(
     (1000L, Kills1k, AchievementRates.Kills1kStr),
@@ -248,24 +262,29 @@ object Achievement extends Enum[Achievement] {
 
   /** Плоская прибавка к интеллекту от достижений героя. */
   def intBonus(hero: Hero): Long =
-    (if (hero.hasAchievement(Brewer1)) BrewerIntBonus else 0L) + raceSets(hero, QuietGroveSet, DeepMotherSet)
+    (if (hero.hasAchievement(Brewer1)) BrewerIntBonus else 0L) + raceSets(hero, QuietGroveSet, DeepMotherSet) +
+      hasty(hero)
+
+  /** «Торопыга» — по +1 к каждой из четырёх характеристик. */
+  private def hasty(hero: Hero): Long =
+    if (hero.hasAchievement(Hasty)) AchievementRates.HastyStatBonus else 0L
 
   /** Плоская прибавка к ловкости от достижений героя. */
   def agiBonus(hero: Hero): Long =
     (if (hero.hasAchievement(MurlocFavorite)) MurlocFavoriteAgiBonus else 0L) +
-      (if (hero.hasAchievement(OwnBack)) OwnBackAgiBonus else 0L) + raceSets(hero, TricksterSet, DesertSet)
+      (if (hero.hasAchievement(OwnBack)) OwnBackAgiBonus else 0L) + raceSets(hero, TricksterSet, DesertSet) + hasty(hero)
 
   /** Плоская прибавка к силе от достижений героя. */
   def strBonus(hero: Hero): Long =
     (if (hero.hasAchievement(MurlocBane)) MurlocBaneStrBonus else 0L) + raceSets(hero, HordeSet, UnderworldSet) +
-      KillTiers.collect { case (_, a, str) if hero.hasAchievement(a) => str }.sum
+      KillTiers.collect { case (_, a, str) if hero.hasAchievement(a) => str }.sum + hasty(hero)
 
   /** Сколько телосложения прибавляет «Друг подгорного народа». */
   val SquadFriendVitBonus: Long = 1L
 
   /** Плоская прибавка к телосложению от достижений героя. */
   def vitBonus(hero: Hero): Long =
-    (if (hero.hasAchievement(SquadFriend)) SquadFriendVitBonus else 0L) + raceSets(hero, PioneerSet, MountainMasterSet)
+    (if (hero.hasAchievement(SquadFriend)) SquadFriendVitBonus else 0L) + raceSets(hero, PioneerSet, MountainMasterSet) + hasty(hero)
 
   /** Сколько HP прибавляет «Переработки наше всё». */
   val OvertimeHpBonus: Long = 100L

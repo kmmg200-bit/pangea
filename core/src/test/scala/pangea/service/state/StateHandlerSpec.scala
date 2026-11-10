@@ -70,6 +70,7 @@ object StateHandlerSpec extends ZIOSpecDefault {
   private def watchedBy(watchers: UserId => Task[List[VkId]]): AdminPanel = new AdminPanel {
     def intercept(user: User, hero: Hero, action: UserAction, renderer: Renderer): Task[Boolean] = ZIO.succeed(false)
     def homeWatchers(except: UserId): Task[List[VkId]] = watchers(except)
+    def canGrant(userId: UserId): Task[Boolean] = ZIO.succeed(false)
   }
 
   /** Обвязка для отложенной выручки: герой, диспетчер и склад невыданных денег. */

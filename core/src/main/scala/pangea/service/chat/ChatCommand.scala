@@ -1,5 +1,7 @@
 package pangea.service.chat
 
+import pangea.model.hero.Achievement
+
 /** Команды, которые бот слушает в общей беседе Пангеи: «Передать» в ответ
  *  (или пересылкой) на сообщение того, кому передают, — вещь или деньги, —
  *  команды о себе — «Мой профиль» и «Моё снаряжение», ответ на которые уходит
@@ -74,6 +76,20 @@ object ChatCommand {
     case "мое снаряжение"                     => Some(Self.Gear)
     case _                                    => None
   }
+
+  /** Слово, с которого «Админ 1» выдаёт достижение. */
+  val Grant: String = "дать"
+
+  /** «Дать Торопыга» — какое достижение выдать тому, на чьё сообщение ответили.
+    * Название сравниваем «голым», как команды о себе; выдаются словом только
+    * [[Achievement.ChatGrantable]]. Кто вправе давать — решает не команда, а
+    * уровень прав написавшего. */
+  def grantCommand(text: String): Option[Achievement] =
+    bare(text).split(' ').toList match {
+      case Grant :: title if title.nonEmpty =>
+        Achievement.ChatGrantable.find(a => bare(a.title) == title.mkString(" "))
+      case _ => None
+    }
 
   private def bare(s: String): String =
     s.toLowerCase.replace('ё', 'е')

@@ -56,8 +56,12 @@ object QuestSupport {
     if (hero.hasAchievement(a)) ZIO.succeed(hero)
     else {
       val updated = hero.withAchievement(a)
+      val line    = content.format("marisa.achievement", "title" -> a.title, "bonus" -> a.bonusLine)
+      val note    = Notes.get(a).map(key => "\n\n" + content.text(key)).getOrElse("")
       heroDao.updateAchievements(user.userId, updated.achievements) *>
-        renderer.show(user, Screen(content.format("marisa.achievement", "title" -> a.title, "bonus" -> a.bonusLine), Nil))
-          .as(updated)
+        renderer.show(user, Screen(line + note, Nil)).as(updated)
     }
+
+  /** Достижения, у которых под строкой о получении — своя приписка. */
+  private val Notes: Map[Achievement, String] = Map(Achievement.Hasty -> "chat.grant.hastyNote")
 }

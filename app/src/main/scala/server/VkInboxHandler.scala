@@ -38,13 +38,20 @@ final class VkInboxHandler(stateHandler: StateHandler, adminConfig: AdminConfig)
   /** Что умеют беседы — общая и торговая, любая, где есть бот: «Передать» в
     * ответ (или пересылкой) на сообщение того, кому передают, команды о себе —
     * «Мой профиль» и «Моё снаряжение», ответ на которые уходит в ту же беседу, —
-    * и «Туториал»: ссылка на статью о том, как всё устроено в игре. Всё прочее
+    * «Туториал»: ссылка на статью о том, как всё устроено в игре, — и «Дать»:
+    * «Админ 1» выдаёт достижение тому, на чьё сообщение ответил. Всё прочее
     * там нас не касается. */
   private def chat(msg: VkEvent.Message): Task[Unit] =
     msg.fromId.filter(_ > 0L) match {
       case None => ZIO.unit
       case Some(from) if ChatCommand.tutorialCommand(msg.text) =>
         stateHandler.tutorialToChat(VkId(from.toString), msg.chatEventKey, msg.peerId)
+      // «Дать Торопыга» ответом на сообщение игрока — от «Админ 1» (права
+      // проверяет StateHandler).
+      case Some(from) if ChatCommand.grantCommand(msg.text).isDefined && msg.quotedAuthor.exists(_ > 0L) =>
+        ZIO.foreachDiscard(ChatCommand.grantCommand(msg.text).zip(msg.quotedAuthor)){ case (a, to) =>
+          stateHandler.grantFromChat(VkId(from.toString), VkId(to.toString), a, msg.chatEventKey, msg.peerId)
+        }
       case Some(from) =>
         ChatCommand.selfCommand(msg.text) match {
           case Some(command) => stateHandler.selfToChat(VkId(from.toString), command, msg.chatEventKey, msg.peerId)

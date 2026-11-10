@@ -679,6 +679,12 @@ while (exp >= Hero.neededExpForLevel(lvl) && lvl < 150L) {
 (`Achievement.milestonesDue`) и выдаёт недостающие. Уровень и убитые приходят из многих мест,
 а проверка по самому герою не зависит от того, откуда.
 
+«Торопыгу» выдаёт только «Админ 1» — в беседе, ответом на сообщение игрока: «Дать Торопыга»
+(`ChatCommand.grantCommand`, `StateHandler.grantFromChat`). Права — `AdminPanel.canGrant`
+(уровень в `admins`); от прочих команда молча пропускается. Словом выдаются только
+`Achievement.ChatGrantable`. Игроку в личку — обычная строка и приписка
+(`chat.grant.hastyNote`), в беседу — подтверждение.
+
 ### Вещи для поручений: сумка и артефакты (`QuestGoods`)
 
 Камни сами ложатся в Ларец Азата, травы и отвары — в Живую сумку (`ArtifactKind.autoCollect`).
