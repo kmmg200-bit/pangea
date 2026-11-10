@@ -418,6 +418,12 @@ class StateHandler(
                      .flatMap(transitionTo(user, hero.state, _, renderer))
                  }
           } yield ()
+      // Вехи — убитые, уровень: какой бы сценой герой ни перевалил порог,
+      // достижение приходит строкой после хода. Не вышло — ход всё равно
+      // состоялся: пишем в лог, а веху выдаст следующий ход.
+      _ <- heroDao.getHeroByUserId(user.userId)
+             .flatMap(ZIO.foreachDiscard(_)(QuestSupport.grantMilestones(heroDao, content, user, _, renderer)))
+             .catchAllCause(ErrorLog.logged(s"Вехи героя ${user.userId.value} не проверены"))
     } yield ()
 
   /** `/restart`, первый шаг: только предупреждение с inline-кнопкой. Клавиатура

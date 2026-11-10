@@ -44,6 +44,13 @@ object QuestSupport {
       (h, a) => grant(heroDao, content, user, h, a, renderer)
     }
 
+  /** Вехи — убитые, уровень героя (см. [[Achievement.milestonesDue]]): порог
+    * пройден, а достижения ещё нет — выдать. Зовётся после каждого хода
+    * игрока: уровень и убитые приходят из многих мест, и проверять по самому
+    * герою надёжнее, чем помнить о каждом. */
+  def grantMilestones(heroDao: HeroDao, content: SceneContent, user: User, hero: Hero, renderer: Renderer): Task[Hero] =
+    ZIO.foldLeft(Achievement.milestonesDue(hero))(hero)((h, a) => grant(heroDao, content, user, h, a, renderer))
+
   /** Достижение — один раз; строка о нём показывается сразу. */
   def grant(heroDao: HeroDao, content: SceneContent, user: User, hero: Hero, a: Achievement, renderer: Renderer): Task[Hero] =
     if (hero.hasAchievement(a)) ZIO.succeed(hero)

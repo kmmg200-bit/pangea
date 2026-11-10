@@ -22,6 +22,16 @@ object AchievementRates {
   /** На сколько процентов достижение за путь, выбранный на рубеже основной
     * линии, поднимает свой стат. */
   val PathStatPct: Long = 5L
+
+  /** Сколько силы даёт каждая веха убитых: 1 000, 10 000, 100 000 и 500 000.
+    * Складываются: все четыре — +18. */
+  val Kills1kStr: Long   = 1L
+  val Kills10kStr: Long  = 2L
+  val Kills100kStr: Long = 5L
+  val Kills500kStr: Long = 10L
+
+  /** Сколько HP даёт каждое достижение за уровень героя. */
+  val LevelHpBonus: Long = 100L
 }
 
 object Achievement extends Enum[Achievement] {
@@ -121,6 +131,66 @@ object Achievement extends Enum[Achievement] {
   case object DesertSet extends Achievement("Гость Пустынь",
     s"+${AchievementRates.RaceSetStatBonus} к ловкости")
 
+  // ── Вехи: убитые за всю жизнь ──────────────────────────────────────────────
+  // Выдаются после хода, на котором герой перевалил порог (см. [[KillTiers]]).
+
+  case object Kills1k extends Achievement("Тысяча за плечами",
+    s"+${AchievementRates.Kills1kStr} к силе")
+
+  case object Kills10k extends Achievement("Мясник лабиринта",
+    s"+${AchievementRates.Kills10kStr} к силе")
+
+  case object Kills100k extends Achievement("Жнец",
+    s"+${AchievementRates.Kills100kStr} к силе")
+
+  case object Kills500k extends Achievement("Сама Смерть",
+    s"+${AchievementRates.Kills500kStr} к силе")
+
+  // ── Вехи: уровень героя ─────────────────────────────────────────────────────
+  // Каждое — +100 HP. Выдаются, как и вехи убитых, после хода с порогом.
+
+  case object Level10 extends Achievement("Великий путь начинается с первой десятки",
+    s"+${AchievementRates.LevelHpBonus} к HP")
+
+  case object Level25 extends Achievement("Четверть сотни",
+    s"+${AchievementRates.LevelHpBonus} к HP")
+
+  case object Level50 extends Achievement("Полпути до сотни",
+    s"+${AchievementRates.LevelHpBonus} к HP")
+
+  case object Level75 extends Achievement("Бывалый",
+    s"+${AchievementRates.LevelHpBonus} к HP")
+
+  case object Level100 extends Achievement("Сотник",
+    s"+${AchievementRates.LevelHpBonus} к HP")
+
+  case object Level125 extends Achievement("Живая легенда",
+    s"+${AchievementRates.LevelHpBonus} к HP")
+
+  case object Level150 extends Achievement("Вершина",
+    s"+${AchievementRates.LevelHpBonus} к HP")
+
+  /** Вехи убитых: сколько надо убить и сколько силы даёт достижение. */
+  val KillTiers: List[(Long, Achievement, Long)] = List(
+    (1000L, Kills1k, AchievementRates.Kills1kStr),
+    (10000L, Kills10k, AchievementRates.Kills10kStr),
+    (100000L, Kills100k, AchievementRates.Kills100kStr),
+    (500000L, Kills500k, AchievementRates.Kills500kStr)
+  )
+
+  /** Вехи уровня героя. */
+  val LevelTiers: List[(Long, Achievement)] = List(
+    10L -> Level10, 25L -> Level25, 50L -> Level50, 75L -> Level75,
+    100L -> Level100, 125L -> Level125, 150L -> Level150
+  )
+
+  /** Вехи, до которых герой уже дошёл, а достижения за них ещё нет, — по
+    * порядку. Порог проверяется по самому герою, поэтому неважно, откуда
+    * пришли уровень или убитые. */
+  def milestonesDue(hero: Hero): List[Achievement] =
+    (KillTiers.collect { case (n, a, _) if hero.kills >= n => a } ++
+      LevelTiers.collect { case (n, a) if hero.lvl >= n => a }).filterNot(hero.hasAchievement)
+
   /** Достижение за набор, собранный целиком. */
   def forSet(set: ItemSet): Option[Achievement] = set match {
     case ItemSet.StoneGuard     => Some(StoneGuardSet)
@@ -187,7 +257,8 @@ object Achievement extends Enum[Achievement] {
 
   /** Плоская прибавка к силе от достижений героя. */
   def strBonus(hero: Hero): Long =
-    (if (hero.hasAchievement(MurlocBane)) MurlocBaneStrBonus else 0L) + raceSets(hero, HordeSet, UnderworldSet)
+    (if (hero.hasAchievement(MurlocBane)) MurlocBaneStrBonus else 0L) + raceSets(hero, HordeSet, UnderworldSet) +
+      KillTiers.collect { case (_, a, str) if hero.hasAchievement(a) => str }.sum
 
   /** Сколько телосложения прибавляет «Друг подгорного народа». */
   val SquadFriendVitBonus: Long = 1L
@@ -201,7 +272,8 @@ object Achievement extends Enum[Achievement] {
 
   /** Плоская прибавка к максимуму HP от достижений героя. */
   def hpBonus(hero: Hero): Long =
-    if (hero.hasAchievement(Overtime)) OvertimeHpBonus else 0L
+    (if (hero.hasAchievement(Overtime)) OvertimeHpBonus else 0L) +
+      LevelTiers.count { case (_, a) => hero.hasAchievement(a) }.toLong * AchievementRates.LevelHpBonus
 
   /** Сколько процентов сверху к серебру с серебряной жилы даёт «Расхититель штолен». */
   val MineLooterVeinPct: Long = 10L
