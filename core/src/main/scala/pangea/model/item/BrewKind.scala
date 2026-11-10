@@ -180,6 +180,11 @@ object BrewRates {
   /** Самогон: во сколько раз Трактирщик платит за него больше, чем за шнапс. */
   val MoonshineFactor: Long = 3L
 
+  /** Почём отвар продаётся с карточки в городе; отвар второго ранга — дороже
+    * (см. [[BrewKind.salePrice]]). */
+  val SalePrice: Long      = 100L
+  val Rank2SalePrice: Long = 1000L
+
   // ── Боевые отвары: числа — от склянок со старых поясов, но лечение и броня
   // крепче (по 40%): отвар занимает ячейку пояса, а не идёт зарядом в придачу.
 
@@ -445,6 +450,16 @@ object BrewKind extends Enum[BrewKind] {
 
   /** Боевые отвары — те, что носят в ячейке пояса (см. [[BrewKind.combat]]). */
   val combatBrews: IndexedSeq[BrewKind] = values.filter(_.combat)
+
+  /** Почём отвар продаётся с карточки в городе: второй ранг — по
+    * [[BrewRates.Rank2SalePrice]], прочее — по [[BrewRates.SalePrice]]. `None` —
+    * с карточки не продаётся: выпивку (шнапс, самогон) берёт Трактирщик, и
+    * дороже. */
+  def salePrice(kind: BrewKind): Option[Long] = kind.effect match {
+    case BrewEffect.Sellable(_)     => None
+    case _ if rank2.contains(kind) => Some(BrewRates.Rank2SalePrice)
+    case _                         => Some(BrewRates.SalePrice)
+  }
 
   /** Отвар, который варится из этого набора трав (порядок не важен), если такой есть. */
   def forHerbs(herbs: List[MaterialKind]): Option[BrewKind] =

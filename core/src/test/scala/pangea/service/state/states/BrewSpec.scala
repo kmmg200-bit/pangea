@@ -110,7 +110,7 @@ object BrewSpec extends ZIOSpecDefault {
       } yield assertTrue(card.text.contains("Зверобойный отвар")) &&
               assertTrue(card.text.contains("из ячейки пояса")) &&
               // «Использовать» у него нет — только «На пояс»
-              assertTrue(card.choices.map(_.id) == List("BeltPut", "Drop", "InventoryList")) &&
+              assertTrue(card.choices.map(_.id) == List("BeltPut", "SellBrew", "Drop", "InventoryList")) &&
               // сколько лечит, сказано в описании
               assertTrue(card.text.contains(s"${BrewRates.PotionHealPct}% здоровья"))
     },
@@ -314,7 +314,7 @@ object BrewSpec extends ZIOSpecDefault {
     },
 
     // ── Инвентарь ─────────────────────────────────────────────────────────────
-    test("карточка отвара: описание, рецепт, «Выпить»; у сонного дурмана и шнапса кнопки нет") {
+    test("карточка отвара: описание, рецепт, «Выпить»; у сонного дурмана — только «Продать», у шнапса кнопок нет") {
       for {
         t <- inventory(baseHero, List(brew(BrewKind.LivingWater, 10L), brew(BrewKind.SleepingDope, 11L), brew(BrewKind.Schnapps, 12L)))
         (state, _, _, r) = t
@@ -327,10 +327,61 @@ object BrewSpec extends ZIOSpecDefault {
         // Рецепта в карточке нет: из чего сварен отвар — не дело описания.
       } yield assertTrue(water.text.contains("Живая вода") && !water.text.contains("Рецепт")) &&
               // фляги нет — заправлять нечего, кнопки нет; а в ячейку пояса ляжет
-              assertTrue(water.choices.map(_.id) == List("BeltPut", "Drop", "InventoryList")) &&
+              assertTrue(water.choices.map(_.id) == List("BeltPut", "SellBrew", "Drop", "InventoryList")) &&
               assertTrue(dope.text.contains("Сонный дурман") && dope.text.contains("валят с ног быка")) &&
-              assertTrue(dope.choices.map(_.id) == List("Drop", "InventoryList") && booze.choices.map(_.id) == List("Drop", "InventoryList")) &&
+              assertTrue(dope.choices.map(_.id) == List("SellBrew", "Drop", "InventoryList") && booze.choices.map(_.id) == List("Drop", "InventoryList")) &&
               assertTrue(booze.text.contains("400 серебра"))
+    },
+
+    test("продажа с карточки в городе: отвар — за 100, второго ранга — за 1000; у стопки уходит одна, карточка остаётся") {
+      val items = List(brew(BrewKind.LivingWater, 10L), brew(BrewKind.LivingWater, 11L), brew(BrewKind.Bubble, 12L))
+      for {
+        t <- inventory(baseHero.copy(silver = 50L), items)
+        (state, dao, inv, r) = t
+        _      <- dao.writeReturnState(userId, Some(StateType.MarketSquare))
+        _      <- state.action(testUser, selectItem(10L), r)
+        water  <- r.sentScreens.map(_.last)
+        _      <- state.action(testUser, tap("SellBrew"), r)
+        h1     <- dao.getHeroByUserId(userId).map(_.get)
+        left1   = inv.snapshot.map(_.id)
+        again  <- r.sentScreens.map(_.last)
+        _      <- state.action(testUser, selectItem(12L), r)
+        bubble <- r.sentScreens.map(_.last)
+        _      <- state.action(testUser, tap("SellBrew"), r)
+        h2     <- dao.getHeroByUserId(userId).map(_.get)
+        list   <- r.sentScreens.map(_.last)
+      } yield assertTrue(BrewKind.rank2.contains(BrewKind.Bubble) && !BrewKind.rank2.contains(BrewKind.LivingWater)) &&
+              assertTrue(water.choices.find(_.id == "SellBrew").map(_.label).contains("🪙 Продать — 100")) &&
+              // ушла последняя бутылка стопки, показанная осталась — и снова её карточка
+              assertTrue(h1.silver == 150L && left1 == List(10L, 12L)) &&
+              assertTrue(again.text.startsWith("🪙 Вы продали «Живая вода» за 100 серебра.") &&
+                again.choices.exists(_.id == "SellBrew")) &&
+              assertTrue(bubble.choices.find(_.id == "SellBrew").map(_.label).contains("🪙 Продать — 1000")) &&
+              // нектар был один — после продажи список сумки
+              assertTrue(h2.silver == 1150L && inv.snapshot.map(_.id) == List(10L)) &&
+              assertTrue(list.text.startsWith("🪙 Вы продали «Пузырьковый нектар» за 1000 серебра."))
+    },
+
+    test("продать можно только в городе: из лабиринта — отказ, отвар и серебро на месте; выпивку с карточки не продать") {
+      for {
+        t <- inventory(baseHero.copy(silver = 50L), List(brew(BrewKind.LivingWater, 10L), brew(BrewKind.Schnapps, 11L)))
+        (state, dao, inv, r) = t
+        _     <- dao.writeReturnState(userId, Some(StateType.Dungeon))
+        _     <- state.action(testUser, selectItem(10L), r)
+        _     <- state.action(testUser, tap("SellBrew"), r)
+        h1    <- dao.getHeroByUserId(userId).map(_.get)
+        away  <- r.sentScreens.map(_.last)
+        // в городе, но шнапс: кнопки нет, и старая кнопка его не продаст
+        _     <- dao.writeReturnState(userId, Some(StateType.CityCenter))
+        _     <- state.action(testUser, selectItem(11L), r)
+        booze <- r.sentScreens.map(_.last)
+        _     <- state.action(testUser, tap("SellBrew"), r)
+        h2    <- dao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(h1.silver == 50L && away.text.startsWith("Продать отвар можно только в городе.") &&
+                away.text.contains("Живая вода")) &&
+              assertTrue(BrewKind.salePrice(BrewKind.Schnapps).isEmpty && BrewKind.salePrice(BrewKind.Moonshine).isEmpty) &&
+              assertTrue(!booze.choices.exists(_.id == "SellBrew")) &&
+              assertTrue(h2.silver == 50L && inv.snapshot.map(_.id) == List(10L, 11L))
     },
 
     test("живая вода заправляет флягу целителя; полную — не тратится; без фляги — не тратится") {
@@ -470,12 +521,12 @@ object BrewSpec extends ZIOSpecDefault {
         _     <- state2.action(testUser, selectItem(12L), r2)
         _     <- state2.action(testUser, tap("CoatWeapon"), r2)
         h4    <- dao2.getHeroByUserId(userId).map(_.get)
-      } yield assertTrue(card.choices.map(_.id) == List("BeltPut", "CoatWeapon", "RefillByBrew", "Drop", "DropAll", "InventoryList")) &&
+      } yield assertTrue(card.choices.map(_.id) == List("BeltPut", "CoatWeapon", "RefillByBrew", "SellBrew", "Drop", "DropAll", "InventoryList")) &&
               assertTrue(h1.weaponDust.coat.contains(pangea.model.hero.WeaponCoat.Poison) && log.contains("смазано ядом")) &&
               assertTrue(beltSlots(h2) == List(BeltSlot.Flask(FlaskKind.Poison, Rarity.Blue, 6))) &&
               assertTrue(left == List(12L)) &&
               // кровавая: фляга яда ей не по толку — кнопки заправки нет, мажет поверх яда
-              assertTrue(blood.choices.map(_.id) == List("BeltPut", "CoatWeapon", "Drop", "InventoryList")) &&
+              assertTrue(blood.choices.map(_.id) == List("BeltPut", "CoatWeapon", "SellBrew", "Drop", "InventoryList")) &&
               assertTrue(h3.weaponDust.coat.contains(pangea.model.hero.WeaponCoat.Bleed) && log.contains("кровавой мазью")) &&
               assertTrue(h4.weaponDust.coat.isEmpty && inv2.snapshot.size == 1)
     },

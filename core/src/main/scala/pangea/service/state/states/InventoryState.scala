@@ -95,6 +95,8 @@ case class InventoryState(
       "DustWeapon"        -> Target.Run { (u, _,  r) => sprinkleDust(u, r) },
       "DrinkBrew"         -> Target.Run { (u, _,  r) => drinkBrew(u, r) },
       "RefillByBrew"      -> Target.Run { (u, _,  r) => refillByBrew(u, r) },
+      // Продать отвар с карточки — только в городе.
+      "SellBrew"          -> Target.Run { (u, _,  r) => sellBrew(u, r) },
       "RackKeyUse"        -> Target.Run { (u, ua, r) => useRackKey(u, ua, r) },
       "RefillFlaskPick"   -> Target.Run { (u, ua, r) => refillFlask(u, ua, r) },
       "CoatWeapon"        -> Target.Run { (u, _,  r) => coatWeapon(u, r) },
@@ -278,8 +280,9 @@ case class InventoryState(
   /** Карточка отвара: описание, рецепт, сколько таких в сумке. Кнопки — по делу:
     * «Использовать» у того, что применяют с карточки; «На пояс» у того, чем пользуются в бою;
     * «Заправить флягу», если на поясе есть фляга такого толка; «Смазать
-    * оружие» у смазок. Шнапс уходит Трактирщику,
-    * кнопок у него нет.
+    * оружие» у смазок; «Продать» — у всех, кроме выпивки (продаёт только в
+    * городе, см. [[sellBrew]]). Шнапс и самогон уходят Трактирщику, и дороже:
+    * кнопок у них нет.
     *
     * Боевой отвар с карточки не пьётся вовсе — об этом говорим прямо, иначе
     * игрок будет искать у него кнопку «Использовать». */
@@ -297,12 +300,36 @@ case class InventoryState(
           content.choice("BeltPut", "inventory.beltPut").copy(color = ChoiceColor.Positive, row = Some(0))),
         Option.when(coats)(content.choice("CoatWeapon", "brew.coat").copy(color = ChoiceColor.Positive, row = Some(0))),
         Option.when(flaskFits)(content.choice("RefillByBrew", "brew.refill").copy(color = ChoiceColor.Positive, row = Some(0))),
+        BrewKind.salePrice(kind).map(price =>
+          Choice("SellBrew", content.format("brew.sell", "price" -> price.toString), row = Some(0))),
         Some(content.choice("Drop", "inventory.drop").copy(color = ChoiceColor.Negative, row = Some(0))),
         packChoice(item, count),
         dropAllChoice(count),
         Some(content.choice("InventoryList", "inventory.exit").copy(row = Some(1), color = ChoiceColor.Negative))
       ).flatten
       renderer.show(user, Screen(text, choices)).as(StateType.Inventory)
+    }
+
+  /** Продать отвар с карточки — только в городе («Персонаж» открыт из него), по
+    * цене его ранга ([[BrewKind.salePrice]]). У стопки уходит одна бутылка, и
+    * игрок остаётся на той же карточке. Не из города — отказ над карточкой,
+    * отвар цел. Выпивку так не продать (кнопка из старого сообщения) — просто
+    * карточка: её берёт Трактирщик. */
+  private def sellBrew(user: User, renderer: Renderer): Task[StateType] =
+    withSelected(user, renderer) { (item, hero) =>
+      item.brew.flatMap(BrewKind.salePrice) match {
+        case None => showItem(user, item.id, renderer)
+        case Some(price) =>
+          heroDao.readReturnState(user.userId).flatMap { from =>
+            if (!from.exists(StateType.cityStates.contains))
+              backToCard(user, renderer, Some(content.text("brew.sellOnlyInCity")))
+            else
+              inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)) *>
+                heroDao.updateSilver(user.userId, hero.silver + price) *>
+                backToCard(user, renderer, Some(content.format("brew.sold",
+                  "name" -> item.name, "price" -> price.toString)))
+          }
+      }
     }
 
   // ── Стопки ─────────────────────────────────────────────────────────────────
