@@ -273,6 +273,82 @@ object HerbWorkbenchSpec extends ZIOSpecDefault {
               assertTrue(screen.choices.map(_.id) == List("WbBrewBag", "WbBrewPot", "WbBrews")) &&
               assertTrue(after.cauldron.map(_.id) == List(70L) && after.brews.isEmpty) &&
               assertTrue(inv.snapshot.map(_.id).sorted == List(71L, 72L))
+    },
+
+    test("полка отваров: написал число — столько бутылок в сумку, с конца стопки; больше, чем стоит, — сколько есть") {
+      val home = townhouse.copy(brews = (80L to 84L).map(bottle(_, BrewKind.BoneSetter)).toList :+ bottle(85L, BrewKind.Schnapps))
+      for {
+        t <- make(home)
+        (state, dao, inv, _, r) = t
+        _      <- state.action(testUser, tap("WbBrew", "id" -> "84", "p" -> "0"), r)
+        screen <- last(r)
+        _      <- state.action(testUser, say("3"), r)
+        after1 <- homeOf(dao)
+        bag1    = inv.snapshot.map(_.id)
+        said1  <- texts(r)
+        again  <- last(r)
+        _      <- state.action(testUser, say("10"), r)
+        after2 <- homeOf(dao)
+        list   <- last(r)
+      } yield assertTrue(screen.text.contains("на полке 5") && screen.text.contains("напишите число")) &&
+              // по одной кнопки на месте
+              assertTrue(screen.choices.map(_.id) == List("WbBrewBag", "WbBrewPot", "WbBrews")) &&
+              assertTrue(bag1 == List(82L, 83L, 84L) && after1.brews.map(_.id) == List(80L, 81L, 85L)) &&
+              // остались ещё — снова экран стопки, и он снова ждёт числа
+              assertTrue(said1.contains("«Костоправный отвар» ×3 — в сумку.") &&
+                again.text.contains("на полке 2") && again.text.contains("напишите число")) &&
+              // просили больше, чем стояло, — забрали сколько было; стопки нет — сама полка
+              assertTrue(after2.brews.map(_.id) == List(85L) && inv.snapshot.size == 5) &&
+              assertTrue(list.text.contains("Полка отваров"))
+    },
+
+    test("забрать числом: в сумке тесно — сколько влезет; не число — просит число; кнопка снимает ожидание") {
+      val sage = (1L to 19L).map(i => herb(500L + i, MaterialKind.Sage)).toList // сумка на 20 мест — одно свободно
+      val home = townhouse.copy(brews = List(bottle(90L, BrewKind.BoneSetter), bottle(91L, BrewKind.BoneSetter), bottle(92L, BrewKind.BoneSetter)))
+      for {
+        t <- make(home, items = sage)
+        (state, dao, inv, _, r) = t
+        _     <- state.action(testUser, tap("WbBrew", "id" -> "92", "p" -> "0"), r)
+        _     <- state.action(testUser, say("много"), r)
+        asked <- texts(r)
+        _     <- state.action(testUser, say("3"), r)
+        short <- homeOf(dao)
+        said  <- texts(r)
+        _     <- state.action(testUser, say("2"), r)
+        full  <- homeOf(dao)
+        said2 <- texts(r)
+        _     <- state.action(testUser, tap("WbBrews", "p" -> "0"), r)
+        _     <- state.action(testUser, say("2"), r)
+        after <- homeOf(dao)
+        menu  <- last(r)
+      } yield assertTrue(asked.contains("Напишите число — сколько бутылок забрать в сумку.")) &&
+              assertTrue(short.brews.map(_.id) == List(90L, 91L) && inv.snapshot.map(_.id).last == 92L) &&
+              assertTrue(said.contains("«Костоправный отвар» ×1 — в сумку.\nВ сумке не хватило места ещё на 2 шт.")) &&
+              // сумка полна — ничего не трогаем
+              assertTrue(full == short && said2.contains("В сумке нет места.")) &&
+              // число после ухода со стопки — просто верстак
+              assertTrue(after == short && inv.snapshot.size == 20 && menu.text.contains("Верстак травника"))
+    },
+
+    test("бутылка одна — числа не ждёт: подсказки нет, а написанное — просто верстак") {
+      val home = townhouse.copy(brews = List(bottle(95L, BrewKind.LivingWater)))
+      for {
+        t <- make(home)
+        (state, dao, inv, _, r) = t
+        _      <- state.action(testUser, tap("WbBrew", "id" -> "95", "p" -> "0"), r)
+        screen <- last(r)
+        _      <- state.action(testUser, say("1"), r)
+        after  <- homeOf(dao)
+        menu   <- last(r)
+      } yield assertTrue(screen.text.contains("на полке 1") && !screen.text.contains("напишите число")) &&
+              assertTrue(after == home && inv.snapshot.isEmpty && menu.text.contains("Верстак травника"))
+    },
+
+    test("ожидание числа из записи до «забрать числом» читается: варить — как было, забирать — не ждёт") {
+      val old = """{"recipe":"BoneSetter","page":2}"""
+      assertTrue(io.circe.jawn.decode[HerbWorkbenchState.WbScene](old) ==
+                   Right(HerbWorkbenchState.WbScene(recipe = Some("BoneSetter"), page = 2, take = None))) &&
+        assertTrue(io.circe.jawn.decode[HerbWorkbenchState.WbScene]("{}") == Right(HerbWorkbenchState.WbScene()))
     }
   )
 }

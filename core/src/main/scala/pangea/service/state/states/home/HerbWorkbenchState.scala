@@ -14,7 +14,7 @@ import pangea.model.item.{BrewKind, Item, ItemStack, MaterialKind}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
-import pangea.repository.inventory.InventoryRepository
+import pangea.repository.inventory.{InventoryRepoError, InventoryRepository}
 import pangea.repository.item.ItemRepository
 import pangea.service.state.{HerbLore, ItemMenu, QuestSupport, StackMove, State, UiScene, UserAction}
 import pangea.service.storage.ItemStore
@@ -31,14 +31,15 @@ import zio.{Random, Task, ZIO}
   * перегонка склянки с травами), и тратит энергию дома — по одной на каждую
   * варку. Сваренное встаёт на полку отваров, что не поместилось — ждёт в
   * котелке. На полке отваров — то же: сложить все из сумки и Живой сумки,
-  * забрать в сумку, бросить в котелок основой для перегонки. Всё живёт в
-  * `home_data`.
+  * забрать в сумку — по одной кнопкой или сразу сколько написано числом, —
+  * бросить в котелок основой для перегонки. Всё живёт в `home_data`.
   *
   * «Изученные» — всё, что герой уже варил (общий счёт «Зельевара»: котелок,
   * куб Азата, Живая сумка) и что варится на верстаке. Выбрал отвар — пишет
   * числом, сколько приготовить: хватает трав на полках и энергии — варится
-  * сразу, нет — верстак говорит, чего и сколько не хватает. Какой отвар ждёт
-  * числа, лежит в `scene_data` ([[HerbWorkbenchState.WbScene]]). */
+  * сразу, нет — верстак говорит, чего и сколько не хватает. Чего верстак ждёт
+  * числом — сварить отвар или забрать его с полки, — лежит в `scene_data`
+  * ([[HerbWorkbenchState.WbScene]]). */
 case class HerbWorkbenchState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
@@ -78,7 +79,8 @@ case class HerbWorkbenchState(
     clearPending(user) *> menu(user, 0, renderer).unit
 
   /** Любая кнопка, кроме выбора отвара, снимает ожидание числа: иначе число,
-    * написанное потом у полок, сварило бы отвар, о котором уже забыли. */
+    * написанное потом у полок, сварило бы отвар, о котором уже забыли. Экран
+    * стопки на полке отваров ставит ожидание заново, когда показывается. */
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     ZIO.when(ua.payload.isDefined && !payload(ua, "action").contains("WbRecipe"))(clearPending(user)) *>
       branch.act(user, ua, renderer)
@@ -247,15 +249,74 @@ case class HerbWorkbenchState(
   private def brew(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     withWorkbench(user) { home =>
       itemOf(home.brews, ua) match {
-        case None => brews(user, page(ua), renderer)
-        case Some(it) =>
-          val data = Map("id" -> it.id.toString, "p" -> page(ua).toString)
-          renderer.show(user, Screen(content.format("home.workbench.brewItem", "name" -> it.name, "n" -> same(home.brews, it).toString), List(
-            Choice("WbBrewBag", content.text("home.workbench.toBag"), color = ChoiceColor.Positive, data = data, row = Some(0)),
-            Choice("WbBrewPot", content.text("home.workbench.toPot"), data = data, row = Some(0)),
-            Choice("WbBrews", content.text("home.house.back"), color = ChoiceColor.Negative, data = Map("p" -> page(ua).toString), row = Some(1))
-          ))).as(StateType.HerbWorkbench)
+        case None     => brews(user, page(ua), renderer)
+        case Some(it) => brewScreen(user, home, it, page(ua), renderer)
       }
+    }
+
+  /** Стопка отваров на полке: сколько их, «В сумку» и «В котелок» по одной. Их
+    * больше одной — ждём ещё и числа: сколько забрать в сумку разом (см.
+    * [[takeBrews]]). */
+  private def brewScreen(user: User, home: HomeData, it: Item, p: Int, renderer: Renderer): Task[StateType] = {
+    val n    = same(home.brews, it)
+    val data = Map("id" -> it.id.toString, "p" -> p.toString)
+    val text = content.format("home.workbench.brewItem", "name" -> it.name, "n" -> n.toString) +
+      (if (n > 1) "\n" + content.text("home.workbench.brewAsk") else "")
+    val pending = it.brew.filter(_ => n > 1) match {
+      case Some(kind) => writeScene(user, HerbWorkbenchState.WbScene(take = Some(kind.entryName), page = p))
+      case None       => clearPending(user)
+    }
+    pending *> renderer.show(user, Screen(text, List(
+      Choice("WbBrewBag", content.text("home.workbench.toBag"), color = ChoiceColor.Positive, data = data, row = Some(0)),
+      Choice("WbBrewPot", content.text("home.workbench.toPot"), data = data, row = Some(0)),
+      Choice("WbBrews", content.text("home.house.back"), color = ChoiceColor.Negative, data = Map("p" -> p.toString), row = Some(1))
+    ))).as(StateType.HerbWorkbench)
+  }
+
+  /** Стопка этого отвара — если на полке он ещё есть; нет — сама полка. */
+  private def brewOf(user: User, kind: BrewKind, p: Int, renderer: Renderer): Task[StateType] =
+    withWorkbench(user) { home =>
+      home.brews.findLast(_.brew.contains(kind)) match {
+        case None     => brews(user, p, renderer)
+        case Some(it) => brewScreen(user, home, it, p, renderer)
+      }
+    }
+
+  /** Забрать с полки в сумку `asked` бутылок этого отвара — сколько написали
+    * числом. Больше, чем стоит, — сколько есть; в сумке тесно — сколько влезет,
+    * прочее ждёт на полке. Берём с конца стопки, как и по одной: показанная
+    * бутылка уходит последней. */
+  private def takeBrews(user: User, kind: BrewKind, asked: Int, p: Int, renderer: Renderer): Task[StateType] =
+    withWorkbench(user) { home =>
+      val stack = home.brews.filter(_.brew.contains(kind))
+      if (stack.isEmpty) say(user, content.text("stack.gone"), renderer) *> brews(user, p, renderer)
+      else for {
+        hero  <- getHero(user)
+        inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
+        want   = asked.min(stack.size)
+        taken <- addToBag(hero, stack.takeRight(want.min(inv.freeSlots.toInt.max(0))))
+        ids    = taken.map(_.id).toSet
+        _     <- ZIO.when(taken.nonEmpty)(saveHome(user, home.copy(brews = home.brews.filterNot(i => ids.contains(i.id)))))
+        _     <- say(user,
+                   if (taken.isEmpty) content.text("home.workbench.bagFull")
+                   else content.format("home.workbench.taken", "name" -> kind.label, "n" -> taken.size.toString) +
+                     (if (taken.size < want) "\n" + content.format("home.workbench.takenShort", "n" -> (want - taken.size).toString)
+                      else ""),
+                   renderer)
+        s     <- if (stack.size > taken.size) brewOf(user, kind, p, renderer) else brews(user, p, renderer)
+      } yield s
+    }
+
+  /** Положить в сумку по порядку, пока она берёт; что легло — то и вернём. */
+  private def addToBag(hero: Hero, items: List[Item], added: List[Item] = Nil): Task[List[Item]] =
+    items match {
+      case Nil => ZIO.succeed(added.reverse)
+      case it :: rest =>
+        inventoryRepo.addItem(hero.id, it).either.flatMap {
+          case Right(_) => addToBag(hero, rest, it :: added)
+          case Left(InventoryRepoError.NoMorePlaceForItems | InventoryRepoError.DustLimitReached) => ZIO.succeed(added.reverse)
+          case Left(e) => ZIO.fail(asThrowable(e))
+        }
     }
 
   private def brewToBag(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
@@ -346,16 +407,23 @@ case class HerbWorkbenchState(
         ))).as(StateType.HerbWorkbench)
     }
 
-  /** Написанное у верстака: число отваров, если отвар выбран; иначе — сам верстак. */
+  /** Написанное у верстака: число — для того, чего верстак ждёт (сварить
+    * изученный отвар или забрать отвары с полки); ждать нечего — сам верстак. */
   private def onText(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     readScene(user).flatMap { scene =>
-      scene.recipe.flatMap(BrewKind.withNameOption) match {
-        case None => menu(user, 0, renderer)
-        case Some(kind) =>
-          ua.text.filterNot(_.isWhitespace).toIntOption.filter(_ > 0) match {
+      val number = ua.text.filterNot(_.isWhitespace).toIntOption.filter(_ > 0)
+      (scene.recipe.flatMap(BrewKind.withNameOption), scene.take.flatMap(BrewKind.withNameOption)) match {
+        case (Some(kind), _) =>
+          number match {
             case None    => say(user, content.text("home.workbench.notNumber"), renderer) *> recipe(user, kind, scene.page, renderer)
             case Some(n) => craft(user, kind, n, scene.page, renderer)
           }
+        case (None, Some(kind)) =>
+          number match {
+            case None    => say(user, content.text("home.workbench.takeNotNumber"), renderer) *> brewOf(user, kind, scene.page, renderer)
+            case Some(n) => takeBrews(user, kind, n, scene.page, renderer)
+          }
+        case _ => menu(user, 0, renderer)
       }
     }
 
@@ -411,7 +479,8 @@ case class HerbWorkbenchState(
 
   /** Снять ожидание числа — если оно было: лишней записи не делаем. */
   private def clearPending(user: User): Task[Unit] =
-    readScene(user).flatMap(s => ZIO.when(s.recipe.isDefined)(UiScene.clear(heroDao, user.userId, UiScene.Workbench)).unit)
+    readScene(user).flatMap(s =>
+      ZIO.when(s.recipe.isDefined || s.take.isDefined)(UiScene.clear(heroDao, user.userId, UiScene.Workbench)).unit)
 
   // ── Вспомогательное ─────────────────────────────────────────────────────────
 
@@ -504,16 +573,19 @@ case class HerbWorkbenchState(
 
 object HerbWorkbenchState {
 
-  /** Какой изученный отвар ждёт числа (`entryName`) и с какой страницы списка
-    * его выбрали — туда ведёт «Назад». */
-  final case class WbScene(recipe: Option[String] = None, page: Int = 0)
+  /** Чего верстак ждёт числом: сварить изученный отвар (`recipe`) или забрать
+    * с полки в сумку отвары этого вида (`take`) — оба `entryName`, — и с какой
+    * страницы списка их выбрали: туда ведёт «Назад». В записях до `take` его
+    * нет — значит, забирать ничего не ждут. */
+  final case class WbScene(recipe: Option[String] = None, page: Int = 0, take: Option[String] = None)
   object WbScene {
     implicit val encoder: Encoder[WbScene] = deriveEncoder
     implicit val decoder: Decoder[WbScene] = (c: HCursor) =>
       for {
         recipe <- c.getOrElse[Option[String]]("recipe")(None)
         page   <- c.getOrElse[Int]("page")(0)
-      } yield WbScene(recipe, page)
+        take   <- c.getOrElse[Option[String]]("take")(None)
+      } yield WbScene(recipe, page, take)
   }
 
   /** Изученные отвары, которые варятся на верстаке: всё, что герой уже варил,
