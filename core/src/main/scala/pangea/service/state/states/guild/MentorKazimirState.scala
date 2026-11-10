@@ -35,6 +35,7 @@ case class MentorKazimirState(heroDao: HeroDao, inventoryRepo: InventoryReposito
       "KazimirMenu"        -> Target.Run { (u, _, r) => enter(u, r).as(StateType.MentorKazimir) },
       quest.questAction    -> Target.Run { (u, _, r) => questTalk(u, r) },
       "KazStory"           -> Target.Run { (u, _, r) => storySketch(u, r) },
+      "KazStoryPay"        -> Target.Run { (u, _, r) => storyPay(u, r) },
       quest.acceptAction   -> Target.Run { (u, _, r) => quest.accept(u, r) *> enter(u, r).as(StateType.MentorKazimir) },
       quest.declineAction  -> Target.Run { (u, _, r) => enter(u, r).as(StateType.MentorKazimir) },
       "Brand"              -> Target.Run { (u, _, r) => brandMenu(u, r) },
@@ -87,8 +88,9 @@ case class MentorKazimirState(heroDao: HeroDao, inventoryRepo: InventoryReposito
     else inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       .map(inv => QuestSupport.hasItem(inv.items.data, pangea.model.item.QuestItemKind.StorySketch))
 
-  /** «Что горит на груди»: Казимир читает набросок и Клеймо — это не руна, это
-    * по части богов; к жрецу. Глава берётся здесь, если ещё не взята. */
+  /** «Что горит на груди»: Казимир прочтёт набросок, но не даром — называет
+    * цену (StoryBrandQuest.KazimirPrice). Глава берётся здесь, если ещё не
+    * взята. Плата при герое — кнопка «Отдать». */
   private def storySketch(user: User, renderer: Renderer): Task[StateType] =
     for {
       quests <- quest.load(user)
@@ -96,15 +98,36 @@ case class MentorKazimirState(heroDao: HeroDao, inventoryRepo: InventoryReposito
       open   <- storyOpen(hero, quests)
       _      <- if (!open) enter(user, renderer)
                 else for {
-                  now  <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
-                  fresh = !quests.isTaken(NpcQuest.StoryBrand)
-                  next  = StoryBrandQuest.step(if (fresh) quests.take(NpcQuest.StoryBrand, now) else quests, 2)
-                  _    <- NpcQuestLog.save(heroDao, user.userId, next)
-                  _    <- renderer.show(user, Screen(content.text("story.storyBrand.kazimir.text").trim +
-                            (if (fresh) "\n\n" + StoryLine.takenLine(content, NpcQuest.StoryBrand, next) else ""), Nil))
-                  _    <- enter(user, renderer)
+                  now   <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
+                  fresh  = !quests.isTaken(NpcQuest.StoryBrand)
+                  next   = StoryBrandQuest.namePrice(StoryBrandQuest.step(if (fresh) quests.take(NpcQuest.StoryBrand, now) else quests, 1))
+                  _     <- NpcQuestLog.save(heroDao, user.userId, next)
+                  canPay <- StoryBrandQuest.canPay(inventoryRepo, hero, StoryBrandQuest.KazimirPrice)
+                  _     <- renderer.show(user, StoryBrandQuest.askScreen(content,
+                             content.text("story.storyBrand.kazimir.ask").trim +
+                               (if (fresh) "\n\n" + StoryLine.takenLine(content, NpcQuest.StoryBrand, next) else ""),
+                             "KazStoryPay", "story.storyBrand.kazimir.payLabel", canPay, content.choice("KazimirMenu", "kazimir.back")))
                 } yield ()
     } yield StateType.MentorKazimir
+
+  /** Плата отдана: железо и камни уходят, Казимир читает набросок и Клеймо —
+    * это не руна, это по части богов; к жрецу. Не его шаг — в меню; платы при
+    * герое нет — снова цена. */
+  private def storyPay(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      quests <- quest.load(user)
+      hero   <- getHero(user)
+      open   <- storyOpen(hero, quests)
+      res    <- if (!open || !StoryBrandQuest.toKazimir(quests)) enter(user, renderer).as(StateType.MentorKazimir)
+                else StoryBrandQuest.pay(inventoryRepo, hero, StoryBrandQuest.KazimirPrice).flatMap {
+                  case false => storySketch(user, renderer)
+                  case true  =>
+                    NpcQuestLog.save(heroDao, user.userId, StoryBrandQuest.step(quests, 2)) *>
+                      renderer.show(user, Screen(content.text("story.storyBrand.kazimir.paid").trim + "\n\n" +
+                        content.text("story.storyBrand.kazimir.text").trim, Nil)) *>
+                      enter(user, renderer).as(StateType.MentorKazimir)
+                }
+    } yield res
 
   // ── «Первый узор» ─────────────────────────────────────────────
 

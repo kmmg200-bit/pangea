@@ -2,9 +2,10 @@ package pangea.service.state.states.story
 
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
+import pangea.generator.item.MaterialGenerator
 import pangea.model.hero.{Hero, LoreData}
 import pangea.model.home.HomeData
-import pangea.model.item.{Item, QuestItemKind}
+import pangea.model.item.{Bundling, Item, MaterialKind, QuestItemKind}
 import pangea.model.quest.{DailyQuests, FirstSteps, NpcQuest, NpcQuests}
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
@@ -19,8 +20,9 @@ import zio.test._
 import zio.{Task, ZIO}
 
 /** Основная линия, глава 3 «Что горит на груди»: набросок узора ведёт к
-  * Казимиру (с 13-го уровня), жрецу и Юноне; встреча с Сойкой — с карточки
-  * наброска; страница списка с новым именем героя — зацепка главы 4. */
+  * Казимиру, жрецу и Юноне — каждый сперва называет цену разговора; встреча с
+  * Сойкой — с карточки наброска, даром; страница списка с новым именем героя —
+  * зацепка главы 4. */
 object StoryBrandSpec extends ZIOSpecDefault {
 
   private val userId   = UserId(1L)
@@ -58,6 +60,28 @@ object StoryBrandSpec extends ZIOSpecDefault {
 
   private def sketchItem: Item = QuestItemKind.item(QuestItemKind.StorySketch).copy(id = 902L)
 
+  private def material(kind: MaterialKind, id: Long): Item = MaterialGenerator.item(kind).copy(id = id)
+
+  /** Плата Казимиру: по два куска вечно огненного железа и магического камня. */
+  private val kazimirPay: List[Item] = List(
+    material(MaterialKind.EverburningIron, 911L), material(MaterialKind.EverburningIron, 912L),
+    material(MaterialKind.MagicStone, 913L), material(MaterialKind.MagicStone, 914L))
+
+  private val bones: List[Item] = List(material(MaterialKind.CursedBones, 921L), material(MaterialKind.CursedBones, 922L))
+  private val hides: List[Item] = List(material(MaterialKind.WhiteWolfHide, 931L), material(MaterialKind.WhiteWolfHide, 932L))
+
+  /** Текст карточки наброска при таком ходе главы. */
+  private def cardText(q: NpcQuests) =
+    for {
+      d     <- dao(hero(), q)
+      _     <- d.writeReturnState(userId, Some(StateType.GlobalMap))
+      r     <- TestRenderer.make
+      c     <- content
+      state  = InventoryState(d, TestInventoryRepository.withItems(List(sketchItem)), TestItemRepository.make, c)
+      _     <- openCard(state, sketchItem, r)
+      shown <- r.sentScreens.map(_.last)
+    } yield shown.text
+
   private def openCard(state: InventoryState, item: Item, r: TestRenderer) =
     state.action(testUser, UserAction("", Some(s"""{"action":"${InventoryState.ItemActionPrefix}${item.id}"}""")), r)
 
@@ -84,7 +108,7 @@ object StoryBrandSpec extends ZIOSpecDefault {
               assertTrue(fourth.text.contains("Сойка") && fourth.choices.exists(_.id == "StoryMeetGo"))
     },
 
-    test("Казимир: кнопка — с наброском при герое, на любом уровне; глава берётся и сразу ведёт к жрецу") {
+    test("Казимир: кнопка — с наброском при герое, на любом уровне; сперва цена — глава берётся, без платы «Отдать» нет") {
       def menu(lvl: Long, items: List[Item]) =
         for {
           d     <- dao(hero(lvl), afterPowder())
@@ -100,53 +124,117 @@ object StoryBrandSpec extends ZIOSpecDefault {
         open    <- menu(13L, List(sketchItem))
         (d, st, r, shown) = open
         _       <- st.action(testUser, tap("KazStory"), r)
-        said    <- texts(r)
+        ask     <- r.sentScreens.map(_.last)
         q       <- questOf(d)
       } yield assertTrue(young._4.choices.exists(_.id == "KazStory") && !empty._4.choices.exists(_.id == "KazStory")) &&
               assertTrue(shown.choices.exists(_.id == "KazStory")) &&
-              assertTrue(said.contains("Это не руна") && said.contains("📜 Новое задание: «Что горит на груди»")) &&
-              assertTrue(StoryBrandQuest.toPriest(q))
+              assertTrue(ask.text.contains("задаром Казимир читает одни вывески") && ask.text.contains("два куска вечно огненного железа") &&
+                ask.text.contains("📜 Новое задание: «Что горит на груди»")) &&
+              assertTrue(!ask.choices.exists(_.id == "KazStoryPay") && ask.choices.exists(_.id == "KazimirMenu")) &&
+              assertTrue(StoryBrandQuest.toKazimir(q) && StoryBrandQuest.priced(q))
     },
 
-    test("жрец: кнопка на шаге жреца с наброском — об отмеченных, дальше к Юноне") {
+    test("Казимир: плата при герое — «Отдать»: железо и камни уходят ровно по два, он читает набросок и шлёт к жрецу") {
+      val inv = TestInventoryRepository.withItems((sketchItem :: kazimirPay) :+ material(MaterialKind.EverburningIron, 915L))
       for {
-        d     <- dao(hero(), brand(2))
+        d     <- dao(hero(), afterPowder())
         r     <- TestRenderer.make
         c     <- content
-        state  = TempleAzatState(d, TestInventoryRepository.withItems(List(sketchItem)), TestItemRepository.make, c)
-        _     <- state.action(testUser, tap("Priest"), r)
-        menu  <- r.sentScreens.map(_.last)
-        _     <- state.action(testUser, tap("PriestStory"), r)
+        state  = MentorKazimirState(d, inv, c)
+        _     <- state.action(testUser, tap("KazStory"), r)
+        ask   <- r.sentScreens.map(_.last)
+        _     <- state.action(testUser, tap("KazStoryPay"), r)
         said  <- texts(r)
         q     <- questOf(d)
-      } yield assertTrue(menu.choices.exists(_.id == "PriestStory")) &&
-              assertTrue(said.contains("Отмеченным не место среди мёртвых") && said.contains("Юнону")) &&
-              assertTrue(StoryBrandQuest.toJunona(q))
+      } yield assertTrue(ask.choices.exists(_.id == "KazStoryPay")) &&
+              assertTrue(said.contains("Вот теперь потолкуем") && said.contains("Это не руна")) &&
+              assertTrue(StoryBrandQuest.toPriest(q) && !StoryBrandQuest.priced(q)) &&
+              assertTrue(inv.snapshot.map(_.id).toSet == Set(sketchItem.id, 915L))
     },
 
-    test("Юнона: кнопка в канцелярии на её шаге; про Смотрителя — по тому, что с ним сделали; называет Сойку") {
-      def ask(fate: WardenFate) =
+    test("плата — россыпью и ровно сколько просят: стопка не в счёт") {
+      val stack = Bundling.pack(List.fill(Bundling.Size)(MaterialGenerator.item(MaterialKind.MagicStone))).map(_.copy(id = 916L)).toList
+      val iron  = kazimirPay.filter(_.material.contains(MaterialKind.EverburningIron))
+      val paid  = StoryBrandQuest.payment(kazimirPay :+ material(MaterialKind.EverburningIron, 915L), StoryBrandQuest.KazimirPrice)
+      val ids   = paid.map(_.map(_.id).toSet)
+      assertTrue(ids.contains(Set(911L, 912L, 913L, 914L))) &&
+      assertTrue(stack.nonEmpty && StoryBrandQuest.payment(iron ++ stack, StoryBrandQuest.KazimirPrice).isEmpty) &&
+      assertTrue(StoryBrandQuest.payment(bones.take(1), StoryBrandQuest.PriestPrice).isEmpty)
+    },
+
+    test("жрец: кнопка на шаге жреца с наброском; сперва цена — две проклятые кости; отдал — об отмеченных, дальше к Юноне") {
+      def visit(items: List[Item]) =
+        for {
+          d     <- dao(hero(), brand(2))
+          inv    = TestInventoryRepository.withItems(sketchItem :: items)
+          r     <- TestRenderer.make
+          c     <- content
+          state  = TempleAzatState(d, inv, TestItemRepository.make, c)
+          _     <- state.action(testUser, tap("Priest"), r)
+          menu  <- r.sentScreens.map(_.last)
+          _     <- state.action(testUser, tap("PriestStory"), r)
+          ask   <- r.sentScreens.map(_.last)
+          _     <- state.action(testUser, tap("PriestStoryPay"), r)
+          said  <- texts(r)
+          q     <- questOf(d)
+        } yield (menu, ask, said, q, inv.snapshot)
+      for {
+        poor <- visit(Nil)
+        rich <- visit(bones)
+      } yield assertTrue(poor._1.choices.exists(_.id == "PriestStory")) &&
+              assertTrue(poor._2.text.contains("Храм не торгует знанием") && !poor._2.choices.exists(_.id == "PriestStoryPay")) &&
+              assertTrue(StoryBrandQuest.toPriest(poor._4) && StoryBrandQuest.priced(poor._4) && !poor._3.contains("Отмеченным не место")) &&
+              assertTrue(rich._2.choices.exists(_.id == "PriestStoryPay")) &&
+              assertTrue(rich._3.contains("Кости затихают") && rich._3.contains("Отмеченным не место среди мёртвых") && rich._3.contains("Юнону")) &&
+              assertTrue(StoryBrandQuest.toJunona(rich._4) && rich._5.map(_.id) == List(sketchItem.id))
+    },
+
+    test("Юнона: кнопка в канцелярии на её шаге; сперва пошлина — две шкуры Белого волка; отдал — про Смотрителя по тому, что с ним сделали, и Сойка") {
+      def ask(fate: WardenFate, items: List[Item]) =
         for {
           d     <- dao(hero(), brand(3, fate))
           sch   <- TestScheduler.make
+          inv    = TestInventoryRepository.withItems(sketchItem :: items)
           r     <- TestRenderer.make
           c     <- content
-          state  = HomeState(d, sch, c, TestInventoryRepository.withItems(List(sketchItem)), TestItemRepository.make)
+          state  = HomeState(d, sch, c, inv, TestItemRepository.make)
           _     <- state.action(testUser, tap("HomeOffice"), r)
           menu  <- r.sentScreens.map(_.last)
           _     <- state.action(testUser, tap("HomeJunonaStory"), r)
+          price <- r.sentScreens.map(_.last)
+          _     <- state.action(testUser, tap("HomeJunonaPay"), r)
           said  <- texts(r)
           q     <- questOf(d)
-        } yield (menu, said, q)
+        } yield (menu, price, said, q, inv.snapshot)
       for {
-        killed   <- ask(WardenFate.Killed)
-        released <- ask(WardenFate.Released)
-        handed   <- ask(WardenFate.Handed)
-      } yield assertTrue(killed._1.choices.exists(_.id == "HomeJunonaStory")) &&
-              assertTrue(killed._2.contains("перерезанным горлом") && released._2.contains("ушёл первым кораблём") &&
-                handed._2.contains("Спасибо за Смотрителя")) &&
-              assertTrue(List(killed, released, handed).forall { case (_, said, q) =>
-                said.contains("Зовут Сойкой") && StoryBrandQuest.toMeeting(q) })
+        poor     <- ask(WardenFate.Killed, Nil)
+        killed   <- ask(WardenFate.Killed, hides)
+        released <- ask(WardenFate.Released, hides)
+        handed   <- ask(WardenFate.Handed, hides)
+      } yield assertTrue(poor._1.choices.exists(_.id == "HomeJunonaStory")) &&
+              assertTrue(poor._2.text.contains("две шкуры Белого волка") && !poor._2.choices.exists(_.id == "HomeJunonaPay")) &&
+              assertTrue(StoryBrandQuest.toJunona(poor._4) && StoryBrandQuest.priced(poor._4) && !poor._3.contains("Зовут Сойкой")) &&
+              assertTrue(killed._2.choices.exists(_.id == "HomeJunonaPay")) &&
+              assertTrue(killed._3.contains("перерезанным горлом") && released._3.contains("ушёл первым кораблём") &&
+                handed._3.contains("Спасибо за Смотрителя")) &&
+              assertTrue(List(killed, released, handed).forall { case (_, _, said, q, bag) =>
+                said.contains("Пошлина принята") && said.contains("Зовут Сойкой") && StoryBrandQuest.toMeeting(q) &&
+                  bag.map(_.id) == List(sketchItem.id) })
+    },
+
+    test("карточка и журнал: собеседник назвал цену — строка с ценой; на новом шаге цена ещё не названа") {
+      val priced = StoryBrandQuest.namePrice(brand(2))
+      val moved  = StoryBrandQuest.step(priced, 3)
+      for {
+        c       <- content
+        plain   <- cardText(brand(2))
+        withPay <- cardText(priced)
+        jPlain   = QuestJournal.render(c, hero(), ready, brand(2), DailyQuests.empty, None, 0L)
+        jPriced  = QuestJournal.render(c, hero(), ready, priced, DailyQuests.empty, None, 0L)
+      } yield assertTrue(plain.contains("Спросить жреца в храме Азата") && !plain.contains("проклятые кости")) &&
+              assertTrue(withPay.contains("просит две проклятые кости")) &&
+              assertTrue(jPlain.contains("спросить жреца в храме Азата") && jPriced.contains("принести жрецу в храме Азата две проклятые кости")) &&
+              assertTrue(!StoryBrandQuest.priced(moved))
     },
 
     test("встреча с Сойкой: с карточки, из города; «Взять страницу» — набросок уходит, страница с новым именем героя в сумке, глава закрыта") {

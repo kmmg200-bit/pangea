@@ -85,6 +85,7 @@ case class HomeState(
       "HomeBuy"     -> Target.Run { (u, ua, r) => buy(u, ua, r) },
       "HomeFurnish" -> Target.Run { (u, _, r) => furnish(u, r) },
       "HomeJunonaStory" -> Target.Run { (u, _, r) => junonaMarked(u, r) },
+      "HomeJunonaPay"   -> Target.Run { (u, _, r) => junonaPay(u, r) },
       "HomeJunonaFace"  -> Target.Run { (u, _, r) => junonaCopies(u, r) },
       "HomeFurnItem"   -> Target.Run { (u, ua, r) => furnItem(u, ua, r) },
       "HomeFurnBuy"    -> Target.Run { (u, ua, r) => furnBuy(u, ua, r) },
@@ -192,17 +193,43 @@ case class HomeState(
         .map(inv => QuestSupport.hasItem(inv.items.data, QuestItemKind.StorySketch))
     }
 
-  /** Юнона о том, кого записывает совет: про Смотрителя — по тому, как с ним
-    * поступили, — и про Сойку; дальше — встреча с ней. */
+  /** Кого записывает совет, Юнона даром не скажет: сперва пошлина — шкуры
+    * Белого волка (StoryBrandQuest.JunonaPrice). Плата при герое — кнопка
+    * «Отдать». */
   private def junonaMarked(user: User, renderer: Renderer): Task[StateType] =
-    for {
-      open   <- junonaOpen(user)
-      quests <- NpcQuestLog.load(heroDao, user.userId)
-      fate    = StoryPowderQuest.choice(quests).fold("")(f => content.text(s"story.storyBrand.junona.warden.${f.key}") + "\n\n")
-      _      <- ZIO.when(open)(NpcQuestLog.save(heroDao, user.userId, StoryBrandQuest.step(quests, 4)) *>
-                  renderer.show(user, Screen(fate + content.text("story.storyBrand.junona.text"), Nil)))
-      res    <- office(user, renderer)
-    } yield res
+    junonaOpen(user).flatMap {
+      case false => office(user, renderer)
+      case true  =>
+        for {
+          quests <- NpcQuestLog.load(heroDao, user.userId)
+          _      <- NpcQuestLog.save(heroDao, user.userId, StoryBrandQuest.namePrice(quests))
+          hero   <- getHero(user)
+          canPay <- StoryBrandQuest.canPay(inventoryRepo, hero, StoryBrandQuest.JunonaPrice)
+          _      <- renderer.show(user, StoryBrandQuest.askScreen(content, content.text("story.storyBrand.junona.ask"),
+                      "HomeJunonaPay", "story.storyBrand.junona.payLabel", canPay,
+                      Choice("HomeOffice", content.text("home.house.back"), color = ChoiceColor.Negative)))
+        } yield StateType.Home
+    }
+
+  /** Пошлина отдана — Юнона о том, кого записывает совет: про Смотрителя — по
+    * тому, как с ним поступили, — и про Сойку; дальше — встреча с ней. Платы
+    * при герое нет — снова цена. */
+  private def junonaPay(user: User, renderer: Renderer): Task[StateType] =
+    junonaOpen(user).flatMap {
+      case false => office(user, renderer)
+      case true  =>
+        for {
+          quests <- NpcQuestLog.load(heroDao, user.userId)
+          hero   <- getHero(user)
+          paid   <- StoryBrandQuest.pay(inventoryRepo, hero, StoryBrandQuest.JunonaPrice)
+          fate    = StoryPowderQuest.choice(quests).fold("")(f => content.text(s"story.storyBrand.junona.warden.${f.key}") + "\n\n")
+          res    <- if (!paid) junonaMarked(user, renderer)
+                    else NpcQuestLog.save(heroDao, user.userId, StoryBrandQuest.step(quests, 4)) *>
+                      renderer.show(user, Screen(content.text("story.storyBrand.junona.paid").trim + "\n\n" + fate +
+                        content.text("story.storyBrand.junona.text"), Nil)) *>
+                      office(user, renderer)
+        } yield res
+    }
 
   /** «Лицо из прошлого» на шаге Юноны, и копии списка при герое. */
   private def junonaFaceOpen(user: User): Task[Boolean] =

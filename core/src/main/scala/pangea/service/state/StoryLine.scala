@@ -113,9 +113,13 @@ object StoryLine {
   /** Название главы для игрока. */
   def title(content: SceneContent, q: NpcQuest): String = content.text(s"journal.quests.${q.key}.title")
 
-  /** Что делать в главе сейчас — строка шага для журнала. */
-  def step(content: SceneContent, q: NpcQuest, quests: NpcQuests): String =
-    content.list(s"journal.quests.${q.key}.steps").lift(quests.of(q).step - 1).getOrElse("")
+  /** Что делать в главе сейчас — строка шага для журнала. В «Что горит на
+    * груди» собеседник шага, назвавший цену разговора, — строкой с ценой
+    * (`priced`, см. [[StoryBrandQuest.priced]]). */
+  def step(content: SceneContent, q: NpcQuest, quests: NpcQuests): String = {
+    val list = if (q == NpcQuest.StoryBrand && StoryBrandQuest.priced(quests)) "priced" else "steps"
+    content.list(s"journal.quests.${q.key}.$list").lift(quests.of(q).step - 1).getOrElse("")
+  }
 
   /** Строка «новое задание»: название и первый шаг. */
   def takenLine(content: SceneContent, q: NpcQuest, quests: NpcQuests): String =

@@ -50,6 +50,7 @@ case class TempleAzatState(
     routes = Map(
       quest.questAction   -> Target.Run { (u, _, r) => questTalk(u, r) },
       "PriestStory"       -> Target.Run { (u, _, r) => storyMarked(u, r) },
+      "PriestStoryPay"    -> Target.Run { (u, _, r) => storyPay(u, r) },
       quest.acceptAction  -> Target.Run { (u, _, r) => quest.accept(u, r) *> showPriest(u, r) },
       quest.declineAction -> Target.Run { (u, _, r) => showPriest(u, r) },
       // «Письмо Марисе»: Жрец помнит прихожанку и знает её подругу.
@@ -112,16 +113,39 @@ case class TempleAzatState(
         .map(inv => QuestSupport.hasItem(inv.items.data, QuestItemKind.StorySketch))
     }
 
-  /** Жрец об отмеченных: земля их не принимает; кто метит — не знает; совет
-    * записывает таких — к Юноне. */
+  /** Об отмеченных Жрец даром не говорит: сперва цена — проклятые кости
+    * (StoryBrandQuest.PriestPrice). Плата при герое — кнопка «Отдать». */
   private def storyMarked(user: User, renderer: Renderer): Task[StateType] =
-    for {
-      open   <- storyOpen(user)
-      quests <- quest.load(user)
-      _      <- ZIO.when(open)(NpcQuestLog.save(heroDao, user.userId, StoryBrandQuest.step(quests, 3)) *>
-                  renderer.show(user, Screen(content.text("story.storyBrand.priest.text"), Nil)))
-      res    <- showPriest(user, renderer)
-    } yield res
+    storyOpen(user).flatMap {
+      case false => showPriest(user, renderer)
+      case true  =>
+        for {
+          quests <- quest.load(user)
+          _      <- NpcQuestLog.save(heroDao, user.userId, StoryBrandQuest.namePrice(quests))
+          hero   <- getHero(user)
+          canPay <- StoryBrandQuest.canPay(inventoryRepo, hero, StoryBrandQuest.PriestPrice)
+          _      <- renderer.show(user, StoryBrandQuest.askScreen(content, content.text("story.storyBrand.priest.ask"),
+                      "PriestStoryPay", "story.storyBrand.priest.payLabel", canPay, content.choice("BackToPriest", "temple.back")))
+        } yield StateType.TempleAzat
+    }
+
+  /** Кости отданы — Жрец об отмеченных: земля их не принимает; кто метит — не
+    * знает; совет записывает таких — к Юноне. Платы при герое нет — снова цена. */
+  private def storyPay(user: User, renderer: Renderer): Task[StateType] =
+    storyOpen(user).flatMap {
+      case false => showPriest(user, renderer)
+      case true  =>
+        for {
+          quests <- quest.load(user)
+          hero   <- getHero(user)
+          paid   <- StoryBrandQuest.pay(inventoryRepo, hero, StoryBrandQuest.PriestPrice)
+          res    <- if (!paid) storyMarked(user, renderer)
+                    else NpcQuestLog.save(heroDao, user.userId, StoryBrandQuest.step(quests, 3)) *>
+                      renderer.show(user, Screen(content.text("story.storyBrand.priest.paid").trim + "\n\n" +
+                        content.text("story.storyBrand.priest.text").trim, Nil)) *>
+                      showPriest(user, renderer)
+        } yield res
+    }
 
   /** Рассказ о некромантах: Жрец его не продаёт. */
   private def showNecroLore(user: User, renderer: Renderer): Task[StateType] =
