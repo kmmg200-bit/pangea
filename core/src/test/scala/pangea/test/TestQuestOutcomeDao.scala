@@ -15,6 +15,9 @@ class TestQuestOutcomeDao(ref: Ref[Map[(HeroId, String), (QuestOutcome, Long)]])
   override def tally(questKey: String): Task[Map[QuestOutcome, Long]] =
     ref.get.map(_.values.map(_._1).filter(_.questKey == questKey).groupBy(identity).map { case (o, all) => o -> all.size.toLong })
 
+  override def ofHero(heroId: HeroId): Task[Map[String, QuestOutcome]] =
+    ref.get.map(_.collect { case ((id, quest), (o, _)) if id == heroId => quest -> o })
+
   /** Исход героя в задании, если записан. */
   def of(heroId: HeroId, questKey: String): UIO[Option[QuestOutcome]] = ref.get.map(_.get(heroId -> questKey).map(_._1))
 

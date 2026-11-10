@@ -45,6 +45,17 @@ object QuestOutcomeStatsSpec extends ZIOSpecDefault {
         text = QuestOutcomeStats.render(c, SquadLooted, Map(SquadLedOut -> 9L))
       } yield assertTrue(text.contains("• 90% вывели дружину наверх") && text.contains("• 10% бросили дружину у фонаря и унесли её груз — как и вы"))
     },
+    test("свой исход неизвестен (закончил до подсчёта): строки без пометки, себя в подсчёт не прибавляем") {
+      for {
+        c <- content
+        rows = QuestOutcomeStats.rows(c, MarisaSaved.questKey, None, Map(MarisaAbandoned -> 6L, MarisaSaved -> 4L))
+        few  = QuestOutcomeStats.rows(c, MarisaSaved.questKey, None, Map(MarisaSaved -> 9L))
+      } yield assertTrue(rows.contains(List(
+                QuestOutcomeStats.Row("60%", "бросили Марису ни с чем", mine = false),
+                QuestOutcomeStats.Row("40%", "спасли Марису", mine = false)))) &&
+              // девять закончивших — процентам верить рано, и себя к ним не добавить
+              assertTrue(few.isEmpty)
+    },
     test("доля меньше половины процента — «меньше 1%»; пока выбрали не все — не больше 99%; все — 100%") {
       for {
         c <- content

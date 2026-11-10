@@ -17,7 +17,7 @@ import pangea.model.top.{TopBoard, TopKind}
 import pangea.service.chat.Links
 import pangea.service.cube.AzatCube
 import pangea.service.equipment.{BeltWork, BrewWork}
-import pangea.service.state.QuestJournal
+import pangea.service.state.{QuestJournal, QuestsDone}
 import pangea.service.storage.ItemStore.Place
 import pangea.service.state.states.{EquipmentState, InventoryState}
 import pangea.service.state.states.hero.SkillsState
@@ -259,12 +259,20 @@ object MiniAppView {
   final case class NpcQuestView(title: String, step: String)
   final case class DailyView(npc: String, line: String)
   final case class BoardView(board: String, what: String, ready: Boolean, state: String)
+
+  /** Пройденное задание ([[QuestsDone.Done]]): `story` — сюжет или задание
+    * горожанина; `stats` — как его закончили другие герои, своя строка — `mine`;
+    * пока закончивших мало — `first`. */
+  final case class OutcomeRowView(pct: String, label: String, mine: Boolean)
+  final case class DoneQuestView(title: String, story: Boolean, first: Option[String], stats: List[OutcomeRowView])
+
   final case class QuestsView(
     hero:    HeroView,
     story:   Option[StoryView],
     npcs:    List[NpcQuestView],
     dailies: List[DailyView],
-    boards:  List[BoardView]
+    boards:  List[BoardView],
+    done:    List[DoneQuestView]
   )
 
   /** Союзник в строю или в резерве — как его карточка в боте. `position` — место
@@ -376,6 +384,8 @@ object MiniAppView {
   implicit val npcQuestEncoder:  Encoder[NpcQuestView]  = deriveEncoder
   implicit val dailyEncoder:     Encoder[DailyView]     = deriveEncoder
   implicit val boardEncoder:     Encoder[BoardView]     = deriveEncoder
+  implicit val outcomeRowEncoder: Encoder[OutcomeRowView] = deriveEncoder
+  implicit val doneQuestEncoder: Encoder[DoneQuestView] = deriveEncoder
   implicit val questsEncoder:    Encoder[QuestsView]    = deriveEncoder
   implicit val allyEncoder:      Encoder[AllyView]      = deriveEncoder
   implicit val squadEncoder:     Encoder[SquadView]     = deriveEncoder
@@ -765,7 +775,8 @@ object MiniAppView {
   }
 
   /** «Задания» — тот же журнал, что в боте, по разделам. */
-  def quests(h: Hero, j: QuestJournal.Journal, content: SceneContent): QuestsView =
+  def quests(h: Hero, j: QuestJournal.Journal, content: SceneContent,
+             done: List[QuestsDone.Done] = Nil): QuestsView =
     QuestsView(
       hero    = hero(h),
       story   = j.story.map(s => StoryView(s.title, s.objectives)),
@@ -773,7 +784,9 @@ object MiniAppView {
       dailies = j.dailies.map(d => DailyView(d.npc, d.line)),
       // Сделанное — коротко, на плашку; «в работе» — как в журнале бота.
       boards  = j.boards.map(b => BoardView(b.board, b.what, b.ready,
-                  if (b.ready) content.text("miniapp.boardReady") else QuestJournal.boardState(content, b)))
+                  if (b.ready) content.text("miniapp.boardReady") else QuestJournal.boardState(content, b))),
+      done    = done.map(d => DoneQuestView(d.title, d.story, d.first,
+                  d.stats.map(r => OutcomeRowView(r.pct, r.label, r.mine))))
     )
 
   /** «Отряд». Кто уже ушёл (найм кончился, кости рассыпались), бот уберёт и

@@ -165,6 +165,23 @@ object MiniAppViewSpec extends ZIOSpecDefault {
       )
     },
 
+    test("задания: пройденные — как собрал их бот, с подсчётом других и своей строкой") {
+      import pangea.service.state.{QuestOutcomeStats, QuestsDone}
+      val hero = TestFixtures.hero(UserId(1L))
+      val done = List(
+        QuestsDone.Done("Встать на ноги", story = true, first = Some("📊 Вы — среди первых…"), stats = Nil),
+        QuestsDone.Done("Письмо Марисе", story = false, first = None,
+          stats = List(QuestOutcomeStats.Row("60%", "бросили Марису ни с чем", mine = false),
+                       QuestOutcomeStats.Row("40%", "спасли Марису", mine = true))))
+      val view = MiniAppView.quests(hero, QuestJournal.Journal(None, Nil, Nil, Nil), content, done)
+      assertTrue(
+        view.done.map(d => (d.title, d.story)) == List(("Встать на ноги", true), ("Письмо Марисе", false)),
+        view.done.headOption.flatMap(_.first).contains("📊 Вы — среди первых…"),
+        view.done.lastOption.map(_.stats.map(r => (r.pct, r.label, r.mine))).contains(
+          List(("60%", "бросили Марису ни с чем", false), ("40%", "спасли Марису", true)))
+      )
+    },
+
     test("отряд: ушедшего по найму не показываем, у оставшегося — сколько ему ещё") {
       val hour  = 3600000L
       val stays = Ally(AllyKind.Human, position = 2, hp = 10L, armor = 0L, energy = 0L, hiredUntil = 5 * hour)

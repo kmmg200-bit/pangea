@@ -260,13 +260,24 @@ export interface EffectView {
   text: string
 }
 
-/** Журнал заданий бота по разделам. */
+/** Пройденное задание. `stats` — как его закончили другие герои, от большей
+  * доли к меньшей, свой исход — `mine`; пусто — развилки нет или закончивших
+  * пока мало, тогда `first` — «вы среди первых». */
+export interface DoneQuestView {
+  title: string
+  story: boolean
+  first: string | null
+  stats: { pct: string; label: string; mine: boolean }[]
+}
+
+/** Журнал заданий бота по разделам и пройденные задания. */
 export interface QuestsView {
   hero: HeroView
   story: { title: string; objectives: string } | null
   npcs: { title: string; step: string }[]
   dailies: { npc: string; line: string }[]
   boards: { board: string; what: string; ready: boolean; state: string }[]
+  done: DoneQuestView[]
 }
 
 export interface AllyView {

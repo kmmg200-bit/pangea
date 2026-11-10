@@ -4,6 +4,7 @@ import pangea.dao.artifact.ArtifactDao
 import pangea.dao.bank.BankVaultDao
 import pangea.dao.barrel.BarrelDao
 import pangea.dao.hero.HeroDao
+import pangea.dao.quest.QuestOutcomeDao
 import pangea.dao.top.TopDao
 import pangea.engine.{Players, Renderer, SceneContent, Screen}
 import pangea.model.artifact.HeroArtifacts
@@ -34,7 +35,7 @@ import pangea.service.payout.Payouts
 import pangea.service.squad.SquadOrders
 import pangea.service.storage.ItemStore
 import pangea.service.storage.ItemStore.Place
-import pangea.service.state.{AzatData, BarrelRobbery, HerbLore, NpcQuestLog, PlayerLock, QuestJournal, SquadDuty, StackMove}
+import pangea.service.state.{AzatData, BarrelRobbery, HerbLore, NpcQuestLog, PlayerLock, QuestJournal, QuestsDone, SquadDuty, StackMove}
 import pangea.service.state.states.{EquipmentState, InventoryState}
 import pangea.service.state.states.home.Racks
 import zio.{Ref, Task, ZIO, ZLayer}
@@ -226,7 +227,7 @@ object MiniApp {
     storesAway(content, hero).filterNot(_ => reach(hero)(from) && reach(hero)(to))
 
   val live: ZLayer[MiniAppConfig with UserRepository with HeroRepository with InventoryRepository with AuctionRepository
-                     with HeroDao with ArtifactDao with BarrelDao with BankVaultDao with TopDao
+                     with HeroDao with ArtifactDao with BarrelDao with BankVaultDao with TopDao with QuestOutcomeDao
                      with ItemRepository with BankRepository with ArtifactRepository with BarrelRepository
                      with Payouts with Players with PlayerLock
                      with SceneContent, Nothing, MiniApp] =
@@ -242,6 +243,7 @@ object MiniApp {
         barrels     <- ZIO.service[BarrelDao]
         vaults      <- ZIO.service[BankVaultDao]
         tops        <- ZIO.service[TopDao]
+        outcomes    <- ZIO.service[QuestOutcomeDao]
         items       <- ZIO.service[ItemRepository]
         bank        <- ZIO.service[BankRepository]
         artifactRepo <- ZIO.service[ArtifactRepository]
@@ -252,7 +254,7 @@ object MiniApp {
         content     <- ZIO.service[SceneContent]
         topCache    <- Ref.make(Map.empty[TopKind, CachedTop])
       } yield new MiniAppLive(config, users, heroes, inventories, lots, heroDao, artifacts, barrels, vaults, content,
-        tops, topCache, new AzatCube(heroDao, inventories, items, content),
+        tops, topCache, outcomes, new AzatCube(heroDao, inventories, items, content),
         new AuctionPurchase(heroDao, inventories, lots, users, bank, payouts, players, content),
         new Outfit(heroDao, inventories, items, content), new GemWork(heroDao, inventories, items, content),
         new BrewWork(heroDao, inventories, content), new BeltWork(heroDao, inventories, items, content),
@@ -275,6 +277,7 @@ final class MiniAppLive(
   content:     SceneContent,
   tops:        TopDao,
   topCache:    Ref[Map[TopKind, MiniApp.CachedTop]],
+  outcomes:    QuestOutcomeDao,
   azatCube:    AzatCube,
   purchase:    AuctionPurchase,
   outfit:      Outfit,
@@ -316,7 +319,8 @@ final class MiniAppLive(
     for {
       ms      <- now
       journal <- QuestJournal.load(heroDao, content, hero, ms)
-    } yield MiniAppView.quests(hero, journal, content)
+      done    <- QuestsDone.load(heroDao, outcomes, content, hero)
+    } yield MiniAppView.quests(hero, journal, content, done)
 
   override def squad(hero: Hero): Task[SquadView] =
     now.map(ms => MiniAppView.squad(hero, content, ms))

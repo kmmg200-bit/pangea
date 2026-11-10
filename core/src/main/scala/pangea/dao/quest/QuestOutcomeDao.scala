@@ -19,6 +19,10 @@ trait QuestOutcomeDao {
   /** Сколько героев закончили задание (`questKey`) каждым исходом. Строки,
     * которых [[QuestOutcome]] не знает, не считаются. */
   def tally(questKey: String): Task[Map[QuestOutcome, Long]]
+
+  /** Чем этот герой закончил задания с развилкой: ключ задания → исход.
+    * Строки, которых [[QuestOutcome]] не знает, пропускаются. */
+  def ofHero(heroId: HeroId): Task[Map[String, QuestOutcome]]
 }
 
 class QuestOutcomeDaoLive(xa: Transactor[Task]) extends QuestOutcomeDao {
@@ -36,6 +40,12 @@ class QuestOutcomeDaoLive(xa: Transactor[Task]) extends QuestOutcomeDao {
           group by outcome"""
       .query[(String, Long)].to[List].transact(xa)
       .map(_.flatMap { case (name, n) => QuestOutcome.find(questKey, name).map(_ -> n) }.toMap)
+
+  override def ofHero(heroId: HeroId): Task[Map[String, QuestOutcome]] =
+    sql"""select quest, outcome from quest_outcomes
+          where hero_id = ${heroId.value}"""
+      .query[(String, String)].to[List].transact(xa)
+      .map(_.flatMap { case (quest, name) => QuestOutcome.find(quest, name).map(quest -> _) }.toMap)
 }
 
 object QuestOutcomeDao {

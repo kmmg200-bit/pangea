@@ -15,22 +15,38 @@ object QuestOutcomeStats {
   /** С какого числа закончивших показываем проценты. */
   val MinHeroes: Long = 10L
 
-  /** Текст по подсчёту `tally`; свой исход — `mine`. Себя герой видит в
-    * подсчёте, даже если его запись не дошла до базы. */
-  def render(content: SceneContent, mine: QuestOutcome, tally: Map[QuestOutcome, Long]): String = {
-    val counts = if (tally.getOrElse(mine, 0L) > 0L) tally else tally.updated(mine, 1L)
+  /** Строка подсчёта: доля, чем закончили и тот ли это исход, что у героя. */
+  final case class Row(pct: String, label: String, mine: Boolean)
+
+  /** Подсчёт задания `questKey` строками — от большей доли к меньшей. `None`
+    * — закончивших меньше [[MinHeroes]], процентам верить рано. Свой исход
+    * `mine` герой видит в подсчёте, даже если его запись не дошла до базы;
+    * исход неизвестен (герой закончил задание до подсчёта) — строки без
+    * пометки. Ими пишет бот после развязки и показывает Mini App. */
+  def rows(content: SceneContent, questKey: String, mine: Option[QuestOutcome],
+           tally: Map[QuestOutcome, Long]): Option[List[Row]] = {
+    val counts = mine.fold(tally)(m => if (tally.getOrElse(m, 0L) > 0L) tally else tally.updated(m, 1L))
     val total  = counts.values.sum
-    val title  = content.text(mine.titleKey)
-    if (total < MinHeroes) content.format("questStats.first", "title" -> title)
-    else {
-      val rows = QuestOutcome.of(mine.questKey)
+    Option.when(total >= MinHeroes)(
+      QuestOutcome.of(questKey)
         .flatMap(o => counts.get(o).filter(_ > 0L).map(o -> _))
         .sortBy { case (o, n) => (-n, QuestOutcome.indexOf(o)) }
-      val lines = rows.map { case (o, n) =>
-        content.format(if (o == mine) "questStats.mine" else "questStats.line",
-          "pct" -> pct(content, n, total), "label" -> content.text(s"questStats.${o.questKey}.${o.entryName}"))
-      }
-      (content.format("questStats.header", "title" -> title) :: lines).mkString("\n")
+        .map { case (o, n) => Row(pct(content, n, total), label(content, o), mine.contains(o)) })
+  }
+
+  /** Как исход звучит в подсчёте: «спасли Марису». */
+  def label(content: SceneContent, o: QuestOutcome): String =
+    content.text(s"questStats.${o.questKey}.${o.entryName}")
+
+  /** Текст по подсчёту `tally`; свой исход — `mine`. */
+  def render(content: SceneContent, mine: QuestOutcome, tally: Map[QuestOutcome, Long]): String = {
+    val title = content.text(mine.titleKey)
+    rows(content, mine.questKey, Some(mine), tally) match {
+      case None => content.format("questStats.first", "title" -> title)
+      case Some(rs) =>
+        val lines = rs.map(r => content.format(if (r.mine) "questStats.mine" else "questStats.line",
+          "pct" -> r.pct, "label" -> r.label))
+        (content.format("questStats.header", "title" -> title) :: lines).mkString("\n")
     }
   }
 
