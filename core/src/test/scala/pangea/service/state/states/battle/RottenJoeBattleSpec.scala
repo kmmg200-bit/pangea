@@ -254,8 +254,8 @@ object RottenJoeBattleSpec extends ZIOSpecDefault {
     },
 
     // ── Добыча ────────────────────────────────────────────────────────────────
-    test("дроп: кожа упыря, расколотый усилитель, дублоны и «Упырь» — поровну") {
-      val drops = (1L to 400L).iterator
+    test("дроп: кожа упыря — половина бросков, пока не выпала; прочее — расколотый усилитель, дублоны и «Упырь»") {
+      val drops = (1L to 2000L).iterator
         .flatMap(s => pangea.generator.loot.LootGenerator
           .rollMiniBoss(joe, 2L, 40L, pangea.domain.Rng(s))._1)
         .toList

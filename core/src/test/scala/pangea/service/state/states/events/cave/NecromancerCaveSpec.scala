@@ -121,9 +121,9 @@ object NecromancerCaveSpec extends ZIOSpecDefault {
       assertTrue(gems.nonEmpty && gems.forall(_.gem.exists(_.kind == pangea.model.item.GemKind.Skull))) &&
       assertTrue(coins.nonEmpty && coins.forall(_ == LootGenerator.NecroSkullDoubloons)) &&
       assertTrue(gems.size == coins.size) &&
-      // вещей набора 40% роллов, костей и черепов — по четверти, резцу — десятая часть
-      assertTrue(gear.size > bones && gear.size < bones * 3) &&
-      assertTrue(chisels > bones / 4 && chisels < bones * 2 / 3) &&
+      // кости — половина первых бросков: их больше, чем вещей набора, а резцов — впятеро меньше, чем костей
+      assertTrue(gear.size > bones / 2 && gear.size < bones) &&
+      assertTrue(chisels > bones / 6 && chisels < bones / 3) &&
       // трофеев и серебра с него не бывает
       assertTrue(!drops.exists { case _: LootDrop.Trophy | _: LootDrop.Silver => true; case _ => false })
     },

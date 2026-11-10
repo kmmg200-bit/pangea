@@ -288,11 +288,11 @@ object LootGenerator {
     * своей раскладке босса (элементаль, Джо, волк, король, Некромант).
     *
     * Свой ингредиент — тот, что в кубе переводит вещь в его набор (шкура волка,
-    * кровь короля, кости Некроманта…), — с одного босса падает не больше одного.
-    * Выпал — следующие броски идут по шкале без него, и его доля делится между
-    * прочей добычей. Так было у одной шкуры волка, теперь у всех. Фиолетовых и
-    * легендарных вещей от этого не прибавляется: их шанс на бросок считается от
-    * полной шкалы, и лишние вещи набора — синие (см. [[setRarity]]).
+    * кровь короля, кости Некроманта…), — половина бросков, пока он с этого
+    * босса не выпал, и больше одного с босса не падает (см. [[rollBossScale]]).
+    * Выпал — следующие броски идут по шкале без него, по одной прочей добыче.
+    * Фиолетовых и легендарных вещей от этого не прибавляется: их шанс на бросок
+    * считается от полной шкалы, и лишние вещи набора — синие (см. [[setRarity]]).
     *
     * Уровень вещи берётся от уровня ГЕРОЯ с разбросом ±1: у босса свой BossLvL
     * (1..10), и вещь по нему была бы мусором. `floorLvl` — этаж встречи: по нему
@@ -345,22 +345,32 @@ object LootGenerator {
   /** Свой ингредиент босса как добыча. */
   private def ingredientOf(boss: MiniBoss): LootDrop = LootDrop.Gear(MaterialGenerator.item(boss.ingredient))
 
-  /** Бросок по шкале добычи `[0, total)`, в начале которой — `ingredient` долей
-    * ингредиента. Он с этого босса уже выпал — бросок идёт по остатку шкалы, и
-    * его доля делится между прочим соразмерно их весам. Возвращает бросок,
-    * размер шкалы, по которой он шёл (от него считается редкость вещи, см.
-    * [[setRarity]]), и Rng. */
-  private def rollPastIngredient(ingredient: Long, total: Long, ingredientLeft: Boolean, rng: Rng): (Long, Long, Rng) = {
-    val from       = if (ingredientLeft) 0L else ingredient
-    val (roll, r1) = rng.between(from, total)
-    (roll, total - from, r1)
+  /** Доля своего ингредиента в бросках минибосса, пока он с этого босса не
+    * выпал: половина — он весит столько же, сколько вся прочая добыча вместе. */
+  val BossIngredientSharePct: Long = 50L
+
+  /** Бросок по шкале добычи минибосса: впереди — его ингредиент (пока он с
+    * этого босса не выпал) с долей [[BossIngredientSharePct]] от всей шкалы, за
+    * ним — `others` долей прочей добычи, раскладка которой у каждого босса своя.
+    * Выпал ингредиент — бросок идёт по одному прочему, и его доля делится между
+    * прочим соразмерно весам.
+    *
+    * Возвращает бросок по шкале прочего, `[0, others)`, или None, если выпал
+    * ингредиент; размер шкалы, по которой шёл бросок, и всю шкалу (от них
+    * считается редкость вещи набора, см. [[setRarity]]); и Rng. */
+  private def rollBossScale(others: Long, ingredientLeft: Boolean, rng: Rng): (Option[Long], Long, Long, Rng) = {
+    val ingredient = others * BossIngredientSharePct / (100L - BossIngredientSharePct).max(1L)
+    val full       = ingredient + others
+    val rolled     = if (ingredientLeft) full else others
+    val (roll, r1) = rng.between(0L, rolled)
+    val rest       = if (ingredientLeft) roll - ingredient else roll
+    (Option.when(rest >= 0L)(rest), rolled, full, r1)
   }
 
-  /** С Белого волка: клык (20%), вещь «Охотника» (40%), резец рунописца (10%),
-    * большая руна (5% — забраны у клыка) и шкура (25%). Редкость вещи — общая для минибоссов
-    * (см. [[setRarity]]). Если шкура с этого волка уже выпала, её четверть
-    * делится между остальными — бросок идёт по укороченной шкале, поэтому
-    * шкура стоит в конце. */
+  /** С Белого волка: шкура — половина бросков, пока она с этого волка не
+    * выпала; прочее — клык (20 долей), вещь «Охотника» (40), резец рунописца
+    * (10) и большая руна (5). Редкость вещи — общая для минибоссов (см.
+    * [[setRarity]]). */
   private def wolfDrop(
       boss: MiniBoss,
       bossLvl: Long,
@@ -368,15 +378,15 @@ object LootGenerator {
       floorLvl: Long,
       ingredientLeft: Boolean,
       rng: Rng
-  ): (LootDrop, Rng) = {
-    val total      = if (ingredientLeft) 100L else WolfHideFrom
-    val (roll, r1) = rng.between(0L, total)
-    if (roll < WolfFangUntil) (LootDrop.Trophy(wolfFang(bossLvl, floorLvl)), r1)
-    else if (roll < WolfGearUntil) setDrop(boss, heroLvl, total, 100L, r1)
-    else if (roll < WolfChiselUntil) (chisel, r1)
-    else if (roll < WolfHideFrom) bigRune(r1)
-    else (ingredientOf(boss), r1)
-  }
+  ): (LootDrop, Rng) =
+    rollBossScale(WolfOthers, ingredientLeft, rng) match {
+      case (None, _, _, r1) => (ingredientOf(boss), r1)
+      case (Some(roll), rolled, full, r1) =>
+        if (roll < WolfFangUntil) (LootDrop.Trophy(wolfFang(bossLvl, floorLvl)), r1)
+        else if (roll < WolfGearUntil) setDrop(boss, heroLvl, rolled, full, r1)
+        else if (roll < WolfChiselUntil) (chisel, r1)
+        else bigRune(r1)
+    }
 
   /** Клык Белого волка: трофей расы «Животное», уровень — этаж встречи,
     * коэффициент — 6 за каждый BossLvL (лежит на самом предмете). */
@@ -391,103 +401,102 @@ object LootGenerator {
       Some(MiniBoss.WhiteWolf.FangCoefPerLvl * bossLvl))
   )
 
-  /** Границы роллов волка (0..99): до 20 — клык, до 60 — вещь набора, до 70 —
-    * резец рунописца, до 75 — большая руна, дальше — шкура. */
+  /** Границы прочей добычи волка (0..74): до 20 — клык, до 60 — вещь набора,
+    * до 70 — резец рунописца, дальше — большая руна. */
   val WolfFangUntil: Long   = 20L
   val WolfGearUntil: Long   = 60L
   val WolfChiselUntil: Long = 70L
-  val WolfHideFrom: Long    = 75L
+  val WolfOthers: Long      = 75L
 
-  /** С элементаля 40% роллов забирает ингредиент, 10% — большая руна (взяты у
-    * ингредиента), 10% — резец рунописца (взяты у вещей), а оставшиеся 40% —
-    * вещь его набора, редкость которой решается общим для минибоссов порядком
-    * (см. [[setRarity]]). Ингредиент уже выпал — бросок идёт без него. */
-  private def elementalDrop(boss: MiniBoss, heroLvl: Long, ingredientLeft: Boolean, rng: Rng): (LootDrop, Rng) = {
-    val (roll, scale, r1) = rollPastIngredient(ElementalIngredientChancePct, 100L, ingredientLeft, rng)
-    if (roll < ElementalIngredientChancePct) (ingredientOf(boss), r1)
-    else if (roll < ElementalIngredientChancePct + ElementalRuneChancePct) bigRune(r1)
-    else if (roll < ElementalIngredientChancePct + ElementalRuneChancePct + ElementalChiselChancePct) (chisel, r1)
-    else setDrop(boss, heroLvl, scale, 100L, r1)
-  }
+  /** С элементаля: ингредиент — половина бросков, пока он не выпал; прочее —
+    * большая руна (10 долей), резец рунописца (10) и вещь его набора (40),
+    * редкость которой решается общим для минибоссов порядком (см.
+    * [[setRarity]]). */
+  private def elementalDrop(boss: MiniBoss, heroLvl: Long, ingredientLeft: Boolean, rng: Rng): (LootDrop, Rng) =
+    rollBossScale(ElementalOthers, ingredientLeft, rng) match {
+      case (None, _, _, r1) => (ingredientOf(boss), r1)
+      case (Some(roll), rolled, full, r1) =>
+        if (roll < ElementalRuneWeight) bigRune(r1)
+        else if (roll < ElementalRuneWeight + ElementalChiselWeight) (chisel, r1)
+        else setDrop(boss, heroLvl, rolled, full, r1)
+    }
 
-  /** С Гнилого Джо: кожа упыря (25%), расколотый усилитель (20%), горсть
-    * дублонов (20%), большая руна (10% — по пять забраны у усилителя и у
-    * дублонов), резец рунописца (10%, взяты у вещей) и вещь «Упыря» на
-    * последние 15% роллов; редкость её — та же, что у всех минибоссов (см.
-    * [[setRarity]]). Кожа уже выпала — бросок идёт без неё. */
-  private def joeDrop(boss: MiniBoss, bossLvl: Long, heroLvl: Long, ingredientLeft: Boolean, rng: Rng): (LootDrop, Rng) = {
-    val (roll, scale, r1) = rollPastIngredient(JoeSkinUntil, 100L, ingredientLeft, rng)
-    if (roll < JoeSkinUntil) (ingredientOf(boss), r1)
-    else if (roll < JoeGemUntil) {
-      // Усилитель — любой камень или череп, но всегда самого низкого качества
-      // («расколотый»), тем же роллом, что и обычный дроп камня.
-      val (gem, r2) = GemGenerator.randomGem(GemModel.MinGrade, r1)
-      (LootDrop.Gem(gem), r2)
-    } else if (roll < JoeDoubloonsUntil) {
-      // Дублоны: 2 × BossLvL с разбросом ±20%, но не меньше одного.
-      val base       = JoeDoubloonsPerLvl * bossLvl
-      val (pct, r2)  = r1.between(100L - JoeDoubloonSpreadPct, 100L + JoeDoubloonSpreadPct + 1L)
-      (LootDrop.Doubloons((base * pct / 100L).max(1L)), r2)
-    } else if (roll < JoeRuneUntil) bigRune(r1)
-    else if (roll < JoeChiselUntil) (chisel, r1)
-    else setDrop(boss, heroLvl, scale, 100L, r1)
-  }
+  /** С Гнилого Джо: кожа упыря — половина бросков, пока она не выпала; прочее —
+    * расколотый усилитель (20 долей), горсть дублонов (20), большая руна (10),
+    * резец рунописца (10) и вещь «Упыря» (15); редкость её — та же, что у всех
+    * минибоссов (см. [[setRarity]]). */
+  private def joeDrop(boss: MiniBoss, bossLvl: Long, heroLvl: Long, ingredientLeft: Boolean, rng: Rng): (LootDrop, Rng) =
+    rollBossScale(JoeOthers, ingredientLeft, rng) match {
+      case (None, _, _, r1) => (ingredientOf(boss), r1)
+      case (Some(roll), rolled, full, r1) =>
+        if (roll < JoeGemUntil) {
+          // Усилитель — любой камень или череп, но всегда самого низкого качества
+          // («расколотый»), тем же роллом, что и обычный дроп камня.
+          val (gem, r2) = GemGenerator.randomGem(GemModel.MinGrade, r1)
+          (LootDrop.Gem(gem), r2)
+        } else if (roll < JoeDoubloonsUntil) {
+          // Дублоны: 2 × BossLvL с разбросом ±20%, но не меньше одного.
+          val base       = JoeDoubloonsPerLvl * bossLvl
+          val (pct, r2)  = r1.between(100L - JoeDoubloonSpreadPct, 100L + JoeDoubloonSpreadPct + 1L)
+          (LootDrop.Doubloons((base * pct / 100L).max(1L)), r2)
+        } else if (roll < JoeRuneUntil) bigRune(r1)
+        else if (roll < JoeChiselUntil) (chisel, r1)
+        else setDrop(boss, heroLvl, rolled, full, r1)
+    }
 
-  /** С Крысиного короля: кровь и большая руна идут по два билета, чумные черви —
-    * по одному, вещи набора «Крыса» и резец рунописца делят ещё два (резцу —
-    * десятая часть всех билетов, у вещей и забрана). Доли крови, руны и червей
-    * между собой прежние — вещи им билетов не отнимали, а добавили своих;
-    * редкость вещи решается общим порядком (см. [[setRarity]]). Кровь уже
-    * выпала — бросок идёт без её билетов. Черви — не его ингредиент: их
-    * сколько выпадет, столько и есть. */
-  private def ratKingDrop(boss: MiniBoss, heroLvl: Long, ingredientLeft: Boolean, rng: Rng): (LootDrop, Rng) = {
-    val (roll, scale, r1) = rollPastIngredient(RatKingBloodTickets, RatKingTickets, ingredientLeft, rng)
-    if (roll < RatKingBloodTickets) (ingredientOf(boss), r1)
-    else if (roll < RatKingBloodTickets + RatKingRuneTickets) bigRune(r1)
-    else if (roll < RatKingBloodTickets + RatKingRuneTickets + RatKingWormTickets)
-      (LootDrop.Gear(MaterialGenerator.item(MaterialKind.PlagueWorms)), r1)
-    else if (roll < RatKingBloodTickets + RatKingRuneTickets + RatKingWormTickets + RatKingChiselTickets) (chisel, r1)
-    else setDrop(boss, heroLvl, scale, RatKingTickets, r1)
-  }
+  /** С Крысиного короля: кровь — половина бросков, пока она не выпала; прочее
+    * — по билетам: большая руна 50, чумные черви 25, резец рунописца 18 и вещи
+    * набора «Крыса» 32; редкость вещи решается общим порядком (см.
+    * [[setRarity]]). Черви — не его ингредиент: их сколько выпадет, столько и
+    * есть. */
+  private def ratKingDrop(boss: MiniBoss, heroLvl: Long, ingredientLeft: Boolean, rng: Rng): (LootDrop, Rng) =
+    rollBossScale(RatKingTickets, ingredientLeft, rng) match {
+      case (None, _, _, r1) => (ingredientOf(boss), r1)
+      case (Some(roll), rolled, full, r1) =>
+        if (roll < RatKingRuneTickets) bigRune(r1)
+        else if (roll < RatKingRuneTickets + RatKingWormTickets)
+          (LootDrop.Gear(MaterialGenerator.item(MaterialKind.PlagueWorms)), r1)
+        else if (roll < RatKingRuneTickets + RatKingWormTickets + RatKingChiselTickets) (chisel, r1)
+        else setDrop(boss, heroLvl, rolled, full, r1)
+    }
 
-  /** С Некроманта: четверть — проклятые кости, 40% роллов — вещь его набора
-    * (редкость по общему порядку, см. [[setRarity]]), 10% — резец рунописца
-    * (взяты у вещей), последняя четверть — расколотый череп с парой дублонов. Череп здесь не случайный камень, а
-    * именно череп: ему и место в оружии некроманта. Кости уже выпали — бросок
-    * идёт без них. */
-  private def necromancerDrop(boss: MiniBoss, heroLvl: Long, ingredientLeft: Boolean, rng: Rng): (List[LootDrop], Rng) = {
-    val (roll, scale, r1) = rollPastIngredient(NecroBonesUntil, 100L, ingredientLeft, rng)
-    if (roll < NecroBonesUntil) (List(ingredientOf(boss)), r1)
-    else if (roll < NecroGearUntil)
-      setDrop(boss, heroLvl, scale, 100L, r1) match {
-        case (drop, r) => (List(drop), r)
-      }
-    else if (roll < NecroChiselUntil) (List(chisel), r1)
-    // Череп идёт с парой дублонов: это один ролл, но две записи в добыче.
-    else (List(
-      LootDrop.Gem(GemGenerator.item(pangea.model.item.GemKind.Skull, GemModel.MinGrade)),
-      LootDrop.Doubloons(NecroSkullDoubloons)), r1)
-  }
+  /** С Некроманта: проклятые кости — половина бросков, пока они не выпали;
+    * прочее — вещь его набора (40 долей, редкость по общему порядку, см.
+    * [[setRarity]]), резец рунописца (10) и расколотый череп с парой дублонов
+    * (25). Череп здесь не случайный камень, а именно череп: ему и место в
+    * оружии некроманта. */
+  private def necromancerDrop(boss: MiniBoss, heroLvl: Long, ingredientLeft: Boolean, rng: Rng): (List[LootDrop], Rng) =
+    rollBossScale(NecroOthers, ingredientLeft, rng) match {
+      case (None, _, _, r1) => (List(ingredientOf(boss)), r1)
+      case (Some(roll), rolled, full, r1) =>
+        if (roll < NecroGearUntil)
+          setDrop(boss, heroLvl, rolled, full, r1) match {
+            case (drop, r) => (List(drop), r)
+          }
+        else if (roll < NecroChiselUntil) (List(chisel), r1)
+        // Череп идёт с парой дублонов: это один ролл, но две записи в добыче.
+        else (List(
+          LootDrop.Gem(GemGenerator.item(pangea.model.item.GemKind.Skull, GemModel.MinGrade)),
+          LootDrop.Doubloons(NecroSkullDoubloons)), r1)
+    }
 
-  /** Границы роллов Некроманта: кости 25%, вещь набора 40%, резец рунописца 10%,
-    * череп с дублонами — остаток. */
-  val NecroBonesUntil:  Long = 25L
-  val NecroGearUntil:   Long = 65L
-  val NecroChiselUntil: Long = 75L
+  /** Границы прочей добычи Некроманта (0..74): до 40 — вещь набора, до 50 —
+    * резец рунописца, дальше — череп с дублонами. */
+  val NecroGearUntil:   Long = 40L
+  val NecroChiselUntil: Long = 50L
+  val NecroOthers:      Long = 75L
   /** Сколько дублонов идёт вместе с черепом. */
   val NecroSkullDoubloons: Long = 2L
 
-  /** Билеты добычи Крысиного короля: кровь 50, большая руна 50, черви 25, резец
-    * рунописца 18 (десятая часть всех) и вещь набора 32. */
-  val RatKingBloodTickets:  Long = 50L
+  /** Билеты прочей добычи Крысиного короля: большая руна 50, черви 25, резец
+    * рунописца 18 и вещь набора 32. Кровь — ещё столько же сверх них. */
   val RatKingRuneTickets:   Long = 50L
   val RatKingWormTickets:   Long = 25L
   val RatKingChiselTickets: Long = 18L
   val RatKingGearTickets:   Long = 32L
-  val RatKingTickets:       Long = RatKingBloodTickets + RatKingRuneTickets + RatKingWormTickets +
-    RatKingChiselTickets + RatKingGearTickets
+  val RatKingTickets:       Long = RatKingRuneTickets + RatKingWormTickets + RatKingChiselTickets + RatKingGearTickets
 
-  /** Резец рунописца: десятая часть бросков добычи каждого минибосса (см.
+  /** Резец рунописца: есть в прочей добыче каждого минибосса (см.
     * `pangea.model.item.Chisel`). */
   private def chisel: LootDrop = LootDrop.Gear(MaterialGenerator.item(MaterialKind.RuneChisel))
 
@@ -571,27 +580,21 @@ object LootGenerator {
         (Some(item.copy(name = name, set = Some(set))), r3)
     }
 
-  /** Шанс (в %), что предмет с элементаля окажется ингредиентом, а не вещью набора. */
-  val ElementalIngredientChancePct: Long = 40L
+  /** Прочая добыча элементаля, в долях: большая руна, резец рунописца и вещь
+    * его набора — какой она редкости, решает общий для минибоссов порядок (см.
+    * [[setRarity]]). Ингредиент — ещё столько же, сколько всё это вместе. */
+  val ElementalRuneWeight: Long   = 10L
+  val ElementalChiselWeight: Long = 10L
+  val ElementalGearWeight: Long   = 40L
+  val ElementalOthers: Long       = ElementalRuneWeight + ElementalChiselWeight + ElementalGearWeight
 
-  /** Большая руна с элементаля — забраны у его ингредиента. */
-  val ElementalRuneChancePct: Long = 10L
-
-  /** Резец рунописца с элементаля — забраны у вещей набора. */
-  val ElementalChiselChancePct: Long = 10L
-
-  /** Остальные роллы — вещь его набора; какой она редкости, решает общий для
-    * минибоссов порядок (см. [[setRarity]]). */
-  val ElementalGearChancePct: Long = 40L
-
-  /** Границы роллов Джо (0..99): до 25 — кожа упыря, до 45 — усилитель, до 65 —
-    * дублоны, до 75 — большая руна (по пять процентов забраны у усилителя и у
-    * дублонов), до 85 — резец рунописца, дальше — вещь набора. */
-  val JoeSkinUntil: Long      = 25L
-  val JoeGemUntil: Long       = 45L
-  val JoeDoubloonsUntil: Long = 65L
-  val JoeRuneUntil: Long      = 75L
-  val JoeChiselUntil: Long    = 85L
+  /** Границы прочей добычи Джо (0..74): до 20 — усилитель, до 40 — дублоны, до
+    * 50 — большая руна, до 60 — резец рунописца, дальше — вещь набора. */
+  val JoeGemUntil: Long       = 20L
+  val JoeDoubloonsUntil: Long = 40L
+  val JoeRuneUntil: Long      = 50L
+  val JoeChiselUntil: Long    = 60L
+  val JoeOthers: Long         = 75L
 
   /** Сколько дублонов за уровень босса роняет Джо и с каким разбросом (в %). */
   val JoeDoubloonsPerLvl: Long   = 2L

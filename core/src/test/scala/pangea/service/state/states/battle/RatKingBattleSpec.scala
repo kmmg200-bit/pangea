@@ -236,7 +236,7 @@ object RatKingBattleSpec extends ZIOSpecDefault {
 
     // ── Добыча ───────────────────────────────────────────────────────────────
 
-    test("дроп с короля: кровь и руна по два билета, черви и вещи «Крысы» — по одному") {
+    test("дроп с короля: кровь — половина бросков, пока не выпала; руна по два билета, черви и вещи «Крысы» — по одному") {
       val drops = (1L to 2000L).toList.flatMap(s =>
         LootGenerator.rollMiniBoss(king, bossLvl, 10L, Rng(s))._1)
       val mats  = drops.collect { case LootDrop.Gear(i) => i.material }.flatten
@@ -246,11 +246,11 @@ object RatKingBattleSpec extends ZIOSpecDefault {
       val worms = mats.count(_ == MaterialKind.PlagueWorms)
       val chisels = mats.count(_ == MaterialKind.RuneChisel)
       assertTrue(mats.toSet == Set[MaterialKind](MaterialKind.RatKingBlood, MaterialKind.PlagueWorms, MaterialKind.RuneChisel)) &&
-      // резцу 18 билетов из 175 — меньше, чем червям
+      // резцу 18 билетов, червям 25
       assertTrue(chisels > worms / 2 && chisels < worms) &&
       assertTrue(runes.forall(_.contains("Большая"))) &&
-      // 50 : 50 : 25 — крови и рун поровну, червей вдвое меньше
-      assertTrue(blood > worms * 3 / 2 && blood < worms * 5 / 2) &&
+      // кровь — половина первых бросков: её втрое-вчетверо больше червей; руны — вдвое
+      assertTrue(blood > worms * 3 && blood < worms * 9 / 2) &&
       assertTrue(runes.size > worms * 3 / 2 && runes.size < worms * 5 / 2) &&
       // вещи у него только своего набора, 32 билета: чуть больше, чем червей
       assertTrue(gear.nonEmpty && gear.forall(_.set.contains(ItemSet.Rat))) &&
