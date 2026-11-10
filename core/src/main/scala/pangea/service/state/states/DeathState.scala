@@ -141,9 +141,13 @@ case class DeathState(
                       else ZIO.none
       // Засада у каравана: плата, опыт и «Квест завершён» — готовым текстом
       // (`wakeNote`), после рассказа Барти. Опыт ложится поверх штрафа за смерть.
-      dealNote     <- if (ambush) BigDealQuest.pay(heroDao, inventoryRepo, content, user,
+      // Как «Большое дело» закончили другие — следом, как у «Письма Марисе».
+      dealPaid     <- if (ambush) BigDealQuest.pay(heroDao, inventoryRepo, content, user,
                         hero.copy(exp = newExp, silver = newSilver), BigDealQuest.FallenDoubloons, "barti.caravan.fallenReward")
                       else ZIO.none
+      dealStats    <- if (dealPaid.isDefined) QuestOutcomeLog.recordAndCount(outcomes, content, hero, QuestOutcome.BigDealFell)
+                      else ZIO.none
+      dealNote      = dealPaid.map(QuestOutcomeLog.withStats(_, dealStats))
       wake          = if (collector) Json.obj(
                         "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
                         "wakeLines" -> List(

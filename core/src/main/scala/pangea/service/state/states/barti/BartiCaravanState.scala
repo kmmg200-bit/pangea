@@ -3,16 +3,17 @@ package pangea.service.state.states.barti
 import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder, HCursor, Json}
 import pangea.dao.hero.HeroDao
+import pangea.dao.quest.QuestOutcomeDao
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.model.battle.SoloPveBattle
 import pangea.model.hero.Hero
-import pangea.model.quest.Difficulty
+import pangea.model.quest.{Difficulty, QuestOutcome}
 import pangea.model.skill.MonsterEnergy
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
 import pangea.service.state.states.LootState.LootData
-import pangea.service.state.{BigDealQuest, NpcQuestLog, State, UserAction}
+import pangea.service.state.{BigDealQuest, NpcQuestLog, QuestOutcomeLog, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 /** «Большое дело», шаг 3: каджитский караван у Сухого колодца на Западной
@@ -30,7 +31,8 @@ import zio.{Random, Task, ZIO}
 case class BartiCaravanState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
-  content:       SceneContent
+  content:       SceneContent,
+  outcomes:      Option[QuestOutcomeDao] = None
 ) extends State {
 
   private val branch = new Branch(
@@ -102,15 +104,17 @@ case class BartiCaravanState(
     } yield res
 
   /** Стража перебита: каджиты возвращаются и платят сполна; отойдя от костров,
-    * Барти проговаривается. Задание закрыто. */
+    * Барти проговаривается. Задание закрыто; исход — в подсчёт «как и вы». */
   private def paid(user: User, renderer: Renderer): Task[Unit] =
     for {
-      _    <- heroDao.writeSceneData(user.userId, Json.Null)
-      hero <- getHero(user)
-      note <- BigDealQuest.pay(heroDao, inventoryRepo, content, user, hero, BigDealQuest.WonDoubloons, "barti.caravan.reward")
-      _    <- renderer.show(user, Screen(kin(hero, "paid"), Nil))
-      _    <- renderer.show(user, Screen(content.text("barti.caravan.slip").trim, Nil))
-      _    <- renderer.show(user, Screen(note.getOrElse(""), List(out)))
+      _     <- heroDao.writeSceneData(user.userId, Json.Null)
+      hero  <- getHero(user)
+      note  <- BigDealQuest.pay(heroDao, inventoryRepo, content, user, hero, BigDealQuest.WonDoubloons, "barti.caravan.reward")
+      stats <- if (note.isDefined) QuestOutcomeLog.recordAndCount(outcomes, content, hero, QuestOutcome.BigDealWon)
+               else ZIO.none
+      _     <- renderer.show(user, Screen(kin(hero, "paid"), Nil))
+      _     <- renderer.show(user, Screen(content.text("barti.caravan.slip").trim, Nil))
+      _     <- renderer.show(user, Screen(note.fold("")(QuestOutcomeLog.withStats(_, stats)), List(out)))
     } yield ()
 
   private def getHero(user: User): Task[Hero] =

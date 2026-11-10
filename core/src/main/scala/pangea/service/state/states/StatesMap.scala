@@ -359,7 +359,7 @@ object StatesMap {
           StoryGraveyard    -> StoryGraveyardState(heroDao, inventoryRepo, itemRepo, content, outcomes, Some(parcels)),
           BartiMeet         -> BartiMeetState(heroDao, inventoryRepo, itemRepo, content),
           BartiHouse        -> BartiHouseState(heroDao, inventoryRepo, content),
-          BartiCaravan      -> BartiCaravanState(heroDao, inventoryRepo, content),
+          BartiCaravan      -> BartiCaravanState(heroDao, inventoryRepo, content, outcomes),
           RaceQuest         -> RaceQuestState(heroDao, inventoryRepo, content),
           NameChange        -> NameChangeState(heroDao, inventoryRepo, content),
           Outskirts -> OutskirtsState(

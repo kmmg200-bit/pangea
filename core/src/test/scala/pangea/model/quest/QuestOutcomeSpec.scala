@@ -28,17 +28,20 @@ object QuestOutcomeSpec extends ZIOSpecDefault {
         "storyTool" -> "shadow",
         "storyTool" -> "shield",
         "storyTool" -> "alone",
+        "bigDeal"   -> "won",
+        "bigDeal"   -> "fell",
         "firstSteps" -> "cottage",
         "firstSteps" -> "townhouse",
         "firstSteps" -> "island"
       ))
     },
-    test("отслеживаются задания с развилкой: Мариса — пять исходов, мурлоки — три, дружина — два, «Порох у причала» — три, «Список» — два, Рубеж I — три пути") {
+    test("отслеживаются задания с развилкой: Мариса — пять исходов, мурлоки — три, дружина — два, «Порох у причала» — три, «Список» — два, Рубеж I — три пути, «Большое дело» — два") {
       val tracked = NpcQuest.values.filter(q => QuestOutcome.of(q).nonEmpty).toList
       assertTrue(tracked == List(NpcQuest.Marisa, NpcQuest.Murloc, NpcQuest.LostSquad, NpcQuest.StoryPowder, NpcQuest.StoryList,
-        NpcQuest.StoryTool)) &&
+        NpcQuest.StoryTool, NpcQuest.BigDeal)) &&
       assertTrue(QuestOutcome.of(NpcQuest.Marisa).size == 5 && QuestOutcome.of(NpcQuest.Murloc).size == 3 &&
-        QuestOutcome.of(NpcQuest.LostSquad).size == 2 && QuestOutcome.of(NpcQuest.StoryTool).size == 3) &&
+        QuestOutcome.of(NpcQuest.LostSquad).size == 2 && QuestOutcome.of(NpcQuest.StoryTool).size == 3 &&
+        QuestOutcome.of(NpcQuest.BigDeal).size == 2) &&
       // «Встать на ноги» — по дому, строка исхода — ключ дома
       assertTrue(QuestOutcome.of(FirstSteps.Key).map(_.entryName) == pangea.model.home.House.values.map(_.key) &&
         QuestOutcome.FirstStepsIsland.titleKey == "firstSteps.title" &&

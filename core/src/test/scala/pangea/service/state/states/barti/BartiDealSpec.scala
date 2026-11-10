@@ -6,7 +6,7 @@ import pangea.model.battle.SoloPveBattle
 import pangea.model.hero.{Hero, LoreData}
 import pangea.model.item.{Item, QuestItemKind}
 import pangea.model.monster.{Monster, Race, Rarity}
-import pangea.model.quest.{DailyQuests, Difficulty, NpcQuest, NpcQuests}
+import pangea.model.quest.{DailyQuests, Difficulty, NpcQuest, NpcQuests, QuestOutcome}
 import pangea.model.squad.AllyKind
 import pangea.model.state.StateType
 import pangea.model.stats.FightStats
@@ -142,19 +142,21 @@ object BartiDealSpec extends ZIOSpecDefault {
               assertTrue(MercenariesState.key(AllyKind.CaravanKhajiit) == "caravanKhajiit")
     },
 
-    test("стража перебита: каджиты платят сполна — 125 дублонов, Барти проговаривается в сторонке; адрес уходит, задание закрыто") {
+    test("стража перебита: каджиты платят сполна — 125 дублонов, Барти проговаривается в сторонке; адрес уходит, задание закрыто, исход — в подсчёт") {
       def win(h: Hero) =
         for {
           d    <- dao(h, deal(3))
           inv   = TestInventoryRepository.withItems(List(addressItem))
+          o    <- TestQuestOutcomeDao.make
           r    <- TestRenderer.make
           c    <- content
           _    <- d.writeSceneData(userId, BartiCaravanState.WonMark.asJson)
-          _    <- BartiCaravanState(d, inv, c).enter(testUser, r)
+          _    <- BartiCaravanState(d, inv, c, Some(o)).enter(testUser, r)
           said <- texts(r)
           q    <- questOf(d)
           after <- heroOf(d)
-        } yield (said, q, after, inv.snapshot)
+          mine <- o.of(after.id, NpcQuest.BigDeal)
+        } yield (said, q, after, inv.snapshot, mine)
       for {
         human <- win(hero())
         cat   <- win(hero(race = Race.Khajiit))
@@ -162,13 +164,14 @@ object BartiDealSpec extends ZIOSpecDefault {
                 human._1.contains("Мы отходим от костров") && human._1.contains("Это ведь не из-за меня?") &&
                 human._1.contains("🟡 +125") && human._1.contains("📜 Квест «Большое дело» завершён")) &&
               assertTrue(cat._1.contains("Брату — тем более")) &&
-              assertTrue(List(human, cat).forall { case (_, q, h, bag) =>
+              assertTrue(List(human, cat).forall { case (said, q, h, bag, mine) =>
                 q.isDone(NpcQuest.BigDeal) && h.doubloons == 10L + BigDealQuest.WonDoubloons && h.exp > 0L &&
-                  !bag.exists(_.questItem.contains(QuestItemKind.BartiAddress))
+                  !bag.exists(_.questItem.contains(QuestItemKind.BartiAddress)) &&
+                  mine.contains(QuestOutcome.BigDealWon) && said.contains("Вы — среди первых, кто закончил «Большое дело»")
               })
     },
 
-    test("пал в засаде — задание всё равно закрыто: 85 дублонов, рассказ Барти, проснуться на Торговой площади") {
+    test("пал в засаде — задание всё равно закрыто: 85 дублонов, рассказ Барти, проснуться на Торговой площади; исход — в подсчёт") {
       val mob = Monster(0L, 11L, Race.Human, Rarity.Uncommon,
         FightStats(atk = 1, hp = 10, armor = 0, defence = 0, evasion = 0, accuracy = 1, energy = 0))
       for {
@@ -177,16 +180,19 @@ object BartiDealSpec extends ZIOSpecDefault {
         _     <- d.writeActiveBattle(userId, SoloPveBattle.from(mob, hero()).copy(story = Some(BigDealQuest.AmbushStory)).asJson)
         r     <- TestRenderer.make
         c     <- content
+        o     <- TestQuestOutcomeDao.make
         _     <- TestRandom.feedInts(1)
-        _     <- DeathState(d, inv, c).enter(testUser, r)
+        _     <- DeathState(d, inv, c, None, Some(o)).enter(testUser, r)
         scene <- d.readSceneData(userId)
         q     <- questOf(d)
         h     <- heroOf(d)
+        mine  <- o.of(h.id, NpcQuest.BigDeal)
         note   = scene.flatMap(_.hcursor.get[String]("wakeNote").toOption).getOrElse("")
         story  = c.text("barti.caravan.fallen")
       } yield assertTrue(scene.exists(_.hcursor.get[String]("wakeTo").toOption.contains("MarketSquare"))) &&
               assertTrue(scene.exists(_.hcursor.get[List[String]]("wakeLines").toOption.contains(List("barti.caravan.fallen")))) &&
-              assertTrue(note.contains("🟡 +85") && note.contains("📜 Квест «Большое дело» завершён")) &&
+              assertTrue(note.contains("🟡 +85") && note.contains("📜 Квест «Большое дело» завершён") &&
+                note.contains("Вы — среди первых, кто закончил «Большое дело»") && mine.contains(QuestOutcome.BigDealFell)) &&
               assertTrue(story.contains("Сабли из-под тюков") && story.contains("доля за охрану")) &&
               assertTrue(q.isDone(NpcQuest.BigDeal) && h.doubloons == 10L + BigDealQuest.FallenDoubloons &&
                 !inv.snapshot.exists(_.questItem.contains(QuestItemKind.BartiAddress)))

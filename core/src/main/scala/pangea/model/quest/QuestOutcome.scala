@@ -9,7 +9,8 @@ import enumeratum._
   *
   * Отслеживаются задания, где выбор и правда разный: «Письмо Марисе»,
   * «Деревня Мурлоков», «Пропавшая дружина», главы основной линии с развилкой и
-  * её рубежи — и «Встать на ноги»: в каком доме герой его закончил. */
+  * её рубежи, «Большое дело» Барти (отбились или пали в засаде) — и «Встать на
+  * ноги»: в каком доме герой его закончил. */
 sealed abstract class QuestOutcome(override val entryName: String, val questKey: String) extends EnumEntry {
 
   /** Где в `scenes.yaml` название задания. */
@@ -86,6 +87,14 @@ object QuestOutcome extends Enum[QuestOutcome] {
 
   /** Сам по себе: свёл счёты и забрал тайник ячейки. */
   case object ToolAlone extends QuestOutcome("alone", NpcQuest.StoryTool.key)
+
+  // ── «Большое дело» Барти: чем кончилась засада ночной стражи у каравана ─────
+
+  /** Отбился от стражи сам — каджиты заплатили сполна. */
+  case object BigDealWon extends QuestOutcome("won", NpcQuest.BigDeal.key)
+
+  /** Пал в засаде — каджиты отбились сами и заплатили меньше. */
+  case object BigDealFell extends QuestOutcome("fell", NpcQuest.BigDeal.key)
 
   // ── «Встать на ноги»: в каком доме засчитано (строка — House.key) ─────────────
 
