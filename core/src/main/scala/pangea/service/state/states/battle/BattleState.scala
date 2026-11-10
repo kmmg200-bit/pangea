@@ -3215,6 +3215,21 @@ case class BattleState(
   private def victoryByHero(hero: Hero, battle: SoloPveBattle, log: Vector[String], nowMs: Long, skip: Set[Long]): TurnResult =
     TurnResult(endOfRoundHero(hero, nowMs), battle.tickBuffs(skip), log, Outcome.Victory)
 
+  /** Сколько снимет с героя один тик горения. По нему же экран боя пишет
+    * прогноз у HP героя (🔥-N): что обещано, то тик и снимет. */
+  private def heroBurnDamage(hero: Hero, battle: SoloPveBattle, burn: Burn, nowMs: Long): Long =
+    (bossDamageTaken(hero, battle, burn.damageOn(hero.effectiveMaxHp(nowMs))) * hero.sets.fireTakenMult).toLong
+
+  /** Сколько снимет с героя один тик яда — с поправкой «Крысы» (порог 10).
+    * Его же показывает прогноз у HP героя (🟢-N). */
+  private def heroPoisonDamage(hero: Hero, poison: Poison, nowMs: Long): Long =
+    (poison.damageOn(hero.effectiveMaxHp(nowMs)) * hero.sets.heroDotTakenMult).toLong
+
+  /** Сколько снимет с героя один тик кровотечения — с поправкой «Крысы»
+    * (порог 10). Его же показывает прогноз у HP героя (🔴-N). */
+  private def heroBleedDamage(hero: Hero, bleed: Bleed, nowMs: Long): Long =
+    (bleed.damageOn(hero.effectiveMaxHp(nowMs)) * hero.sets.heroDotTakenMult).toLong
+
   /** Тик эффектов ГЕРОЯ в конце раунда: реген лечит на `pct`% макс.HP и слабеет.
     * Возвращает обновлённых героя и бой (с ослабленным регеном) плюс строку
     * эффекта (пустая, если регена нет). */
@@ -3235,8 +3250,7 @@ case class BattleState(
     // и урон огня по ней выше, и само пламя растёт быстрее.
     val (burnedHero, burnedBattle, burnLine) = battle0.effects.heroBurn match {
       case Some(burn) =>
-        val maxHp = hero.effectiveMaxHp(nowMs)
-        val dmg   = (bossDamageTaken(hero, battle0, burn.damageOn(maxHp)) * hero.sets.fireTakenMult).toLong
+        val dmg   = heroBurnDamage(hero, battle0, burn, nowMs)
         val grown = (1L to hero.sets.heroBurnGrowthMult.max(1L)).foldLeft(burn)((b, _) => b.grown)
         (hero.copy(fightStats = hero.fightStats.copy(hp = (hero.fightStats.hp - dmg).max(0L))),
          battle0.copy(effects = battle0.effects.copy(heroBurn = Some(grown))),
@@ -3248,10 +3262,9 @@ case class BattleState(
     // само отравление («Ядовитые зловония…»), а не его последствия.
     // «Крыса» (порог 10): зараза герою не новость — яд и кровь снимают с него
     // вдвое меньше.
-    val dotMult = hero.sets.heroDotTakenMult
     val (poisonedHero, poisonedBattle, poisonLine) = burnedBattle.effects.heroPoison match {
       case Some(poison) =>
-        val dmg = (poison.damageOn(burnedHero.effectiveMaxHp(nowMs)) * dotMult).toLong
+        val dmg = heroPoisonDamage(burnedHero, poison, nowMs)
         (burnedHero.copy(fightStats = burnedHero.fightStats.copy(
            hp = (burnedHero.fightStats.hp - dmg).max(0L))),
          burnedBattle.copy(effects = burnedBattle.effects.copy(heroPoison = poison.decayed)),
@@ -3263,7 +3276,7 @@ case class BattleState(
     // «Крысой» (порог 10) рана затягивается, как слабеет яд.
     val (bledHero, bledBattle, bleedLine) = poisonedBattle.effects.heroBleed match {
       case Some(bleed) =>
-        val dmg   = (bleed.damageOn(poisonedHero.effectiveMaxHp(nowMs)) * dotMult).toLong
+        val dmg   = heroBleedDamage(poisonedHero, bleed, nowMs)
         val decay = hero.sets.heroBleedDecayPerRound
         val left  = if (decay <= 0) Some(bleed) else Bleed.of(bleed.pct - decay)
         (poisonedHero.copy(fightStats = poisonedHero.fightStats.copy(
@@ -6343,6 +6356,20 @@ case class BattleState(
       ).flatten
       if (parts.isEmpty) "" else " (" + parts.mkString(" ") + ")"
     }
+    // Раны на ГЕРОЕ — тем же видом у его HP: яд 🟢 / кровотечение 🔴 / горение
+    // 🔥 и сколько снимет ближайший тик, тем же расчётом, что сам тик
+    // (tickHeroEffects), — по настоящему бою, а не по подставленной цели.
+    // Герой-нежить яд и кровь не берёт: тик гасит их без урона — не пишем.
+    val heroFx     = battle0.effects
+    val undeadHero = hero.sets.heroIsUndead
+    val heroDots = {
+      val parts = List(
+        heroFx.heroPoison.filterNot(_ => undeadHero).map(p => s"${Poison.Icon}-${heroPoisonDamage(hero, p, nowMs)}"),
+        heroFx.heroBleed.filterNot(_ => undeadHero).map(b => s"${Bleed.Icon}-${heroBleedDamage(hero, b, nowMs)}"),
+        heroFx.heroBurn.map(bn => s"${Burn.Icon}-${heroBurnDamage(hero, battle0, bn, nowMs)}")
+      ).flatten
+      if (parts.isEmpty) "" else " (" + parts.mkString(" ") + ")"
+    }
     val beltHpRegen    = battle.effects.heroRegen.map(_.healOn(maxHp)).getOrElse(0L)
     // Реген HP/ход = зелье + «Целебный» и наборы (% макс.HP) + черепа в снаряжении (промилле макс.HP).
     val hpRegenTotal   = beltHpRegen + maxHp * (hero.passives.hpRegenPct + hero.sets.hpRegenPct) / 100L +
@@ -6357,6 +6384,7 @@ case class BattleState(
       "monsterHp"       -> battle.monsterCurrentHp.toString,
       "monsterMax"      -> battle.monsterStats.hp.toString,
       "monsterPoison"   -> monsterPoison,
+      "heroDots"        -> heroDots,
       "heroRegen"       -> heroRegen,
       "monsterArmor"    -> battle.monsterCurrentArmor.toString,
       "monsterMaxArmor" -> battle.monsterStats.armor.toString,

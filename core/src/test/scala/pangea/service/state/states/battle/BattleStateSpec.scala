@@ -2,7 +2,7 @@ package pangea.service.state.states.battle
 
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.model.battle.{Buff, Burn, HeroBattleState, Regen, SoloPveBattle}
+import pangea.model.battle.{Bleed, Buff, Burn, HeroBattleState, Poison, Regen, SoloPveBattle}
 import pangea.model.item.{BeltSlot, FlaskKind, Gem, GemKind, Item, ItemDetails, ItemType, Rarity => ItemRarity}
 import pangea.model.monster.{Race, Rarity}
 import pangea.model.skill.MonsterEnergy
@@ -42,6 +42,10 @@ object BattleStateSpec extends ZIOSpecDefault {
   /** Встречается ли подстрока в тексте ровно один раз. */
   private def once(text: String, needle: String): Boolean =
     text.sliding(needle.length).count(_ == needle) == 1
+
+  /** Строка HP героя на экране боя — первая после «🧙 Вы:». */
+  private def heroHpLine(texts: List[String]): String =
+    texts.flatMap(_.linesIterator.toList).dropWhile(_ != "🧙 Вы:").drop(1).headOption.getOrElse("")
 
   // Герой с высокой точностью — попадает практически всегда
   private def strongHero = TestFixtures.hero(userId).copy(
@@ -377,6 +381,56 @@ object BattleStateSpec extends ZIOSpecDefault {
         result <- state.action(testUser, tap("Attack"), renderer)
         hero   <- heroDao.getHeroByUserId(userId).map(_.get)
       } yield assertTrue(result == StateType.Death) && assertTrue(hero.fightStats.hp == 0L)
+    },
+
+    // ── Раны на герое — на экране боя, как у моба ────────────────────────────
+    test("раны на герое видны у его HP, как у моба: 🟢 яд, 🔴 кровь, 🔥 огонь — по урону тика") {
+      val b = plainSteelBattle.copy(effects = plainSteelBattle.effects.copy(
+        heroPoison = Some(Poison(8)), heroBleed = Some(Bleed(2)), heroBurn = Some(Burn(4))))
+      val maxHp = strongHero.effectiveMaxHp(0L)
+      for {
+        t <- makeState(strongHero, b)
+        (state, _, renderer) = t
+        _       <- state.enter(testUser, renderer)
+        screens <- renderer.sentScreens
+        texts    = screens.map(_.text)
+        mobLine  = texts.flatMap(_.linesIterator.toList).find(_.startsWith("❤ ")).getOrElse("")
+      } yield assertTrue(heroHpLine(texts).startsWith(
+                s"❤ ${strongHero.fightStats.hp}/$maxHp (🟢-${maxHp * 8 / 100} 🔴-${maxHp * 2 / 100} 🔥-${maxHp * 4 / 100})")) &&
+              // у моба своих ран нет — и чужие к нему не приписаны
+              assertTrue(mobLine.startsWith("❤ 9999/9999") && !mobLine.contains("("))
+    },
+
+    test("что обещает прогноз у HP героя, то и снимает тик в конце раунда") {
+      val b = plainSteelBattle.copy(effects = plainSteelBattle.effects.copy(heroPoison = Some(Poison(8))))
+      for {
+        t <- makeState(strongHero, b)
+        (state, _, renderer) = t
+        _        <- state.enter(testUser, renderer)
+        before   <- renderer.sentScreens
+        promised  = "🟢-(\\d+)".r.findFirstMatchIn(heroHpLine(before.map(_.text))).map(_.group(1))
+        _        <- TestRandom.feedInts(60, 1) *> TestRandom.feedLongs(100L, 100L)
+        _        <- state.action(testUser, tap("Attack"), renderer)
+        after    <- renderer.sentScreens
+      } yield assertTrue(promised.isDefined) &&
+              assertTrue(promised.exists(n => after.exists(_.text.contains(s"Яд снимает с вас $n HP"))))
+    },
+
+    test("герой-нежить: яд и кровь у HP не пишутся — тик гасит их без урона; огонь — с наценкой нежити") {
+      val undead = strongHero.copy(equipment = setEquipment(pangea.model.item.ItemSet.Necromancer, 10, None))
+      val b = plainSteelBattle.copy(effects = plainSteelBattle.effects.copy(
+        heroPoison = Some(Poison(8)), heroBleed = Some(Bleed(2)), heroBurn = Some(Burn(4))))
+      val maxHp = undead.effectiveMaxHp(0L)
+      val fire  = (Burn(4).damageOn(maxHp) * undead.sets.fireTakenMult).toLong
+      for {
+        t <- makeState(undead, b)
+        (state, _, renderer) = t
+        _       <- state.enter(testUser, renderer)
+        screens <- renderer.sentScreens
+        line     = heroHpLine(screens.map(_.text))
+      } yield assertTrue(undead.sets.heroIsUndead) &&
+              assertTrue(line.contains(s"(🔥-$fire)")) &&
+              assertTrue(!line.contains("🟢") && !line.contains("🔴"))
     },
 
     // ── Пояс: сумка расходников ───────────────────────────────────────────────
