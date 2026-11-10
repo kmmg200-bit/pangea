@@ -304,8 +304,10 @@ case class Hero(
     // процент от достижений («Добейте меня...») — туда же.
     val g = gems
     val s = sets
+    // Великанье зелье — до конца боя (снимает его конец боя, см. BattleState.afterBattle).
+    val giant = if (statBoosts.hasActive(pangea.model.item.BrewRates.GiantBoost, nowMs)) pangea.model.item.BrewRates.GiantHpPct.toLong else 0L
     (subtotal + g.flatHp + s.flatHp + Achievement.hpBonus(this)) *
-      (100L + g.maxHpBonusPct + s.maxHpBonusPct + Achievement.hpPct(this)) / 100L
+      (100L + g.maxHpBonusPct + s.maxHpBonusPct + Achievement.hpPct(this) + giant) / 100L
   }
 
   def traumaRemainingText(nowMs: Long): Option[String] =

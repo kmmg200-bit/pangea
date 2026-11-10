@@ -47,6 +47,12 @@ object BrewEffect {
   /** Защита до конца боя: снимает с героя то, что этого толка уже висит, и не
     * даёт лечь новому (см. [[pangea.model.battle.Ward]]). Только из пояса. */
   final case class Ward(ward: pangea.model.battle.Ward) extends BrewEffect
+  /** Великанье зелье: до конца боя больше наибольшее здоровье, и прибавка
+    * сразу налита. Только из пояса. */
+  case object Giant extends BrewEffect
+  /** Ровная регенерация: `pct`% здоровья в раунд, `rounds` раундов, не слабея
+    * (отвар лунного побега). Только из пояса. */
+  final case class SteadyRegen(pct: Int, rounds: Int) extends BrewEffect
 }
 
 /** Отвары: три травы в кубе Азата → порции ([[portions]]). Из трав первого
@@ -86,6 +92,7 @@ sealed abstract class BrewKind(
     * места на место можно только в строю. */
   def combat: Boolean = effect match {
     case BrewEffect.Potion(_) | BrewEffect.Shift | BrewEffect.Ward(_) => true
+    case BrewEffect.Giant | BrewEffect.SteadyRegen(_, _)              => true
     case _                                                            => false
   }
 
@@ -155,6 +162,17 @@ object BrewRates {
 
   /** Сколько ходов он терпит, прежде чем удрать. */
   val SentenceRounds: Int = 3
+
+  /** Великанье зелье: на сколько процентов больше наибольшее здоровье, имя бафа и
+    * его предельный срок. Сходит он в конце боя; срок — на случай, если бой
+    * кончился там, где об этом не узнали. */
+  val GiantHpPct: Int    = 20
+  val GiantBoost: String = "brew:giant"
+  val GiantMs: Long      = 60L * 60L * 1000L
+
+  /** Отвар лунного побега: сколько здоровья в раунд и сколько раундов, не слабея. */
+  val MoonRegenPct: Int    = 12
+  val MoonRegenRounds: Int = 5
 
   /** Пузырь: имя бафа. Срока у него нет — он ждёт смерти, сколько бы её ни ждать. */
   val BubbleBoost: String = "brew:bubble"
@@ -394,6 +412,18 @@ object BrewKind extends Enum[BrewKind] {
     List(IronFern, Nettle, Calendula),
     "Бурый, густой, отдаёт ржавчиной и кузней. Раны под ним стягиваются коркой: кровь унимается, а новые раны до конца боя не кровят.",
     BrewEffect.Ward(pangea.model.battle.Ward.Bleed))
+
+  case object GiantBrew extends BrewKind(
+    "Великанье зелье",
+    List(GiantRoot, Sage, Chamomile),
+    s"Тяжёлое, землистое, будто пьёшь сам корень. Плечи раздаются вширь, дыхание становится глубже: +${BrewRates.GiantHpPct}% к наибольшему здоровью до конца боя — и прибавка сразу ваша.",
+    BrewEffect.Giant)
+
+  case object MoonBrew extends BrewKind(
+    "Отвар лунного побега",
+    List(MoonShoot, Valerian, Eyebright),
+    s"Бледный, почти прозрачный, в темноте светится, как луна в колодце. Раны затягиваются на глазах и, в отличие от живучего сбора, не скупятся: ${BrewRates.MoonRegenPct}% здоровья в раунд, ${BrewRates.MoonRegenRounds} раундов подряд.",
+    BrewEffect.SteadyRegen(BrewRates.MoonRegenPct, BrewRates.MoonRegenRounds))
 
   val values: IndexedSeq[BrewKind] = findValues
 

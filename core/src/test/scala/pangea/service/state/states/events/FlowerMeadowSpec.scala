@@ -194,7 +194,7 @@ object FlowerMeadowSpec extends ZIOSpecDefault {
               assertTrue(HerbLore.insightTarget(rank1.learn(Knowledge.FlowersRank2, alone = false), MaterialKind.UnusualFlower).isEmpty)
     },
 
-    test("Нераскрытая роза — обычная трава второго ранга: одна из двенадцати редких") {
+    test("Нераскрытая роза — обычная трава второго ранга: одна из четырнадцати редких") {
       val rare = MaterialKind.herbsOfRank(2)
       for {
         t <- meadow(hero(), LoreData.empty
@@ -206,7 +206,7 @@ object FlowerMeadowSpec extends ZIOSpecDefault {
         _   <- state.action(testUser, tap("FlowerFind"), r)
         names = inv.snapshot.map(_.name)
       } yield assertTrue(names == List(MaterialKind.UnopenedRose.displayName)) &&
-              assertTrue(rare.size == 12 && rare.contains(MaterialKind.UnopenedRose)) &&
+              assertTrue(rare.size == 14 && rare.contains(MaterialKind.UnopenedRose)) &&
               assertTrue(MaterialKind.UnopenedRose.herbRank == 2 && MaterialKind.UnopenedRose.herbModifier == 30)
     },
 

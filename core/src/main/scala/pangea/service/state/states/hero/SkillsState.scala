@@ -285,6 +285,8 @@ object SkillsState {
         t("rested", "pct" -> HomeRates.RestedExpPct.toString, "left" -> left)
       case BrewRates.BubbleBoost =>
         t("untimed", "name" -> brew(BrewEffect.Bubble))
+      case BrewRates.GiantBoost =>
+        t("untilBattleEnd", "name" -> brew(BrewEffect.Giant), "pct" -> BrewRates.GiantHpPct.toString)
       case BrewRates.WolfCallBoost =>
         t("timed", "name" -> brew(BrewEffect.WolfCall), "left" -> left)
       case BrewRates.RotCallBoost =>

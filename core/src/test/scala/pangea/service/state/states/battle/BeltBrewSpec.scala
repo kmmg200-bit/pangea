@@ -2,7 +2,7 @@ package pangea.service.state.states.battle
 
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.model.battle.{BattleAlly, Bleed, Burn, Formation, Poison, SoloPveBattle, Ward}
+import pangea.model.battle.{BattleAlly, Bleed, Burn, Formation, Poison, Regen, SoloPveBattle, Ward}
 import pangea.model.hero.Hero
 import pangea.model.squad.AllyKind
 import pangea.model.item.{BeltSlot, BrewKind, BrewRates, FlaskKind, Item, ItemDetails, ItemType, MaterialKind, Rarity => ItemRarity}
@@ -414,6 +414,55 @@ object BeltBrewSpec extends ZIOSpecDefault {
       // все четыре — боевые, из пояса, на редкой траве: по одной склянке за рецепт
       assertTrue(List(BrewKind.SnakeSerum, BrewKind.FireproofBrew, BrewKind.WarmBlood, BrewKind.ClotBrew)
         .forall(k => k.combat && k.beltable && !k.drinkable && k.portions == 1))
+    },
+
+    test("великанье зелье: предел здоровья +20% до конца боя, прибавка налита сразу; второе не тратится; после боя сходит") {
+      val h  = hero(BeltSlot.Brew(BrewKind.GiantBrew), BeltSlot.Brew(BrewKind.GiantBrew))
+      val max0 = h.effectiveMaxHp(0L)
+      for {
+        // моб с 1 HP: после глотка добьём его — бой кончится
+        t <- makeState(h, battle(h, 1L))
+        (state, dao, r) = t
+        _     <- state.action(testUser, useSlot(0), r)
+        mid   <- dao.getHeroByUserId(userId).map(_.get)
+        _     <- state.action(testUser, useSlot(1), r)
+        twice <- dao.getHeroByUserId(userId).map(_.get)
+        log   <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+        _     <- state.action(testUser, tap("Attack"), r)
+        after <- dao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(mid.effectiveMaxHp(0L) == max0 * (100L + BrewRates.GiantHpPct) / 100L) &&
+              assertTrue(mid.fightStats.hp == h.fightStats.hp + (mid.effectiveMaxHp(0L) - max0)) &&
+              assertTrue(log.contains("к наибольшему здоровью до конца боя")) &&
+              // второе — то же бонусное действие раунда: склянка цела
+              assertTrue(slots(twice).lift(1).contains(BeltSlot.Brew(BrewKind.GiantBrew))) &&
+              // бой кончился: баф снят, здоровье не выше обычного предела
+              assertTrue(!after.statBoosts.boosts.exists(_.name == BrewRates.GiantBoost)) &&
+              assertTrue(after.fightStats.hp <= after.effectiveMaxHp(0L) && after.effectiveMaxHp(0L) == max0)
+    },
+
+    test("отвар лунного побега: 12% в раунд пять раундов, не слабея, и сходит разом") {
+      val h = hero(BeltSlot.Brew(BrewKind.MoonBrew))
+      val steps = Iterator.iterate(Option(Regen(BrewRates.MoonRegenPct, Some(BrewRates.MoonRegenRounds))))(_.flatMap(_.decayed))
+                    .takeWhile(_.isDefined).flatten.toList
+      for {
+        t <- makeState(h, battle(h, 100000L))
+        (state, dao, r) = t
+        _   <- state.action(testUser, useSlot(0), r)
+        mid <- battleOf(dao)
+        log <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(mid.effects.heroRegen.contains(Regen(12, Some(5)))) &&
+              assertTrue(log.contains("12% здоровья в раунд, 5 раундов подряд")) &&
+              // пять раундов лечения, все по 12%
+              assertTrue(steps.size == 5 && steps.forall(_.pct == 12)) &&
+              // живучий сбор слабеет, как раньше
+              assertTrue(Regen.onDrink.decayed.contains(Regen(Regen.OnDrink - Regen.DecayPerRound))) &&
+              assertTrue(List(BrewKind.GiantBrew, BrewKind.MoonBrew).forall(k => k.combat && k.portions == 1))
+    },
+
+    test("регенерация, записанная в бою до лунного побега, читается и слабеет по-старому") {
+      val old = io.circe.Json.obj("pct" -> 10.asJson)
+      assertTrue(old.as[Regen] == Right(Regen(10))) &&
+      assertTrue(old.as[Regen].toOption.flatMap(_.decayed).contains(Regen(8)))
     },
 
     test("бой, записанный до защит, читается: защит нет") {

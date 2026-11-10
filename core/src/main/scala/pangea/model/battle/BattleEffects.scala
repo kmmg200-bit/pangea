@@ -117,10 +117,15 @@ object HealedWounds {
 }
 
 /** Тикающая регенерация героя: в конце раунда лечит `pct`% макс.HP, затем слабеет
- *  на `DecayPerRound` п.п. до исчезновения. */
-case class Regen(pct: Int) {
+ *  на `DecayPerRound` п.п. до исчезновения. `steady` — ровная регенерация (отвар
+ *  лунного побега): столько раундов ещё лечит, не слабея, и сходит разом.
+ *  Option — чтобы регенерация, записанная в бою раньше, читалась. */
+case class Regen(pct: Int, steady: Option[Int] = None) {
   def healOn(maxHp: Long): Long = (maxHp.toDouble * pct / 100.0).toLong.max(0L)
-  def decayed: Option[Regen]    = Regen.of(pct - Regen.DecayPerRound)
+  def decayed: Option[Regen] = steady match {
+    case Some(left) => Option.when(left > 1)(copy(steady = Some(left - 1)))
+    case None       => Regen.of(pct - Regen.DecayPerRound)
+  }
 }
 
 object Regen {

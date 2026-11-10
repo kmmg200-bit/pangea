@@ -477,7 +477,21 @@ case class BattleState(
     * [[showRefilled]] — показы идут после всех записей хода. */
   private def afterBattle(user: User, hero: Hero): Task[List[String]] =
     ZIO.when(!hero.weaponDust.isEmpty)(heroDao.updateWeaponDust(user.userId, WeaponDust.empty)) *>
+      giantGone(user, hero) *>
       refillBelt(user, hero)
+
+  /** Бой кончился — великанье зелье сходит: баф снят, а здоровье, налитое
+    * сверх обычного предела, возвращается к нему. */
+  private def giantGone(user: User, hero: Hero): Task[Unit] =
+    ZIO.when(hero.statBoosts.boosts.exists(_.name == BrewRates.GiantBoost)) {
+      val calm = hero.copy(statBoosts = hero.statBoosts.without(BrewRates.GiantBoost))
+      ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS)).flatMap { now =>
+        val max = calm.effectiveMaxHp(now)
+        heroDao.updateStatBoosts(user.userId, calm.statBoosts) *>
+          ZIO.when(hero.fightStats.hp > max)(
+            heroDao.updateFightStats(user.userId, hero.fightStats.copy(hp = max)))
+      }
+    }.unit
 
   private def showRefilled(user: User, names: List[String], renderer: Renderer): Task[Unit] =
     ZIO.when(names.nonEmpty)(renderer.show(user, Screen(content.format("battle.belt.refilled",
@@ -4562,6 +4576,9 @@ case class BattleState(
       // Защита того же толка уже держит до конца боя — второй склянке делать нечего.
       case BrewEffect.Ward(w) if battle.effects.warded(w) =>
         Some(content.text("battle.belt.wardAlready"))
+      // Великанье зелье не складывается само с собой.
+      case BrewEffect.Giant if hero.statBoosts.hasActive(BrewRates.GiantBoost, nowMs) =>
+        Some(content.text("battle.belt.giantAlready"))
       case _ => None
     }
 
@@ -4662,6 +4679,23 @@ case class BattleState(
             done(hero, battle.copy(group = battle.group.copy(pendingShift = Some(p))),
               Vector(content.format("battle.belt.shimmer", "n" -> p.toString)))
         }
+
+      // Великанье зелье: предел здоровья выше до конца боя, прибавка налита сразу.
+      case BrewEffect.Giant =>
+        val before = hero.effectiveMaxHp(nowMs)
+        val grown  = hero.copy(statBoosts = hero.statBoosts.add(
+                       StatBoost(BrewRates.GiantBoost, ParamsBuff.zero, nowMs + BrewRates.GiantMs), nowMs))
+        val max    = grown.effectiveMaxHp(nowMs)
+        val hp     = (grown.fightStats.hp + (max - before).max(0L)).min(max)
+        done(grown.copy(fightStats = grown.fightStats.copy(hp = hp)), battle,
+          Vector(content.format("battle.belt.giant", "brew" -> kind.label,
+            "pct" -> BrewRates.GiantHpPct.toString, "hp" -> hp.toString, "max" -> max.toString)))
+
+      // Ровная регенерация: лечит каждый раунд, не слабея, и сходит разом.
+      case BrewEffect.SteadyRegen(pct, rounds) =>
+        done(hero, battle.copy(effects = battle.effects.copy(heroRegen = Some(Regen(pct, Some(rounds))))),
+          Vector(content.format("battle.belt.moonRegen", "brew" -> kind.label,
+            "pct" -> pct.toString, "rounds" -> rounds.toString)))
 
       // Защитный отвар: снимает своё и держит до конца боя.
       case BrewEffect.Ward(w) =>
