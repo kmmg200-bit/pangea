@@ -1572,8 +1572,12 @@ case class BattleState(
     * ход: в группе их может лечь несколько, и за каждого положена своя доля.
     * Проценты считаются от эффективных потолков, восстановленное не может
     * опустить текущее значение (если оно почему-то выше потолка). */
-  private def ghoulFeast(before: SoloPveBattle, res: TurnResult, nowMs: Long): TurnResult = {
-    val kills = heroKills(before, res)
+  private def ghoulFeast(before: SoloPveBattle, res: TurnResult, nowMs: Long): TurnResult =
+    ghoulFeastFor(heroKills(before, res), res, nowMs)
+
+  /** Пир за `kills` добитых героем — см. [[ghoulFeast]]; в ход мобов их считает
+    * [[killsInMobTurn]]. */
+  private def ghoulFeastFor(kills: Int, res: TurnResult, nowMs: Long): TurnResult = {
     if (kills <= 0 || !res.hero.sets.feastsOnKill) res
     else {
       val hero     = res.hero
@@ -1600,11 +1604,42 @@ case class BattleState(
     (inLine + active).max(0)
   }
 
+  /** Кого добил герой в ход одного моба: тот истёк ранами — кровью, ядом,
+    * пламенем от ударов героя, — напоролся на шипы или попал под контрудар.
+    * Павшие за этот ход, кроме засчитанных союзнику: он бил последним (см.
+    * [[creditKill]]) — тот же счёт, что у итогов боя ([[BattleState.killedByHero]]).
+    * Лежащий или павший герой ничего не добивает. */
+  private def heroKillsInMobTurn(before: SoloPveBattle, res: TurnResult): Int =
+    if (res.battle.group.heroDown || res.hero.fightStats.hp <= 0L) 0
+    else (heroKills(before, res) - (allyKills(res.battle) - allyKills(before))).max(0)
+
+  private def allyKills(b: SoloPveBattle): Int = (b.group.allies ++ b.group.alliesGone).map(_.kills).sum
+
+  /** Добитые героем в ход моба — тоже его добитые: пир «Упыря», напор
+    * «Преисподней», «Некромант» — тут же, как за удар героя, и до хода
+    * следующего моба. `before` — бой до хода этого моба, `hero` и `after` —
+    * после. Возвращает героя, бой и строки об этом. */
+  private def killsInMobTurn(before: SoloPveBattle, hero: Hero, after: SoloPveBattle,
+                             nowMs: Long): Task[(Hero, SoloPveBattle, Vector[String])] = {
+    val res  = TurnResult(hero, after, Vector.empty, Outcome.Continue)
+    val mine = heroKillsInMobTurn(before, res)
+    if (mine <= 0) ZIO.succeed((hero, after, Vector.empty))
+    else {
+      val fed = underworldPushFor(mine, ghoulFeastFor(mine, res, nowMs), nowMs)
+      // Встать за героем может только его добитый: все павшие за этот ход — его.
+      (if (mine == heroKills(before, res)) necroRise(before, fed) else ZIO.succeed(fed))
+        .map(r => (r.hero, r.battle, r.log))
+    }
+  }
+
   /** «Преисподняя» (порог 12, только демону): каждый добитый героем враг
     * возвращает долю максимума энергии — тут же, в бою. Считаем так же, как
     * пир упыря, до хода союзников. */
-  private def underworldPush(before: SoloPveBattle, res: TurnResult, nowMs: Long): TurnResult = {
-    val kills = heroKills(before, res)
+  private def underworldPush(before: SoloPveBattle, res: TurnResult, nowMs: Long): TurnResult =
+    underworldPushFor(heroKills(before, res), res, nowMs)
+
+  /** Напор за `kills` добитых героем — см. [[underworldPush]]. */
+  private def underworldPushFor(kills: Int, res: TurnResult, nowMs: Long): TurnResult = {
     val pct   = res.hero.sets.killEnergyPct
     if (kills <= 0 || pct <= 0L) res
     else {
@@ -5424,18 +5459,24 @@ case class BattleState(
       // Ходят те, кто стоял в строю к началу фазы, — ищем их по местам: павший
       // смыкает ряды, призванный минибоссом встаёт в строй, и индексы плывут.
       // Пришедшие в этом раунде не бьют — они только что встали.
+      // Кого добил в ход моба сам герой (раны, шипы, контрудар) — его добитые:
+      // пир, напор, «Некромант» тут же, до хода следующего (см. killsInMobTurn).
       ZIO.foldLeft(res.battle.group.places)((res.hero, res.battle, Vector.empty[String])) {
         case ((h, b, log), place) =>
           val idx = b.group.idxOf(place)
           // Герой пал прямо сейчас — мобы замирают; лежит с прошлого раунда — бьют отряд.
           if ((h.fightStats.hp <= 0 && !b.group.heroDown) || idx < 0) ZIO.succeed((h, b, log))
-          else freeMobTurn(h, b, idx, nowMs).map { case (h2, b2, lines) => (h2, b2, log ++ lines) }
+          else freeMobTurn(h, b, idx, nowMs).flatMap { case (h2, b2, lines) =>
+            killsInMobTurn(b, h2, b2, nowMs).map { case (h3, b3, fed) => (h3, b3, log ++ lines ++ fed) }
+          }
       }.flatMap { case (h, b, log) =>
         // Активный вне пары ходит последним — как моб вне пары; при лежащем
         // герое так же ходит и тот, что в паре: отвечать ему некому.
         if (b.group.paired && !b.group.heroDown) ZIO.succeed((h, b, log))
         else if (h.fightStats.hp <= 0 && !b.group.heroDown) ZIO.succeed((h, b, log))
-        else unpairedActiveTurn(h, b, nowMs).map { case (h2, b2, lines) => (h2, b2, log ++ lines) }
+        else unpairedActiveTurn(h, b, nowMs).flatMap { case (h2, b2, lines) =>
+          killsInMobTurn(b, h2, b2, nowMs).map { case (h3, b3, fed) => (h3, b3, log ++ lines ++ fed) }
+        }
       }.map { case (h, b, log) =>
         val outcome =
           if (h.fightStats.hp <= 0 && !b.group.heroDown) Outcome.Death
