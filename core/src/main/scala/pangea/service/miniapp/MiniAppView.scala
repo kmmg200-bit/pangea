@@ -144,14 +144,16 @@ object MiniAppView {
 
   /** Чем можно воспользоваться из сумки: `item` — как в списке вещей, `brew` —
     * что можно сделать с отваром, `belt` — кладётся ли на пояс, `beltFull` — на
-    * поясе нет места, и вот вопрос, что снять. */
-  final case class BagActView(item: Long, brew: List[BrewAskView], belt: Boolean, beltFull: Option[String])
+    * поясе нет места, и вот вопрос, что снять, `unpack` — это стопка, её можно
+    * распаковать. */
+  final case class BagActView(item: Long, brew: List[BrewAskView], belt: Boolean, beltFull: Option[String],
+                              unpack: Boolean)
 
   /** Вещи героя. `gearLocked` — почему снаряжение и комплект со стойки сейчас
     * не сменить: герой в бою; `storesAway` — почему дотянуться удастся не до
     * всех хранилищ: герой не в городе или в бою; `gemStock` — камни, которые
-    * можно вставить в гнездо; `bagActs` — отвары и что кладётся на пояс, пусто
-    * в бою; `drops` — что можно выбросить прямо сейчас. */
+    * можно вставить в гнездо; `bagActs` — отвары, что кладётся на пояс, и
+    * стопки, пусто в бою; `drops` — что можно выбросить прямо сейчас. */
   final case class InventoryView(
     hero:       HeroView,
     capacity:   Long,
@@ -450,8 +452,8 @@ object MiniAppView {
     else InventoryState.listed(inv.items.data).flatMap { case (item, _) =>
       val asks = brewAsks(h, item, content, now)
       val slot = BeltSlot.of(item)
-      Option.when(asks.nonEmpty || slot.isDefined)(
-        BagActView(item.id, asks, slot.isDefined, slot.flatMap(beltFull(h, _, content))))
+      Option.when(asks.nonEmpty || slot.isDefined || item.isBundle)(
+        BagActView(item.id, asks, slot.isDefined, slot.flatMap(beltFull(h, _, content)), unpack = item.isBundle))
     }
 
   private def beltFull(h: Hero, slot: BeltSlot, content: SceneContent): Option[String] = {

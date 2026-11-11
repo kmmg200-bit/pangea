@@ -19,7 +19,7 @@ import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
-import pangea.service.equipment.{BeltWork, BrewWork, GemWork, Outfit}
+import pangea.service.equipment.{BeltWork, BrewWork, BundleWork, GemWork, Outfit}
 import pangea.service.state.states.InventoryState._
 import pangea.service.state.states.home.Racks
 import pangea.service.state.states.marisa.MarisaHuntState
@@ -41,6 +41,9 @@ case class InventoryState(
 
   /** Надеть — общее с карточкой слота и с Mini App. */
   private val outfit = new Outfit(heroDao, inventoryRepo, itemRepository, content)
+
+  /** Распаковать стопку — общее с Mini App. */
+  private val bundles = new BundleWork(inventoryRepo, content)
 
   /** Резец — общее с Mini App. */
   private val gemWork = new GemWork(heroDao, inventoryRepo, itemRepository, content)
@@ -389,9 +392,7 @@ case class InventoryState(
                }
     } yield res
 
-  /** Распаковать стопку: вещи ложатся в сумку, как были. Вместо одного места
-    * они займут пять — нужно ещё четыре свободных; пыли место не нужно, но
-    * сверх своего предела она не ляжет. */
+  /** Распаковать стопку (см. [[BundleWork.unpack]]): итог — над карточкой. */
   private def unpackSelected(user: User, renderer: Renderer): Task[StateType] =
     for {
       scene <- readScene(user)
@@ -399,27 +400,8 @@ case class InventoryState(
       inv   <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       res   <- scene.selectedId.flatMap(id => inv.items.data.find(_.id == id))
                  .map(i => stackOf(inv.items.data, i).lastOption.getOrElse(i)) match {
-                 case None => showList(user, renderer)
-                 case Some(item) =>
-                   val inside = Bundling.contents(item)
-                   inside match {
-                     case Nil => backToCard(user, renderer)
-                     case first :: _ =>
-                       inv.swapped(List(item), inside) match {
-                         case Left(Inventory.SwapRefusal.HoardFull) =>
-                           backToCard(user, renderer, Some(content.format("inventory.bundle.hoardFull",
-                             "name" -> first.displayTitle, "limit" -> Item.HoardLimit.toString)))
-                         case Left(_) =>
-                           // Сколько мест не хватает: стопка своё место отдаст, а вещи займут свои.
-                           val short = inv.occupied - 1L + inside.count(!_.weightless).toLong - inv.maxItems
-                           backToCard(user, renderer, Some(content.format("inventory.bundle.unpackNoRoom",
-                             "count" -> short.max(1L).toString)))
-                         case Right(_) =>
-                           inventoryRepo.swap(hero.id, List(item), inside).mapError(e => new Throwable(e.toString)) *>
-                             backToCard(user, renderer, Some(content.format("inventory.bundle.unpacked",
-                               "name" -> first.displayTitle, "n" -> inside.size.toString)))
-                       }
-                   }
+                 case None       => showList(user, renderer)
+                 case Some(item) => bundles.unpack(hero.id, inv, item).flatMap(note => backToCard(user, renderer, note))
                }
     } yield res
 

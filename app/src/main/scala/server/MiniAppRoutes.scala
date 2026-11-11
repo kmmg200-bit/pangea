@@ -67,6 +67,10 @@ final class MiniAppRoutes(app: MiniApp) {
       asPlayer(req)(hero => app.gear(hero, GearAct.UseChisel(slot)).flatMap(view => Ok(view.asJson)))
 
     // Пояс: положить из сумки (`slot` — вместо какой ячейки) и вынуть ячейку. Меняют игру — только POST.
+    // Стопка из сумки: распаковать. Меняет игру — только POST.
+    case req @ POST -> Root / "api" / "app" / "bag" / "unpack" :? ItemParam(id) =>
+      asPlayer(req)(hero => app.unpack(hero, id).flatMap(view => Ok(view.asJson)))
+
     case req @ POST -> Root / "api" / "app" / "belt" / "put" :? ItemParam(id) +& BeltCellParam(slot) =>
       asPlayer(req)(hero => app.gear(hero, GearAct.BeltPut(id, slot)).flatMap(view => Ok(view.asJson)))
 

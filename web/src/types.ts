@@ -86,12 +86,14 @@ export interface BrewAskView {
   refusal: string | null
 }
 
-/** Чем можно воспользоваться из сумки. `beltFull` — на поясе нет места, и вот вопрос, что снять. */
+/** Чем можно воспользоваться из сумки. `beltFull` — на поясе нет места, и вот вопрос, что снять;
+ *  `unpack` — это стопка, её можно распаковать. */
 export interface BagActView {
   item: number
   brew: BrewAskView[]
   belt: boolean
   beltFull: string | null
+  unpack: boolean
 }
 
 export interface HeroView {

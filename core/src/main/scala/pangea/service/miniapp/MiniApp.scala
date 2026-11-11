@@ -28,7 +28,7 @@ import pangea.repository.item.ItemRepository
 import pangea.repository.user.UserRepository
 import pangea.service.auction.AuctionPurchase
 import pangea.service.cube.AzatCube
-import pangea.service.equipment.{BeltWork, BrewWork, GemWork, Outfit}
+import pangea.service.equipment.{BeltWork, BrewWork, BundleWork, GemWork, Outfit}
 import pangea.service.miniapp.MiniAppView.{AuctionActionView, AuctionView, CharacterView, CraftActionView, CraftView,
   InventoryActionView, InventoryView, QuestsView, SquadActionView, SquadView, TopView}
 import pangea.service.payout.Payouts
@@ -81,6 +81,10 @@ trait MiniApp {
 
   /** Отвар из сумки — как с его карточки в боте; не в бою. */
   def brew(hero: Hero, itemId: Long, act: MiniApp.BrewAct): Task[InventoryActionView]
+
+  /** Распаковать стопку `itemId` из сумки — как кнопкой на её карточке в
+    * боте; не в бою. */
+  def unpack(hero: Hero, itemId: Long): Task[InventoryActionView]
 
   /** Надеть комплект со стойки №`n` — обменяться с ней надетым, как кнопкой
     * стойки дома. Только в городе. */
@@ -302,6 +306,9 @@ final class MiniAppLive(
 ) extends MiniApp {
   import MiniApp.{BrewAct, CubeAct, Denied, GearAct, Outcome, SquadAct}
 
+  /** Распаковать стопку — общее с карточкой стопки в боте. */
+  private val bundleWork = new BundleWork(inventories, content)
+
   override def player(launchParams: String): Task[Either[Denied, Hero]] =
     config.vkSecret.map(_.trim).filter(_.nonEmpty) match {
       case None => ZIO.left(Denied.Off)
@@ -419,6 +426,18 @@ final class MiniAppLive(
 
   override def brew(hero: Hero, itemId: Long, act: BrewAct): Task[InventoryActionView] =
     notInBattle(hero, content.text("battle.belt.notInBattle"))(brewAct(_, itemId, act))
+
+  /** Те же правила и слова, что у карточки стопки в боте ([[BundleWork]]).
+    * Стопки уже нет — так и сказать. */
+  override def unpack(hero: Hero, itemId: Long): Task[InventoryActionView] =
+    notInBattle(hero, content.text("miniapp.storages.inBattle")) { fresh =>
+      inventories.get(fresh.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
+        inv.items.data.find(_.id == itemId) match {
+          case None       => ZIO.succeed(content.text("stack.gone"))
+          case Some(item) => bundleWork.unpack(fresh.id, inv, item).map(_.getOrElse(content.text("stack.gone")))
+        }
+      }
+    }
 
   /** Под локом игрока, героя перечитываем уже под ним. В бою — ничего не
     * трогаем, говорим почему. */

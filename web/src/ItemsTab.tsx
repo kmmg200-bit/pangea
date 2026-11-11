@@ -189,6 +189,11 @@ function BagActs(props: { data: InventoryView; item: ItemView; acts: Acts; onDon
             На пояс
           </button>
         )}
+        {act.unpack && (
+          <button className="equip-off" disabled={acts.busy} onClick={() => finish(() => api.bagUnpack(item.id))}>
+            Распаковать
+          </button>
+        )}
       </div>
       {brew && (
         <BrewQuestion
