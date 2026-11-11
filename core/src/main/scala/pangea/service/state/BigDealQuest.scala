@@ -1,17 +1,23 @@
 package pangea.service.state
 
 import pangea.dao.hero.HeroDao
+import pangea.domain.Rng
 import pangea.engine.SceneContent
+import pangea.generator.item.ItemGenerator
 import pangea.generator.monster.MonsterGenerator
 import pangea.model.battle.{BattleAlly, SoloPveBattle}
 import pangea.model.hero.Hero
-import pangea.model.item.{BrewKind, Item, QuestItemKind}
+import pangea.model.item.{BrewKind, Item, ItemType, QuestItemKind, Rarity => ItemRarity}
 import pangea.model.monster.{Monster, Race, Rarity}
 import pangea.model.quest.{NpcQuest, NpcQuests}
 import pangea.model.squad.{AllyKind, UndeadForm}
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
-import zio.{Task, ZIO}
+import pangea.repository.item.ItemRepository
+import pangea.service.parcel.Parcels
+import zio.{Random, Task, ZIO}
+
+import java.util.concurrent.TimeUnit
 
 /** «Большое дело» ([[NpcQuest.BigDeal]]) — вторая часть линии Барти:
   * контрабанда с каджитским караваном. Ведёт адрес Барти из «Ходового товара»:
@@ -135,11 +141,25 @@ object BigDealQuest {
     MonsterGenerator.generateOfRaceAndRarity(Level, GuardRace, CaptainRarity, Some(captainName)) ::
       List.fill(GuardCount)(MonsterGenerator.generateOfRaceAndRarity(Level, GuardRace, GuardRarity))
 
-  /** Каджиты заплатили: адрес уходит, дублоны — в кошель, опыт, задание закрыто.
-    * Строка награды (по ключу `rewardKey`) и «Квест завершён» — готовым текстом.
-    * Задание не у каравана — ничего не делает. */
-  def pay(heroDao: HeroDao, inventoryRepo: InventoryRepository, content: SceneContent, user: User, hero: Hero,
-          doubloons: Long, rewardKey: String): Task[Option[String]] =
+  /** Амулет от каравана: Та'Нахир передаёт его герою через Барти — при любом
+    * исходе засады. Сюжетная экипировка (см. `Item.isStoryGear`) этого уровня, с
+    * характеристиками легендарной. */
+  val AmuletName: String          = "Каджитский амулет"
+  val AmuletLvl: Long             = 15L
+  val AmuletRarity: ItemRarity    = ItemRarity.Orange
+
+  def amulet(rng: Rng): Item =
+    ItemGenerator.createItemOfType(ItemType.Amulet, AmuletLvl, AmuletRarity, rng)._1.withName(AmuletName).asStoryGear
+
+  /** Каджиты заплатили: адрес уходит, дублоны — в кошель, опыт, задание закрыто,
+    * а Барти передаёт амулет от каравана (`amuletKey` — его слова; не влез в
+    * сумку — посылкой, см. StoryGearPost). Слова Барти, амулет, строка награды
+    * (по ключу `rewardKey`) и «Квест завершён» — готовым текстом. Без
+    * хранилища вещей (в старых тестах) амулета нет. Задание не у каравана —
+    * ничего не делает. */
+  def pay(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemRepo: Option[ItemRepository], parcels: Option[Parcels],
+          content: SceneContent, user: User, hero: Hero, doubloons: Long, rewardKey: String,
+          amuletKey: String): Task[Option[String]] =
     NpcQuestLog.load(heroDao, user.userId).flatMap { q =>
       if (!toCaravan(q)) ZIO.none
       else for {
@@ -148,7 +168,26 @@ object BigDealQuest {
         done <- NpcQuestDialog(heroDao, content, NpcQuest.BigDeal, "BigDeal")
                   .complete(user, hero.copy(doubloons = hero.doubloons + doubloons), identity)
         (_, expLine) = done
-      } yield Some(content.format(rewardKey, "doubloons" -> doubloons.toString, "exp" -> expLine) + "\n\n" +
+        gift <- giveAmulet(inventoryRepo, itemRepo, parcels, content, hero)
+      } yield Some(gift.fold("")(g => content.text(amuletKey).trim + g + "\n\n") +
+        content.format(rewardKey, "doubloons" -> doubloons.toString, "exp" -> expLine) + "\n\n" +
         content.text("barti.caravan.questDone"))
+    }
+
+  /** Амулет — в сумку, не влез — посылкой. Ответ — строки о нём: что легло в
+    * сумку и куда ушла посылка; без хранилища вещей — ничего. */
+  private def giveAmulet(inventoryRepo: InventoryRepository, itemRepo: Option[ItemRepository], parcels: Option[Parcels],
+                         content: SceneContent, hero: Hero): Task[Option[String]] =
+    itemRepo match {
+      case None => ZIO.none
+      case Some(items) =>
+        for {
+          seed  <- Random.nextLong
+          now   <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+          given <- StoryGearPost.give(inventoryRepo, items, parcels, hero, content.text("barti.caravan.amuletFrom"),
+                     List(amulet(Rng(seed))), now)
+          (bagged, posted) = given
+        } yield Some(bagged.map(i => "\n\n" + content.format("barti.caravan.amuletLine", "name" -> i.displayTitle)).mkString +
+          posted.fold("")("\n\n" + _))
     }
 }

@@ -14,6 +14,8 @@ import pangea.model.user.User
 import pangea.model.artifact.ArtifactKind
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.InventoryRepository
+import pangea.repository.item.ItemRepository
+import pangea.service.parcel.Parcels
 import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
@@ -29,7 +31,11 @@ case class DeathState(
   content:       SceneContent,
   artifacts:     Option[ArtifactRepository] = None,
   // Пал от коллектора — исход «Письма Марисе» (см. QuestOutcome).
-  outcomes:      Option[QuestOutcomeDao] = None
+  outcomes:      Option[QuestOutcomeDao] = None,
+  // Пал в засаде у каравана — амулет от каджитов: сохранить и, если не влез в
+  // сумку, — посылкой (см. BigDealQuest.pay).
+  itemRepo:      Option[ItemRepository] = None,
+  parcels:       Option[Parcels] = None
 ) extends State {
 
   override def targetStates: Set[StateType] = Set(StateType.Rest)
@@ -142,8 +148,9 @@ case class DeathState(
       // Засада у каравана: плата, опыт и «Квест завершён» — готовым текстом
       // (`wakeNote`), после рассказа Барти. Опыт ложится поверх штрафа за смерть.
       // Как «Большое дело» закончили другие — следом, как у «Письма Марисе».
-      dealPaid     <- if (ambush) BigDealQuest.pay(heroDao, inventoryRepo, content, user,
-                        hero.copy(exp = newExp, silver = newSilver), BigDealQuest.FallenDoubloons, "barti.caravan.fallenReward")
+      dealPaid     <- if (ambush) BigDealQuest.pay(heroDao, inventoryRepo, itemRepo, parcels, content, user,
+                        hero.copy(exp = newExp, silver = newSilver), BigDealQuest.FallenDoubloons, "barti.caravan.fallenReward",
+                        "barti.caravan.amuletFallen")
                       else ZIO.none
       dealStats    <- if (dealPaid.isDefined) QuestOutcomeLog.recordAndCount(outcomes, content, hero, QuestOutcome.BigDealFell)
                       else ZIO.none

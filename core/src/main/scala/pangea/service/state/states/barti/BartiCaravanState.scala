@@ -12,6 +12,8 @@ import pangea.model.skill.MonsterEnergy
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
+import pangea.repository.item.ItemRepository
+import pangea.service.parcel.Parcels
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.{BigDealQuest, NpcQuestLog, QuestOutcomeLog, State, UserAction}
 import zio.{Random, Task, ZIO}
@@ -32,7 +34,10 @@ case class BartiCaravanState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
   content:       SceneContent,
-  outcomes:      Option[QuestOutcomeDao] = None
+  outcomes:      Option[QuestOutcomeDao] = None,
+  // Амулет от каравана: сохранить и, если не влез в сумку, — посылкой.
+  itemRepo:      Option[ItemRepository] = None,
+  parcels:       Option[Parcels] = None
 ) extends State {
 
   private val branch = new Branch(
@@ -104,12 +109,14 @@ case class BartiCaravanState(
     } yield res
 
   /** Стража перебита: каджиты возвращаются и платят сполна; отойдя от костров,
-    * Барти проговаривается. Задание закрыто; исход — в подсчёт «как и вы». */
+    * Барти проговаривается и передаёт амулет от каравана. Задание закрыто;
+    * исход — в подсчёт «как и вы». */
   private def paid(user: User, renderer: Renderer): Task[Unit] =
     for {
       _     <- heroDao.writeSceneData(user.userId, Json.Null)
       hero  <- getHero(user)
-      note  <- BigDealQuest.pay(heroDao, inventoryRepo, content, user, hero, BigDealQuest.WonDoubloons, "barti.caravan.reward")
+      note  <- BigDealQuest.pay(heroDao, inventoryRepo, itemRepo, parcels, content, user, hero, BigDealQuest.WonDoubloons,
+                 "barti.caravan.reward", "barti.caravan.amulet")
       stats <- if (note.isDefined) QuestOutcomeLog.recordAndCount(outcomes, content, hero, QuestOutcome.BigDealWon)
                else ZIO.none
       _     <- renderer.show(user, Screen(kin(hero, "paid"), Nil))

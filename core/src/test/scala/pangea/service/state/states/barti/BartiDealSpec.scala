@@ -11,6 +11,7 @@ import pangea.model.squad.AllyKind
 import pangea.model.state.StateType
 import pangea.model.stats.FightStats
 import pangea.model.user.{TelegramId, User, UserId, VkId}
+import pangea.service.parcel.Parcels
 import pangea.service.state.BigDealQuest.Stock
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.battle.BattleState
@@ -151,7 +152,8 @@ object BartiDealSpec extends ZIOSpecDefault {
           r    <- TestRenderer.make
           c    <- content
           _    <- d.writeSceneData(userId, BartiCaravanState.WonMark.asJson)
-          _    <- BartiCaravanState(d, inv, c, Some(o)).enter(testUser, r)
+          _    <- BartiCaravanState(d, inv, c, Some(o), Some(TestItemRepository.make),
+                    Some(Parcels(TestParcelDao.empty, TestBankRepository.empty, c))).enter(testUser, r)
           said <- texts(r)
           q    <- questOf(d)
           after <- heroOf(d)
@@ -167,8 +169,29 @@ object BartiDealSpec extends ZIOSpecDefault {
               assertTrue(List(human, cat).forall { case (said, q, h, bag, mine) =>
                 q.isDone(NpcQuest.BigDeal) && h.doubloons == 10L + BigDealQuest.WonDoubloons && h.exp > 0L &&
                   !bag.exists(_.questItem.contains(QuestItemKind.BartiAddress)) &&
-                  mine.contains(QuestOutcome.BigDealWon) && said.contains("Вы — среди первых, кто закончил «Большое дело»")
+                  mine.contains(QuestOutcome.BigDealWon) && said.contains("Вы — среди первых, кто закончил «Большое дело»") &&
+                  said.contains("Та'Нахир просил передать") && said.contains("🎁 ★ [Ур.15] Каджитский амулет") &&
+                  bag.exists(i => i.isStoryGear && i.name == BigDealQuest.AmuletName && i.lvl == BigDealQuest.AmuletLvl &&
+                    i.rarity == BigDealQuest.AmuletRarity && i.itemType == pangea.model.item.ItemType.Amulet)
               })
+    },
+
+    test("амулет от каравана не влез в сумку — уходит посылкой и на почте не сгорает") {
+      val inv = TestInventoryRepository.full
+      inv.put(addressItem)
+      for {
+        d    <- dao(hero(), deal(3))
+        r    <- TestRenderer.make
+        c    <- content
+        post  = TestParcelDao.empty
+        _    <- d.writeSceneData(userId, BartiCaravanState.WonMark.asJson)
+        _    <- BartiCaravanState(d, inv, c, None, Some(TestItemRepository.make),
+                  Some(Parcels(post, TestBankRepository.empty, c))).enter(testUser, r)
+        said <- texts(r)
+        q    <- questOf(d)
+      } yield assertTrue(post.snapshot.map(_.item.name) == List(BigDealQuest.AmuletName) && post.snapshot.forall(_.item.isStoryGear)) &&
+              assertTrue(!inv.snapshot.exists(_.isStoryGear) && said.contains("Сюжетное на почте не сгорает") && said.contains("(Барти)")) &&
+              assertTrue(q.isDone(NpcQuest.BigDeal))
     },
 
     test("пал в засаде — задание всё равно закрыто: 85 дублонов, рассказ Барти, проснуться на Торговой площади; исход — в подсчёт") {
@@ -182,7 +205,8 @@ object BartiDealSpec extends ZIOSpecDefault {
         c     <- content
         o     <- TestQuestOutcomeDao.make
         _     <- TestRandom.feedInts(1)
-        _     <- DeathState(d, inv, c, None, Some(o)).enter(testUser, r)
+        _     <- DeathState(d, inv, c, None, Some(o), Some(TestItemRepository.make),
+                   Some(Parcels(TestParcelDao.empty, TestBankRepository.empty, c))).enter(testUser, r)
         scene <- d.readSceneData(userId)
         q     <- questOf(d)
         h     <- heroOf(d)
@@ -193,6 +217,8 @@ object BartiDealSpec extends ZIOSpecDefault {
               assertTrue(scene.exists(_.hcursor.get[List[String]]("wakeLines").toOption.contains(List("barti.caravan.fallen")))) &&
               assertTrue(note.contains("🟡 +85") && note.contains("📜 Квест «Большое дело» завершён") &&
                 note.contains("Вы — среди первых, кто закончил «Большое дело»") && mine.contains(QuestOutcome.BigDealFell)) &&
+              assertTrue(note.contains("Та'Нахир велел отдать тебе") && note.contains("🎁 ★ [Ур.15] Каджитский амулет") &&
+                inv.snapshot.exists(i => i.isStoryGear && i.name == BigDealQuest.AmuletName)) &&
               assertTrue(story.contains("Сабли из-под тюков") && story.contains("доля за охрану")) &&
               assertTrue(q.isDone(NpcQuest.BigDeal) && h.doubloons == 10L + BigDealQuest.FallenDoubloons &&
                 !inv.snapshot.exists(_.questItem.contains(QuestItemKind.BartiAddress)))

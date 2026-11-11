@@ -271,7 +271,7 @@ object StatesMap {
             artifacts
           ),
           Battle -> BattleState(heroDao, inventoryRepo, itemRepo, content, scheduler, Some(arenaDao), bank),
-          Death  -> DeathState(heroDao, inventoryRepo, content, artifacts, outcomes),
+          Death  -> DeathState(heroDao, inventoryRepo, content, artifacts, outcomes, Some(itemRepo), Some(parcels)),
           Rest   -> RestState(heroDao, scheduler, content),
           Inventory -> InventoryState(
             heroDao,
@@ -359,7 +359,7 @@ object StatesMap {
           StoryGraveyard    -> StoryGraveyardState(heroDao, inventoryRepo, itemRepo, content, outcomes, Some(parcels)),
           BartiMeet         -> BartiMeetState(heroDao, inventoryRepo, itemRepo, content),
           BartiHouse        -> BartiHouseState(heroDao, inventoryRepo, content),
-          BartiCaravan      -> BartiCaravanState(heroDao, inventoryRepo, content, outcomes),
+          BartiCaravan      -> BartiCaravanState(heroDao, inventoryRepo, content, outcomes, Some(itemRepo), Some(parcels)),
           RaceQuest         -> RaceQuestState(heroDao, inventoryRepo, content),
           NameChange        -> NameChangeState(heroDao, inventoryRepo, content),
           Outskirts -> OutskirtsState(
