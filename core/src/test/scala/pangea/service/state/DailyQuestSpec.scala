@@ -8,7 +8,7 @@ import pangea.model.item._
 import pangea.model.monster.Race
 import pangea.model.quest._
 import pangea.model.user.{TelegramId, User, UserId, VkId}
-import pangea.test.{TestArtifactRepository, TestFixtures, TestHeroDao, TestInventoryRepository, TestRenderer}
+import pangea.test.{TestArtifactRepository, TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestRenderer}
 import zio.ZIO
 import zio.test._
 
@@ -327,6 +327,34 @@ object DailyQuestSpec extends ZIOSpecDefault {
         given <- DailyQuestLog.load(d, userId).map(_.of(DailyNpc.Gustavo))
       } yield assertTrue(given.exists(t => t.count == DailyKind.HerbsAny.goal && t.ready)) &&
               assertTrue(arts.snapshot.bag.items.data.isEmpty)
+    },
+
+    test("Густаво: склянке некуда лечь — работу не принимает, уговор ждёт; освободил место — склянка в сумке") {
+      import pangea.service.state.states.gustavo.GustavoState
+      def tap(k: String) = UserAction("", Some(s"""{"action":"$k"}"""))
+      val task = DailyTask(DailyKind.HerbsAny, DailyRates.dayOf(0L), count = DailyKind.HerbsAny.goal, taken = true)
+      // в сумке двадцать мест — и двадцать шлемов
+      val stuffed = (1L to 20L).toList.map(i => thing(i, s"Шлем $i", ItemType.Helmet, ItemDetails.Plain))
+      for {
+        d     <- dao()
+        h     <- d.getHeroByUserId(userId).map(_.get)
+        r     <- TestRenderer.make
+        c     <- ZIO.attempt(SceneContent.load())
+        inv    = TestInventoryRepository.withItems(stuffed)
+        st     = GustavoState(d, inv, c, Some(TestItemRepository.make))
+        _     <- seed(d, DailyNpc.Gustavo, task)
+        _     <- st.action(testUser, tap("GustavoDailyHand"), r)
+        kept  <- DailyQuestLog.load(d, userId).map(_.of(DailyNpc.Gustavo))
+        said  <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+        _     <- inv.removeItem(1L, h.id)
+        _     <- st.action(testUser, tap("GustavoDailyHand"), r)
+        done  <- DailyQuestLog.load(d, userId).map(_.of(DailyNpc.Gustavo))
+        paid  <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(kept.exists(t => t.ready && !t.done)) &&
+              assertTrue(said.contains("Освободи место — тогда и рассчитаемся")) &&
+              assertTrue(!said.contains("Густаво суёт тебе склянку")) &&
+              assertTrue(done.exists(_.done) && paid.contains("Густаво суёт тебе склянку")) &&
+              assertTrue(inv.snapshot.count(_.itemType == ItemType.Brew) == 1)
     },
 
     test("сдача закрывает поручение: опыт идёт, завтрашнее не копится") {

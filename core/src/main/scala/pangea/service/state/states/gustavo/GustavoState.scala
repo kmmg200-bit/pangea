@@ -113,18 +113,33 @@ case class GustavoState(
     } yield StateType.Gustavo
 
   /** Травник платит склянкой из своих запасов — что сварил, тем и делится. За
-    * редкую траву и склянка редкая: такие он варит по одной. */
+    * редкую траву и склянка редкая: такие он варит по одной.
+    *
+    * Склянке нужно место в сумке. Нет его — Густаво работу не принимает: уговор
+    * остаётся готовым, награда ждёт, пока герой освободит место. Иначе склянка
+    * пропадала бы, а Густаво говорил бы, что отдал её. */
   private def handDaily(user: User, renderer: Renderer): Task[StateType] =
     for {
       now  <- nowMs
       hero <- getHero(user)
+      task <- daily.today(hero, now)
+      inv  <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
+      full  = task.ready && itemRepo.isDefined && inv.freeSlots <= 0
+      _    <- if (full) renderer.show(user, Screen(content.text("daily.gustavo.noRoom"), Nil))
+              else payDaily(user, hero, now, renderer)
+      _    <- renderMenu(user, renderer)
+    } yield StateType.Gustavo
+
+  /** Сдать готовую работу и выдать склянку — место под неё уже проверено. */
+  private def payDaily(user: User, hero: Hero, now: Long, renderer: Renderer): Task[Unit] =
+    for {
       paid <- daily.hand(user, hero, now)
       _    <- ZIO.foreachDiscard(paid) { case (task, exp) =>
                 val brew = BrewKind.item(
                   DailyRates.brew(task.kind.rareReward, DailyRates.dayOf(now) + hero.id.value))
                 val give = itemRepo.fold(ZIO.unit: Task[Unit])(repo =>
                   repo.persist(hero.id, brew).flatMap(it =>
-                    inventoryRepo.addItem(hero.id, it).ignore))
+                    inventoryRepo.addItem(hero.id, it).mapError(e => new Throwable(e.toString))))
                 // За редкую траву и склянка редкая, и опыт вдвое — об этом он
                 // говорит отдельно, чтобы разница не прошла мимо.
                 val key = if (task.kind.rareReward) "daily.gustavo.rewardRare"
@@ -132,8 +147,7 @@ case class GustavoState(
                 give *> renderer.show(user, Screen(content.format(key,
                   "brew" -> brew.displayTitle, "exp" -> exp.toString), Nil))
               }
-      _    <- renderMenu(user, renderer)
-    } yield StateType.Gustavo
+    } yield ()
 
   // ── Травы ───────────────────────────────────────────────────────────────
 

@@ -32,7 +32,12 @@ final class InventoryRepositoryLive(inventoryDao: InventoryDao)
         .update(updatedInventory)
         .orElseFail(InventoryRepoError.CantUpdateInventory)
     } yield ())
-      .tapError(err => ZIO.logError(s"Error occurred: $err"))
+      .tapError {
+        // «Нет места» и предел пыли — обычный отказ, а не сбой: вызывающий его
+        // ждёт и говорит игроку, что места нет. В лог — только настоящие сбои.
+        case InventoryRepoError.NoMorePlaceForItems | InventoryRepoError.DustLimitReached => ZIO.unit
+        case err => ZIO.logError(s"Error occurred: $err")
+      }
 
   def updateItem(heroId: HeroId, item: Item): IO[InventoryRepoError, Unit] =
     for {
