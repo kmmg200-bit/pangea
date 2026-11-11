@@ -183,16 +183,49 @@ object DeathStateSpec extends ZIOSpecDefault {
               assertTrue(sceneData.flatMap(_.hcursor.get[Long]("restDurationMs").toOption).contains(60000L))
     },
 
-    test("restDurationMs растёт с уровнем героя и не достигает 90 минут") {
-      val highHero = TestFixtures.hero(userId).copy(lvl = 50L)
+    test("restDurationMs растёт с уровнем героя, но не дольше 30 минут: потолок — с 41-го уровня") {
+      def restAt(lvl: Long) =
+        for {
+          triple    <- makeState(TestFixtures.hero(userId).copy(lvl = lvl))
+          (state, heroDao, _, renderer) = triple
+          _         <- state.enter(testUser, renderer)
+          sceneData <- heroDao.readSceneData(userId)
+        } yield sceneData.flatMap(_.hcursor.get[Long]("restDurationMs").toOption).getOrElse(0L)
       for {
-        triple                    <- makeState(highHero)
-        (state, heroDao, _, renderer) = triple
-        _                         <- state.enter(testUser, renderer)
-        sceneData                 <- heroDao.readSceneData(userId)
-        ms                         = sceneData.flatMap(_.hcursor.get[Long]("restDurationMs").toOption).getOrElse(0L)
-      } yield assertTrue(ms > 60000L) &&            // больше, чем на 1 уровне
-              assertTrue(ms < 90L * 60000L)         // строго меньше асимптоты в 90 минут
+        at20  <- restAt(20L)
+        at40  <- restAt(40L)
+        at41  <- restAt(41L)
+        at100 <- restAt(100L)
+      } yield assertTrue(at20 > 60000L && at20 < at40) &&      // больше, чем на 1-м уровне, и растёт
+              assertTrue(at40 < 30L * 60000L) &&                 // 29,7 минуты — ещё по формуле
+              assertTrue(at41 == 30L * 60000L && at100 == 30L * 60000L)
+    },
+
+    test("пал благословлённым — отдых вдвое короче, не дольше 15 минут; кончилось благословение — как обычно") {
+      def restWith(lvl: Long, azat: Option[AzatState]) =
+        for {
+          t   <- makeState(TestFixtures.hero(userId).copy(lvl = lvl))
+          (state, heroDao, _, renderer) = t
+          _   <- ZIO.foreachDiscard(azat)(a => heroDao.writeAzatData(userId, a.asJson))
+          _   <- state.enter(testUser, renderer)
+          sd  <- heroDao.readSceneData(userId)
+        } yield sd.flatMap(_.hcursor.get[Long]("restDurationMs").toOption).getOrElse(0L)
+      // Благословение на неделю вперёд: TestClock стоит на нуле.
+      val blessing = Some(AzatState(blessingUntil = Some(AzatState.BlessingDurationMs)))
+      val expired  = Some(AzatState(blessingUntil = Some(0L)))
+      for {
+        high  <- restWith(100L, blessing)
+        low   <- restWith(1L, blessing)
+        plain <- restWith(20L, None)
+        mid   <- restWith(20L, blessing)
+        over  <- restWith(100L, expired)
+      } yield assertTrue(high == 15L * 60000L) &&
+              assertTrue(low == 30000L) &&                       // минута на 1-м уровне — полминуты
+              assertTrue(math.abs(mid - plain / 2L) <= 1L) &&
+              assertTrue(over == 30L * 60000L) &&
+              // с «Первопроходцем» (порог 9) — ещё вдвое: 7,5 минуты
+              assertTrue(DeathState.restMs(100L, 0.5, blessed = true) == 450000L &&
+                         DeathState.restMs(100L, 0.5, blessed = false) == 15L * 60000L)
     },
 
     test("enter → получает случайную именованную травму из списка") {

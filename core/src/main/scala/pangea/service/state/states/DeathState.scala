@@ -96,7 +96,8 @@ case class DeathState(
       fellEarlier   = battle.exists(_.group.heroDown)
       withMarisa   <- heroDao.readSceneData(user.userId).map(_.flatMap(_.as[LootData].toOption)
                         .flatMap(_.eventData).flatMap(_.as[MarisaHuntState.Progress].toOption).exists(_.withMarisa))
-      // Благословение Азата смягчает штраф: теряется на BlessingBonusPct% меньше.
+      // Благословение Азата смягчает штраф: теряется на BlessingBonusPct% меньше,
+      // а отдых после смерти вдвое короче (см. DeathState.restMs).
       azat         <- AzatData.load(heroDao, user.userId, now)
       blessed       = azat.blessingActive(now)
       expPenalty    = (hero.exp * DeathState.ExpLossPct / 100L).max(0L)
@@ -132,13 +133,10 @@ case class DeathState(
       // Пал в бою, куда брали отряд, — резерв уходит. В бой один на один отряд
       // не брали: он оставался дома, и резерв цел.
       _            <- ZIO.when(battle.exists(_.squadTaken))(reserveLeaves(user, hero, now, renderer))
-      // Время в мёртвом режиме растёт с уровнем героя и асимптотически
-      // стремится к 90 минутам, не достигая их:
-      //   deathTimeMinutes = 90 - 89 * exp(-k * (level - 1))
-      // На 1 уровне == 1 минута; k — коэффициент роста.
-      // «Первопроходец» (порог 9) сокращает этот отдых вдвое.
-      deathRestMinutes = 90.0 - 89.0 * math.exp(-DeathState.RestGrowthK * (hero.lvl - 1L))
-      deathRestMs      = (deathRestMinutes * 60000.0 * hero.sets.deathRestMult).toLong
+      // Время в мёртвом режиме растёт с уровнем героя, но не дольше 30 минут;
+      // «Первопроходец» (порог 9) и благословение Азата сокращают его — каждое
+      // вдвое (см. DeathState.restMs).
+      deathRestMs   = DeathState.restMs(hero.lvl, hero.sets.deathRestMult, blessed)
       // Коллектор: задание закрыто здесь же, а что сказать и куда идти —
       // RestState прочитает при пробуждении. Как «Письмо Марисе» закончили
       // другие — готовым текстом (`wakeNote`), после «Квест завершён».
@@ -297,8 +295,23 @@ case class DeathState(
 }
 
 object DeathState {
-  // Коэффициент роста времени мёртвого режима по уровню героя (см. формулу в enter).
+  // Коэффициент роста времени мёртвого режима по уровню героя (см. [[restMs]]).
   val RestGrowthK: Double = 0.01
+
+  /** Дольше скольких минут отдых после смерти не длится — до сокращений. */
+  val MaxRestMinutes: Double = 30.0
+
+  /** Сколько длится отдых после смерти, мс. Растёт с уровнем героя:
+    *   90 − 89 · e^(−k · (уровень − 1)) минут
+    * — на 1-м уровне ровно минута, — но не дольше [[MaxRestMinutes]] (потолок
+    * наступает с 41-го уровня). `mult` — доля, что оставляет «Первопроходец»
+    * (порог 9 — половину); пал благословлённым (`blessed`) — ещё на
+    * [[AzatState.BlessingDeathRestCutPct]]% короче, то есть не дольше 15 минут. */
+  def restMs(lvl: Long, mult: Double, blessed: Boolean): Long = {
+    val minutes  = (90.0 - 89.0 * math.exp(-RestGrowthK * (lvl - 1L))).min(MaxRestMinutes)
+    val blessing = if (blessed) (100L - AzatState.BlessingDeathRestCutPct) / 100.0 else 1.0
+    (minutes * 60000.0 * mult * blessing).toLong
+  }
 
   /** Сколько процентов опыта сгорает при смерти (до скидки благословения). */
   val ExpLossPct: Long = 10L
