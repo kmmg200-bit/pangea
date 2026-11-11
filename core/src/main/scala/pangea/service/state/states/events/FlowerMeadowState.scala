@@ -162,12 +162,12 @@ case class FlowerMeadowState(
       _ <- scheduler.cancel(user.userId, TaskKind.FlowerMeadow)
       _ <- heroDao.writeActiveBattle(user.userId, battle.asJson)
       _ <- heroDao.writeSceneData(user.userId, routing.asJson)
-      _ <- renderer.show(user, Screen(content.text("flowerMeadow.wolfAmbush"), Nil))
       // Знания читаем заново: догадка по цветку могла только что их пополнить.
       lore <- HerbLore.readLore(heroDao, user.userId)
-      _ <- ZIO.when(!lore.metWolf)(
-             renderer.show(user, Screen(content.text("flowerMeadow.wolfFirstMeeting"), Nil)) *>
-               HerbLore.writeLore(heroDao, user.userId, lore.copy(metWolf = true)))
+      // Засада и первая встреча с волком — одним сообщением; бой придёт следом.
+      _ <- renderer.show(user, Screen(Screen.joined(content.text("flowerMeadow.wolfAmbush"),
+             if (lore.metWolf) "" else content.text("flowerMeadow.wolfFirstMeeting")), Nil))
+      _ <- ZIO.when(!lore.metWolf)(HerbLore.writeLore(heroDao, user.userId, lore.copy(metWolf = true)))
     } yield StateType.Battle
   }
 

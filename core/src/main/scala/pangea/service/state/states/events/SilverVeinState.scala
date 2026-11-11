@@ -48,16 +48,16 @@ case class SilverVeinState(heroDao: HeroDao, scheduler: Scheduler, content: Scen
       hero <- getHero(user)
       _    <- heroDao.writeSceneData(user.userId, Json.obj(StartedAtKey -> now.asJson))
       _    <- scheduler.schedule(user.userId, now + durationFor(hero), TaskKind.Harvest, StateType.SilverVein, HarvestAction)
-      // Брамбл в отряде — берётся за кирку, и дело идёт вдвое быстрее.
-      _    <- ZIO.when(hero.squad.has(AllyKind.Gnome))(
-                renderer.show(user, Screen(content.text("silverVein.gnomeHelps"), Nil)))
-      _    <- showVein(user, renderer)
+      // Брамбл в отряде — берётся за кирку, и дело идёт вдвое быстрее; об этом —
+      // тем же сообщением, над жилой.
+      _    <- showVein(user, renderer,
+                if (hero.squad.has(AllyKind.Gnome)) content.text("silverVein.gnomeHelps") else "")
     } yield ()
 
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     branch.act(user, ua, renderer)
 
-  private def showVein(user: User, renderer: Renderer): Task[Unit] =
+  private def showVein(user: User, renderer: Renderer, note: String = ""): Task[Unit] =
     for {
       now     <- nowMs
       hero    <- getHero(user)
@@ -68,7 +68,7 @@ case class SilverVeinState(heroDao: HeroDao, scheduler: Scheduler, content: Scen
       remaining = started.map(s => (total - (now - s)).max(0L)).getOrElse(total)
       _       <- renderer.show(user, Screen(
                    content.format("silverVein.enter.text", "duration" -> formatRemaining(remaining)),
-                   AppButton.inRow(content, content.screen("silverVein.enter").choices)))
+                   AppButton.inRow(content, content.screen("silverVein.enter").choices)).noted(note))
     } yield ()
 
   // Ручная попытка уйти: до конца добычи показываем confirm c остатком времени;
@@ -122,14 +122,16 @@ case class SilverVeinState(heroDao: HeroDao, scheduler: Scheduler, content: Scen
       // Опыт за выбранную жилу — от уровня лабиринта (см. GatherExp).
       now      <- nowMs
       exp      <- GatherExp.grant(heroDao, content, user, hero, GatherExp.VeinPct, now)
-      _        <- ZIO.when(exp.nonEmpty)(renderer.show(user, Screen(exp, Nil)))
       gemRoll  <- Random.nextIntBetween(1, 101)
       gem      <- if (gemRoll <= GemDropChancePct) randomGem.map(Some(_)) else ZIO.none
       dustRoll <- Random.nextIntBetween(1, 101)
       dust     <- if (dustRoll <= DustDropChancePct) randomDust.map(Some(_)) else ZIO.none
       finds     = gem.toList ++ dust.toList
-      result   <- if (finds.nonEmpty) dropFinds(user, rolled, finds, mine)
-                  else grantSilverDirectly(user, hero.silver, reward, renderer, mine)
+      // Опыт — тем же сообщением, что и серебро; находки же показывает экран
+      // добычи — его рисует добыча, и опыт идёт перед ним сам.
+      result   <- if (finds.nonEmpty)
+                    ZIO.when(exp.nonEmpty)(renderer.show(user, Screen(exp, Nil))) *> dropFinds(user, rolled, finds, mine)
+                  else grantSilverDirectly(user, hero.silver, reward, renderer, mine, exp)
     } yield result
 
   // Череп (Skull) намеренно исключён из пула — см. SilverVeinState.DroppableGemKinds.
@@ -150,10 +152,10 @@ case class SilverVeinState(heroDao: HeroDao, scheduler: Scheduler, content: Scen
       .as(StateType.Loot)
 
   private def grantSilverDirectly(user: User, curSilver: Long, reward: Long, renderer: Renderer,
-                                  mine: Boolean): Task[StateType] =
+                                  mine: Boolean, exp: String): Task[StateType] =
     heroDao.updateSilver(user.userId, curSilver + reward) *>
       heroDao.writeSceneData(user.userId, Json.Null) *>
-      renderer.show(user, Screen(content.format("silverVein.done", "silver" -> reward.toString), Nil))
+      renderer.show(user, Screen(Screen.joined(exp, content.format("silverVein.done", "silver" -> reward.toString)), Nil))
         .as(if (mine) StateType.SquadMine else StateType.Dungeon)
 
   private def startedAt(user: User): Task[Option[Long]] =

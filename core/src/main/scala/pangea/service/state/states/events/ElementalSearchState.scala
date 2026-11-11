@@ -69,10 +69,11 @@ case class ElementalSearchState(
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     branch.act(user, ua, renderer)
 
-  /** Находки приходят сами — рядом с «Уйти» кнопка приложения. */
-  private def showSearch(user: User, renderer: Renderer): Task[Unit] = {
+  /** Находки приходят сами — рядом с «Уйти» кнопка приложения. `note` — что
+    * только что нашлось: тем же сообщением, над экраном. */
+  private def showSearch(user: User, renderer: Renderer, note: String = ""): Task[Unit] = {
     val screen = content.screen("elementalSearch.enter")
-    renderer.show(user, screen.copy(choices = AppButton.inRow(content, screen.choices)))
+    renderer.show(user, screen.copy(choices = AppButton.inRow(content, screen.choices)).noted(note))
   }
 
   /** Срабатывание таймера: выдаём камень и, если попытки остались, ставим следующий. */
@@ -94,16 +95,17 @@ case class ElementalSearchState(
             // сопровождаем остатком мест: хранилище молча переполняется, и
             // камни начинают пропадать — лучше увидеть это сразу.
             where     <- InventoryFeedback.intakeLine(inventoryRepo, content, hero.id, persisted, intake)
-            _         <- renderer.show(user, Screen(
-                           content.format("elementalSearch.found", "gem" -> gem.displayTitle) + "\n" + where, Nil))
+            found      = content.format("elementalSearch.found", "gem" -> gem.displayTitle) + "\n" + where
             left       = s.triesLeft - 1
+            // Находка — одним сообщением с экраном осмотра, а последняя — с
+            // концом осмотра.
             out <- if (left <= 0)
                      heroDao.writeSceneData(user.userId, Json.Null) *>
-                       renderer.show(user, Screen(content.text("elementalSearch.done"), Nil))
+                       renderer.show(user, Screen(Screen.joined(found, content.text("elementalSearch.done")), Nil))
                          .as(StateType.Dungeon)
                    else
                      writeScene(user, SearchScene(left)) *> scheduleNext(user) *>
-                       showSearch(user, renderer).as(StateType.ElementalSearch)
+                       showSearch(user, renderer, found).as(StateType.ElementalSearch)
           } yield out
       }
     } yield res

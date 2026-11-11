@@ -110,9 +110,10 @@ case class ThievesSpoilsState(heroDao: HeroDao, content: SceneContent) extends S
         val purses = List.fill(scene.count)(ThievesState.purse(scene.lvl))
         for {
           closed <- BoardProgress.markDone(heroDao, user.userId, BoardKind.Thieves)
-          _      <- renderer.show(user, Screen(content.format("thieves.won",
-                      "count" -> scene.count.toString, "gang" -> gangName(race)), Nil))
-          _      <- ZIO.when(closed)(renderer.show(user, Screen(content.text("questBoard.doneThieves"), Nil)))
+          // Победа и закрытое объявление с доски — одним сообщением.
+          _      <- renderer.show(user, Screen(Screen.joined(
+                      content.format("thieves.won", "count" -> scene.count.toString, "gang" -> gangName(race)),
+                      if (closed) content.text("questBoard.doneThieves") else ""), Nil))
           // Уцелевшие запомнят, кто им помешал.
           after  <- Random.nextIntBetween(GangGrudge.MinExplores, GangGrudge.MaxExplores + 1)
           _      <- GangGrudge.remember(heroDao, user.userId, race, after)

@@ -155,8 +155,8 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
         else {
           val level = DungeonState.DragonRetreatLevel
           heroDao.updateDungeonLevel(user.userId, level) *>
-            renderer.show(user, Screen(content.format("dungeon.dragon.left", "level" -> level.toString), Nil)) *>
-            renderer.show(user, enterScreen(hero.copy(dungeonLevel = level), now))
+            renderer.show(user, enterScreen(hero.copy(dungeonLevel = level), now)
+              .noted(content.format("dungeon.dragon.left", "level" -> level.toString)))
         }
     } yield StateType.Dungeon
 
@@ -358,16 +358,17 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
       _ <- heroDao.updateFightStats(user.userId, hero.fightStats.copy(hp = maxHp, energy = newEnergy))
       _ <- ZIO.when(hasFlask)(heroDao.updateEquipment(user.userId, refilledEq))
       _ <- inventoryRepo.refillFlasks(hero.id).orElse(ZIO.unit)
+      // Засада — тем же сообщением, что и ручеёк: «…Однако на шум пришёл и кто-то
+      // ещё». Экран боя придёт следом — его рисует бой.
+      roll   <- Random.nextIntBetween(1, 101)
+      ambush  = roll <= 50
       _ <- renderer.show(user, Screen(
              content.format("dungeon.spring",
                "healed"      -> healed.toString,
                "energy"      -> energyBack.toString,
-               "flaskFilled" -> (if (hasFlask) content.text("dungeon.springFlaskFilled") else "")), Nil))
-      roll   <- Random.nextIntBetween(1, 101)
-      result <- if (roll <= 50)
-                  renderer.show(user, Screen(content.text("dungeon.springAmbush"), Nil)) *>
-                    startBattle(user, hero)
-                else ZIO.succeed(StateType.Dungeon)
+               "flaskFilled" -> (if (hasFlask) content.text("dungeon.springFlaskFilled") else "")) +
+               (if (ambush) content.text("dungeon.springAmbush") else ""), Nil))
+      result <- if (ambush) startBattle(user, hero) else ZIO.succeed(StateType.Dungeon)
     } yield result
   }
 
@@ -389,8 +390,7 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
       now  <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
       hero <- getHero(user)
       _ <- if (!hero.canGoLighter)
-             renderer.show(user, Screen(content.text("dungeon.alreadyAtTop"), Nil)) *>
-               renderer.show(user, enterScreen(hero, now))
+             renderer.show(user, enterScreen(hero, now).noted(content.text("dungeon.alreadyAtTop")))
            else {
              val newLevel = math.max(1, hero.dungeonLevel - 1)
              heroDao.updateDungeonLevel(user.userId, newLevel) *>
@@ -423,8 +423,7 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
     } yield result
 
   private def atDeepest(user: User, hero: Hero, nowMs: Long, renderer: Renderer): Task[StateType] =
-    (renderer.show(user, Screen(content.text("dungeon.deepestReached"), Nil)) *>
-      renderer.show(user, enterScreen(hero, nowMs))).as(StateType.Dungeon)
+    renderer.show(user, enterScreen(hero, nowMs).noted(content.text("dungeon.deepestReached"))).as(StateType.Dungeon)
 
   private def descend(user: User, hero: Hero, nowMs: Long, renderer: Renderer): Task[StateType] = {
     val newLevel = math.min(150, hero.dungeonLevel + 1)
@@ -443,8 +442,7 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
       deadline = nowMs + extra
       _ <- heroDao.writeSceneData(user.userId, TrackingData(deadline).asJson)
       _ <- scheduler.schedule(user.userId, deadline, TaskKind.DarknessTracking, StateType.Dungeon, TrackAction)
-      _ <- renderer.show(user, Screen(content.text("dungeon.trackingStart"), Nil))
-      _ <- renderer.show(user, trackingScreen)
+      _ <- renderer.show(user, trackingScreen.noted(content.text("dungeon.trackingStart")))
     } yield StateType.Dungeon
 
   /** Время выслеживания вышло — генерируем гарантированного Отмеченного тьмой
@@ -471,8 +469,7 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
       hero <- getHero(user)
       _    <- heroDao.writeSceneData(user.userId, io.circe.Json.Null)
       _    <- scheduler.cancel(user.userId, TaskKind.DarknessTracking)
-      _    <- renderer.show(user, Screen(content.text("dungeon.trackingStopped"), Nil))
-      _    <- renderer.show(user, enterScreen(hero, now))
+      _    <- renderer.show(user, enterScreen(hero, now).noted(content.text("dungeon.trackingStopped")))
     } yield StateType.Dungeon
 
   /** Экран ожидания во время выслеживания: кнопка «перестать искать»

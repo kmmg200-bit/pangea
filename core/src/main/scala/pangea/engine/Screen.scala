@@ -8,4 +8,16 @@ package pangea.engine
 // image → картинка к сообщению: фото из альбома группы ВК, `photo-<группа>_<фото>`
 // или ссылка на него. ВК прикрепляет уже загруженное фото — заново его не грузим.
 case class Screen(text: String, choices: List[Choice], inline: Boolean = false, hideKeyboard: Boolean = false,
-                  image: Option[String] = None)
+                  image: Option[String] = None) {
+
+  /** Тот же экран, а над ним — заметка о том, что только что случилось: одним
+    * сообщением, а не двумя подряд («Глубже некуда» и следом этаж). */
+  def noted(note: String): Screen =
+    if (note.isEmpty) this else copy(text = if (text.isEmpty) note else s"$note\n\n$text")
+}
+
+object Screen {
+
+  /** Несколько заметок подряд — одним сообщением, абзацами; пустые пропускаются. */
+  def joined(notes: String*): String = notes.filter(_.nonEmpty).mkString("\n\n")
+}

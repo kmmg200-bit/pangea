@@ -83,7 +83,9 @@ case class FoundItemState(
   private def readFound(user: User): Task[Option[FoundItemData]] =
     heroDao.readSceneData(user.userId).map(_.flatMap(_.as[FoundItemData].toOption))
 
-  private def showFoundScreen(user: User, renderer: Renderer): Task[Unit] =
+  /** Экран находки. `note` — что только что не вышло: тем же сообщением, над
+    * находкой. */
+  private def showFoundScreen(user: User, renderer: Renderer, note: String = ""): Task[Unit] =
     for {
       hero <- heroDao
         .getHeroByUserId(user.userId)
@@ -99,7 +101,7 @@ case class FoundItemState(
       // Над «Оставить» — «🎒 Рюкзак»: освободить место и вернуться к находке.
       packBtn = item.map(_ => content.choice("FoundBackpack", "foundItem.backpackLabel"))
       (take, rest) = content.screen("foundItem.enter").choices.partition(_.id == "TakeItem")
-      _    <- renderer.show(user, Screen(text, take ++ wearBtn.toList ++ packBtn.toList ++ rest))
+      _    <- renderer.show(user, Screen(text, take ++ wearBtn.toList ++ packBtn.toList ++ rest).noted(note))
     } yield ()
 
   /** «🎒 Рюкзак»: заглянуть в сумку, не бросая находку, — сразу в инвентарь.
@@ -147,8 +149,7 @@ case class FoundItemState(
       inventoryRepository.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
         TakeAndEquip.noRoom(hero, inv, item, slot) match {
           case Some(key) =>
-            renderer.show(user, Screen(content.format(key, "name" -> item.name), Nil)) *>
-              showFoundScreen(user, renderer).as(StateType.FoundItem)
+            showFoundScreen(user, renderer, content.format(key, "name" -> item.name)).as(StateType.FoundItem)
           case None => wearItem(user, hero, item, slot, renderer)
         }
       }

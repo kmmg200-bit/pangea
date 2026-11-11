@@ -311,7 +311,8 @@ object DungeonStateSpec extends ZIOSpecDefault {
         screens  <- renderer.sentScreens
       } yield assertTrue(result == StateType.Dungeon) &&
               assertTrue(updated.exists(_.fightStats.hp > 10L)) &&
-              assertTrue(screens.exists(_.text.contains("ручеёк")))
+              assertTrue(screens.exists(_.text.contains("ручеёк"))) &&
+              assertTrue(!screens.exists(_.text.contains("Однако на шум")))
     },
 
     test("FindEvent Spring → засада (roll ≤ 50) → начинается бой") {
@@ -327,7 +328,9 @@ object DungeonStateSpec extends ZIOSpecDefault {
         result   <- state.action(testUser, tap("FindEvent"), renderer)
         screens  <- renderer.sentScreens
       } yield assertTrue(result == StateType.Battle) &&
-              assertTrue(screens.exists(_.text.contains("ручья")))
+              // ручеёк и засада — одним сообщением
+              assertTrue(screens.exists(s => s.text.contains("живительный ручеёк") && s.text.contains("Однако на шум"))) &&
+              assertTrue(!screens.exists(_.text.startsWith(" Однако")))
     },
 
     test("FindEvent Spring → фляга целителя на поясе наполнена, даже пустая; кузнеца — нет") {
@@ -509,7 +512,9 @@ object DungeonStateSpec extends ZIOSpecDefault {
         screens                       <- renderer.sentScreens
         updatedHero                   <- heroDao.getHeroByUserId(userId)
       } yield assertTrue(result == StateType.Dungeon) &&
-              assertTrue(screens.exists(_.text.contains("Выше уже некуда"))) &&
+              // «выше некуда» — тем же сообщением, что и экран этажа с его кнопками
+              assertTrue(screens.size == 1) &&
+              assertTrue(screens.exists(s => s.text.startsWith("Выше уже некуда") && s.choices.exists(_.id == "FindEvent"))) &&
               assertTrue(updatedHero.exists(_.dungeonLevel == 1))
     },
 

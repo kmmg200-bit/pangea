@@ -42,20 +42,20 @@ case class RottenJoeState(heroDao: HeroDao, content: SceneContent) extends State
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     branch.act(user, ua, renderer)
 
-  /** Экран встречи. Первую реплику показываем отдельным сообщением и только один
-    * раз за всю игру — дальше Джо уже знакомый. */
+  /** Экран встречи — одним сообщением: вход, первая реплика (только один раз за
+    * всю игру — дальше Джо уже знакомый) и выбор. */
   private def show(user: User, renderer: Renderer): Task[StateType] =
     for {
       lore <- readLore(user)
-      _    <- renderer.show(user, Screen(content.text("rottenJoe.enter"), Nil))
-      _    <- ZIO.when(!lore.metJoe)(
-                renderer.show(user, Screen(content.text("rottenJoe.firstMeeting"), Nil)) *>
-                  heroDao.writeLoreData(user.userId, lore.copy(metJoe = true).asJson))
-      _    <- renderer.show(user, Screen(content.text("rottenJoe.choose"), List(
+      _    <- renderer.show(user, Screen(Screen.joined(content.text("rottenJoe.enter"),
+                if (lore.metJoe) "" else content.text("rottenJoe.firstMeeting"), content.text("rottenJoe.choose")), List(
                 content.choice("AttackJoe", "rottenJoe.attack").copy(row = Some(0)),
                 content.choice("OpenCharacter", "common.character").copy(row = Some(1)),
                 content.choice("LeaveJoe", "rottenJoe.leave").copy(row = Some(2))
               )))
+      // Знакомство — после показа: не дошло сообщение — Джо и в другой раз
+      // представится.
+      _    <- ZIO.when(!lore.metJoe)(heroDao.writeLoreData(user.userId, lore.copy(metJoe = true).asJson))
     } yield StateType.RottenJoe
 
   private def attack(user: User, renderer: Renderer): Task[StateType] =

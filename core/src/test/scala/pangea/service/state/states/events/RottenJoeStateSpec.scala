@@ -45,19 +45,22 @@ object RottenJoeStateSpec extends ZIOSpecDefault {
               assertTrue(screens.last.choices.map(_.id) == List("AttackJoe", "OpenCharacter", "LeaveJoe"))
     },
 
-    test("первая встреча даёт отдельную реплику, вторая — уже нет") {
+    test("встреча — одним сообщением: вход, реплика первой встречи и выбор с кнопками; во второй раз реплики нет") {
       for {
         t <- makeState()
         (state, dao, renderer) = t
         _      <- state.enter(testUser, renderer)
-        first  <- renderer.sentScreens.map(_.map(_.text).mkString)
+        first  <- renderer.sentScreens
         lore   <- loreOf(dao)
         _      <- state.enter(testUser, renderer)
-        second <- renderer.sentScreens.map(_.map(_.text).mkString)
-      } yield assertTrue(first.contains("надо будет спросить об этом Трактирщика")) &&
+        second <- renderer.sentScreens.map(_.drop(first.size))
+      } yield assertTrue(first.size == 1) &&
+              assertTrue(first.forall(s => s.text.contains("резкий запах гнили") &&
+                s.text.contains("надо будет спросить об этом Трактирщика") &&
+                s.text.contains("есть время решить") && s.choices.nonEmpty)) &&
               assertTrue(lore.metJoe) && // встречу запомнили — трактирщик откроет кнопку
               // во второй заход реплика больше не добавляется
-              assertTrue(second.split("надо будет спросить").length == 2)
+              assertTrue(second.size == 1 && second.forall(!_.text.contains("надо будет спросить")))
     },
 
     test("напасть → бой с Гнилым Джо: раса, статы по BossLvL и вид записаны") {
