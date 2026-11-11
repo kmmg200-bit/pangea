@@ -758,8 +758,9 @@ case class FetShopState(
   /** Купить набор. Сперва вещи получают номера из базы, следом покупка — в
     * журнал: не записалась — покупки нет, и дважды набор не купить. Потом
     * дублоны — Фету, а герою: +7 мест в сумке, семь вещей в неё (влезут всегда:
-    * мест прибавилось столько же), серебро на руки и благословение Азата —
-    * продлится, если уже идёт. Уже куплен — к прилавку, без единого слова. */
+    * мест прибавилось столько же), серебро на руки, репутация искателей и
+    * благословение Азата — продлится, если уже идёт. Уже куплен — к прилавку,
+    * без единого слова. */
   private def buyPack(user: User, renderer: Renderer): Task[Unit] =
     (journal, itemRepo) match {
       case (Some(log), Some(items)) =>
@@ -779,6 +780,8 @@ case class FetShopState(
                    _     <- inventoryRepo.increaseCapacity(hero.id, FetShopState.PackSlots).mapError(asThrowable)
                    _     <- ZIO.foreachDiscard(goods)(inventoryRepo.addItem(hero.id, _).mapError(asThrowable))
                    _     <- heroDao.updateSilver(user.userId, hero.silver + FetShopState.PackSilver)
+                   // Как любая репутация, идёт и в дневной наказ Горна «репутация за день».
+                   _     <- heroDao.updateGuildReputation(user.userId, hero.guildReputation + FetShopState.PackReputation)
                    now   <- nowMs
                    azat  <- AzatData.load(heroDao, user.userId, now)
                    _     <- AzatData.save(heroDao, user.userId, azat.blessedFor(FetShopState.PackBlessingMs, now))
@@ -895,6 +898,7 @@ object FetShopState {
     * текстах `fet.pack.pitch` и `fet.pack.done`. */
   val PackPriceDoubloons: Long = 600L
   val PackSilver: Long         = 25000L
+  val PackReputation: Long     = 500L
   val PackSlots: Long          = 7L
   val PackBlessingDays: Long   = 5L
   val PackBlessingMs: Long     = PackBlessingDays * 24L * 60L * 60L * 1000L

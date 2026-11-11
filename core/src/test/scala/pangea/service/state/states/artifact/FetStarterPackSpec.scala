@@ -14,7 +14,8 @@ import zio.test._
 
 /** Набор успешного искателя у Фета: 600 дублонов, один на игрока. Стопки живой
   * воды, шнапса и костоправного, фиолетовые 5 уровня — двуручное, одноручное,
-  * лук и щит, 25 000 серебра, +7 мест в сумке и благословение Азата на 5 дней.
+  * лук и щит, 25 000 серебра, 500 репутации искателей, +7 мест в сумке и
+  * благословение Азата на 5 дней.
   * Покупка — в журнал; купившему кнопки больше нет. */
 object FetStarterPackSpec extends ZIOSpecDefault {
 
@@ -74,14 +75,15 @@ object FetStarterPackSpec extends ZIOSpecDefault {
         _    <- f.state.action(testUser, tap("FetPackBuy"), f.renderer)
         ask  <- f.renderer.sentScreens.map(_.last)
       } yield assertTrue(card.text.startsWith("«Лучше этого набора для начинающего искателя ты не найдёшь")) &&
-              assertTrue(card.text.contains("• 🪙 25 000 серебра") && card.text.contains("Набор продаётся один раз.")) &&
+              assertTrue(card.text.contains("• 🪙 25 000 серебра\n• 🎖 500 репутации искателей\n") &&
+                         card.text.contains("Набор продаётся один раз.")) &&
               assertTrue(card.choices.map(_.id) == List("FetPackBuy", "FetShop") &&
                          card.choices.headOption.exists(_.label == "Купить за 🟡 600")) &&
               assertTrue(ask.text == "Взять «Набор успешного искателя» за 🟡 600?" &&
                          ask.choices.map(_.id) == List("FetPackYes", "FetShop"))
     },
 
-    test("покупка: −600 дублонов, +25 000 серебра, +7 мест и семь вещей даже в полную сумку, благословение на 5 дней") {
+    test("покупка: −600 дублонов, +25 000 серебра, +500 репутации, +7 мест и семь вещей даже в полную сумку, благословение на 5 дней") {
       // Номера мечей — не те, что раздаст тестовое хранилище вещей (с единицы).
       val full = (1001L to 1020L).toList.map(gear)
       for {
@@ -99,6 +101,9 @@ object FetStarterPackSpec extends ZIOSpecDefault {
         inside = stacks.map(s => Bundling.contents(s).flatMap(_.brew))
         ids    = got.map(_.id) ++ stacks.flatMap(Bundling.contents).map(_.id)
       } yield assertTrue(hero.doubloons == 100L && hero.silver == 26000L) &&
+              assertTrue(hero.guildReputation == TestFixtures.hero(userId).guildReputation + 500L) &&
+              assertTrue(said.contains(content.text("fet.pack.done")) &&
+                         content.text("fet.pack.done").contains("🎖 500 репутации искателей")) &&
               assertTrue(inv.maxItems == 27L && inv.items.data.size == 27 && got.size == 7) &&
               // три стопки по пять: живая вода, шнапс, костоправный
               assertTrue(inside.map(_.toSet) ==
