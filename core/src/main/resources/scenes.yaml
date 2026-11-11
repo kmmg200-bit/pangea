@@ -5894,7 +5894,10 @@ squad:
   dismissLabel:
     label: "Выгнать"
     color: "negative"
+  # Наёмник (Йорген, Плюх, Брамбл) — его можно нанять снова; прочие — поднятые,
+  # крыса — уходят насовсем (dismissConfirmGone).
   dismissConfirm: "Выгнать {name} из отряда? Нанять снова можно будет в таверне."
+  dismissConfirmGone: "Выгнать {name} из отряда? {name} покинет вас навсегда: в таверне таких не нанимают."
   dismissYes: "Да, выгнать"
   dismissNo: "Нет"
   moved: "{name} теперь на позиции {n}."

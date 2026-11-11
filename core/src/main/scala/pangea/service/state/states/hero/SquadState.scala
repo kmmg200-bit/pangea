@@ -3,7 +3,7 @@ package pangea.service.state.states.hero
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.hero.Hero
-import pangea.model.squad.{Ally, AllyRates}
+import pangea.model.squad.{Ally, AllyKind, AllyRates}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.service.squad.SquadOrders
@@ -240,7 +240,7 @@ case class SquadState(heroDao: HeroDao, content: SceneContent) extends State {
   private def confirmReserveDismiss(user: User, i: Int, who: String, renderer: Renderer): Task[Unit] =
     withReservedAlly(user, i, who, renderer) { (_, a) =>
       val data = reserved(i, a)
-      renderer.show(user, Screen(content.format("squad.dismissConfirm", "name" -> a.name), List(
+      renderer.show(user, Screen(dismissAsk(a), List(
         Choice("SquadReserveDismissDo", content.text("squad.dismissYes"), data = data, color = ChoiceColor.Negative, row = Some(0)),
         Choice("SquadReserveAlly", content.text("squad.dismissNo"), data = data, row = Some(0)))))
     }
@@ -295,9 +295,15 @@ case class SquadState(heroDao: HeroDao, content: SceneContent) extends State {
       case _ => showList(user, renderer)
     }
 
+  /** «Выгнать?» — наёмника потом можно нанять снова, прочие (поднятые, крыса)
+    * уходят насовсем: в таверне таких не нанимают. */
+  private def dismissAsk(a: Ally): String =
+    content.format(if (AllyKind.hireable.contains(a.kind)) "squad.dismissConfirm" else "squad.dismissConfirmGone",
+      "name" -> a.name)
+
   private def confirmDismiss(user: User, at: Int, renderer: Renderer): Task[Unit] =
     withAllyAt(user, at, renderer) { a =>
-      renderer.show(user, Screen(content.format("squad.dismissConfirm", "name" -> a.name), List(
+      renderer.show(user, Screen(dismissAsk(a), List(
         Choice("SquadDismissDo", content.text("squad.dismissYes"), data = Map("pos" -> at.toString), color = ChoiceColor.Negative, row = Some(0)),
         Choice("SquadAlly", content.text("squad.dismissNo"), data = Map("pos" -> at.toString), row = Some(0)))))
     }

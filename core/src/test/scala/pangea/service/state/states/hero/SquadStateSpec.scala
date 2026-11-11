@@ -192,7 +192,7 @@ object SquadStateSpec extends ZIOSpecDefault {
         _   <- state.action(testUser, pick("SquadDismissDo", 2), renderer)
         gone <- dao.getHeroByUserId(userId).map(_.get)
         back <- state.action(testUser, tap("BackFromSquad"), renderer)
-      } yield assertTrue(ask.text.contains("Выгнать Йорген Кремень из отряда?")) &&
+      } yield assertTrue(ask.text == "Выгнать Йорген Кремень из отряда? Нанять снова можно будет в таверне.") &&
               assertTrue(ask.choices.map(_.id) == List("SquadDismissDo", "SquadAlly")) &&
               assertTrue(kept.squad.has(AllyKind.Human)) &&
               assertTrue(!gone.squad.has(AllyKind.Human) && gone.squad.has(AllyKind.Gnome)) &&
@@ -262,6 +262,25 @@ object SquadStateSpec extends ZIOSpecDefault {
               assertTrue(swap.squad.allyAt(2).exists(_.name == "Поднятый орк") &&
                          swap.squad.reserve.map(_.kind) == List(AllyKind.Human)) &&
               assertTrue(told.contains("Йорген Кремень уходит в резерв, а Поднятый орк встаёт на позицию 2."))
+    },
+
+    test("не наёмник — в строю и в резерве: «покинет вас навсегда», а не «нанять в таверне»") {
+      val form  = UndeadForm("Гоблин немощный раб", 16L, AllyKind.Human.stats(3L))
+      val risen = baseHero.copy(squad = baseHero.squad.raise(form, lvl, 0L))
+      val pos   = risen.squad.inOrder.find(_.kind == AllyKind.Undead).map(_.position).getOrElse(0)
+      val gone  = "Выгнать Гоблин немощный раб из отряда? Гоблин немощный раб покинет вас навсегда: в таверне таких не нанимают."
+      for {
+        t <- makeState(risen)
+        (state, _, renderer) = t
+        _     <- state.action(testUser, pick("SquadDismiss", pos), renderer)
+        line  <- renderer.sentScreens.map(_.last)
+        t2 <- makeState(risen.copy(squad = risen.squad.toReserve(pos)))
+        (state2, _, renderer2) = t2
+        _     <- state2.action(testUser,
+                   UserAction("", Some(s"""{"action":"SquadReserveDismiss","r":"0","who":"Гоблин немощный раб"}""")), renderer2)
+        inRes <- renderer2.sentScreens.map(_.last)
+      } yield assertTrue(pos > 0 && line.text == gone && inRes.text == gone) &&
+              assertTrue(!line.text.contains("таверне можно") && !line.text.contains("Нанять снова"))
     },
 
     test("выгнать из резерва — с подтверждением; сдвинулся список — кнопка ни о чём") {

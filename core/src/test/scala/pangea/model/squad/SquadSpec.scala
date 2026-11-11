@@ -265,6 +265,19 @@ object SquadSpec extends ZIOSpecDefault {
       assertTrue(packed.admitRisen(orc, lvl, now).pendingRisen.contains(orc))
     },
 
+    test("в резерв можно убрать весь строй — десять союзников; полный резерв больше не берёт") {
+      def risen(name: String) = UndeadForm(name, 1L, AllyKind.Human.stats(1L))
+      val full   = (1 to AllyRates.Positions - 1).foldLeft(Squad.empty)((s, i) => s.raise(risen(s"Поднятый $i"), lvl, now))
+      val hidden = full.inOrder.map(_.position).foldLeft(full)((s, p) => s.toReserve(p))
+      // строй пуст, и в него снова встаёт новый — а в резерв его уже не убрать
+      val more   = hidden.raise(risen("Ещё один"), lvl, now)
+      val pos    = more.inOrder.headOption.map(_.position).getOrElse(0)
+      assertTrue(AllyRates.ReserveSize == AllyRates.Positions - 1) &&
+      assertTrue(full.allies.size == 10 && hidden.allies.isEmpty && hidden.reserve.size == 10 && hidden.reserveFull) &&
+      assertTrue(hidden.reserve.map(_.name).toSet == full.allies.map(_.name).toSet) &&
+      assertTrue(more.allies.map(_.name) == List("Ещё один") && more.toReserve(pos) == more)
+    },
+
     test("резерв руками: туда и обратно, обмен со строем, выгнать; крысу туда не берут") {
       val orc     = UndeadForm("Поднятый орк", 3L, AllyKind.Human.stats(3L))
       val rat     = UndeadForm("Крыса", 1L, AllyKind.Human.stats(1L))
