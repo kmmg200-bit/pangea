@@ -3,11 +3,13 @@ package pangea.service.state.states.artifact
 import io.circe.{Json, jawn}
 import io.circe.syntax.EncoderOps
 import pangea.dao.hero.HeroDao
+import pangea.domain.Rng
 import pangea.engine.{Branch, Choice, ChoiceColor, Journal, Renderer, SceneContent, Screen, Target}
+import pangea.generator.item.ItemGenerator
 import pangea.model.GameEvent
 import pangea.model.artifact.{Artifact, ArtifactKind, HeroArtifacts}
 import pangea.model.hero.{FetPotion, Hero}
-import pangea.model.item.{Item, MaterialKind, QuestItemKind}
+import pangea.model.item.{BrewKind, Bundling, Grip, Item, ItemType, MaterialKind, QuestItemKind, Rarity}
 import pangea.model.quest.NpcQuest
 import pangea.model.rune.{RuneStone, RuneStoneSize}
 import pangea.model.state.StateType
@@ -15,7 +17,7 @@ import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
-import pangea.service.state.{CityExit, HedgeSongQuest, NpcQuestDialog, QuestSupport, StackMove, State, StrayCasketQuest, UserAction}
+import pangea.service.state.{AzatData, CityExit, HedgeSongQuest, NpcQuestDialog, QuestSupport, StackMove, State, StrayCasketQuest, UserAction}
 import pangea.util.TimeLeft
 import zio.{Random, Task, ZIO}
 
@@ -35,7 +37,9 @@ import zio.{Random, Task, ZIO}
  *  ложатся в сумку, а в ход идут с карточки предмета. И беспроигрышная лотерея:
  *  [[FetShopState.LotteryRunes]] большие руны случайных узоров за
  *  [[FetShopState.LotteryPriceDoubloons]] — каждая игра пишется в журнал, по нему
- *  админ-панель считает, сколько раз в неё сыграли. */
+ *  админ-панель считает, сколько раз в неё сыграли. Первым рядом прилавка —
+ *  Набор успешного искателя за [[FetShopState.PackPriceDoubloons]]: он один на
+ *  игрока, покупка пишется в журнал, и купившему кнопки больше нет. */
 case class FetShopState(
   heroDao:       HeroDao,
   artifacts:     ArtifactRepository,
@@ -85,6 +89,10 @@ case class FetShopState(
       "FetNameCoupon"    -> Target.Run { (u, _, r) => showNameCoupon(u, r).as(StateType.FetShop) },
       "FetNameCouponBuy" -> Target.Run { (u, _, r) => confirmNameCoupon(u, r).as(StateType.FetShop) },
       "FetNameCouponYes" -> Target.Run { (u, _, r) => buyNameCoupon(u, r).as(StateType.FetShop) },
+      // Набор успешного искателя: купил — кнопки нет, и нажатия ведут к прилавку.
+      "FetPack"     -> Target.Run { (u, _, r)  => showPack(u, r).as(StateType.FetShop) },
+      "FetPackBuy"  -> Target.Run { (u, _, r)  => confirmPack(u, r).as(StateType.FetShop) },
+      "FetPackYes"  -> Target.Run { (u, _, r)  => buyPack(u, r).as(StateType.FetShop) },
       "FetRunes"    -> Target.Run { (u, _, r)  => showLottery(u, r).as(StateType.FetShop) },
       "FetRunesBuy" -> Target.Run { (u, _, r)  => playLottery(u, 1, r).as(StateType.FetShop) },
       // «Купить до лимита» — все игры, что остались на сегодня. Кнопка «×10» из
@@ -108,7 +116,7 @@ case class FetShopState(
     branch.act(user, ua, renderer)
 
   private def showShop(user: User, renderer: Renderer): Task[Unit] =
-    quest.load(user).flatMap { quests =>
+    quest.load(user).zip(packOffered(user)).flatMap { case (quests, pack) =>
       val goods = ArtifactKind.values.toList.zipWithIndex.map { case (k, i) =>
         Choice("FetGoods", content.text(s"artifact.${k.key}.title"), data = Map("kind" -> k.entryName), row = Some(i))
       }
@@ -144,12 +152,17 @@ case class FetShopState(
       val leaveRow = questRow + (if (talk.isEmpty) 0 else 1)
       // У прилавка число в чате уже ничего не значит: карточка Зелья
       // исчезновения закрыта.
+      val counter = goods ++ potions ++ lottery ++ coupons ++ talk ++ List(
+        Choice("LeaveFetShop", content.text("fet.leave"), color = ChoiceColor.Negative, row = Some(leaveRow)),
+        CityExit.button(content, Some(leaveRow)))
+      // Набор успешного искателя — первым рядом, пока игрок его не купил:
+      // остальные ряды съезжают на один. Купил — кнопки больше нет совсем.
+      val buttons =
+        if (!pack) counter
+        else Choice("FetPack", content.text("fet.pack.title"), color = ChoiceColor.Positive, row = Some(0)) ::
+          counter.map(c => c.copy(row = c.row.map(_ + 1)))
       heroDao.writeSceneData(user.userId, Json.Null) *>
-        renderer.show(user, Screen(content.text("fet.counter"),
-          goods ++ potions ++ lottery ++ coupons ++ talk ++ List(
-            Choice("LeaveFetShop", content.text("fet.leave"),
-              color = ChoiceColor.Negative, row = Some(leaveRow)),
-            CityExit.button(content, Some(leaveRow)))))
+        renderer.show(user, Screen(content.text("fet.counter"), buttons))
     }
 
   // ── «Живая кожа» ──────────────────────────────────────────────
@@ -705,6 +718,92 @@ case class FetShopState(
       "runes" -> runes.map(_.name).asJson)))
       .catchAllCause(cause => ZIO.logErrorCause("лотерея Фета не записана в журнал", cause)))
 
+  // ── Набор успешного искателя ─────────────────────────────────────────────
+
+  /** Предлагать ли набор: он один на игрока — купил, и строка о покупке лежит в
+    * журнале. Без журнала (или без хранилища вещей) не продаём вовсе: иначе не
+    * уследить, что набор уже куплен. */
+  private def packOffered(user: User): Task[Boolean] =
+    (journal, itemRepo) match {
+      case (Some(log), Some(_)) => log.count(user.userId, GameEvent.FetStarterPack, 0L).map(_ == 0L)
+      case _                    => ZIO.succeed(false)
+    }
+
+  /** Карточка: речь Фета и что в наборе. Набор уже куплен — кнопки к нему
+    * нет, а нажатие из старого сообщения ведёт к прилавку. */
+  private def showPack(user: User, renderer: Renderer): Task[Unit] =
+    packOffered(user).flatMap {
+      case false => showShop(user, renderer)
+      case true =>
+        renderer.show(user, Screen(content.text("fet.pack.pitch"), List(
+          Choice("FetPackBuy", Choice.fit(content.format("fet.buyLabel",
+            "price" -> FetShopState.PackPriceDoubloons.toString)), color = ChoiceColor.Positive, row = Some(0)),
+          Choice("FetShop", content.text("fet.back"), color = ChoiceColor.Negative, row = Some(1)))))
+    }
+
+  private def confirmPack(user: User, renderer: Renderer): Task[Unit] =
+    packOffered(user).zip(getHero(user)).flatMap {
+      case (false, _) => showShop(user, renderer)
+      case (true, hero) if hero.doubloons < FetShopState.PackPriceDoubloons =>
+        renderer.show(user, Screen(content.format("fet.notEnough",
+          "price" -> FetShopState.PackPriceDoubloons.toString), backRow))
+      case (true, _) =>
+        renderer.show(user, Screen(content.format("fet.pack.confirm",
+          "price" -> FetShopState.PackPriceDoubloons.toString), List(
+          Choice("FetPackYes", content.text("fet.confirmYes"), color = ChoiceColor.Positive, row = Some(0)),
+          Choice("FetShop", content.text("fet.confirmNo"), color = ChoiceColor.Negative, row = Some(0))
+        ), inline = true))
+    }
+
+  /** Купить набор. Сперва вещи получают номера из базы, следом покупка — в
+    * журнал: не записалась — покупки нет, и дважды набор не купить. Потом
+    * дублоны — Фету, а герою: +7 мест в сумке, семь вещей в неё (влезут всегда:
+    * мест прибавилось столько же), серебро на руки и благословение Азата —
+    * продлится, если уже идёт. Уже куплен — к прилавку, без единого слова. */
+  private def buyPack(user: User, renderer: Renderer): Task[Unit] =
+    (journal, itemRepo) match {
+      case (Some(log), Some(items)) =>
+        for {
+          offered <- packOffered(user)
+          hero    <- getHero(user)
+          price    = FetShopState.PackPriceDoubloons
+          _ <- if (!offered) showShop(user, renderer)
+               else if (hero.doubloons < price)
+                 renderer.show(user, Screen(content.format("fet.notEnough", "price" -> price.toString), backRow))
+               else
+                 for {
+                   goods <- packGoods(hero, items)
+                   _     <- log.append(GameEvent(user.userId, GameEvent.FetStarterPack, Json.obj(
+                              "price" -> price.asJson, "items" -> goods.map(_.displayTitle).asJson)))
+                   _     <- heroDao.updateDoubloons(user.userId, hero.doubloons - price)
+                   _     <- inventoryRepo.increaseCapacity(hero.id, FetShopState.PackSlots).mapError(asThrowable)
+                   _     <- ZIO.foreachDiscard(goods)(inventoryRepo.addItem(hero.id, _).mapError(asThrowable))
+                   _     <- heroDao.updateSilver(user.userId, hero.silver + FetShopState.PackSilver)
+                   now   <- nowMs
+                   azat  <- AzatData.load(heroDao, user.userId, now)
+                   _     <- AzatData.save(heroDao, user.userId, azat.blessedFor(FetShopState.PackBlessingMs, now))
+                   _     <- renderer.show(user, Screen(content.text("fet.pack.done"), Nil))
+                   _     <- showShop(user, renderer)
+                 } yield ()
+        } yield ()
+      case _ => showShop(user, renderer)
+    }
+
+  /** Вещи набора, каждая со своим номером из базы: стопки отваров (и склянки
+    * внутри них — у каждой свой номер, иначе распакованные слиплись бы) и
+    * оружие со щитом. */
+  private def packGoods(hero: Hero, items: ItemRepository): Task[List[Item]] =
+    for {
+      stacks <- ZIO.foreach(FetShopState.PackBrews) { kind =>
+                  ZIO.foreach(List.fill(Bundling.Size)(BrewKind.item(kind)))(items.persist(hero.id, _))
+                    .flatMap(inside => ZIO.fromOption(Bundling.pack(inside))
+                      .orElseFail(new Throwable(s"Стопка «${kind.label}» не собралась")))
+                    .flatMap(items.persist(hero.id, _))
+                }
+      seed   <- Random.nextLong
+      gear   <- ZIO.foreach(FetShopState.packGear(Rng(seed)))(items.persist(hero.id, _))
+    } yield stacks ++ gear
+
   // ── Вспомогательное ────────────────────────────────────────────────────────
 
   private def backRow: List[Choice] =
@@ -791,4 +890,32 @@ object FetShopState {
 
   /** Кожа упыря — остаётся только от Гнилого Джо. */
   def ghoulSkin(item: Item): Boolean = item.material.contains(MaterialKind.GhoulSkin)
+
+  /** Набор успешного искателя: почём, что в нём и сколько. Числа — те же, что в
+    * текстах `fet.pack.pitch` и `fet.pack.done`. */
+  val PackPriceDoubloons: Long = 600L
+  val PackSilver: Long         = 25000L
+  val PackSlots: Long          = 7L
+  val PackBlessingDays: Long   = 5L
+  val PackBlessingMs: Long     = PackBlessingDays * 24L * 60L * 60L * 1000L
+
+  /** Стопки отваров набора: живая вода, шнапс и костоправный — от травм. */
+  val PackBrews: List[BrewKind] = List(BrewKind.LivingWater, BrewKind.Schnapps, BrewKind.BoneSetter)
+
+  /** Оружие и щит набора — фиолетовые этого уровня: двуручное и одноручное
+    * ближнего боя, лук и щит. */
+  val PackGearLvl: Long = 5L
+  val PackGear: List[(ItemType, Option[Grip])] = List(
+    ItemType.Weapon -> Some(Grip.TwoHanded),
+    ItemType.Weapon -> Some(Grip.OneHanded),
+    ItemType.Weapon -> Some(Grip.Bow),
+    ItemType.Shield -> None)
+
+  /** Оружие и щит набора; статы и гнёзда — как у любой фиолетовой вещи этого
+    * уровня. Номеров у них пока нет: их даст база. */
+  def packGear(rng: Rng): List[Item] =
+    PackGear.foldLeft((List.empty[Item], rng)) { case ((acc, r), (itemType, grip)) =>
+      val (item, next) = ItemGenerator.createItemOfType(itemType, PackGearLvl, Rarity.Purple, r, grip)
+      (acc :+ item, next)
+    }._1
 }

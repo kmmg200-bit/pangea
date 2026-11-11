@@ -17,4 +17,8 @@ object GameEvent {
   /** Беспроигрышная лотерея Фета: три большие руны за дублоны. По этим записям
     * админ-панель считает, сколько раз в неё сыграли (см. `AdminDao.stats`). */
   val FetRuneLottery: String = "fet_rune_lottery"
+
+  /** Куплен Набор успешного искателя у Фета: он один на игрока, и по этой
+    * строке лавка его больше не предлагает (см. FetShopState). */
+  val FetStarterPack: String = "fet_starter_pack"
 }
