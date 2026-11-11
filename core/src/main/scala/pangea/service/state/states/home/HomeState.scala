@@ -838,7 +838,9 @@ case class HomeState(
   // ── «Обустройство» у Юноны ──────────────────────────────────────────────────
 
   /** Папка «Обустройство»: что совет поставит в дом — по дому и местам; хлам из
-    * домика — вывезти за серебро. Без дома обустраивать нечего. */
+    * домика — вывезти за серебро. Без дома обустраивать нечего. Верстак и
+    * посыльный — по одному: есть уже, в доме или в кладовой, — в папке их нет
+    * (см. [[onlyOneOwned]]). */
   private def furnish(user: User, renderer: Renderer): Task[StateType] =
     loadHome(user).flatMap { home =>
       home.house match {
@@ -847,7 +849,7 @@ case class HomeState(
           val clutter = Option.when(home.hasClutter)(Choice("HomeClutterPay",
             content.format("home.furnish.clutter", "price" -> money(HomeRates.ClutterSilver)),
             color = ChoiceColor.Positive, row = Some(0)))
-          val items = Furniture.values.filter(_.minTier <= h.tier).zipWithIndex.map { case (f, i) =>
+          val items = Furniture.values.filter(f => f.minTier <= h.tier && !onlyOneOwned(f, home)).zipWithIndex.map { case (f, i) =>
             Choice("HomeFurnItem", content.format("home.furnish.item", "name" -> furnName(f), "price" -> money(f.doubloons)),
               data = Map("f" -> f.key), row = Some(1 + i))
           }
@@ -860,22 +862,31 @@ case class HomeState(
     }
 
   /** Вещь из папки: что даёт, сколько мест свободно (у стойки — ячеек в
-    * оружейной), и «Купить за …». */
+    * оружейной), и «Купить за …». Верстак или посыльный уже есть (кнопка со
+    * старого экрана) — «Купить» нет, вместо мест — почему. */
   private def furnItem(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     loadHome(user).flatMap { home =>
       furnOf(ua, home) match {
         case None => furnish(user, renderer)
         case Some(f) =>
+          val have = Option.when(onlyOneOwned(f, home))(buyRefusal(f, home)).flatten
           val free = if (f.takesSlot) content.format("home.furnish.free", "n" -> home.slotsFree.toString)
                      else content.format("home.furnish.freeArmory", "n" -> (home.racksMax - home.racks.size).max(0).toString)
-          val text = furnText(f, "desc", home) + "\n\n" + free
-          renderer.show(user, Screen(text, List(
+          val text = furnText(f, "desc", home) + "\n\n" + have.getOrElse(free)
+          val buy  = Option.when(have.isEmpty)(
             Choice("HomeFurnBuy", content.format("home.furnish.buy", "price" -> money(f.doubloons)),
-              color = ChoiceColor.Positive, data = Map("f" -> f.key), row = Some(0)),
+              color = ChoiceColor.Positive, data = Map("f" -> f.key), row = Some(0)))
+          renderer.show(user, Screen(text, buy.toList :+
             Choice("HomeFurnish", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(0))
-          ))).as(StateType.Home)
+          )).as(StateType.Home)
       }
     }
+
+  /** Верстак и посыльный — по одному на героя: один уже есть, в доме или в
+    * кладовой, — второго Юнона не продаёт. Покупку держит ещё и [[buyRefusal]]:
+    * кнопка со старого экрана тоже ничего не купит. */
+  private def onlyOneOwned(f: Furniture, home: HomeData): Boolean =
+    (f == Furniture.ArtisanBench || f == Furniture.Courier) && home.owned(f) > 0
 
   /** Купить: нужны дублоны и место. Места нет — Юнона спрашивает, что спрятать
     * в кладовую ([[stashAsk]]); дублонов нет — до этого вопроса не доходит.

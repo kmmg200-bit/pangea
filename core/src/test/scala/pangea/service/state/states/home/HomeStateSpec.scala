@@ -385,12 +385,21 @@ object HomeStateSpec extends ZIOSpecDefault {
         once  <- homeOf(dao)
         _     <- state.action(testUser, tap("HomeFurnBuy", "f" -> "courier"), r)
         twice <- homeOf(dao)
+        _     <- state.action(testUser, tap("HomeFurnish"), r)
+        list  <- last(r)
+        _     <- state.action(testUser, tap("HomeFurnItem", "f" -> "courier"), r)
+        again <- last(r)
         h     <- heroOf(dao)
         said  <- texts(r)
       } yield assertTrue(card.text.contains("Личный посыльный") && card.text.contains("Займёт одно место в доме")) &&
               assertTrue(card.choices.exists(c => c.id == "HomeFurnBuy" && c.label.contains("100"))) &&
               assertTrue(once.hasCourier && twice.furniture == List("courier") && h.doubloons == 400L) &&
-              assertTrue(said.contains("живёт личный посыльный") && said.contains("Посыльный у тебя уже есть"))
+              assertTrue(said.contains("живёт личный посыльный") && said.contains("Посыльный у тебя уже есть")) &&
+              // посыльный уже есть — в «Обустройстве» его больше нет, стойка — на месте
+              assertTrue(!list.choices.exists(_.data.get("f").contains("courier")) &&
+                list.choices.exists(_.data.get("f").contains("rack"))) &&
+              // кнопка со старого экрана — карточка без «Купить», и сказано почему
+              assertTrue(!again.choices.exists(_.id == "HomeFurnBuy") && again.text.contains("Посыльный у тебя уже есть"))
     },
 
     test("Юнона: вывезти хлам — за 5 000 серебра; в домике сундуков не продают, только стойку, верстак и посыльного") {

@@ -66,6 +66,25 @@ object BenchSpec extends ZIOSpecDefault {
               assertTrue(said.contains("верстак ремесленника") && said.contains("Второй ни к чему"))
     },
 
+    test("верстак есть — в «Обустройстве» его больше нет, даже если он убран в кладовую") {
+      def offered(s: pangea.engine.Screen): Boolean = s.choices.exists(_.data.get("f").contains("artisan"))
+      for {
+        t1 <- make(withBench, active)
+        (h1, _, _, _, r1) = t1
+        _      <- h1.action(testUser, tap("HomeFurnish"), r1)
+        placed <- r1.sentScreens.map(_.last)
+        t2 <- make(cottage.copy(stored = List("artisan")), active)
+        (h2, _, _, _, r2) = t2
+        _      <- h2.action(testUser, tap("HomeFurnish"), r2)
+        stored <- r2.sentScreens.map(_.last)
+        t3 <- make(cottage, active)
+        (h3, _, _, _, r3) = t3
+        _      <- h3.action(testUser, tap("HomeFurnish"), r3)
+        none   <- r3.sentScreens.map(_.last)
+      } yield assertTrue(!offered(placed) && !offered(stored)) &&
+              assertTrue(offered(none))
+    },
+
     test("вставить куб: нет куба, спит — так и говорит; активный — переезжает домой, в Храме его больше нет") {
       for {
         t1 <- make(withBench, AzatState.empty)
