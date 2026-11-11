@@ -75,7 +75,10 @@ case class GirlState(
       "Excuse"        -> Target.Run { (u, _, r) => show(u, r, Step.Excuse) },
       "Refuse"        -> Target.Run { (u, _, r) => refuse(u, r) },
       "Explain"       -> Target.Run { (u, _, r) => demand(u, r) },
-      "PayBrother"    -> Target.Run { (u, _, r) => payBrother(u, r) },
+      // Отдать — сперва переспросить: серебра уйдёт много, а вернуть его нельзя.
+      "PayBrother"    -> Target.Run { (u, _, r) => confirmPay(u, r) },
+      "PayBrotherYes" -> Target.Run { (u, _, r) => payBrother(u, r) },
+      "PayBrotherNo"  -> Target.Run { (u, _, r) => backToDemand(u, r) },
       "FightBrother"  -> Target.Run { (u, _, r) => fightBrother(u, r) },
       "LeaveRoom"     -> Target.Run { (u, _, r) => leaveRoom(u, r) }
     ),
@@ -294,20 +297,45 @@ case class GirlState(
       content.choice("FightBrother", "girl.fightLabel")
     ))
 
-  /** Отдать: сначала из кошелька, остаток — из бочки. */
+  /** «Отдать серебро» сперва переспрашивает: сколько уйдёт и откуда. Не во
+    * время требования брата (кнопка из старого сообщения) — просто текущий шаг. */
+  private def confirmPay(user: User, renderer: Renderer): Task[StateType] =
+    requireScene(user).flatMap { scene =>
+      if (scene.step == Step.Demand || scene.step == Step.PayConfirm) show(user, renderer, Step.PayConfirm)
+      else renderer.show(user, screenFor(scene)).as(StateType.Girl)
+    }
+
+  /** Передумал отдавать — снова требование брата: отдать или взять оружие. */
+  private def backToDemand(user: User, renderer: Renderer): Task[StateType] =
+    requireScene(user).flatMap { scene =>
+      if (scene.step == Step.PayConfirm) show(user, renderer, Step.Demand)
+      else renderer.show(user, screenFor(scene)).as(StateType.Girl)
+    }
+
+  private def payConfirmScreen(half: Long): Screen =
+    Screen(content.format("girl.payConfirm.text", "silver" -> half.toString), List(
+      content.choice("PayBrotherYes", "girl.payConfirm.yes", "silver" -> half.toString),
+      content.choice("PayBrotherNo", "girl.payConfirm.no")
+    ))
+
+  /** Отдать — только переспросив ([[confirmPay]]): сначала из кошелька,
+    * остаток — из бочки. Не подтверждено (кнопка из старого сообщения) —
+    * серебро цело, просто текущий шаг. */
   private def payBrother(user: User, renderer: Renderer): Task[StateType] =
-    for {
-      hero    <- getHero(user)
-      scene   <- requireScene(user)
-      half     = scene.price
-      fromHand = hero.silver.min(half)
-      fromBarrel = half - fromHand
-      _       <- heroDao.updateSilver(user.userId, hero.silver - fromHand)
-      _       <- ZIO.when(fromBarrel > 0L)(
-                   barrelRepo.withdrawSilver(hero.id, fromBarrel).mapError(e => new Throwable(e.toString)))
-      _       <- renderer.show(user, Screen(content.format("girl.paid", "silver" -> half.toString), Nil))
-      _       <- clear(user)
-    } yield StateType.GlobalMap
+    requireScene(user).flatMap { scene =>
+      if (scene.step != Step.PayConfirm) renderer.show(user, screenFor(scene)).as(StateType.Girl)
+      else for {
+        hero    <- getHero(user)
+        half     = scene.price
+        fromHand = hero.silver.min(half)
+        fromBarrel = half - fromHand
+        _       <- heroDao.updateSilver(user.userId, hero.silver - fromHand)
+        _       <- ZIO.when(fromBarrel > 0L)(
+                     barrelRepo.withdrawSilver(hero.id, fromBarrel).mapError(e => new Throwable(e.toString)))
+        _       <- renderer.show(user, Screen(content.format("girl.paid", "silver" -> half.toString), Nil))
+        _       <- clear(user)
+      } yield StateType.GlobalMap
+    }
 
   /** Взять оружие: редкий человек уровня этажа, добыча — и в город. Драка в
     * таверне — без отряда: наёмники остались за столом. */
@@ -347,6 +375,7 @@ case class GirlState(
     case Step.Excuse   => content.screen("girl.excuse")
     case Step.Brother  => content.screen("girl.brother")
     case Step.Demand   => demandScreen(scene.price)
+    case Step.PayConfirm => payConfirmScreen(scene.price)
     case Step.RoomWait => lightsOut
     case _             => Screen(content.text("girl.lightsOut"), Nil)
   }
@@ -471,6 +500,8 @@ object GirlState {
     val Excuse     = "excuse"
     val Brother    = "brother"
     val Demand     = "demand"
+    /** Согласился отдать серебро — переспрашиваем, точно ли. */
+    val PayConfirm = "payConfirm"
     val RoomWait   = "roomWait"
   }
 

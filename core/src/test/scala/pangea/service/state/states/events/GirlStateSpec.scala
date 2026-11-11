@@ -289,25 +289,51 @@ object GirlStateSpec extends ZIOSpecDefault {
               assertTrue(h.silver == 600L)
     },
 
-    test("отказ дважды: брат требует половину серебра с бочкой; отдать — из кошелька и бочки") {
+    test("отказ дважды: брат требует половину серебра с бочкой; отдать — переспросив, из кошелька и бочки") {
       for {
         t <- make(hero.copy(silver = 300L), Some(orcScene(Step.Room)), barrelSilver = 700L)
         (state, dao, _, barrel, _, r) = t
-        _      <- state.action(testUser, tap("Excuse"), r)
-        excuse <- r.sentScreens.map(_.last)
-        _      <- state.action(testUser, tap("Refuse"), r)
-        _      <- state.action(testUser, tap("Explain"), r)
-        demand <- r.sentScreens.map(_.last)
-        result <- state.action(testUser, tap("PayBrother"), r)
-        h      <- heroOf(dao)
-        all    <- texts(r)
+        _       <- state.action(testUser, tap("Excuse"), r)
+        excuse  <- r.sentScreens.map(_.last)
+        _       <- state.action(testUser, tap("Refuse"), r)
+        _       <- state.action(testUser, tap("Explain"), r)
+        demand  <- r.sentScreens.map(_.last)
+        asked   <- state.action(testUser, tap("PayBrother"), r)
+        confirm <- r.sentScreens.map(_.last)
+        kept    <- heroOf(dao)
+        result  <- state.action(testUser, tap("PayBrotherYes"), r)
+        h       <- heroOf(dao)
+        all     <- texts(r)
       } yield assertTrue(excuse.choices.map(_.id) == List("Intimacy", "Refuse")) &&
               // не уединялись — и пропадать из кошелька было нечему
               assertTrue(all.contains("Грубиян") && !all.contains("Одеваясь")) &&
               assertTrue(demand.text.contains("500 серебра") && demand.choices.map(_.id) == List("PayBrother", "FightBrother")) &&
               assertTrue(demand.choices.head.label == "Отдать серебро (500)") &&
+              // «Отдать» сперва переспрашивает — серебро пока на месте
+              assertTrue(asked == StateType.Girl && kept.silver == 300L) &&
+              assertTrue(confirm.text.contains("Точно отдать 500 серебра") && confirm.text.contains("из бочки")) &&
+              assertTrue(confirm.choices.map(_.id) == List("PayBrotherYes", "PayBrotherNo") &&
+                confirm.choices.head.label == "Да, отдать 500") &&
               assertTrue(result == StateType.GlobalMap) &&
               assertTrue(h.silver == 0L && barrel.silverSnapshot == 500L)
+    },
+
+    test("отдать брату: «Передумал» — снова требование, серебро цело; «Да» без вопроса (старая кнопка) не платит") {
+      for {
+        t <- make(hero.copy(silver = 300L), Some(orcScene(Step.Demand).copy(price = 500L)), barrelSilver = 700L)
+        (state, dao, _, barrel, _, r) = t
+        stale <- state.action(testUser, tap("PayBrotherYes"), r)
+        h0    <- heroOf(dao)
+        _     <- state.action(testUser, tap("PayBrother"), r)
+        back  <- state.action(testUser, tap("PayBrotherNo"), r)
+        shown <- r.sentScreens.map(_.last)
+        scene <- sceneOf(dao)
+        h1    <- heroOf(dao)
+      } yield assertTrue(stale == StateType.Girl && h0.silver == 300L) &&
+              assertTrue(back == StateType.Girl && shown.choices.map(_.id) == List("PayBrother", "FightBrother")) &&
+              assertTrue(shown.text.contains("либо я тебя прямо тут и прибью")) &&
+              assertTrue(scene.exists(s => s.step == Step.Demand && s.price == 500L)) &&
+              assertTrue(h1.silver == 300L && barrel.silverSnapshot == 700L)
     },
 
     test("взять оружие: редкий человек уровня этажа, добыча ведёт в город; драка в таверне — без отряда") {
