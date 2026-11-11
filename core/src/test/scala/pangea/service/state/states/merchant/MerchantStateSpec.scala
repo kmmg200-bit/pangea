@@ -448,6 +448,36 @@ object MerchantStateSpec extends ZIOSpecDefault {
       } yield assertTrue(invRepo.snapshot.map(_.id) == List(2L))
     },
 
+    test("выключенные активные способности не берегут щит с Блоком и парирующий кинжал с Контрударом") {
+      val shield = gear(1L, Rarity.Gray, ItemDetails.HandSkill(Skill.Block), ItemType.Shield)
+      val dagger = gear(2L, Rarity.Gray, ItemDetails.HandSkill(Skill.Counterstrike), ItemType.Weapon)
+      val active = gear(3L, Rarity.Gray, ItemDetails.Armor(Skill.MinorHeal), ItemType.ChestPlate)
+      val off    = JunkSaleSettings(actives = false)
+      for {
+        t <- makeState(richHero, items = List(shield, dagger, active))
+        (state, _, invRepo, renderer) = t
+        _ <- state.action(testUser, tap("JunkActives"), renderer)
+        _ <- state.action(testUser, tap("SellJunk"), renderer)
+      } yield assertTrue(invRepo.snapshot.map(_.id) == List(3L)) && // остался только нагрудник с Малым лечением
+              assertTrue(MerchantState.isJunk(shield, off) && MerchantState.isJunk(dagger, off)) &&
+              // редкость по-прежнему решает: выключенная серая не уходит и у щита
+              assertTrue(!MerchantState.isJunk(shield, off.copy(rarities = Set(Rarity.White))))
+    },
+
+    test("«Продать хлам» не шлёт заново страницу с товарами — только итог; и когда сдавать нечего — тоже") {
+      for {
+        t <- makeState(richHero, items = List(gear(1L, Rarity.Gray)))
+        (state, _, invRepo, renderer) = t
+        _     <- state.action(testUser, tap("SellJunk"), renderer)
+        sold  <- renderer.sentScreens
+        _     <- state.action(testUser, tap("SellJunk"), renderer)
+        empty <- renderer.sentScreens
+      } yield assertTrue(invRepo.snapshot.isEmpty) &&
+              // без кнопок — значит, клавиатура лавки остаётся прежней
+              assertTrue(sold.size == 1 && sold.forall(s => s.choices.isEmpty && s.text.contains("Ришелье забрал 1 шт. хлама"))) &&
+              assertTrue(empty.size == 2 && empty.lastOption.exists(s => s.choices.isEmpty && s.text.contains("нет снаряжения")))
+    },
+
     test("настройка переживает обновление стока (Refresh её не сбрасывает)") {
       for {
         t <- makeState(richHero)

@@ -10,6 +10,7 @@ import pangea.generator.item.ItemGenerator
 import pangea.model.hero.Hero
 import pangea.model.item.{FlaskKind, Item, ItemDetails, ItemStack, ItemType, QuestItemKind, Rarity}
 import pangea.model.quest.NpcQuest
+import pangea.model.skill.Skill
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
@@ -335,7 +336,11 @@ case class MerchantState(
   }
 
   /** Быстрая продажа всего «хлама» — по настройке игрока (см. [[JunkSaleSettings]],
-    * по умолчанию Серая и Белая редкости). Трофеи и камни не продаются никогда. */
+    * по умолчанию Серая и Белая редкости). Трофеи и камни не продаются никогда.
+    *
+    * Страницу с товарами следом не шлём: она длинная, а товар от сдачи хлама не
+    * меняется. Сообщение без кнопок оставляет клавиатуру лавки, какая была (см.
+    * VkRenderer), — жать «Продать хлам» и всё остальное можно и дальше. */
   private def sellJunk(user: User, renderer: Renderer): Task[StateType] =
     for {
       now   <- nowMs
@@ -345,7 +350,7 @@ case class MerchantState(
       junk   = items.filter(isJunk(_, data.junkSettings))
       total  = junk.map(sellPriceFor(hero, _)).sum
       _ <- if (junk.isEmpty)
-             renderer.show(user, Screen(content.text("merchant.sellJunkEmpty"), Nil)) *> showMenu(user, renderer)
+             renderer.show(user, Screen(content.text("merchant.sellJunkEmpty"), Nil))
            else
              inventoryRepo.removeItems(junk.map(_.id).toSet, hero.id).mapError(e => new Throwable(e.toString)) *>
                heroDao.updateSilver(user.userId, hero.silver + total) *>
@@ -353,8 +358,7 @@ case class MerchantState(
                DailyQuestLog.add(heroDao, user.userId, DailyNpc.Richelieu, DailyKind.SellJunk, junk.size.toLong) *>
                renderer.show(user, Screen(content.format("merchant.sellJunkDone",
                  "count" -> junk.size.toString, "silver" -> total.toString), Nil)) *>
-               questAfterJunk(user, hero.copy(silver = hero.silver + total), data, junk, renderer) *>
-               showMenu(user, renderer)
+               questAfterJunk(user, hero.copy(silver = hero.silver + total), data, junk, renderer)
     } yield StateType.Merchant
 
   // ── Задание Ришелье ─────────────────────────────────────────────────────────
@@ -838,7 +842,10 @@ object MerchantState {
         !holdsSomething(item) &&
         s.rarities.contains(item.rarity) &&
         (s.passives || item.passive.isEmpty) &&
-        (s.actives || item.activeSkill.isEmpty) &&
+        // Блок щита и Контрудар парирующего кинжала — не способность, а сама
+        // вещь: они есть у каждого щита и такого кинжала. Выключенные активные
+        // способности их не берегут — щит и кинжал уходят по своей редкости.
+        (s.actives || item.activeSkill.forall(Skill.handSkills.contains)) &&
         (s.flasks || item.itemType != ItemType.Flask) &&
         (s.sets || item.set.isEmpty)
 
