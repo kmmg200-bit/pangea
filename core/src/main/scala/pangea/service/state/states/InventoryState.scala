@@ -128,6 +128,7 @@ case class InventoryState(
       // Трактаты Густаво: читать, пока не осилишь.
       "ReadTreatise"      -> Target.Run { (u, _,  r) => readTreatise(u, r) },
       "IdentifyFlower"    -> Target.Run { (u, _,  r) => identifyFlower(u, r) },
+      "IdentifyAll"       -> Target.Run { (u, _,  r) => identifyAllFlowers(u, r) },
       // Купон на смену расы: квест начинается сразу — только из города.
       "RaceChange"        -> Target.Run { (u, _,  r) => startRaceChange(u, r) },
       // Купон на смену имени: новое имя пишут текстом — тоже только из города.
@@ -257,6 +258,10 @@ case class InventoryState(
             // Неопознанный цветок — приглядеться к нему ещё раз (см. HerbLore.identify).
             Option.when(item.material.exists(MaterialKind.isUnknownFlower))(
               content.choice("IdentifyFlower", "knowledge.identifyLabel").copy(color = ChoiceColor.Positive, row = Some(0))),
+            // Таких цветов несколько — опознать их разом (см. HerbLore.identifyAll).
+            Option.when(item.material.exists(MaterialKind.isUnknownFlower) && count > 1)(
+              content.choice("IdentifyAll", "knowledge.identifyAllLabel", "n" -> count.toString)
+                .copy(color = ChoiceColor.Positive, row = Some(0))),
             // Пыль сыплется на оружие: разовое покрытие на один бой.
             Option.when(item.material.exists(_.gem.isDefined))(
               content.choice("DustWeapon", "inventory.dustWeapon").copy(color = ChoiceColor.Positive, row = Some(0))),
@@ -1430,6 +1435,33 @@ case class InventoryState(
           } yield s
       }
     }
+
+  /** «Опознать все»: те же броски, что у «Опознать», по всем таким цветкам в
+    * сумке подряд. Знаешь ранг — все становятся травами; не знаешь — рассыпаются
+    * по одному, пока не придёт догадка или пока не кончатся. Цветы остались —
+    * снова их карточка: теперь их можно опознать; не осталось — список. */
+  private def identifyAllFlowers(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      scene <- readScene(user)
+      hero  <- getHero(user)
+      inv   <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
+      res   <- scene.selectedId.flatMap(id => inv.items.data.find(_.id == id)) match {
+                 case None => showList(user, renderer)
+                 case Some(item) =>
+                   item.material.filter(MaterialKind.isUnknownFlower) match {
+                     case None => showItem(user, item.id, renderer)
+                     case Some(kind) =>
+                       for {
+                         now  <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
+                         // С конца стопки: её место в списке держит первый цветок (см. ItemStack.grouped).
+                         done <- HerbLore.identifyAll(heroDao, inventoryRepo, content, user, hero,
+                                   stackOf(inv.items.data, item).reverse, kind, now)
+                         _    <- renderer.show(user, Screen(done.lines.mkString("\n"), Nil))
+                         s    <- done.left.headOption.fold(showList(user, renderer))(f => showItem(user, f.id, renderer))
+                       } yield s
+                   }
+               }
+    } yield res
 
   // ── Пыль на оружие ─────────────────────────────────────────────────────────
 

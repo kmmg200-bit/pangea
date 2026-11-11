@@ -119,6 +119,80 @@ object FlowerIdentifySpec extends ZIOSpecDefault {
               assertTrue(inv2.snapshot.map(_.material) == List(Some(MaterialKind.herbsOfRank(2)(0))))
     },
 
+    test("несколько неопознанных цветков — на карточке ещё «Опознать все N»; цветок один — её нет") {
+      for {
+        t <- make(LoreData.empty, List(flower(MaterialKind.StrangeFlower, 1L), flower(MaterialKind.StrangeFlower, 2L),
+               flower(MaterialKind.StrangeFlower, 3L), flower(MaterialKind.UnusualFlower, 4L)))
+        (state, _, _, r) = t
+        _       <- state.action(testUser, selectItem(1L), r)
+        strange <- r.sentScreens.map(_.last)
+        _       <- state.action(testUser, selectItem(4L), r)
+        unusual <- r.sentScreens.map(_.last)
+      } yield assertTrue(strange.choices.exists(c => c.id == "IdentifyAll" && c.label == "🔍 Опознать все 3")) &&
+              assertTrue(strange.choices.exists(_.id == "IdentifyFlower")) &&
+              assertTrue(unusual.choices.exists(_.id == "IdentifyFlower") && !unusual.choices.exists(_.id == "IdentifyAll"))
+    },
+
+    test("знаешь простые травы — «Опознать все» делает травой каждый странный цветок на его месте, необычный не трогает") {
+      val pool = MaterialKind.herbsOfRank(1)
+      for {
+        t <- make(rank1, List(flower(MaterialKind.StrangeFlower, 1L), flower(MaterialKind.StrangeFlower, 2L),
+               flower(MaterialKind.UnusualFlower, 9L), flower(MaterialKind.StrangeFlower, 3L)))
+        (state, dao, inv, r) = t
+        // с конца стопки: третьему — трава №1, второму — №0, первому — №1
+        _    <- TestRandom.feedInts(1, 0, 1)
+        _    <- state.action(testUser, selectItem(1L), r)
+        _    <- state.action(testUser, tap("IdentifyAll"), r)
+        said <- texts(r)
+        last <- r.sentScreens.map(_.last)
+        lore <- loreOf(dao)
+      } yield assertTrue(inv.snapshot.map(i => i.id -> i.material) ==
+                List(1L -> Some(pool(1)), 2L -> Some(pool(0)), 9L -> Some(MaterialKind.UnusualFlower), 3L -> Some(pool(1)))) &&
+              assertTrue(said.contains(s"и узнаёте каждый: ${pool(1).displayName} (2 шт), ${pool(0).displayName}.")) &&
+              // цветов не осталось — дальше список, а не карточка
+              assertTrue(!last.choices.exists(c => c.id == "IdentifyFlower" || c.id == "IdentifyAll")) &&
+              assertTrue(lore == rank1)
+    },
+
+    test("не знаешь — цветы рассыпаются по одному до догадки; остальные целы, и «Опознать все» делает их травами") {
+      val pool = MaterialKind.herbsOfRank(1)
+      for {
+        t <- make(LoreData.empty, (1L to 5L).toList.map(flower(MaterialKind.StrangeFlower, _)))
+        (state, dao, inv, r) = t
+        // 40 ÷ 4 = 10: два броска мимо, третий — в цель
+        _    <- TestRandom.feedInts(50, 11, 10)
+        _    <- state.action(testUser, selectItem(1L), r)
+        _    <- state.action(testUser, tap("IdentifyAll"), r)
+        lore <- loreOf(dao)
+        bag   = inv.snapshot.map(_.id)
+        said <- texts(r)
+        card <- r.sentScreens.map(_.last)
+        // знание есть — та же кнопка теперь опознаёт оставшиеся
+        _    <- TestRandom.feedInts(2, 3)
+        _    <- state.action(testUser, tap("IdentifyAll"), r)
+      } yield assertTrue(bag == List(1L, 2L)) &&
+              assertTrue(lore.knows(Knowledge.FlowersRank1) && lore.learnedAlone(Knowledge.FlowersRank1)) &&
+              assertTrue(said.contains("в труху рассыпалось 3 шт.") && said.contains("стал лучше разбираться") &&
+                said.contains("Остальные цветы целы (2 шт.) — теперь их можно опознать.")) &&
+              assertTrue(card.choices.exists(c => c.id == "IdentifyAll" && c.label == "🔍 Опознать все 2")) &&
+              assertTrue(inv.snapshot.map(i => i.id -> i.material) == List(1L -> Some(pool(3)), 2L -> Some(pool(2))))
+    },
+
+    test("необычные цветы без знаний: догадка так и не пришла — рассыпались все, знания нет") {
+      for {
+        t <- make(LoreData.empty, (1L to 3L).toList.map(flower(MaterialKind.UnusualFlower, _)))
+        (state, dao, inv, r) = t
+        // 40 ÷ 8 = 5: все три мимо
+        _    <- TestRandom.feedInts(6, 6, 6)
+        _    <- state.action(testUser, selectItem(1L), r)
+        _    <- state.action(testUser, tap("IdentifyAll"), r)
+        lore <- loreOf(dao)
+        said <- texts(r)
+      } yield assertTrue(inv.snapshot.isEmpty && !lore.knows(Knowledge.FlowersRank2)) &&
+              assertTrue(said.contains("в труху рассыпалось 3 шт.") &&
+                said.contains("Цветы кончились, а понять так ничего и не удалось."))
+    },
+
     test("сорванная редкая трава без знаний — «Необычный цветок», простая — «Странный»; догадка у каждого своя") {
       assertTrue(HerbLore.recognised(LoreData.empty, MaterialKind.herbsOfRank(2)(0)) == MaterialKind.UnusualFlower) &&
         assertTrue(HerbLore.recognised(rank1, MaterialKind.herbsOfRank(2)(0)) == MaterialKind.UnusualFlower) &&

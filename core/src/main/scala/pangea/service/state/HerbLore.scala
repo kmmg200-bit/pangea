@@ -5,7 +5,7 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.{Renderer, SceneContent, Screen}
 import pangea.model.hero.{Hero, Knowledge, LoreData}
 import pangea.generator.item.MaterialGenerator
-import pangea.model.item.{Item, MaterialKind, QuestItemKind}
+import pangea.model.item.{Item, ItemStack, MaterialKind, QuestItemKind}
 import pangea.model.user.{User, UserId}
 import pangea.repository.inventory.InventoryRepository
 import zio.{Random, Task, ZIO}
@@ -141,14 +141,10 @@ object HerbLore {
       case None => ZIO.succeed(Identified(Nil, Some(item)))
       case Some(rank) =>
         readLore(heroDao, user.userId).flatMap { lore =>
-          if (Knowledge.forHerbRank(rank).forall(lore.knows)) {
-            val pool = MaterialKind.herbsOfRank(rank)
-            for {
-              idx  <- Random.nextIntBounded(pool.size)
-              herb  = MaterialGenerator.item(pool(idx)).copy(id = item.id)
-              _    <- inventoryRepo.updateItem(hero.id, herb).mapError(e => new Throwable(e.toString))
-            } yield Identified(List(content.format("knowledge.identified", "name" -> herb.name)), Some(herb))
-          } else
+          if (Knowledge.forHerbRank(rank).forall(lore.knows))
+            becomeHerb(inventoryRepo, hero, item, rank).map(herb =>
+              Identified(List(content.format("knowledge.identified", "name" -> herb.name)), Some(herb)))
+          else
             for {
               _      <- inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString))
               result <- insightTarget(lore, kind).fold[Task[(LoreData, Option[String])]](ZIO.succeed((lore, None)))(k =>
@@ -157,6 +153,69 @@ object HerbLore {
               result._2.fold(List(content.text("knowledge.identifyFailed")))(List(_)), None)
         }
     }
+
+  /** Цветок становится случайной травой своего ранга — на том же месте. */
+  private def becomeHerb(inventoryRepo: InventoryRepository, hero: Hero, item: Item, rank: Int): Task[Item] = {
+    val pool = MaterialKind.herbsOfRank(rank)
+    for {
+      idx  <- Random.nextIntBounded(pool.size)
+      herb  = MaterialGenerator.item(pool(idx)).copy(id = item.id)
+      _    <- inventoryRepo.updateItem(hero.id, herb).mapError(e => new Throwable(e.toString))
+    } yield herb
+  }
+
+  /** Что вышло из «Опознать все»: строки для игрока и цветы, что остались целы. */
+  final case class IdentifiedAll(lines: List[String], left: List[Item])
+
+  /** «Опознать все» — кнопка на карточке неопознанного цветка, когда таких
+    * несколько: те же броски, что у «Опознать», по цветкам подряд, в порядке
+    * `flowers`. Ранг знаком — все цветы становятся травами. Не знаком — цветы
+    * рассыпаются по одному, пока не придёт догадка (остальные целы, и теперь
+    * их можно опознать), или пока цветы не кончатся. */
+  def identifyAll(heroDao: HeroDao, inventoryRepo: InventoryRepository, content: SceneContent, user: User,
+                  hero: Hero, flowers: List[Item], kind: MaterialKind, nowMs: Long): Task[IdentifiedAll] =
+    MaterialKind.unknownFlowerRank(kind) match {
+      case None                       => ZIO.succeed(IdentifiedAll(Nil, flowers))
+      case Some(_) if flowers.isEmpty => ZIO.succeed(IdentifiedAll(Nil, Nil))
+      case Some(rank) =>
+        readLore(heroDao, user.userId).flatMap { lore =>
+          Knowledge.forHerbRank(rank).filterNot(lore.knows) match {
+            case None =>
+              ZIO.foreach(flowers)(becomeHerb(inventoryRepo, hero, _, rank)).map(herbs =>
+                IdentifiedAll(List(content.format("knowledge.identifiedAll", "herbs" -> herbList(herbs))), Nil))
+            case Some(knowledge) =>
+              crumbleAll(heroDao, inventoryRepo, content, user, hero, lore, knowledge, flowers, 0, nowMs)
+          }
+        }
+    }
+
+  /** Цветы рассыпаются по одному, после каждого — бросок на догадку, как у
+    * «Опознать». Догадка пришла — остальные цветы не трогаем. */
+  private def crumbleAll(heroDao: HeroDao, inventoryRepo: InventoryRepository, content: SceneContent, user: User,
+                         hero: Hero, lore: LoreData, knowledge: Knowledge, flowers: List[Item], spent: Int,
+                         nowMs: Long): Task[IdentifiedAll] =
+    flowers match {
+      case Nil =>
+        ZIO.succeed(IdentifiedAll(List(crumbledLine(content, spent), content.text("knowledge.identifyAllFailed")), Nil))
+      case item :: rest =>
+        inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)) *>
+          guess(heroDao, inventoryRepo, content, user, hero, lore, knowledge, nowMs).flatMap {
+            case (_, Some(line)) =>
+              val left = Option.when(rest.nonEmpty)(content.format("knowledge.identifyAllLeft", "count" -> rest.size.toString))
+              ZIO.succeed(IdentifiedAll(crumbledLine(content, spent + 1) :: line :: left.toList, rest))
+            case (after, None) =>
+              crumbleAll(heroDao, inventoryRepo, content, user, hero, after, knowledge, rest, spent + 1, nowMs)
+          }
+    }
+
+  private def crumbledLine(content: SceneContent, count: Int): String =
+    content.format("knowledge.crumbledAll", "count" -> count.toString)
+
+  /** Травы одной строкой, как стопки в сумке: «Крапива (3 шт), Мята». */
+  private def herbList(herbs: List[Item]): String = {
+    val names = herbs.map(_.name)
+    names.distinct.map(name => name + ItemStack.countSuffix(names.count(_ == name))).mkString(", ")
+  }
 
   /** Порог броска (1..100) на освоение трактата: интеллект ÷ 2 плюс 2 % за каждую
     * прошлую неудачу с этой книгой. */
