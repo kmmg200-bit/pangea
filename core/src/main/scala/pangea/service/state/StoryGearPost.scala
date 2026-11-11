@@ -20,7 +20,7 @@ object StoryGearPost {
     else
       for {
         sent   <- ZIO.foreach(items)(parcels.send(hero.id, fromName, _, now))
-        landed <- parcels.arrive(hero.id, sent.map(_.id), now)
+        landed <- parcels.arrive(hero.id, hero.userId, sent.map(_.id), now)
       } yield parcels.report(landed)
 
   /** Выдать сюжетную экипировку (вещи ещё без номеров): сохранить, положить в

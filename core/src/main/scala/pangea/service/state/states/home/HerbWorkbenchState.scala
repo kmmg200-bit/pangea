@@ -400,12 +400,11 @@ case class HerbWorkbenchState(
   /** Все отвары — из сумки и из Живой сумки — на полку, пока есть место. */
   private def putBrews(user: User, renderer: Renderer): Task[StateType] =
     withWorkbench(user) { home =>
-      gather(user, _.brew.isDefined, home.brewShelves - home.brews.size).flatMap {
+      gather(user, HomeStow.isBrew, home.brewShelves - home.brews.size).flatMap {
         case (Nil, 0) => say(user, content.text("home.workbench.noBrews"), renderer) *> brews(user, 0, renderer)
         case (taken, left) =>
           saveHome(user, home.copy(brews = home.brews ++ taken)) *>
-            say(user, content.format("home.workbench.brewsPut", "n" -> taken.size.toString) +
-              (if (left > 0) "\n" + content.format("home.workbench.brewsLeft", "n" -> left.toString) else ""), renderer) *>
+            say(user, stow.brewsText(taken.size, left), renderer) *>
             brews(user, 0, renderer)
       }
     }

@@ -123,7 +123,7 @@ object StoryGearSpec extends ZIOSpecDefault {
         line    <- StoryGearPost.send(parcels, h, "с добычи", List(storyHelm(1L)), 0L)
         month   <- dao.burn(h.id, 30 * day - Parcels.ShelfMs)
         sent    <- parcels.send(h.id, "Пётр", plainHelm(2L), 30 * day)
-        _       <- parcels.arrive(h.id, List(sent.id), 30 * day)
+        _       <- parcels.arrive(h.id, h.userId, List(sent.id), 30 * day)
         listed  <- parcels.waiting(h.id)
         later   <- dao.burn(h.id, 37 * day - Parcels.ShelfMs)
       } yield assertTrue(line.exists(_.contains("Сюжетное на почте не сгорает")) && month.isEmpty) &&

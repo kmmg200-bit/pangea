@@ -389,10 +389,11 @@ case class HomeState(
       }
     }
 
-  /** «Разложить всё»: рунные камни — на алтарь, травы — на полки верстака,
-    * камни — в хранилище, пока есть место; травы и камни берутся и из Живой
-    * сумки и Ларца. Нет верстака или хранилища в этом доме — их шаг
-    * пропускается. Дом пишется одной записью, итог — одним сообщением. */
+  /** «Разложить всё»: рунные камни — на алтарь, травы и отвары — на полки
+    * верстака травника, камни — в хранилище, пока есть место; травы и отвары
+    * берутся и из Живой сумки, камни — и из Ларца. Нет верстака или хранилища
+    * в этом доме — их шаг пропускается. Дом пишется одной записью, итог —
+    * одним сообщением. */
   private def stowAll(user: User, renderer: Renderer): Task[StateType] =
     loadHome(user).flatMap { home =>
       home.house match {
@@ -404,14 +405,19 @@ case class HomeState(
             herbs <- if (h.tier >= House.Townhouse.tier)
                        stow.gather(hero.id, HomeStow.isHerb, ArtifactKind.LivingBag, home.herbShelves - home.herbs.size)
                      else ZIO.succeed((List.empty[Item], 0))
+            brews <- if (h.tier >= House.Townhouse.tier)
+                       stow.gather(hero.id, HomeStow.isBrew, ArtifactKind.LivingBag, home.brewShelves - home.brews.size)
+                     else ZIO.succeed((List.empty[Item], 0))
             gems  <- if (h == House.Island)
                        stow.gather(hero.id, HomeStow.isGem, ArtifactKind.Casket, home.gemShelves - home.gems.size)
                      else ZIO.succeed((List.empty[Item], 0))
-            next   = HomeStow.addRunes(home, runes).copy(herbs = home.herbs ++ herbs._1, gems = home.gems ++ gems._1)
+            next   = HomeStow.addRunes(home, runes)
+                       .copy(herbs = home.herbs ++ herbs._1, brews = home.brews ++ brews._1, gems = home.gems ++ gems._1)
             _     <- ZIO.when(next != home)(saveHome(user, next))
             lines  = List(
                        Option.when(runes.nonEmpty)(stow.runesText(runes)),
                        Option.when(herbs != ((Nil, 0)))(stow.herbsText(herbs._1.size, herbs._2)),
+                       Option.when(brews != ((Nil, 0)))(stow.brewsText(brews._1.size, brews._2)),
                        Option.when(gems != ((Nil, 0)))(stow.gemsText(gems._1.size, gems._2))
                      ).flatten
             _     <- say(user, if (lines.isEmpty) content.text("home.house.stowNothing") else lines.mkString("\n\n"), renderer)

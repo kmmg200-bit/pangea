@@ -3,6 +3,7 @@ package pangea.service.parcel
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Players, SceneContent}
 import pangea.model.hero.{Hero, HeroId}
+import pangea.model.home.{HomeIntake, HomePlace}
 import pangea.model.item.{Bundling, Item, ItemStack, ItemType}
 import pangea.model.parcel.Parcel
 import pangea.model.user.{User, UserId}
@@ -161,13 +162,15 @@ final case class Transfers(
     }
 
   /** Ответ отправителю: что ушло и кому. У стопок своя строка — «стопку»
-    * не скажешь «отправлено». */
+    * не скажешь «отправлено». Что дом получателя может взять (руны, травы,
+    * отвары, камни — см. [[HomeIntake]]), «ляжет в дом или в банковскую
+    * ячейку»: есть ли у него дом и место в нём, отправителю не видно. */
   def sentText(items: List[Item], to: String): String =
     items.headOption match {
       case Some(first) if first.isBundle =>
         content.format("transfer.sentBundle", "what" -> what(first, items.size), "to" -> to)
       case first =>
-        content.format("transfer.sent",
+        content.format(if (first.exists(HomeIntake.wanted)) "transfer.sentHome" else "transfer.sent",
           "name"  -> first.fold("")(_.displayTitle),
           "count" -> items.size.toString,
           "to"    -> to)
@@ -207,7 +210,9 @@ final case class Transfers(
                    ship(sender, target, fit.take(count.max(1)), now, chat)(item =>
                      bank.withdraw(hero.id, item.id).mapError(e => new Throwable(e.toString)).unit
                    ).map { shipment =>
-                     Transfers.Outcome.Sent(content.format("transfer.courier.sent",
+                     val key = if (shipment.items.headOption.exists(HomeIntake.wanted)) "transfer.courier.sentHome"
+                               else "transfer.courier.sent"
+                     Transfers.Outcome.Sent(content.format(key,
                        "what" -> shipment.items.headOption.fold("")(what(_, shipment.items.size)),
                        "to"   -> target.name), shipment.handOver)
                    }
@@ -234,7 +239,7 @@ final case class Transfers(
       lock.withLock(target.userId) {
         for {
           now      <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
-          landed   <- parcels.arrive(target.heroId, sent.map(_.id), now)
+          landed   <- parcels.arrive(target.heroId, target.userId, sent.map(_.id), now)
           receiver <- userRepo.getUserById(target.userId).option.map(_.flatten)
           _        <- ZIO.foreachDiscard(receiver.zip(letter(fromName, sent, landed))) { case (r, text) =>
                         players.notify(r, text).ignore
@@ -248,21 +253,38 @@ final case class Transfers(
     * только когда он пошёл с этих вещей: пока на почте что-то лежит, срок у
     * новых тот же, что у остального. */
   private def letter(fromName: String, sent: List[Parcel], landed: Parcels.Landing): Option[String] = {
+    val home   = landed.homed.size
     val vault  = landed.delivered.size
     val mail   = landed.mailed.size
-    val notice = Option.when(vault + mail > 0) {
+    val notice = Option.when(home + vault + mail > 0) {
       val where =
-        if (mail == 0) content.text("transfer.noticeVault")
+        if (home > 0) homeWhere(home, vault, mail, landed.homed.map(_._2))
+        else if (mail == 0) content.text("transfer.noticeVault")
         else if (vault == 0) content.text("transfer.noticeMail")
         else content.format("transfer.noticeSplit", "vault" -> vault.toString, "mail" -> mail.toString)
       val shelf = if (landed.started) content.text("transfer.noticeShelf") else ""
       content.format("transfer.notice",
         "from" -> fromName,
-        "what" -> sent.headOption.fold("")(p => what(p.item, vault + mail))) + where + shelf
+        "what" -> sent.headOption.fold("")(p => what(p.item, home + vault + mail))) + where + shelf
     }
     val lines = Option.when(landed.burned.nonEmpty)(parcels.burnedText(landed.burned)).toList ++ notice
     Option.when(lines.nonEmpty)(lines.mkString("\n\n"))
   }
+
+  /** Где переданное, если часть (или всё) легло в дом: всё — «Всё уже в вашем
+    * доме: на полках верстака травника»; часть — «В дом легло 8 (на полки
+    * верстака травника), в банковскую ячейку — 3, остальное (2) ждёт на
+    * почте». */
+  private def homeWhere(home: Int, vault: Int, mail: Int, where: List[HomePlace]): String =
+    if (vault == 0 && mail == 0) content.format("transfer.noticeHome", "places" -> parcels.places("at", where))
+    else {
+      val key =
+        if (mail == 0) "transfer.noticeHomeVault"
+        else if (vault == 0) "transfer.noticeHomeMail"
+        else "transfer.noticeHomeSplit"
+      content.format(key, "home" -> home.toString, "places" -> parcels.places("to", where),
+        "vault" -> vault.toString, "mail" -> mail.toString)
+    }
 
   /** Почта фоном, раз в минуту, — хода хозяев не ждём. Посылки, которые не
     * разложились сразу (доставка упала или их отправили до того, как они
@@ -274,7 +296,7 @@ final case class Transfers(
     for {
       stuck  <- parcels.stranded(now - Transfers.StrandedMs)
       _      <- ZIO.foreachDiscard(stuck) { case (heroId, userId, ids) =>
-                  lock.withLock(userId)(parcels.arrive(heroId, ids, now))
+                  lock.withLock(userId)(parcels.arrive(heroId, userId, ids, now))
                     .flatMap(landed => ZIO.foreachDiscard(parcels.report(landed))(write(userId, _)))
                     .catchAllCause(cause => ZIO.logErrorCause(s"Посылки игрока ${userId.value} не разложились", cause))
                 }

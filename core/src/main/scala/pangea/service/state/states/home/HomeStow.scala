@@ -16,7 +16,7 @@ import zio.{Task, ZIO}
   * хранилища и для «Разложить всё» на главном экране дома.
   *
   * Дом здесь не пишется: взятое вызывающий кладёт в `HomeData` и сохраняет
-  * сам — «Разложить всё» так сохраняет три хранилища одной записью. */
+  * сам — «Разложить всё» так сохраняет все хранилища одной записью. */
 final case class HomeStow(
   inventoryRepo: InventoryRepository,
   artifacts:     Option[ArtifactRepository],
@@ -57,6 +57,11 @@ final case class HomeStow(
     content.format("home.workbench.herbsPut", "n" -> taken.toString) +
       (if (left > 0) "\n" + content.format("home.workbench.herbsLeft", "n" -> left.toString) else "")
 
+  /** «На полку встало отваров: N» и, если не всё влезло, — сколько осталось. */
+  def brewsText(taken: Int, left: Int): String =
+    content.format("home.workbench.brewsPut", "n" -> taken.toString) +
+      (if (left > 0) "\n" + content.format("home.workbench.brewsLeft", "n" -> left.toString) else "")
+
   /** «В хранилище легло камней: N» и, если не всё влезло, — сколько осталось. */
   def gemsText(taken: Int, left: Int): String =
     content.format("home.gems.put", "n" -> taken.toString) +
@@ -72,6 +77,8 @@ final case class HomeStow(
 object HomeStow {
 
   def isHerb(it: Item): Boolean = it.material.exists(_.isHerb)
+
+  def isBrew(it: Item): Boolean = it.brew.isDefined
 
   def isGem(it: Item): Boolean = it.gem.isDefined
 
