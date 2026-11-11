@@ -91,6 +91,11 @@ trait MiniApp {
     * Только в городе. */
   def move(hero: Hero, from: String, to: String, itemId: Long, all: Boolean): Task[InventoryActionView]
 
+  /** Выбросить вещь `itemId` из хранилища `from` (имена — как у `move`); `all`
+    * — всю её стопку. Хранилище должно быть под рукой ([[MiniApp.dropBarred]]);
+    * сюжетное не выбрасывают. */
+  def drop(hero: Hero, from: String, itemId: Long, all: Boolean): Task[InventoryActionView]
+
   /** «Крафт»: куб Азата и сумка, из которой в него кладут. */
   def craft(hero: Hero): Task[CraftView]
 
@@ -225,6 +230,12 @@ object MiniApp {
     * оба хранилища. `None` — можно. */
   def moveBarred(content: SceneContent, hero: Hero, from: Place, to: Place): Option[String] =
     storesAway(content, hero).filterNot(_ => reach(hero)(from) && reach(hero)(to))
+
+  /** Почему из `from` сейчас ничего не выбросить: хранилище должно быть под
+    * рукой, как и для переноса ([[reach]]). `None` — можно. */
+  def dropBarred(content: SceneContent, hero: Hero, from: Place): Option[String] =
+    if (reach(hero)(from)) None
+    else Some(content.text(if (inBattle(hero)) "miniapp.storages.dropInBattle" else "miniapp.storages.dropAway"))
 
   val live: ZLayer[MiniAppConfig with UserRepository with HeroRepository with InventoryRepository with AuctionRepository
                      with HeroDao with ArtifactDao with BarrelDao with BankVaultDao with TopDao with QuestOutcomeDao
@@ -565,6 +576,31 @@ final class MiniAppLive(
               }
           }
         case _ => tell(gone)
+      }
+    }
+
+  /** «Выбросить» — общим [[ItemStore.drop]]. Хранилище должно быть под рукой
+    * ([[MiniApp.dropBarred]]); бочка — та же, что при переносе: вскрытая воры
+    * ничего не отдаёт, а первое за сутки дело с ней — жребий. Сюжетное не
+    * выбрасывают — словами бота. */
+  override def drop(hero: Hero, from: String, itemId: Long, all: Boolean): Task[InventoryActionView] =
+    storesAct(hero) { (user, fresh, say) =>
+      def tell(text: String) = say.show(user, Screen(text, Nil))
+      Place.byId(from) match {
+        case None => tell(content.text("stack.gone"))
+        case Some(src) =>
+          MiniApp.dropBarred(content, fresh, src).fold(barrelGuard(user, fresh, src, src))(ZIO.some(_)).flatMap {
+            case Some(why) => tell(why)
+            case None =>
+              ItemStore.drop(places(src), fresh, itemId, all).flatMap {
+                case ItemStore.Dropped.Gone => tell(content.text("stack.gone"))
+                case ItemStore.Dropped.Kept(item) =>
+                  tell(content.text(if (item.isStoryGear) "inventory.storyNoDrop" else "miniapp.storages.questNoDrop"))
+                case ItemStore.Dropped.Done(item, n) =>
+                  tell(if (all) content.format("miniapp.storages.droppedAll", "name" -> item.displayTitle, "n" -> n.toString)
+                       else content.format("miniapp.storages.dropped", "name" -> item.displayTitle))
+              }
+          }
       }
     }
 

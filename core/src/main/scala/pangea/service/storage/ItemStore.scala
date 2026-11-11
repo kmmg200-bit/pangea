@@ -11,11 +11,12 @@ import pangea.repository.artifact.{ArtifactRepoError, ArtifactRepository}
 import pangea.repository.bank.{BankRepoError, BankRepository}
 import pangea.repository.barrel.{BarrelRepoError, BarrelRepository}
 import pangea.repository.inventory.{InventoryRepoError, InventoryRepository}
-import pangea.service.state.InventoryFeedback
+import pangea.service.state.{InventoryFeedback, StackMove}
 import zio.{Task, ZIO}
 
 /** Место, где у героя лежат вещи: сумка, артефакт, бочка, ячейка, полки дома.
-  * Перенос между любыми двумя — [[ItemStore.move]]; им пользуются и экраны
+  * Перенос между любыми двумя — [[ItemStore.move]], выбросить из любого —
+  * [[ItemStore.drop]]; переносом пользуются и экраны
   * бота, и Mini App, поэтому места, пределы и слова отказа — здесь, по одному
   * на хранилище. Всё меняет героя и зовётся под локом игрока. */
 trait ItemStore {
@@ -51,6 +52,32 @@ object ItemStore {
               ZIO.unless(removed)(ZIO.logError(s"Вещь ${item.id} героя ${hero.id.value} легла, но не ушла с прежнего места"))
             ).as(None)
         }
+    }
+
+  /** Чем кончилось «Выбросить» ([[drop]]). */
+  sealed trait Dropped
+  object Dropped {
+    /** Вещи там уже нет — ничего не тронуто. */
+    case object Gone extends Dropped
+    /** Сюжетное — предмет задания или экипировка ★ — не выбрасывают. */
+    final case class Kept(item: Item) extends Dropped
+    /** Выброшено `count` вещей стопки `item` (одна, если стопку не просили). */
+    final case class Done(item: Item, count: Int) extends Dropped
+  }
+
+  /** Выбросить из `store` вещь `itemId` — одну или (`all`) всю её стопку, с
+    * конца, как и переносят ([[StackMove.stack]]). Сюжетное не выбрасывают: на
+    * карточке бота у него такой кнопки нет. */
+  def drop(store: ItemStore, hero: Hero, itemId: Long, all: Boolean): Task[Dropped] =
+    store.items(hero).flatMap { items =>
+      items.find(_.id == itemId) match {
+        case None                                               => ZIO.succeed(Dropped.Gone)
+        case Some(item) if item.isQuestItem || item.isStoryGear => ZIO.succeed(Dropped.Kept(item))
+        case Some(item) =>
+          val doomed = if (all) StackMove.stack(items, item) else List(item)
+          ZIO.foldLeft(doomed)(0)((n, it) => store.remove(hero, it).map(gone => if (gone) n + 1 else n))
+            .map(n => if (n == 0) Dropped.Gone else Dropped.Done(item, n))
+      }
     }
 
   private def asThrowable(e: Any): Throwable = new Throwable(e.toString)

@@ -374,6 +374,46 @@ object MiniAppViewSpec extends ZIOSpecDefault {
       )
     },
 
+    test("что выбросить: в городе — из сумки и открытых хранилищ, кроме сюжетного; вне города — при себе; в бою — ничего") {
+      import pangea.model.artifact.{Artifact, ArtifactKind}
+      import pangea.model.barrel.{BarrelThieves, StolenGoods}
+      import pangea.model.inventory.Inventory.Items
+      def at(state: StateType, robbed: Boolean = false) = {
+        val hero   = TestFixtures.hero(UserId(1L), state = state)
+        val arts   = HeroArtifacts.empty(hero.id).copy(casket = Artifact(ArtifactKind.Casket, 1, 0, Items(List(ruby(9L)))))
+        val vault  = BankVault(1L, hero.id, 1, Items(List(sword.copy(id = 40L), sword.copy(id = 41L).asStoryGear)), 0L)
+        val barrel = Barrel.empty(hero.id).withItems(List(ruby(50L)))
+        val thief  = barrel.copy(thieves = Some(BarrelThieves(0L, Some(StolenGoods(Nil, 0L)))))
+        val stores = MiniAppView.Stores(arts, if (robbed) thief else barrel, vault, HomeData.empty)
+        val quest  = sword.copy(id = 77L, itemType = ItemType.QuestItem)
+        MiniAppView.inventory(hero, inv(hero, List(sword, ruby(5L), ruby(6L), quest)), stores, content, _.name, 0L)
+      }
+      def drops(v: MiniAppView.InventoryView) = v.drops.map(d => d.from -> d.item)
+      assertTrue(
+        // Стопка рубинов — одной строкой, как в списке; предмет задания и ★ — нет.
+        drops(at(StateType.MarketSquare)) == List("bag" -> sword.id, "bag" -> 6L, "casket" -> 9L, "barrel" -> 50L, "vault" -> 40L),
+        // Лабиринт: только сумка и то, что при себе.
+        drops(at(StateType.Dungeon)) == List("bag" -> sword.id, "bag" -> 6L, "casket" -> 9L),
+        drops(at(StateType.Battle)).isEmpty,
+        // Вскрытая ворами бочка не отдаёт ничего.
+        !drops(at(StateType.MarketSquare, robbed = true)).exists(_._1 == "barrel")
+      )
+    },
+
+    test("выбросить под рукой: вне города — только при себе, в бою — ничего, в городе — всё; почему — своими словами") {
+      import pangea.model.artifact.ArtifactKind
+      import pangea.service.storage.ItemStore.Place
+      def barred(state: StateType, from: Place) =
+        MiniApp.dropBarred(content, TestFixtures.hero(UserId(1L), state = state), from)
+      assertTrue(
+        barred(StateType.Dungeon, Place.Bag).isEmpty,
+        barred(StateType.Dungeon, Place.Art(ArtifactKind.Wardrobe)).isEmpty,
+        barred(StateType.Dungeon, Place.Vault).contains(content.text("miniapp.storages.dropAway")),
+        barred(StateType.Battle, Place.Bag).contains(content.text("miniapp.storages.dropInBattle")),
+        barred(StateType.MarketSquare, Place.Barrel).isEmpty
+      )
+    },
+
     test("пояс в снаряжении — по ячейкам: сколько из скольких, пустая помнит, чем была") {
       val belt = Item(30L, "Пояс", 1L, Rarity.Blue, ItemType.Belt,
         attack = 0, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0,

@@ -82,6 +82,10 @@ final class MiniAppRoutes(app: MiniApp) {
     case req @ POST -> Root / "api" / "app" / "storages" / "move" :? PlaceFrom(from) +& PlaceTo(to) +& ItemParam(id) +& AllParam(all) =>
       asPlayer(req)(hero => app.move(hero, from, to, id, all.getOrElse(false)).flatMap(view => Ok(view.asJson)))
 
+    // Выбросить вещь (или всю стопку) из хранилища. Меняет игру — только POST.
+    case req @ POST -> Root / "api" / "app" / "storages" / "drop" :? PlaceFrom(from) +& ItemParam(id) +& AllParam(all) =>
+      asPlayer(req)(hero => app.drop(hero, from, id, all.getOrElse(false)).flatMap(view => Ok(view.asJson)))
+
     // Стойка дома: надеть её комплект — обменяться надетым. Меняет игру — только POST.
     case req @ POST -> Root / "api" / "app" / "racks" / "wear" :? RackParam(n) =>
       asPlayer(req)(hero => app.rack(hero, n).flatMap(view => Ok(view.asJson)))

@@ -77,6 +77,52 @@ function MovePanel(props: { data: InventoryView; from: string; item: ItemView; a
   )
 }
 
+/** «Выбросить» в карточке вещи: из сумки и из хранилищ, до которых герой
+  * сейчас дотянется, — всё, кроме сюжетного. Стопку — одну вещь или всю. Сперва
+  * переспросить: вернуть вещь не получится. */
+function DropPanel(props: { data: InventoryView; from: string; item: ItemView; acts: Acts; onDone: () => void }) {
+  const { data, from, item, acts } = props
+  // Что переспрашиваем: одну вещь или всю стопку.
+  const [ask, setAsk] = useState<'one' | 'all' | null>(null)
+  // Бот старше приложения — поля нет: нет и кнопки.
+  if (!(data.drops ?? []).some((d) => d.from === from && d.item === item.id)) return null
+  const what = ask === 'all' ? `«${item.title}» ×${item.count}` : `«${item.title}»`
+  return (
+    <div className="move">
+      <div className="equip-acts">
+        <button className="equip-off" disabled={acts.busy} onClick={() => setAsk('one')}>
+          Выбросить
+        </button>
+        {item.count > 1 && (
+          <button className="equip-off" disabled={acts.busy} onClick={() => setAsk('all')}>
+            Выбросить все {item.count}
+          </button>
+        )}
+      </div>
+      {ask && (
+        <div className="buy-confirm">
+          <p className="buy-ask">Выбросить {what}? Вернуть не получится.</p>
+          <div className="buy-row">
+            <button
+              className="buy-yes"
+              disabled={acts.busy}
+              onClick={() => {
+                acts.run(() => api.storeDrop(from, item.id, ask === 'all'))
+                props.onDone()
+              }}
+            >
+              Выбросить
+            </button>
+            <button className="buy-no" onClick={() => setAsk(null)}>
+              Передумал
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** Вопрос отвара: почему нельзя, на что потратить или тратить ли склянку. Выбор
   * травмы, рода или фляги сам и есть подтверждение. */
 function BrewQuestion(props: { ask: BrewAskView; busy: boolean; onUse: (arg: string | null) => void; onBack: () => void }) {
@@ -239,7 +285,8 @@ function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; a
   * нажал, и написано, как его открыть. Вещь из любого хранилища — в любое,
   * которое её возьмёт (из карточки вещи), — в городе; вне города — между тем,
   * что при себе. Комплект со стойки — на героя, отвар и пояс — из карточки вещи
-  * в сумке, где угодно. В бою — ни то ни другое. Бот проверит это сам, под тем же замком, что и ходы в чате. Что
+  * в сумке, где угодно. Выбросить — из карточки вещи, откуда её можно и
+  * переложить. В бою — ни то ни другое. Бот проверит это сам, под тем же замком, что и ходы в чате. Что
   * сказал бот — всплывает над нижней панелью. */
 export function ItemsTab(props: { data: InventoryView; onChange: (v: InventoryView) => void }) {
   const [group, setGroup] = useState<Group>('self')
@@ -297,6 +344,7 @@ export function ItemsTab(props: { data: InventoryView; onChange: (v: InventoryVi
           )}
           {open.from === BAG && <BagActs data={props.data} item={open.item} acts={acts} onDone={() => setOpen(null)} />}
           <MovePanel data={props.data} from={open.from} item={open.item} acts={acts} onDone={() => setOpen(null)} />
+          <DropPanel data={props.data} from={open.from} item={open.item} acts={acts} onDone={() => setOpen(null)} />
         </Sheet>
       )}
       {toast}

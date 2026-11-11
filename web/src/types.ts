@@ -121,6 +121,15 @@ export interface InventoryView {
   gemStock: GemStockView[]
   /** Отвары и что кладётся на пояс; пусто в бою. */
   bagActs: BagActView[]
+  /** Что можно выбросить прямо сейчас. */
+  drops: DropView[]
+}
+
+/** Вещь `item` (у стопки — та же, что в списке) из хранилища `from` (`bag` —
+  * сумка) можно выбросить прямо сейчас: хранилище под рукой, вещь не сюжетная. */
+export interface DropView {
+  from: string
+  item: number
 }
 
 /** Камень в гнезде надетой вещи. */

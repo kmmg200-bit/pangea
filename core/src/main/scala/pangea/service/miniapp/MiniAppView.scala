@@ -128,6 +128,10 @@ object MiniAppView {
     * не дотянуться (почему — `storesAway`). */
   final case class MoveView(from: String, item: Long, to: List[String], far: Boolean)
 
+  /** Вещь `item` (у стопки — та же, что в списке) из хранилища `from` можно
+    * выбросить прямо сейчас: хранилище под рукой, а вещь не сюжетная. */
+  final case class DropView(from: String, item: Long)
+
   /** Один из вариантов, на что потратить отвар: `id` уходит боту. */
   final case class BrewOptionView(id: String, label: String)
 
@@ -147,7 +151,7 @@ object MiniAppView {
     * не сменить: герой в бою; `storesAway` — почему дотянуться удастся не до
     * всех хранилищ: герой не в городе или в бою; `gemStock` — камни, которые
     * можно вставить в гнездо; `bagActs` — отвары и что кладётся на пояс, пусто
-    * в бою. */
+    * в бою; `drops` — что можно выбросить прямо сейчас. */
   final case class InventoryView(
     hero:       HeroView,
     capacity:   Long,
@@ -159,7 +163,8 @@ object MiniAppView {
     storesAway: Option[String],
     moves:      List[MoveView],
     gemStock:   List[GemStockView],
-    bagActs:    List[BagActView]
+    bagActs:    List[BagActView],
+    drops:      List[DropView]
   )
 
   /** Ответ на «надеть» или «снять»: вещи после этого и что сказать. */
@@ -361,6 +366,7 @@ object MiniAppView {
   implicit val countEncoder:     Encoder[CountView]     = deriveEncoder
   implicit val storageEncoder:   Encoder[StorageView]   = deriveEncoder
   implicit val moveEncoder:      Encoder[MoveView]      = deriveEncoder
+  implicit val dropEncoder:      Encoder[DropView]      = deriveEncoder
   implicit val gemStockEncoder:  Encoder[GemStockView]  = deriveEncoder
   implicit val brewOptionEncoder: Encoder[BrewOptionView] = deriveEncoder
   implicit val brewAskEncoder:   Encoder[BrewAskView]   = deriveEncoder
@@ -432,7 +438,8 @@ object MiniAppView {
       storesAway = MiniApp.storesAway(content, h),
       moves      = moves(h, inv, stores, views),
       gemStock   = gemStock(inv, stores, describe),
-      bagActs    = bagActs(h, inv, content, now)
+      bagActs    = bagActs(h, inv, content, now),
+      drops      = drops(h, inv, stores, views)
     )
   }
 
@@ -542,6 +549,29 @@ object MiniAppView {
       if takers.nonEmpty
       to         = takers.filter(p => near(from) && near(p))
     } yield MoveView(from.id, item.id, to.map(_.id), far = to.size < takers.size)
+  }
+
+  /** Что можно выбросить прямо сейчас: из открытых хранилищ, до которых герой
+    * дотянется ([[MiniApp.reach]]), — всё, кроме сюжетного (предметов заданий и
+    * экипировки ★). Вскрытая ворами бочка не отдаёт ничего. Стопка — одной
+    * строкой, как в списке. */
+  private def drops(h: Hero, inv: Inventory, st: Stores, storages: List[StorageView]): List[DropView] = {
+    val near = MiniApp.reach(h)
+    val open = Place.all.filter(p => p == Place.Bag || storages.exists(s => s.id == p.id && s.locked.isEmpty))
+      .filterNot(p => p == Place.Barrel && st.barrel.robbed)
+      .filter(near)
+    def inside(p: Place): List[Item] = p match {
+      case Place.Bag         => inv.items.data
+      case Place.Art(kind)   => st.artifacts.of(kind).items.data
+      case Place.Barrel      => st.barrel.items.data
+      case Place.Vault       => st.vault.items.data
+      case Place.Shelf(kind) => kind.get(st.home)
+    }
+    for {
+      from      <- open
+      (item, _) <- ItemStack.grouped(inside(from))
+      if !item.isQuestItem && !item.isStoryGear
+    } yield DropView(from.id, item.id)
   }
 
   /** Что из сумки встанет в слот ([[EquipmentState.fitting]]) и что изменится,

@@ -107,6 +107,40 @@ object ItemStoreSpec extends ZIOSpecDefault {
         herbs.accepts(herb(1L)) && !herbs.accepts(gem),
         List(casket, wr, bank, herbs).forall(!_.accepts(quest))
       )
+    },
+    test("выбросить: одну — ровно её, стопку — всю; сюжетное не трогаем; вещи уже нет — так и сказано") {
+      def done(d: ItemStore.Dropped): Option[(Long, Int)] = d match {
+        case ItemStore.Dropped.Done(it, n) => Some(it.id -> n)
+        case _                             => None
+      }
+      def kept(d: ItemStore.Dropped): Option[Long] = d match {
+        case ItemStore.Dropped.Kept(it) => Some(it.id)
+        case _                          => None
+      }
+      val townhouse = HomeData.empty.copy(tier = House.Townhouse.tier)
+      for {
+        c     <- ZIO.attempt(SceneContent.load())
+        dao   <- TestHeroDao.withHero(userId, hero)
+        _     <- dao.writeHomeData(userId, townhouse.copy(herbs = List(herb(1L), herb(2L), herb(3L))).asJson)
+        shelf  = new ItemStore.HomeShelf(dao, ItemStore.HomeShelf.Herbs, c)
+        one   <- ItemStore.drop(shelf, hero, 3L, all = false)
+        left1 <- shelf.items(hero).map(_.map(_.id))
+        all   <- ItemStore.drop(shelf, hero, 2L, all = true)
+        left2 <- shelf.items(hero).map(_.map(_.id))
+        bag    = TestInventoryRepository.withItems(List(sword(5L), sword(7L).asStoryGear, sword(8L).copy(itemType = ItemType.QuestItem)))
+        store  = new ItemStore.Bag(bag, _ => "в сумке нет места")
+        star  <- ItemStore.drop(store, hero, 7L, all = false)
+        quest <- ItemStore.drop(store, hero, 8L, all = true)
+        plain <- ItemStore.drop(store, hero, 5L, all = false)
+        again <- ItemStore.drop(store, hero, 5L, all = false)
+      } yield assertTrue(
+        done(one).contains(3L -> 1) && left1 == List(1L, 2L),
+        // вся стопка — обе ромашки, что остались
+        done(all).contains(2L -> 2) && left2.isEmpty,
+        kept(star).contains(7L) && kept(quest).contains(8L),
+        done(plain).contains(5L -> 1) && again == ItemStore.Dropped.Gone,
+        bag.snapshot.map(_.id) == List(7L, 8L)
+      )
     }
   )
 }
