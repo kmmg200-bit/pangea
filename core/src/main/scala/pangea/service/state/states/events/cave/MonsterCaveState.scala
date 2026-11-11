@@ -108,8 +108,7 @@ case class MonsterCaveState(
       _ <- writeScene(user, scene)
       // Взято задание с доски — говорим сразу, что эта пещера годится.
       hunt <- BoardProgress.hunting(heroDao, user.userId, BoardKind.CaveClear)
-      _ <- ZIO.when(hunt)(renderer.show(user, Screen(content.text("questBoard.markCave"), Nil)))
-      _ <- showGate(user, scene, renderer)
+      _ <- showGate(user, scene, renderer, if (hunt) content.text("questBoard.markCave") else "")
     } yield ()
 
   /** Вернулись в пещеру — из боя, с добычи или из меню персонажа. Привал,
@@ -120,13 +119,13 @@ case class MonsterCaveState(
       res <- if (!scene.inside) showGate(user, scene, renderer)
              else if (scene.restUntil > 0L && now >= scene.restUntil) wake(user, renderer)
              else if (scene.restUntil > 0L) sleeping(user, scene, now, renderer)
-             else reward(user, scene, renderer).flatMap(s => showRoom(user, s, renderer))
+             else reward(user, scene).flatMap { case (s, note) => showRoom(user, s, renderer, note) }
     } yield res
 
   /** Порог пещеры: чья она — видно по следам, сколько их — нет. У выездных
     * гадать не о чем: герой пришёл сюда по объявлению и знает, за кем, — а у
     * пещеры некроманта по костям у входа видно ещё и, чья родня там поднята. */
-  private def showGate(user: User, scene: CaveScene, renderer: Renderer): Task[StateType] =
+  private def showGate(user: User, scene: CaveScene, renderer: Renderer, note: String = ""): Task[StateType] =
     renderer.show(user, Screen(
       if (scene.sewer) content.format("sewer.gate.text", "lvl" -> Difficulty.render(scene.questLvl.toInt))
       else if (scene.necro) content.format("necro.gate.text",
@@ -137,30 +136,30 @@ case class MonsterCaveState(
         content.choice("CaveSupply", "cave.gate.supply").copy(row = Some(1)),
         content.choice("OpenCharacter", "common.character").copy(row = Some(2)),
         content.choice("CaveOut", "cave.gate.leave").copy(color = ChoiceColor.Negative, row = Some(3))
-      ))).as(StateType.MonsterCave)
+      )).noted(note)).as(StateType.MonsterCave)
 
   private def enterCave(user: User, renderer: Renderer): Task[StateType] =
     withScene(user) { scene =>
       val inside = scene.copy(inside = true, at = 0)
+      // Вход и первая комната — одним сообщением. Пещера Некроманта выдаёт себя
+      // с порога: живым здесь не пахнет.
       writeScene(user, inside) *>
-        renderer.show(user, Screen(txt(scene, "entered"), Nil)) *>
-        // Пещера Некроманта выдаёт себя с порога: живым здесь не пахнет.
-        ZIO.when(scene.undeadMobs)(renderer.show(user, Screen(content.text("cave.deadAir"), Nil))) *>
-        showRoom(user, inside, renderer)
+        showRoom(user, inside, renderer,
+          Screen.joined(txt(scene, "entered"), if (scene.undeadMobs) content.text("cave.deadAir") else ""))
     }
 
   // ── Вещь, пущенная в дело на пороге ────────────────────────────────────────
 
   /** Скарб героя кнопками: сперва то, что на поясе (дымную флягу носят там),
     * потом сумка. И у входа, и у алтаря. */
-  private def showSupplies(user: User, scene: CaveScene, renderer: Renderer): Task[Unit] =
+  private def showSupplies(user: User, scene: CaveScene, renderer: Renderer, note: String = ""): Task[Unit] =
     for {
       hero  <- getHero(user)
       inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
       // Стопку в дело не пускают: вещи из неё идут в дело только после распаковки.
       all    = CaveSupply.beltSupplies(hero.equipment.belt) ++ inv.items.data.filterNot(_.isBundle).map(Supply.Carried)
       _ <- if (all.isEmpty)
-             renderer.show(user, Screen(content.text("cave.supply.empty"), List(backToGate)))
+             renderer.show(user, Screen(content.text("cave.supply.empty"), List(backToGate)).noted(note))
            else {
              val (pageItems, pages, p) = ItemMenu.page(all, scene.page)
              val text = content.format(if (atAltar(scene)) "cave.altar.pick" else "cave.supply.pick",
@@ -177,7 +176,7 @@ case class MonsterCaveState(
                Option.when(p > 0)(Choice("CavePrev", content.text("common.prev"), row = Some(ItemMenu.NavRow))),
                Option.when(p < pages - 1)(Choice("CaveNext", content.text("common.next"), row = Some(ItemMenu.NavRow)))
              ).flatten
-             renderer.show(user, Screen(text, buttons ++ nav))
+             renderer.show(user, Screen(text, buttons ++ nav).noted(note))
            }
     } yield ()
 
@@ -202,8 +201,8 @@ case class MonsterCaveState(
         case None                       => showSupplies(user, scene, renderer).as(StateType.MonsterCave)
         // Сюжетное — и предмет, и экипировка (см. Item.isStoryGear) — здесь не тратят.
         case Some(item) if item.isQuestItem || item.isStoryGear =>
-          renderer.show(user, Screen(content.format("cave.supply.quest", "name" -> item.displayTitle), Nil)) *>
-            showSupplies(user, scene, renderer).as(StateType.MonsterCave)
+          showSupplies(user, scene, renderer, content.format("cave.supply.quest", "name" -> item.displayTitle))
+            .as(StateType.MonsterCave)
         case Some(item) if atAltar(scene) => offer(user, hero, scene, item, renderer)
         case Some(item)                   => spend(user, hero, scene, item, renderer)(
                                                takeFrom(hero, item, CaveSupply.charged(item)))
@@ -238,8 +237,8 @@ case class MonsterCaveState(
     if (item.isTreasureMap) readMap(user, hero, scene, item, renderer)
     // Пустая фляга остаётся при герое: тратить нечего, и забирать её не за что.
     else if (charged.exists(_.charges <= 0))
-      renderer.show(user, Screen(content.format("cave.supply.emptyFlask", "name" -> item.displayTitle), Nil)) *>
-        showSupplies(user, scene, renderer).as(StateType.MonsterCave)
+      showSupplies(user, scene, renderer, content.format("cave.supply.emptyFlask", "name" -> item.displayTitle))
+        .as(StateType.MonsterCave)
     else {
       val next = boon match {
         case CaveBoon.Dope   => scene.copy(weakened = true)
@@ -258,8 +257,7 @@ case class MonsterCaveState(
       for {
         _ <- take
         _ <- writeScene(user, next)
-        _ <- renderer.show(user, Screen(line, Nil))
-        _ <- showSupplies(user, next, renderer)
+        _ <- showSupplies(user, next, renderer, line)
       } yield StateType.MonsterCave
     }
   }
@@ -276,8 +274,7 @@ case class MonsterCaveState(
           (dug, _) = CaveGenerator.addTreasureRoom(scene.copy(treasure = Some(zone)), Rng(seed))
           _ <- inventoryRepo.removeItem(map.id, hero.id).mapError(asThrowable)
           _ <- writeScene(user, dug)
-          _ <- renderer.show(user, Screen(txt(scene, "supply.map"), Nil))
-          _ <- showSupplies(user, dug, renderer)
+          _ <- showSupplies(user, dug, renderer, txt(scene, "supply.map"))
         } yield StateType.MonsterCave
       case (ItemType.TreasureMap, _) => say(user, scene, "supply.mapAlready", renderer)
       case _                         => say(user, scene, "supply.mapHalf", renderer)
@@ -317,9 +314,10 @@ case class MonsterCaveState(
       _      <- heroDao.writeActiveBattle(user.userId,
                   battle.copy(lootLevel = Option.when(scene.away)(mobLvl)).asJson)
       _      <- heroDao.writeSceneData(user.userId, routing.asJson)
-      _      <- renderer.show(user, Screen(content.format("cave.altar.bones", "name" -> bones.name), Nil))
       // Вызванный — тот же Некромант: первая встреча с ним открывает Трактирщика.
-      _      <- meet(user, lord, renderer)
+      met    <- meet(user, lord)
+      _      <- renderer.show(user, Screen(
+                  Screen.joined(content.format("cave.altar.bones", "name" -> bones.name), met), Nil))
     } yield StateType.Battle
   }
 
@@ -329,10 +327,9 @@ case class MonsterCaveState(
     val skull = GemGenerator.item(GemKind.Skull, grade).copy(id = item.id)
     for {
       _   <- inventoryRepo.updateItem(hero.id, skull).mapError(asThrowable)
-      _   <- renderer.show(user, Screen(content.format("cave.altar.skull",
-               "gem" -> item.displayTitle, "skull" -> skull.displayTitle), Nil))
       // Череп стоит камню тех же сил, что и поднятый с камня, — алтарь гаснет.
-      res <- burnOut(user, scene, renderer)
+      res <- burnOut(user, scene, renderer, content.format("cave.altar.skull",
+               "gem" -> item.displayTitle, "skull" -> skull.displayTitle))
     } yield res
   }
 
@@ -360,8 +357,7 @@ case class MonsterCaveState(
       // «Некромант» (порог 6) держит поднятого дольше — срок ставится здесь, в
       // минуту поднятия, и снятый потом набор его уже не торопит.
       _ <- heroDao.updateSquad(user.userId, hero.squad.raise(form, hero.lvl, now, hero.sets.undeadLastsMult))
-      _ <- renderer.show(user, Screen(content.format(line, "name" -> form.name), Nil))
-      res <- burnOut(user, scene, renderer)
+      res <- burnOut(user, scene, renderer, content.format(line, "name" -> form.name))
     } yield res
 
   /** Экран «кем жертвуем»: весь отряд кнопками и отказ. */
@@ -391,9 +387,8 @@ case class MonsterCaveState(
                   _ <- inventoryRepo.removeItem(scene.pendingTrophy, hero.id).mapError(asThrowable).ignore
                   _ <- heroDao.updateSquad(user.userId,
                          hero.squad.replaceAt(p, form, hero.lvl, now, hero.sets.undeadLastsMult))
-                  _ <- renderer.show(user, Screen(content.format(key(scene, "altar.swapped"),
-                         "old" -> old.name, "name" -> form.name), Nil))
-                  out <- burnOut(user, scene.copy(pending = None, pendingTrophy = 0L), renderer)
+                  out <- burnOut(user, scene.copy(pending = None, pendingTrophy = 0L), renderer,
+                           content.format(key(scene, "altar.swapped"), "old" -> old.name, "name" -> form.name))
                 } yield out
             }
           } yield res
@@ -403,18 +398,16 @@ case class MonsterCaveState(
 
   /** Герой передумал жертвовать своими: трофей цел, алтарь ещё ждёт. */
   private def cancelSwap(user: User, scene: CaveScene, renderer: Renderer): Task[StateType] =
-    renderer.show(user, Screen(content.text("cave.altar.kept"), Nil)) *>
-      showRoom(user, scene.copy(pending = None, pendingTrophy = 0L), renderer)
+    showRoom(user, scene.copy(pending = None, pendingTrophy = 0L), renderer, content.text("cave.altar.kept"))
 
-  /** Алтарь отдал свою силу — больше он не отзовётся. */
-  private def burnOut(user: User, scene: CaveScene, renderer: Renderer): Task[StateType] =
-    renderer.show(user, Screen(content.text("cave.altar.spent"), Nil)) *>
-      showRoom(user, scene.copy(altarSpent = true), renderer)
+  /** Алтарь отдал свою силу — больше он не отзовётся. `note` — что он сделал:
+    * тем же сообщением, что и «алтарь погас», над комнатой. */
+  private def burnOut(user: User, scene: CaveScene, renderer: Renderer, note: String): Task[StateType] =
+    showRoom(user, scene.copy(altarSpent = true), renderer, Screen.joined(note, content.text("cave.altar.spent")))
 
   /** Короткая реплика камня и обратно к сумке. */
   private def say(user: User, scene: CaveScene, name: String, renderer: Renderer): Task[StateType] =
-    renderer.show(user, Screen(txt(scene, name), Nil)) *>
-      showSupplies(user, scene, renderer).as(StateType.MonsterCave)
+    showSupplies(user, scene, renderer, txt(scene, name)).as(StateType.MonsterCave)
 
   /** Заряд — из фляги в сумке, всё прочее — из сумки целиком. */
   private def takeFrom(hero: Hero, item: Item, charged: Option[ItemDetails.Charged]): Task[Unit] =
@@ -432,15 +425,13 @@ case class MonsterCaveState(
       if (!scene.inside) showGate(user, scene, renderer)
       else scene.neighbour(dir) match {
         case None =>
-          wall(scene).flatMap(line => renderer.show(user, Screen(line, Nil))) *> showRoom(user, scene, renderer)
+          wall(scene).flatMap(line => showRoom(user, scene, renderer, line))
         case Some(idx) =>
           val moved = scene.copy(at = idx)
           if (moved.room.monsters > 0 && moved.room.kind == RoomKind.Lair)
             getHero(user).flatMap(fightLord(user, _, moved, idx, renderer))
           else if (moved.room.monsters > 0) getHero(user).flatMap(fight(user, _, moved, idx, renderer))
-          else writeScene(user, moved) *>
-            renderer.show(user, Screen(content.text("cave.moved"), Nil)) *>
-            showRoom(user, moved, renderer)
+          else showRoom(user, moved, renderer, content.text("cave.moved"))
       }
     }
 
@@ -452,7 +443,7 @@ case class MonsterCaveState(
 
   /** Экран комнаты: что здесь есть и куда отсюда ведут ходы. Направления видны
     * все четыре — зелёные там, где проход, красные там, где камень. */
-  private def showRoom(user: User, scene: CaveScene, renderer: Renderer): Task[StateType] = {
+  private def showRoom(user: User, scene: CaveScene, renderer: Renderer, note: String = ""): Task[StateType] = {
     val room = scene.room
     val text = roomText(scene)
     def dirChoice(id: String, key: String, dir: CaveDir, row: Int): Choice =
@@ -474,7 +465,7 @@ case class MonsterCaveState(
       content.choice("OpenCharacter", "common.character").copy(row = Some(4)),
       content.choice("CaveOut", "cave.gate.leave").copy(color = ChoiceColor.Negative, row = Some(4))
     )
-    writeScene(user, scene) *> renderer.show(user, Screen(text, choices)).as(StateType.MonsterCave)
+    writeScene(user, scene) *> renderer.show(user, Screen(text, choices).noted(note)).as(StateType.MonsterCave)
   }
 
   /** Описание комнаты. Обысканная показывает, что от находки осталось, — сорванную
@@ -612,25 +603,27 @@ case class MonsterCaveState(
       _ <- heroDao.writeActiveBattle(user.userId,
              battle.copy(lootLevel = Option.when(scene.away)(mobLvl)).asJson)
       _ <- heroDao.writeSceneData(user.userId, routing.asJson)
-      _ <- renderer.show(user, Screen(content.text(
-             if (scene.sewer) "sewer.king" else if (lord == MiniBoss.Necromancer) "cave.necro.lord" else "cave.king.lord"), Nil))
       // Встреча с хозяином: после неё Трактирщику есть о ком рассказать.
-      _ <- meet(user, lord, renderer)
+      met <- meet(user, lord)
+      _ <- renderer.show(user, Screen(Screen.joined(content.text(
+             if (scene.sewer) "sewer.king" else if (lord == MiniBoss.Necromancer) "cave.necro.lord" else "cave.king.lord"),
+             met), Nil))
     } yield StateType.Battle
   }
 
   /** Первая встреча с хозяином — в логове или из разлома алтаря — записывается в
     * лор героя и звучит репликой: после неё у Трактирщика появляется, о ком
-    * спросить. Со знакомым ни отметки, ни слов. */
-  private def meet(user: User, lord: MiniBoss, renderer: Renderer): Task[Unit] =
+    * спросить. Реплику отдаём, а не показываем: она идёт тем же сообщением, что
+    * и выход хозяина. Со знакомым ни отметки, ни слов — пусто. */
+  private def meet(user: User, lord: MiniBoss): Task[String] =
     HerbLore.readLore(heroDao, user.userId).flatMap { lore =>
       val first = lord match {
         case MiniBoss.Necromancer if !lore.metNecro   => Some(lore.copy(metNecro = true) -> "cave.necro.firstMeeting")
         case MiniBoss.RatKing     if !lore.metRatKing => Some(lore.copy(metRatKing = true) -> "cave.king.firstMeeting")
         case _                                        => None
       }
-      ZIO.foreachDiscard(first) { case (met, line) =>
-        HerbLore.writeLore(heroDao, user.userId, met) *> renderer.show(user, Screen(content.text(line), Nil))
+      first.fold(ZIO.succeed(""): Task[String]) { case (met, line) =>
+        HerbLore.writeLore(heroDao, user.userId, met).as(content.text(line))
       }
     }
 
@@ -689,8 +682,7 @@ case class MonsterCaveState(
                        else CaveGenerator.sewerDeep(scene.questLvl, Rng(seed))
           below      = deep.copy(weakened = scene.weakened, poisoned = scene.poisoned,
                          expEarned = scene.expEarned, restUsed = true)
-          _         <- renderer.show(user, Screen(awayTxt(scene, "descended"), Nil))
-          res       <- showRoom(user, below, renderer)
+          res       <- showRoom(user, below, renderer, awayTxt(scene, "descended"))
         } yield res
     }
 
@@ -732,7 +724,7 @@ case class MonsterCaveState(
 
   /** Трава в трещине: как сорванный в поле цветок — что именно сорвано, зависит
     * от знаний героя, и по странному цветку можно догадаться о травах так же, как
-    * на поляне (HerbLore.insight). Волков в пещере нет, за спину тут никто не
+    * на поляне (HerbLore.insightText). Волков в пещере нет, за спину тут никто не
     * заходит. */
   private def pickHerb(user: User, scene: CaveScene, renderer: Renderer): Task[StateType] =
     for {
@@ -747,12 +739,11 @@ case class MonsterCaveState(
       persisted <- itemRepo.persist(hero.id, item)
       intake    <- ArtifactIntake.accept(artifacts, inventoryRepo, hero.id, persisted)
       where     <- InventoryFeedback.intakeLine(inventoryRepo, content, hero.id, persisted, intake)
-      _ <- renderer.show(user, Screen(
-             content.format("cave.herb", "flower" -> persisted.name) + "\n" + where, Nil))
-      now <- nowMs
-      _   <- HerbLore.insight(heroDao, inventoryRepo, content, renderer, user, hero, lore, kind, now)
-      done = scene.withRoom(scene.at, _.copy(done = true))
-      res <- showRoom(user, done, renderer)
+      now   <- nowMs
+      guess <- HerbLore.insightText(heroDao, inventoryRepo, content, user, hero, lore, kind, now)
+      done   = scene.withRoom(scene.at, _.copy(done = true))
+      res   <- showRoom(user, done, renderer,
+                 Screen.joined(content.format("cave.herb", "flower" -> persisted.name) + "\n" + where, guess))
     } yield res
 
   /** Сундук: чаще всего в нём то же, что берут с мобов четвёртого тира, но
@@ -853,8 +844,7 @@ case class MonsterCaveState(
                   hp = hero.effectiveMaxHp(now), armor = hero.effectiveMaxArmor(now), energy = hero.maxEnergy(now)))
         _    <- heroDao.updateSquad(user.userId, hero.squad.restored(hero.lvl))
         rested = scene.copy(restUntil = 0L).withRoom(scene.at, _.copy(done = true))
-        _    <- renderer.show(user, Screen(content.text("cave.rest.done"), Nil))
-        res  <- showRoom(user, rested, renderer)
+        res  <- showRoom(user, rested, renderer, content.text("cave.rest.done"))
       } yield res
     }
 
@@ -863,12 +853,11 @@ case class MonsterCaveState(
   /** Последний обитатель пал — пещера докладывает долю от опыта, что герой взял
     * со всех её мобов. Награда одна на пещеру. Из пещеры это героя не выводит:
     * необысканные углы остаются на месте, и уходит он сам, когда захочет. */
-  private def reward(user: User, scene: CaveScene, renderer: Renderer): Task[CaveScene] =
-    if (!scene.cleared || scene.rewarded || scene.expEarned <= 0L) ZIO.succeed(scene)
+  private def reward(user: User, scene: CaveScene): Task[(CaveScene, String)] =
+    if (!scene.cleared || scene.rewarded || scene.expEarned <= 0L) ZIO.succeed((scene, ""))
     // Верхний ярус выездного места выбит, а хозяина так и не видели: за
     // половину дела не платят — надо искать ход вниз.
-    else if (!scene.lastFloor)
-      renderer.show(user, Screen(awayTxt(scene, "upperClear"), Nil)).as(scene)
+    else if (!scene.lastFloor) ZIO.succeed((scene, awayTxt(scene, "upperClear")))
     else {
       val bonus = (scene.expEarned * CaveRates.ClearExpPct / 100L).max(1L)
       // Выездные в счёт пещер не идут: за каждое своё объявление.
@@ -879,16 +868,16 @@ case class MonsterCaveState(
         got     = hero.expFrom(bonus, now)
         leveled = hero.gainExp(got)
         _      <- heroDao.updateExpAndLevel(user.userId, leveled.exp, leveled.lvl, leveled.upgradePoints)
-        _      <- renderer.show(user, Screen(content.format(key(scene, "cleared"), "exp" -> got.toString), Nil))
-        _      <- ZIO.when(leveled.lvl > hero.lvl)(
-                    renderer.show(user, Screen(s"Вы получили новый уровень ${leveled.lvl}!", Nil)))
-        // Отдельной строкой, чтобы это не потерялось среди опыта и уровня.
-        _      <- renderer.show(user, Screen(content.text(key(scene, "allClear")), Nil))
         closed <- BoardProgress.markDone(heroDao, user.userId, quest)
-        _      <- ZIO.when(closed)(renderer.show(user, Screen(content.text(doneKey(quest)), Nil)))
         done    = scene.copy(rewarded = true)
         _      <- writeScene(user, done)
-      } yield done
+        // Всё одним сообщением над комнатой, но каждое своим абзацем: «всё
+        // чисто» не потеряется среди опыта и уровня.
+      } yield (done, Screen.joined(
+        content.format(key(scene, "cleared"), "exp" -> got.toString),
+        if (leveled.lvl > hero.lvl) content.format("cave.levelUp", "lvl" -> leveled.lvl.toString) else "",
+        content.text(key(scene, "allClear")),
+        if (closed) content.text(doneKey(quest)) else ""))
     }
 
   private def askLeave(user: User, renderer: Renderer): Task[StateType] =
@@ -910,9 +899,9 @@ case class MonsterCaveState(
       val quest = scene.fold[BoardKind](BoardKind.CaveClear)(questOf)
       scheduler.cancel(user.userId, TaskKind.CaveRest) *>
         heroDao.writeSceneData(user.userId, Json.Null) *>
-        renderer.show(user, Screen(content.text(scene.fold("cave.left")(key(_, "left"))), Nil)) *>
         BoardProgress.markFailed(heroDao, user.userId, quest).flatMap(failed =>
-          ZIO.when(failed)(renderer.show(user, Screen(content.text("questBoard.failed"), Nil)))) *>
+          renderer.show(user, Screen(Screen.joined(content.text(scene.fold("cave.left")(key(_, "left"))),
+            if (failed) content.text("questBoard.failed") else ""), Nil))) *>
         ZIO.succeed(if (away) StateType.GlobalMap else StateType.Dungeon)
     }
 

@@ -2,7 +2,7 @@ package pangea.service.state
 
 import io.circe.syntax.EncoderOps
 import pangea.dao.hero.HeroDao
-import pangea.engine.{Renderer, SceneContent, Screen}
+import pangea.engine.SceneContent
 import pangea.model.hero.{Hero, Knowledge, LoreData}
 import pangea.generator.item.MaterialGenerator
 import pangea.model.item.{Item, ItemStack, MaterialKind, QuestItemKind}
@@ -97,16 +97,13 @@ object HerbLore {
   /** Догадка по сорванному цветку — на поляне и в пещере одна и та же. Только
     * неопознанный цветок и только когда есть о чём догадываться (иначе броска нет
     * и случайное число не тратится). Удача — знание «сам дошёл», купленный трактат
-    * о нём тихо уходит из сумки, игроку — строка. Возвращает знания после. */
-  def insight(heroDao: HeroDao, inventoryRepo: InventoryRepository, content: SceneContent, renderer: Renderer,
-              user: User, hero: Hero, lore: LoreData, kind: MaterialKind, nowMs: Long): Task[LoreData] =
+    * о нём тихо уходит из сумки, а строку для игрока отдаём: её говорят тем же
+    * сообщением, что и находку. Не догадался или не о чем — пусто. */
+  def insightText(heroDao: HeroDao, inventoryRepo: InventoryRepository, content: SceneContent,
+                  user: User, hero: Hero, lore: LoreData, kind: MaterialKind, nowMs: Long): Task[String] =
     insightTarget(lore, kind) match {
-      case None => ZIO.succeed(lore)
-      case Some(knowledge) =>
-        guess(heroDao, inventoryRepo, content, user, hero, lore, knowledge, nowMs).flatMap {
-          case (after, None)       => ZIO.succeed(after)
-          case (after, Some(line)) => renderer.show(user, Screen(line, Nil)).as(after)
-        }
+      case None            => ZIO.succeed("")
+      case Some(knowledge) => guess(heroDao, inventoryRepo, content, user, hero, lore, knowledge, nowMs).map(_._2.getOrElse(""))
     }
 
   /** Бросок на догадку: удача — знание «сам дошёл», трактат о нём уходит из

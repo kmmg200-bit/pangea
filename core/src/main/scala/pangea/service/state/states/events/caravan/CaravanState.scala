@@ -72,17 +72,16 @@ case class CaravanState(
       case Some(scene) if scene.spoils =>
         // Охрана перебита — объявление с доски можно закрывать.
         BoardProgress.markDone(heroDao, user.userId, BoardKind.CaravanRout).flatMap(marked =>
-          ZIO.when(marked)(renderer.show(user, Screen(content.text("questBoard.doneCaravan"), Nil)))) *>
-          showSpoils(user, renderer)
+          showSpoils(user, renderer, if (marked) content.text("questBoard.doneCaravan") else ""))
       case Some(scene)                 => show(user, scene, renderer).unit
       case None                        => discover(user, renderer)
     }
 
   /** Бой кончился, обоз стоит без охраны: поклажу забирают одной кнопкой. */
-  private def showSpoils(user: User, renderer: Renderer): Task[Unit] =
+  private def showSpoils(user: User, renderer: Renderer, note: String = ""): Task[Unit] =
     renderer.show(user, Screen(content.text("caravan.spoils.text"), List(
       content.choice("CaravanSpoils", "caravan.spoils.take")
-        .copy(color = ChoiceColor.Positive, row = Some(0)))))
+        .copy(color = ChoiceColor.Positive, row = Some(0)))).noted(note))
 
   /** Поклажа уходит на экран добычи — тем же путём, каким её отдавали бы за
     * тихую кражу. Сцена на этом кончается. */
@@ -117,8 +116,7 @@ case class CaravanState(
       _     <- writeScene(user, scene)
       // Взято задание с доски — говорим сразу, что караван тот самый.
       hunt  <- BoardProgress.hunting(heroDao, user.userId, BoardKind.CaravanRout)
-      _     <- ZIO.when(hunt)(renderer.show(user, Screen(content.text("questBoard.markCaravan"), Nil)))
-      _     <- show(user, scene, renderer)
+      _     <- show(user, scene, renderer, if (hunt) content.text("questBoard.markCaravan") else "")
     } yield ()
 
   private def rollGoods(heroLvl: Long, rng: Rng): (List[Item], List[Long]) =
@@ -132,7 +130,7 @@ case class CaravanState(
 
   // ── Экраны подхода ────────────────────────────────────────────────────────
 
-  private def show(user: User, scene: CaravanScene, renderer: Renderer): Task[StateType] =
+  private def show(user: User, scene: CaravanScene, renderer: Renderer, note: String = ""): Task[StateType] =
     for {
       hero <- getHero(user)
       race  = Race.withName(scene.race)
@@ -153,7 +151,7 @@ case class CaravanState(
         Some(content.choice("OpenCharacter", "common.character").copy(row = Some(3))),
         Some(content.choice("CaravanLeave", "caravan.leave").copy(color = ChoiceColor.Negative, row = Some(3)))
       ).flatten
-      _ <- renderer.show(user, Screen(text, keys))
+      _ <- renderer.show(user, Screen(text, keys).noted(note))
     } yield StateType.Caravan
 
   /** Что герой уже успел сделать с караваном — строкой под описанием. */
@@ -167,9 +165,7 @@ case class CaravanState(
 
   private def step(user: User, scene: CaravanScene, stage: Int, renderer: Renderer): Task[StateType] = {
     val next = scene.copy(stage = stage)
-    writeScene(user, next) *>
-      renderer.show(user, Screen(content.text(s"caravan.moveTo$stage"), Nil)) *>
-      show(user, next, renderer)
+    writeScene(user, next) *> show(user, next, renderer, content.text(s"caravan.moveTo$stage"))
   }
 
   // ── Вещи и страх ──────────────────────────────────────────────────────────
@@ -187,12 +183,12 @@ case class CaravanState(
   private def supplies(hero: Hero, items: List[Item]): List[Supply] =
     CaveSupply.beltSupplies(hero.equipment.belt) ++ carried(hero, items).map(Supply.Carried)
 
-  private def showSupplies(user: User, scene: CaravanScene, renderer: Renderer): Task[Unit] =
+  private def showSupplies(user: User, scene: CaravanScene, renderer: Renderer, note: String = ""): Task[Unit] =
     for {
       hero <- getHero(user)
       inv  <- inventoryRepo.get(hero.id).mapError(asThrowable)
       all   = supplies(hero, inv.items.data)
-      _ <- if (all.isEmpty) renderer.show(user, Screen(content.text("caravan.supply.empty"), List(backButton)))
+      _ <- if (all.isEmpty) renderer.show(user, Screen(content.text("caravan.supply.empty"), List(backButton)).noted(note))
            else {
              val (pageItems, pages, p) = ItemMenu.page(all, scene.page)
              val buttons = pageItems.zipWithIndex.map {
@@ -208,7 +204,7 @@ case class CaravanState(
                Option.when(p < pages - 1)(Choice("CaravanNext", content.text("common.next"), row = Some(ItemMenu.NavRow)))
              ).flatten
              renderer.show(user, Screen(content.format("caravan.supply.pick",
-               "page" -> (p + 1).toString, "total" -> pages.toString), buttons ++ nav))
+               "page" -> (p + 1).toString, "total" -> pages.toString), buttons ++ nav).noted(note))
            }
     } yield ()
 
@@ -266,8 +262,7 @@ case class CaravanState(
         heroDao.updateEquipment(user.userId,
           hero.equipment.copy(additionalWeapon = blade.copy(details = d.spent))) *>
           writeScene(user, next) *>
-          renderer.show(user, Screen(content.text(s"caravan.supply.divine.${d.kind.entryName}"), Nil)) *>
-          show(user, next, renderer)
+          show(user, next, renderer, content.text(s"caravan.supply.divine.${d.kind.entryName}"))
       case None => showSupplies(user, scene, renderer).as(StateType.Caravan)
     }
 
@@ -290,10 +285,9 @@ case class CaravanState(
       for {
         _ <- take
         _ <- writeScene(user, next)
-        _ <- renderer.show(user, Screen(content.format(
-               if (smoke) "caravan.supply.smoke" else "caravan.supply.dope",
-               "name" -> item.displayTitle, "pct" -> CaravanRates.DopeCutPct.toString), Nil))
-        res <- show(user, next, renderer)
+        res <- show(user, next, renderer, content.format(
+                 if (smoke) "caravan.supply.smoke" else "caravan.supply.dope",
+                 "name" -> item.displayTitle, "pct" -> CaravanRates.DopeCutPct.toString))
       } yield res
     }
   }
@@ -310,17 +304,15 @@ case class CaravanState(
     if (scene.scared >= MaxScares) say(user, scene, content.text("caravan.supply.alreadyScared"), renderer)
     else {
       val next = scene.copy(scared = scene.scared + 1)
-      writeScene(user, next) *>
-        renderer.show(user, Screen(content.text("caravan.scared"), Nil)) *>
-        show(user, next, renderer)
+      writeScene(user, next) *> show(user, next, renderer, content.text("caravan.scared"))
     }
 
   private def say(user: User, scene: CaravanScene, text: String, renderer: Renderer): Task[StateType] =
-    renderer.show(user, Screen(text, Nil)) *> showSupplies(user, scene, renderer).as(StateType.Caravan)
+    showSupplies(user, scene, renderer, text).as(StateType.Caravan)
 
   // ── Торговля ──────────────────────────────────────────────────────────────
 
-  private def trade(user: User, scene: CaravanScene, renderer: Renderer): Task[StateType] =
+  private def trade(user: User, scene: CaravanScene, renderer: Renderer, note: String = ""): Task[StateType] =
     for {
       hero   <- getHero(user)
       // Обоз читается как прилавок Ришелье — с тем же сравнением с надетым.
@@ -333,7 +325,7 @@ case class CaravanState(
       _ <- renderer.show(user, Screen(
              content.format("caravan.trade.text", "silver" -> hero.silver.toString) + "\n\n" + lines.mkString("\n\n"),
              buttons :+ content.choice("CaravanBack", "caravan.trade.back")
-               .copy(color = ChoiceColor.Negative, row = Some(scene.goods.size))))
+               .copy(color = ChoiceColor.Negative, row = Some(scene.goods.size))).noted(note))
     } yield StateType.Caravan
 
   private def buy(user: User, scene: CaravanScene, idx: Int, renderer: Renderer): Task[StateType] =
@@ -344,20 +336,19 @@ case class CaravanState(
           // Караван берёт только то, что при герое: до банковской ячейки из
           // лабиринта не дойти, и торговцу до неё дела нет.
           res <- if (hero.silver < price)
-                   renderer.show(user, Screen(content.text("caravan.trade.poor"), Nil)) *> trade(user, scene, renderer)
+                   trade(user, scene, renderer, content.text("caravan.trade.poor"))
                  else
                    for {
                      _         <- heroDao.updateSilver(user.userId, hero.silver - price)
                      persisted <- itemRepo.persist(hero.id, item)
                      added     <- inventoryRepo.addItem(hero.id, persisted).either
-                     _         <- renderer.show(user, Screen(
-                                    if (added.isRight) content.format("caravan.trade.bought", "name" -> persisted.displayTitle)
-                                    else content.text("common.inventoryFull"), Nil))
+                     said       = if (added.isRight) content.format("caravan.trade.bought", "name" -> persisted.displayTitle)
+                                  else content.text("common.inventoryFull")
                      left       = scene.copy(
                                     goods  = scene.goods.patch(idx, Nil, 1),
                                     prices = scene.prices.patch(idx, Nil, 1))
                      _         <- writeScene(user, left)
-                     out       <- if (left.goods.isEmpty) show(user, left, renderer) else trade(user, left, renderer)
+                     out       <- if (left.goods.isEmpty) show(user, left, renderer, said) else trade(user, left, renderer, said)
                    } yield out
         } yield res
       case _ => trade(user, scene, renderer)
@@ -369,29 +360,24 @@ case class CaravanState(
     * слишком хорошо. С дымом — половина на половину, и столько же на то, чтобы
     * уйти с добычей незамеченным. */
   private def sneak(user: User, scene: CaravanScene, renderer: Renderer): Task[StateType] =
-    if (!scene.smoke)
-      renderer.show(user, Screen(content.text("caravan.sneak.noSmoke"), Nil)) *> attack(user, scene, renderer)
+    if (!scene.smoke) attack(user, scene, renderer, content.text("caravan.sneak.noSmoke"))
     else
       Random.nextIntBetween(1, 101).flatMap { roll =>
-        if (roll > CaravanRates.SneakPct)
-          renderer.show(user, Screen(content.text("caravan.sneak.caught"), Nil)) *> attack(user, scene, renderer)
+        if (roll > CaravanRates.SneakPct) attack(user, scene, renderer, content.text("caravan.sneak.caught"))
         else
-          for {
-            _   <- renderer.show(user, Screen(content.text("caravan.sneak.took"), Nil))
-            out <- Random.nextIntBetween(1, 101).flatMap { away =>
-                     if (away <= CaravanRates.SlipPct) slipAway(user, scene, renderer)
-                     else renderer.show(user, Screen(content.text("caravan.sneak.spotted"), Nil)) *>
-                            attack(user, scene, renderer)
-                   }
-          } yield out
+          Random.nextIntBetween(1, 101).flatMap { away =>
+            val took = content.text("caravan.sneak.took")
+            if (away <= CaravanRates.SlipPct) slipAway(user, scene, renderer, took)
+            else attack(user, scene, renderer, Screen.joined(took, content.text("caravan.sneak.spotted")))
+          }
       }
 
   /** Ушёл с поклажей и без боя: вещи забирает экран добычи, караван на этом
     * кончается — а вместе с ним и объявление, если герой шёл по нему: охрану он
     * не перебил, и второго такого обоза ему не найти. */
-  private def slipAway(user: User, scene: CaravanScene, renderer: Renderer): Task[StateType] =
-    renderer.show(user, Screen(content.text("caravan.sneak.away"), Nil)) *>
-      failQuest(user, renderer) *>
+  private def slipAway(user: User, scene: CaravanScene, renderer: Renderer, note: String): Task[StateType] =
+    failedLine(user).flatMap(failed =>
+      renderer.show(user, Screen(Screen.joined(note, content.text("caravan.sneak.away"), failed), Nil))) *>
       heroDao.writeSceneData(user.userId, LootData(items = scene.goods, silvers = Nil).asJson)
         .as(StateType.Loot)
 
@@ -400,10 +386,12 @@ case class CaravanState(
   /** Напасть. Одурманенный караван приходится брать двумя волнами; в остальном
     * это обычный групповой бой, только с башнями в хвосте строя. Поклажу
     * отдают после последней волны. */
-  private def attack(user: User, scene: CaravanScene, renderer: Renderer): Task[StateType] =
-    startWave(user, scene.copy(wave = scene.wave + 1), renderer)
+  private def attack(user: User, scene: CaravanScene, renderer: Renderer, note: String = ""): Task[StateType] =
+    startWave(user, scene.copy(wave = scene.wave + 1), renderer, note)
 
-  private def startWave(user: User, scene: CaravanScene, renderer: Renderer): Task[StateType] =
+  /** Волна охраны. `note` — что было перед ней (скрытность не удалась): тем же
+    * сообщением, что и «охрана бросается на вас»; экран боя придёт следом. */
+  private def startWave(user: User, scene: CaravanScene, renderer: Renderer, note: String): Task[StateType] =
     for {
       hero  <- getHero(user)
       race   = Race.withName(scene.race)
@@ -428,9 +416,9 @@ case class CaravanState(
                   eventData = Some(scene.copy(stage = CaravanRates.StageMoment, spoils = last).asJson))
       _ <- heroDao.writeActiveBattle(user.userId, battle.asJson)
       _ <- heroDao.writeSceneData(user.userId, routing.asJson)
-      _ <- renderer.show(user, Screen(content.format(
+      _ <- renderer.show(user, Screen(Screen.joined(note, content.format(
              if (scene.waves > 1) "caravan.battleWave" else "caravan.battle",
-             "count" -> count.toString, "wave" -> scene.wave.toString, "of" -> scene.waves.toString), Nil))
+             "count" -> count.toString, "wave" -> scene.wave.toString, "of" -> scene.waves.toString)), Nil))
     } yield StateType.Battle
 
   private def weaken(m: Monster, on: Boolean): Monster =
@@ -445,14 +433,16 @@ case class CaravanState(
     * дорогой, и найти его второй раз негде. */
   private def leave(user: User, renderer: Renderer): Task[StateType] =
     heroDao.writeSceneData(user.userId, Json.Null) *>
-      renderer.show(user, Screen(content.text("caravan.left"), Nil)) *>
-      failQuest(user, renderer).as(StateType.Dungeon)
+      failedLine(user).flatMap(failed =>
+        renderer.show(user, Screen(Screen.joined(content.text("caravan.left"), failed), Nil))).as(StateType.Dungeon)
 
   /** Цель упущена — объявление пропадает с доски. Разгромленная охрана уже
-    * отмечена сделанной, и её это не касается. */
-  private def failQuest(user: User, renderer: Renderer): Task[Unit] =
-    BoardProgress.markFailed(heroDao, user.userId, BoardKind.CaravanRout).flatMap(failed =>
-      ZIO.when(failed)(renderer.show(user, Screen(content.text("questBoard.failed"), Nil))).unit)
+    * отмечена сделанной, и её это не касается. Строку о провале отдаём, а не
+    * показываем: она идёт тем же сообщением, что и уход; не было объявления —
+    * пусто. */
+  private def failedLine(user: User): Task[String] =
+    BoardProgress.markFailed(heroDao, user.userId, BoardKind.CaravanRout)
+      .map(failed => if (failed) content.text("questBoard.failed") else "")
 
   private def handleFallback(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     parseAction(ua.payload) match {

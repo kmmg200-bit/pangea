@@ -176,10 +176,14 @@ object CaravanSpec extends ZIOSpecDefault {
         _      <- state.action(testUser, tap("CaravanSneakUp"), r)
         close  <- sceneOf(dao)
         waited <- labels(r)
+        step   <- r.sentScreens
         _      <- state.action(testUser, tap("CaravanWait"), r)
         moment <- sceneOf(dao)
         last   <- labels(r)
       } yield assertTrue(close.exists(_.stage == CaravanRates.StageClose)) &&
+              // шаг и новая сцена — одним сообщением, с кнопками сцены
+              assertTrue(step.size == 1 && step.forall(s => s.text.startsWith("Вы идёте следом, держась у стены.") &&
+                s.text.contains("Вы подбираетесь ближе") && s.choices.nonEmpty)) &&
               assertTrue(waited.exists(_.contains("Выжидать"))) &&
               assertTrue(moment.exists(_.stage == CaravanRates.StageMoment)) &&
               assertTrue(!last.exists(_.contains("Выжидать")) && !last.exists(_.contains("Действовать тихо")))
@@ -440,9 +444,13 @@ object CaravanSpec extends ZIOSpecDefault {
         _      <- put(dao, scene(stage = CaravanRates.StageMoment))
         out    <- state.action(testUser, tap("CaravanSneak"), r)
         said   <- texts(r)
+        sent   <- r.sentScreens
         battle <- battleOf(dao)
       } yield assertTrue(out == StateType.Battle && battle.isDefined) &&
-              assertTrue(said.contains("Без дыма к повозкам не подобраться"))
+              assertTrue(said.contains("Без дыма к повозкам не подобраться")) &&
+              // «вас видно как на ладони» и «охрана бросается» — одним сообщением; бой следом
+              assertTrue(sent.size == 1 && sent.forall(s => s.text.contains("Без дыма к повозкам не подобраться") &&
+                s.text.contains("⚔ Охрана каравана бросается на вас")))
     },
 
     test("кража в дыму: половина на половину дойти и столько же уйти") {

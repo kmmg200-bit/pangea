@@ -128,20 +128,22 @@ case class FlowerMeadowState(
             energyLine = if (regained > 0L) "\n" + content.format("flowerMeadow.energy", "energy" -> regained.toString) else ""
             // За каждый цветок — опыт от уровня лабиринта (см. GatherExp).
             expLine   <- GatherExp.grant(heroDao, content, user, hero, GatherExp.FlowerPct, now)
-            _         <- renderer.show(user, Screen(
-                           content.format("flowerMeadow.found", "flower" -> item.name) + energyLine +
-                             (if (expLine.isEmpty) "" else "\n" + expLine) + "\n" + where, Nil))
+            found      = content.format("flowerMeadow.found", "flower" -> item.name) + energyLine +
+                           (if (expLine.isEmpty) "" else "\n" + expLine) + "\n" + where
             // Странный цветок — шанс самому понять, что к чему: о простых травах, а
-            // зная их, — о редких, вдвое реже (см. HerbLore.insight).
-            _         <- HerbLore.insight(heroDao, inventoryRepo, content, renderer, user, hero, lore, kind, now)
+            // зная их, — о редких, вдвое реже (см. HerbLore.insightText). Цветок,
+            // догадка и что дальше — одним сообщением.
+            guess     <- HerbLore.insightText(heroDao, inventoryRepo, content, user, hero, lore, kind, now)
+            note       = Screen.joined(found, guess)
             left       = s.left - 1
-            out <- if (wolf) wolfAmbush(user, hero, s.copy(left = left), renderer)
+            out <- if (wolf) wolfAmbush(user, hero, s.copy(left = left), renderer, note)
                    else if (left <= 0)
                      heroDao.writeSceneData(user.userId, Json.Null) *>
-                       renderer.show(user, Screen(content.text("flowerMeadow.done"), Nil)).as(StateType.Dungeon)
+                       renderer.show(user, Screen(Screen.joined(note, content.text("flowerMeadow.done")), Nil))
+                         .as(StateType.Dungeon)
                    else
                      scheduleNext(user, now, s.copy(left = left)) *>
-                       renderer.show(user, meadowScreen(intro = false)).as(StateType.FlowerMeadow)
+                       renderer.show(user, meadowScreen(intro = false).noted(note)).as(StateType.FlowerMeadow)
           } yield out
       }
     } yield res
@@ -149,7 +151,8 @@ case class FlowerMeadowState(
   /** Белый волк подкрался сзади: подготовиться нельзя — сразу бой. Первая встреча
     * оставляет след в знаниях (и кнопку у трактирщика). Добыча вернёт на поляну,
     * если цветы ещё остались; таймер там поставится заново (`nextAt = 0`). */
-  private def wolfAmbush(user: User, hero: Hero, scene: MeadowScene, renderer: Renderer): Task[StateType] = {
+  private def wolfAmbush(user: User, hero: Hero, scene: MeadowScene, renderer: Renderer,
+                         note: String): Task[StateType] = {
     val wolf    = MiniBoss.WhiteWolf
     val lvl     = wolf.bossLvl(hero.lvl)
     val monster = Monster(0L, lvl, wolf.race, Rarity.Legendary, wolf.stats(lvl))
@@ -164,8 +167,9 @@ case class FlowerMeadowState(
       _ <- heroDao.writeSceneData(user.userId, routing.asJson)
       // Знания читаем заново: догадка по цветку могла только что их пополнить.
       lore <- HerbLore.readLore(heroDao, user.userId)
-      // Засада и первая встреча с волком — одним сообщением; бой придёт следом.
-      _ <- renderer.show(user, Screen(Screen.joined(content.text("flowerMeadow.wolfAmbush"),
+      // Сорванный цветок, засада и первая встреча с волком — одним сообщением;
+      // бой придёт следом.
+      _ <- renderer.show(user, Screen(Screen.joined(note, content.text("flowerMeadow.wolfAmbush"),
              if (lore.metWolf) "" else content.text("flowerMeadow.wolfFirstMeeting")), Nil))
       _ <- ZIO.when(!lore.metWolf)(HerbLore.writeLore(heroDao, user.userId, lore.copy(metWolf = true)))
     } yield StateType.Battle

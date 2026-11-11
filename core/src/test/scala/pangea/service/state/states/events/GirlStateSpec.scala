@@ -229,12 +229,17 @@ object GirlStateSpec extends ZIOSpecDefault {
       } yield assertTrue(result == StateType.Girl) &&
               assertTrue(h.silver == 600L) &&
               assertTrue(h.traumaUntil.contains(GirlState.HealDelayMs)) &&      // TestClock на нуле
-              assertTrue(dark.text.contains("погас свет") && dark.choices.map(_.id) == List("OpenApp", "Excuse")) &&
+              // уединение и темнота — одним сообщением
+              assertTrue(dark.text.startsWith("Вы уединились") && dark.text.contains("погас свет") &&
+                dark.choices.map(_.id) == List("OpenApp", "Excuse")) &&
               assertTrue(dark.choices.lastOption.exists(c => c.label == "Прошу прощения, но у меня есть дела" && c.row.contains(0))) &&
               assertTrue(tasks.exists(s => s.kind == TaskKind.GirlRoom && s.fireAt == GirlState.RoomWaitMs && s.expectedState == StateType.Girl)) &&
-              assertTrue(stay == StateType.Girl && still == dark && again == StateType.Girl && still2 == dark) &&
+              // дальше в темноте — тот же экран, но «вы уединились» уже не повторяется
+              assertTrue(stay == StateType.Girl && still.choices == dark.choices && still.text.contains("погас свет") &&
+                !still.text.contains("уединились") && again == StateType.Girl && still2 == still) &&
               assertTrue(out == StateType.GlobalMap) &&
-              assertTrue(all.contains("оставив даму спать") && all.contains("на 400 серебра")) &&
+              // уход из комнаты и пропажа — одним сообщением
+              assertTrue(all.contains("покинуть её комнату.\n\nУже на улице") && all.contains("на 400 серебра")) &&
               assertTrue(cancelled.contains(userId -> TaskKind.GirlRoom))
     },
 

@@ -162,8 +162,7 @@ case class GirlState(
       step  = if (roll < CityThanksPct) Step.CityThanks
               else if (roll < CityThanksPct + CityMapPct) Step.CityMap
               else Step.CityTavern
-      _    <- renderer.show(user, Screen(content.text("girl.escorted"), Nil))
-      _    <- show(user, renderer, step)
+      _    <- show(user, renderer, step, content.text("girl.escorted"))
     } yield StateType.Girl
 
   // ── Город: карта отца ───────────────────────────────────────────────────────
@@ -196,8 +195,7 @@ case class GirlState(
                  map   <- itemRepo.persist(hero.id, TreasureMapGenerator.create(hero.lvl, half = false))
                  added <- inventoryRepo.addItem(hero.id, map).as(true).catchAll(_ => ZIO.succeed(false))
                  next  <- if (!added)
-                            renderer.show(user, Screen(content.text("girl.mapNoRoom"), Nil)) *>
-                              renderer.show(user, screenFor(scene)).as(StateType.Girl)
+                            renderer.show(user, screenFor(scene).noted(content.text("girl.mapNoRoom"))).as(StateType.Girl)
                           else
                             purse.charge(user.userId, hero, price) *>
                               renderer.show(user, Screen(content.format("girl.mapBought", "price" -> price.toString), Nil)) *>
@@ -227,8 +225,7 @@ case class GirlState(
                      heroDao.updateTrauma(user.userId, Some(healAt), hero.traumaNames))
           _     <- writeScene(user, scene.copy(step = Step.RoomWait, lost = lost, roomStartedAt = Some(now)))
           _     <- scheduler.schedule(user.userId, now + RoomWaitMs, TaskKind.GirlRoom, StateType.Girl, LeaveRoomAction)
-          _     <- renderer.show(user, Screen(content.text("girl.intimacy"), Nil))
-          _     <- renderer.show(user, lightsOut)
+          _     <- renderer.show(user, lightsOut.noted(content.text("girl.intimacy")))
         } yield StateType.Girl
     }
 
@@ -260,8 +257,8 @@ case class GirlState(
                else if (!done) renderer.show(user, lightsOut).as(StateType.Girl)
                else
                  scheduler.cancel(user.userId, TaskKind.GirlRoom) *>
-                   renderer.show(user, Screen(content.text("girl.roomLeft"), Nil)) *>
-                   renderer.show(user, Screen(content.format("girl.silverGone", "silver" -> scene.lost.toString), Nil)) *>
+                   renderer.show(user, Screen(Screen.joined(content.text("girl.roomLeft"),
+                     content.format("girl.silverGone", "silver" -> scene.lost.toString)), Nil)) *>
                    clear(user).as(StateType.GlobalMap)
     } yield res
 
@@ -271,11 +268,10 @@ case class GirlState(
     * брата. */
   private def refuse(user: User, renderer: Renderer): Task[StateType] =
     requireScene(user).flatMap { scene =>
-      ZIO.when(scene.roomStartedAt.isDefined)(
-        scheduler.cancel(user.userId, TaskKind.GirlRoom) *>
-          renderer.show(user, Screen(content.format("girl.silverNoticed", "silver" -> scene.lost.toString), Nil))) *>
-        renderer.show(user, Screen(content.text("girl.refuse"), Nil)) *>
-        show(user, renderer, Step.Brother)
+      val noticed = Option.when(scene.roomStartedAt.isDefined)(
+                      content.format("girl.silverNoticed", "silver" -> scene.lost.toString)).getOrElse("")
+      ZIO.when(scene.roomStartedAt.isDefined)(scheduler.cancel(user.userId, TaskKind.GirlRoom)) *>
+        show(user, renderer, Step.Brother, Screen.joined(noticed, content.text("girl.refuse")))
     }
 
   // ── Таверна: брат ───────────────────────────────────────────────────────────
@@ -351,13 +347,14 @@ case class GirlState(
 
   // ── Общее ───────────────────────────────────────────────────────────────────
 
-  /** Показать шаг и запомнить его. */
-  private def show(user: User, renderer: Renderer, step: String): Task[StateType] =
+  /** Показать шаг и запомнить его. `note` — что было перед ним: тем же
+    * сообщением, над шагом. */
+  private def show(user: User, renderer: Renderer, step: String, note: String = ""): Task[StateType] =
     for {
       scene <- requireScene(user)
       next   = scene.copy(step = step)
       _     <- writeScene(user, next)
-      _     <- renderer.show(user, screenFor(next))
+      _     <- renderer.show(user, screenFor(next).noted(note))
     } yield StateType.Girl
 
   private def screenFor(scene: GirlScene): Screen = scene.step match {

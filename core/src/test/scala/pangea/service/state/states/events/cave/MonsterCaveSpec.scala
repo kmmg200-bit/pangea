@@ -189,14 +189,17 @@ object MonsterCaveSpec extends ZIOSpecDefault {
         room  <- r.sentScreens.map(_.last)
         byId   = room.choices.map(c => c.id -> c.color).toMap
         stay  <- state.action(testUser, tap("CaveLeft"), r)
-        wall  <- r.sentScreens.map(_.dropRight(1).last.text)
+        // стена — тем же сообщением, что и комната: первым абзацем, а под ним
+        // комната со своими кнопками
+        bump  <- r.sentScreens.map(_.last)
+        wall   = bump.text.split("\n\n").head
         // в стену можно упираться сколько угодно — описание всякий раз своё
         _     <- ZIO.foreachDiscard(1 to 20)(_ => state.action(testUser, tap("CaveBack"), r))
-        seen  <- r.sentScreens.map(_.map(_.text).filter(walls.contains).distinct)
+        seen  <- r.sentScreens.map(_.map(_.text.split("\n\n").head).filter(walls.contains).distinct)
         scene <- sceneOf(dao)
       } yield assertTrue(byId("CaveForward") == ChoiceColor.Positive && byId("CaveRight") == ChoiceColor.Positive) &&
               assertTrue(byId("CaveLeft") == ChoiceColor.Negative && byId("CaveBack") == ChoiceColor.Negative) &&
-              assertTrue(stay == StateType.MonsterCave && walls.contains(wall)) &&
+              assertTrue(stay == StateType.MonsterCave && walls.contains(wall) && bump.choices == room.choices) &&
               assertTrue(walls.size > 3 && seen.size > 1) &&
               assertTrue(scene.exists(_.at == 0))
     },
@@ -502,12 +505,14 @@ object MonsterCaveSpec extends ZIOSpecDefault {
         _      <- put(dao, line)
         _      <- state.enter(testUser, r)
         first  <- r.sentScreens.map(_.last.text)
-        // проходим до конца и обратно, запоминая, что видели в каждой комнате
+        // проходим до конца и обратно, запоминая, что видели в каждой комнате;
+        // «вы проходите дальше» идёт тем же сообщением, первым абзацем — комната
+        // последним
         _      <- ZIO.foreachDiscard(1 to 6)(_ => state.action(testUser, tap("CaveForward"), r))
-        there  <- r.sentScreens.map(_.map(_.text).filter(emptyRooms.contains))
+        there  <- r.sentScreens.map(_.map(_.text.split("\n\n").last).filter(emptyRooms.contains))
         _      <- ZIO.foreachDiscard(1 to 6)(_ => state.action(testUser, tap("CaveBack"), r))
-        back   <- r.sentScreens.map(_.map(_.text).filter(emptyRooms.contains))
-        home   <- r.sentScreens.map(_.last.text)
+        back   <- r.sentScreens.map(_.map(_.text.split("\n\n").last).filter(emptyRooms.contains))
+        home   <- r.sentScreens.map(_.last.text.split("\n\n").last)
       } yield assertTrue(emptyRooms.size >= 8 && emptyRooms.contains(first)) &&
               // соседние комнаты выглядят по-разному
               assertTrue(there.distinct.size > 3) &&
@@ -586,12 +591,27 @@ object MonsterCaveSpec extends ZIOSpecDefault {
               assertTrue(scene.exists(_.at == 2))
     },
 
+    test("зачистка с новым уровнем: опыт и новый уровень — со ★, одним сообщением с комнатой") {
+      for {
+        t <- cave()
+        (state, dao, _, _, r) = t
+        _     <- put(dao, smallCave(monsters = 0).copy(expEarned = 5000L))
+        _     <- state.enter(testUser, r)
+        first <- r.sentScreens
+        after <- dao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(after.lvl > 1L) &&
+              assertTrue(first.size == 1 && first.forall(s => s.text.startsWith("★ Последний из них") &&
+                s.text.contains(s"★ Вы получили новый уровень ${after.lvl}!") &&
+                s.text.contains("Кажется, теперь всё чисто.")))
+    },
+
     test("за последнего убитого — сто шестьдесят процентов взятого, и только один раз") {
       for {
         t <- cave()
         (state, dao, _, _, r) = t
         _      <- put(dao, smallCave(monsters = 0).copy(expEarned = 20L))
         _      <- state.enter(testUser, r)
+        first  <- r.sentScreens
         said   <- texts(r)
         after  <- dao.getHeroByUserId(userId).map(_.get)
         scene  <- sceneOf(dao)
@@ -601,6 +621,9 @@ object MonsterCaveSpec extends ZIOSpecDefault {
       } yield assertTrue(said.contains("+32 опыта") && after.exp == 32L) &&
               assertTrue(CaveRates.ClearExpPct == 160L) &&
               assertTrue(said.contains("Кажется, теперь всё чисто.")) &&
+              // опыт со ★, «всё чисто» и комната — одним сообщением
+              assertTrue(first.size == 1 && first.forall(s => s.text.startsWith("★ Последний из них") &&
+                s.text.contains("Кажется, теперь всё чисто.") && s.choices.exists(_.id == "CaveForward"))) &&
               assertTrue(scene.exists(_.rewarded)) &&
               assertTrue(twice.exp == 32L) &&
               // зачистка не выталкивает из пещеры: герой в той же комнате и ходит дальше
