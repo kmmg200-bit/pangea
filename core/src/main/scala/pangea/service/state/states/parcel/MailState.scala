@@ -42,13 +42,15 @@ case class MailState(
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     branch.act(user, ua, renderer)
 
-  private def showMail(user: User, renderer: Renderer): Task[Unit] =
+  /** Экран почты. `note` — что только что забрано (или почему нет): тем же
+    * сообщением, над почтой. */
+  private def showMail(user: User, renderer: Renderer, note: String = ""): Task[Unit] =
     for {
       hero  <- getHero(user)
       inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
       items <- parcels.waiting(hero.id)
       now   <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
-      _ <- if (items.isEmpty) renderer.show(user, Screen(content.text("mail.empty"), leaveRow))
+      _ <- if (items.isEmpty) renderer.show(user, Screen(content.text("mail.empty"), leaveRow).noted(note))
            else {
              val page = items.take(ItemMenu.DefaultPageSize)
              val buttons = page.zipWithIndex.map { case (p, i) =>
@@ -68,7 +70,7 @@ case class MailState(
                Choice("MailAll",   content.text("mail.takeAll"), row = Some(buttons.size)),
                Choice("LeaveMail", content.text("mail.back"), color = ChoiceColor.Negative, row = Some(buttons.size + 1)),
                CityExit.button(content, Some(buttons.size + 1))
-             )))
+             )).noted(note))
            }
     } yield ()
 
@@ -83,38 +85,47 @@ case class MailState(
       items <- parcels.waiting(hero.id)
       _ <- items.find(_.id == parcelId) match {
         case None => showMail(user, renderer)
-        case Some(_) if inv.freeSlots <= 0 =>
-          renderer.show(user, Screen(content.text("common.inventoryFull"), Nil)) *> showMail(user, renderer)
+        case Some(_) if inv.freeSlots <= 0 => showMail(user, renderer, content.text("common.inventoryFull"))
         case Some(parcel) =>
           parcels.claim(hero.id, parcel).flatMap {
             case false => showMail(user, renderer)
             case true =>
               inventoryRepo.addItem(hero.id, parcel.item).mapError(asThrowable) *>
-                renderer.show(user, Screen(content.format("mail.taken",
-                  "name" -> parcel.item.displayTitle), Nil)) *>
-                showMail(user, renderer)
+                showMail(user, renderer, content.format("mail.taken", "name" -> parcel.item.displayTitle))
           }
       }
     } yield ()
 
-  /** Забрать всё, что влезет в сумку. */
+  /** Забрать всё, что влезет в сумку. Посылок берём столько, сколько в сумке
+    * свободных мест, а не первые десять с экрана: экран показывает десять, но
+    * кнопка — про всё. */
   private def takeAll(user: User, renderer: Renderer): Task[Unit] =
     for {
       hero  <- getHero(user)
       inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
-      items <- parcels.waiting(hero.id)
-      fit    = items.take(inv.freeSlots.toInt.max(0))
+      fit   <- parcels.waiting(hero.id, inv.freeSlots.max(0L))
       taken <- ZIO.foreach(fit) { parcel =>
                  parcels.claim(hero.id, parcel).flatMap {
                    case false => ZIO.none
                    case true  => inventoryRepo.addItem(hero.id, parcel.item).mapError(asThrowable).as(Some(parcel))
                  }
                }.map(_.flatten)
-      _ <- if (taken.isEmpty) renderer.show(user, Screen(content.text("common.inventoryFull"), Nil))
-           else renderer.show(user, Screen(content.format("mail.tookAll",
-             "items" -> taken.map(_.item.displayTitle).mkString(", ")), Nil))
-      _ <- showMail(user, renderer)
+      _ <- showMail(user, renderer,
+             if (taken.isEmpty) content.text("common.inventoryFull")
+             else content.format("mail.tookAll", "items" -> tookList(taken)))
     } yield ()
+
+  /** Забранное одной строкой: одинаковые — вместе, «Щит ×3», как при «Забрать
+    * всё» из хранилищ. Длинный список сворачиваем в «и ещё N»: забрать можно и
+    * сотню вещей, а сообщение ВК не резиновое. */
+  private def tookList(taken: List[Parcel]): String = {
+    val names           = taken.map(_.item.displayTitle)
+    val groups          = names.distinct.map(name => name -> names.count(_ == name))
+    val (shown, hidden) = groups.splitAt(MailState.ListedKinds)
+    val line            = shown.map { case (name, n) => if (n > 1) s"$name ×$n" else name }.mkString(", ")
+    val rest            = hidden.map(_._2).sum
+    if (rest > 0) line + content.format("parcel.andMore", "count" -> rest.toString) else line
+  }
 
   private def handleFallback(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     ua.payload.flatMap(p => jawn.decode[Map[String, String]](p).toOption.flatMap(_.get("id")))
@@ -133,4 +144,10 @@ case class MailState(
       .orElseFail(new Throwable(s"No hero for user ${user.userId}"))
 
   private def asThrowable(e: Any): Throwable = new Throwable(e.toString)
+}
+
+object MailState {
+
+  /** Сколько разных вещей перечисляем в «Забрано: …»; остальное — «и ещё N». */
+  val ListedKinds: Int = 20
 }

@@ -331,6 +331,34 @@ object TransferSpec extends ZIOSpecDefault {
               assertTrue(invRepo.snapshot.map(_.id) == List(10L, 11L) && parcelDao.snapshot.isEmpty)
     },
 
+    test("«Забрать всё» берёт столько, сколько влезет, а не только первые десять с экрана; итог — над почтой") {
+      for {
+        heroDao  <- TestHeroDao.withHero(userId, TestFixtures.hero(userId))
+        parcelDao = TestParcelDao.empty
+        content  <- ZIO.attempt(SceneContent.load())
+        renderer <- TestRenderer.make
+        parcels   = Parcels(parcelDao, TestBankRepository.empty, content)
+        invRepo   = TestInventoryRepository.accepting
+        _        <- invRepo.increaseCapacity(heroId, 20L)                     // в сумке сорок мест
+        state     = MailState(heroDao, invRepo, parcels, content)
+        // сорок пять посылок: пять одинаковых щитов и сорок разных мечей
+        _        <- ZIO.foreachDiscard(1L to 5L)(i => parcels.send(heroId, "Иван", sword(i, "Щит"), 0L))
+        _        <- ZIO.foreachDiscard(6L to 45L)(i => parcels.send(heroId, "Иван", sword(i, s"Меч $i"), 0L))
+        _        <- state.enter(testUser, renderer)
+        shown    <- renderer.sentScreens.map(_.last)
+        before   <- renderer.sentScreens.map(_.size)
+        _        <- state.action(testUser, tap("MailAll"), renderer)
+        sent     <- renderer.sentScreens.map(_.drop(before))
+      } yield assertTrue(shown.choices.count(_.id == "MailTake") == pangea.service.state.ItemMenu.DefaultPageSize) && // на экране — одна страница
+              // а забрано сорок — сколько влезло; пять ждут на почте
+              assertTrue(invRepo.snapshot.size == 40 && parcelDao.snapshot.size == 5) &&
+              // одно сообщение: итог над почтой; одинаковые — одной строкой,
+              // после двадцати видов — «и ещё N» (здесь ещё шестнадцать мечей)
+              assertTrue(sent.size == 1 && sent.forall(s => s.text.startsWith("Забрано: [Ур.3] Щит ×5, [Ур.3] Меч 6, ") &&
+                s.text.contains(" и ещё 16") && s.text.contains("📮 Почта Торгового дома") &&
+                s.choices.exists(_.id == "MailAll")))
+    },
+
     test("в Торговом доме почта видна, только когда на ней что-то есть") {
       import pangea.service.state.states.bank.TradeHouseState
       def house(withMail: Boolean) =
