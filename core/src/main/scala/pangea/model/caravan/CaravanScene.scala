@@ -128,10 +128,10 @@ object CaravanRates {
     case _             => 4.0
   }
 
-  /** Редкости товара: синяя 35 · фиолетовая 32 · пурпурная 32 · легендарная 1. */
+  /** Редкости товара: синяя 75 · фиолетовая 12 · пурпурная 12 · легендарная 1. */
   val GoodsPool: List[Rarity] =
-    List.fill(35)(Rarity.Blue) ++ List.fill(32)(Rarity.Purple) ++
-      List.fill(32)(Rarity.Violet) ++ List.fill(1)(Rarity.Orange)
+    List.fill(75)(Rarity.Blue) ++ List.fill(12)(Rarity.Purple) ++
+      List.fill(12)(Rarity.Violet) ++ List.fill(1)(Rarity.Orange)
 
   /** Редкости охраны: второй тир 50 · третий 40 · четвёртый 9 · именной 1. */
   val GuardPool: List[MobRarity] =

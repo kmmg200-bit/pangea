@@ -127,11 +127,13 @@ object CaravanSpec extends ZIOSpecDefault {
       assertTrue((1L to 400L).map(s => CaravanGenerator.guardRarity(Rng(s))._1).distinct.size >= 3)
     },
 
-    test("товары: 35% синих, 32% фиолетовых, 32% пурпурных, 1% легендарных") {
+    test("товары: 75% синих, 12% фиолетовых, 12% пурпурных, 1% легендарных") {
       val pool = CaravanRates.GoodsPool
       assertTrue(pool.size == 100) &&
-      assertTrue(pool.count(_ == ItemRarity.Blue) == 35 && pool.count(_ == ItemRarity.Purple) == 32) &&
-      assertTrue(pool.count(_ == ItemRarity.Violet) == 32 && pool.count(_ == ItemRarity.Orange) == 1)
+      assertTrue(pool.count(_ == ItemRarity.Blue) == 75 && pool.count(_ == ItemRarity.Purple) == 12) &&
+      assertTrue(pool.count(_ == ItemRarity.Violet) == 12 && pool.count(_ == ItemRarity.Orange) == 1) &&
+      // бросок по пулу и правда выдаёт синие чаще всего
+      assertTrue((1L to 400L).map(s => CaravanGenerator.goodsRarity(Rng(s))._1).count(_ == ItemRarity.Blue) > 200)
     },
 
     test("цена: (уровень+20)×4 на множитель редкости с разбросом в пятую часть") {
