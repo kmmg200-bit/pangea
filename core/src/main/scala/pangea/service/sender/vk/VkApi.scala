@@ -14,6 +14,7 @@ import pangea.model.vk.Attachment
 import pangea.model.vk.keyboard.Keyboard
 import pangea.model.vk.model.UserResponse
 import pangea.service.ErrorLog
+import pangea.service.chat.ChatButtons
 import pangea.service.sender.{Api, ChatTarget}
 import pangea.service.sender.vk.config.VkConfig
 import zio.interop.catz._
@@ -77,6 +78,11 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
   // беседы (см. VkApi.chatPeer). Без настроенной беседы молчим: объявления и
   // ответы в беседу не должны ломать ход игрока, поэтому и ошибки здесь не
   // роняют вызов.
+  //
+  // В общую и торговую беседу сообщение уходит с кнопками приложения и
+  // туториала под полем ввода (см. VkApi.chatKeyboard). ВК их не принял — то же
+  // сообщение без них: объявление важнее кнопок. random_id у обеих попыток
+  // один, поэтому дважды сообщение не уйдёт.
   override def sendToChat(to: ChatTarget, message: String): Task[Unit] =
     VkApi.chatPeer(config, to) match {
       case None => ZIO.unit
@@ -87,15 +93,22 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
           "random_id" -> List(randomId.toString)
         ) ++ baseQueryParams
 
-        val request = Request[Task](
-          method = Method.POST,
-          uri = uri / "messages.send"
-        ).withEntity(UrlForm(formParams.map { case (k, vs) => k -> Chain.fromSeq(vs) }))
+        def send(fields: Map[String, List[String]]): Task[Unit] = {
+          val request = Request[Task](
+            method = Method.POST,
+            uri = uri / "messages.send"
+          ).withEntity(UrlForm(fields.map { case (k, vs) => k -> Chain.fromSeq(vs) }))
+          GameMetrics.vkCall(VkApi.SendMethod)(client
+            .run(request)
+            .use(res => res.bodyText.compile.toList.map(_.mkString("")).flatMap(VkApi.failOnBadResponse(res.status, _))))
+            .retry(VkApi.SendRetry)
+        }
 
-        GameMetrics.vkCall(VkApi.SendMethod)(client
-          .run(request)
-          .use(res => res.bodyText.compile.toList.map(_.mkString("")).flatMap(VkApi.failOnBadResponse(res.status, _))))
-          .retry(VkApi.SendRetry)
+        VkApi.chatKeyboard(config, peerId)
+          .fold(send(formParams)) { keys =>
+            send(formParams + ("keyboard" -> List(keys.getJson))).catchAll(err =>
+              ZIO.logWarning(s"vk chat keyboard refused, sending without it: ${err.getMessage}") *> send(formParams))
+          }
           .tapErrorCause(ErrorLog.logged("vk chat announce failed"))
           .orElse(ZIO.unit)
     }
@@ -180,6 +193,11 @@ object VkApi {
     case ChatTarget.Trade        => config.tradeChatPeerId.orElse(config.chatPeerId)
     case ChatTarget.Peer(peerId) => Some(peerId)
   }
+
+  /** Кнопки под полем ввода — только в общей и торговой беседе (см.
+    * [[ChatButtons]]); в прочих беседах, куда позвали бота, — без кнопок. */
+  def chatKeyboard(config: VkConfig, peerId: Long): Option[Keyboard] =
+    Option.when(config.chatPeerId.contains(peerId) || config.tradeChatPeerId.contains(peerId))(ChatButtons.keyboard)
 
   /** Метод отправки — метка в метриках вызовов ВК. */
   private val SendMethod = "messages.send"

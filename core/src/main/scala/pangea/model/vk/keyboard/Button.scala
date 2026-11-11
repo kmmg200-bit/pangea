@@ -14,7 +14,7 @@ object Button {
   /** Цвет ВК принимает только у кнопок text и callback — прочим его не шлём. */
   implicit val encoder: Encoder[Button] = (b: Button) =>
     b.action match {
-      case _: Action.OpenApp => Json.obj("action" -> b.action.asJson)
-      case _                 => Json.obj("action" -> b.action.asJson, "color" -> b.color.asJson)
+      case _: Action.OpenApp | _: Action.OpenLink => Json.obj("action" -> b.action.asJson)
+      case _                                      => Json.obj("action" -> b.action.asJson, "color" -> b.color.asJson)
     }
 }

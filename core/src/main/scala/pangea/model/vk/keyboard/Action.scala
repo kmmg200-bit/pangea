@@ -33,12 +33,23 @@ object Action {
     override def payload: Option[Json] = None
   }
 
+  /** Открывает ссылку `link` — статью, страницу ВК. Боту нажатие ничего не
+    * шлёт; цвета у такой кнопки нет, как и у [[OpenApp]]. Ссылку на оплату так
+    * не дают: в мобильном ВК она откроется во встроенном браузере (см.
+    * TradeHouseState). */
+  case class OpenLink(label_ : String, link: String) extends Action {
+    override def `type`: String        = "open_link"
+    override def label: String         = label_
+    override def payload: Option[Json] = None
+  }
+
   implicit val encoder: Encoder[Action] =
     (action: Action) => {
       val base = Json.obj("type" -> action.`type`.asJson, "label" -> action.label.asJson)
       // Номер приложения ВК ждёт числом, а payload — строкой с JSON внутри.
       val extra = action match {
         case OpenApp(_, appId) => Json.obj("app_id" -> appId.asJson)
+        case OpenLink(_, link) => Json.obj("link" -> link.asJson)
         case other             => other.payload.fold(Json.obj())(p => Json.obj("payload" -> p.toString.asJson))
       }
       base.deepMerge(extra)
