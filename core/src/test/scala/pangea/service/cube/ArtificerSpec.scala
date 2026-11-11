@@ -2,10 +2,10 @@ package pangea.service.cube
 
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.generator.item.MaterialGenerator
+import pangea.generator.item.{GemGenerator, MaterialGenerator}
 import pangea.model.hero.{Achievement, AchievementRates, AzatState, CubeStatus}
 import pangea.model.home.{HomeData, RecipeNote}
-import pangea.model.item.{Item, MaterialKind}
+import pangea.model.item.{GemKind, Item, MaterialKind}
 import pangea.model.state.StateType
 import pangea.model.stats.BaseStats
 import pangea.model.user.{TelegramId, User, UserId, VkId}
@@ -16,7 +16,7 @@ import zio.ZIO
 import zio.test._
 
 /** «Артефактор» I–V: разных рецептов куба в книге рецептов — 10, 25, 50, 100,
-  * 150. Каждый ранг — +1 ко всем характеристикам. */
+  * 150; отвары не в счёт. Каждый ранг — +1 ко всем характеристикам. */
 object ArtificerSpec extends ZIOSpecDefault {
 
   private val userId   = UserId(1L)
@@ -27,14 +27,22 @@ object ArtificerSpec extends ZIOSpecDefault {
   /** Ромашка, календула, крапива — костоправный отвар. */
   private val boneSet = List(herb(1L, MaterialKind.Chamomile), herb(2L, MaterialKind.Calendula), herb(3L, MaterialKind.Nettle))
 
+  private def ruby(id: Long): Item = GemGenerator.item(GemKind.Ruby, 1).copy(id = id)
+  /** Три расколотых рубина — камень грейдом выше: новая запись в книге. */
+  private val rubies = List(ruby(1L), ruby(2L), ruby(3L))
+
   /** `n` записей, которых куб не повторит. */
   private def notes(n: Int): List[RecipeNote] = List.tabulate(n)(i => RecipeNote(List(s"Что-то $i"), s"Итог $i", 1))
 
   /** Активировать куб в Храме с книгой из `known` записей: что сказали и каким стал герой. */
-  private def activate(known: Int, items: List[Item] = boneSet, already: List[String] = Nil) =
+  private def activate(known: Int, items: List[Item] = rubies, already: List[String] = Nil) =
+    activateWith(notes(known), items, already)
+
+  /** То же с книгой как есть — хоть бы и со старыми записями об отварах. */
+  private def activateWith(book: List[RecipeNote], items: List[Item], already: List[String]) =
     for {
       dao   <- TestHeroDao.withHero(userId, TestFixtures.hero(userId, StateType.Cube).copy(achievements = already))
-      _     <- dao.writeHomeData(userId, HomeData(recipes = notes(known)).asJson)
+      _     <- dao.writeHomeData(userId, HomeData(recipes = book).asJson)
       _     <- dao.writeAzatData(userId, AzatState(cube = CubeStatus.Active, cubeCharges = 10, cubeItems = items).asJson)
       r     <- TestRenderer.make
       c     <- ZIO.attempt(SceneContent.load())
@@ -73,6 +81,15 @@ object ArtificerSpec extends ZIOSpecDefault {
         got <- activate(30, items = Nil)
       } yield assertTrue(got._2.hasAchievement(Achievement.Artificer1) && got._2.hasAchievement(Achievement.Artificer2)) &&
               assertTrue(!got._2.hasAchievement(Achievement.Artificer3))
+    },
+
+    test("отвар записью не считается: девять записей и сваренный отвар — «Артефактора» нет; старые записи об отварах не в счёт") {
+      val oldBrew = RecipeNote(List("Ромашка", "Календула", "Крапива"), "Костоправный отвар", 2)
+      for {
+        brew <- activate(9, items = boneSet)
+        old  <- activateWith(notes(9) :+ oldBrew, items = Nil, already = Nil)
+      } yield assertTrue(!brew._1.contains("Вы получили достижение") && !brew._2.hasAchievement(Achievement.Artificer1)) &&
+              assertTrue(!old._2.hasAchievement(Achievement.Artificer1))
     },
 
     test("полученный ранг не повторяется") {

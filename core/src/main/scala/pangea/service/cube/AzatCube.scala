@@ -88,14 +88,16 @@ final class AzatCube(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemR
              case Power.Own(n) =>
                saveAzat(user.userId, azat.copy(cubeItems = kept, cubeCharges = n - result.chargesUsed))
            }
-      // Всё, что получилось, — в книгу рецептов: и дома, и в Храме, и без
-      // библиотеки (листать её — в библиотеке). По ней и «Артефактор».
-      book <- if (result.applied.isEmpty) loadHome(user.userId)
-              else loadHome(user.userId).map(_.noted(result.applied.map(AzatCube.note)))
-                     .tap(h => saveHome(user.userId, h))
+      // Всё, что получилось, кроме отваров, — в книгу рецептов: и дома, и в
+      // Храме, и без библиотеки (листать её — в библиотеке). По ней и
+      // «Артефактор». Отвары в книгу не идут: их считают «Зельевар» и рейтинг
+      // алхимиков (см. HomeData.recipeBook).
+      notes = result.applied.filterNot(_.result.brew.isDefined).map(AzatCube.note)
+      book <- if (notes.isEmpty) loadHome(user.userId)
+              else loadHome(user.userId).map(_.noted(notes)).tap(h => saveHome(user.userId, h))
       msgKey = if (result.anyApplied) "cube.activated" else "cube.nothing"
       _ <- renderer.show(user, Screen(content.text(msgKey), Nil))
-      _ <- QuestSupport.grantArtificer(heroDao, content, user, book.recipes.size, renderer)
+      _ <- QuestSupport.grantArtificer(heroDao, content, user, book.recipeBook.size, renderer)
       // Сваренные отвары — в счёт «Зельевара I» и «Промышленного аптекаря».
       _ <- QuestSupport.brewed(heroDao, content, user,
              result.items.filter(_.id <= 0L).flatMap(_.brew).map(_.entryName), renderer)

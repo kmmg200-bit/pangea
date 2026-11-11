@@ -3,7 +3,7 @@ package pangea.model.home
 import io.circe.generic.semiauto.deriveEncoder
 import io.circe.{Decoder, Encoder, HCursor}
 import pangea.model.hero.Equipment
-import pangea.model.item.{Item, Rarity}
+import pangea.model.item.{BrewKind, Item, Rarity}
 import pangea.model.monster.NamedTrophy
 
 /** Дом героя — один из трёх, по ступеням. Продаёт их Юнона Кинтслев,
@@ -183,7 +183,8 @@ object HomeRates {
   * `racks` — оружейная: что висит на магических стойках, стойка №N —
   * `racks(N - 1)`; `recipes` — книга рецептов: что получилось в кубе на
   * верстаке ремесленника (видна в библиотеке, когда она есть, а пишется и без
-  * неё).
+  * неё). Отваров в ней нет: куб их больше не записывает, а старые записи о них
+  * не показываются и не считаются (см. [[HomeData.recipeBook]]).
   *
   * На острове — `wall`: Стена трофеев, чьи уникальные трофеи на ней висят
   * (имена именных мобов, без повторов; см. [[NamedTrophy]]).
@@ -270,6 +271,12 @@ final case class HomeData(
   /** Книга рецептов с новыми записями — без повторов. */
   def noted(notes: List[RecipeNote]): HomeData = copy(recipes = (recipes ++ notes).distinct)
 
+  /** Книга рецептов, как её видят игрок, «Артефактор» и рейтинг: без отваров.
+    * Новых записей о них куб не пишет, а старые лежат в базе, но нигде не
+    * показываются и не считаются. Отвары считают «Зельевар» и рейтинг
+    * алхимиков. */
+  def recipeBook: List[RecipeNote] = recipes.filterNot(RecipeNote.isBrew)
+
   private def island: Boolean = house.contains(House.Island)
 
   /** Полки верстака: трав и отваров — с прибавкой острова и сундуков аптекаря. */
@@ -320,6 +327,13 @@ object RecipeNote {
 
   /** Как в книге записан камень для божественного оружия (см. CubeCraft). */
   val DivineGem: String = "Целый камень (3 тир и выше)"
+
+  /** Названия отваров: записи о них книга рецептов не держит (см.
+    * [[HomeData.recipeBook]]). Старые записи узнаются по тому, что вышло. */
+  lazy val BrewNames: Set[String] = BrewKind.values.map(_.label).toSet
+
+  /** Запись об отваре — из тех, что куб писал в книгу раньше. */
+  def isBrew(note: RecipeNote): Boolean = BrewNames.contains(note.result)
 
   /** Божественное оружие раньше ковали из надколотых камней: старая запись в
     * книге читается уже по нынешнему рецепту, иначе книга врала бы. */

@@ -433,9 +433,10 @@ case class HomeState(
       home.house.filter(_.tier >= House.Townhouse.tier) match {
         case None    => showHouse(user, renderer)
         case Some(h) =>
-          val book = Option.when(home.recipes.nonEmpty)(content.format("home.library.bookLine", "n" -> home.recipes.size.toString))
+          val notes = home.recipeBook
+          val book  = Option.when(notes.nonEmpty)(content.format("home.library.bookLine", "n" -> notes.size.toString))
           renderer.show(user, Screen(content.text(s"home.houses.${h.key}.library") + book.fold("")("\n\n" + _), List(
-            Option.when(home.recipes.nonEmpty)(Choice("HomeRecipes", content.text("home.library.book"), color = ChoiceColor.Positive,
+            Option.when(notes.nonEmpty)(Choice("HomeRecipes", content.text("home.library.book"), color = ChoiceColor.Positive,
               data = Map("p" -> "0"), row = Some(0))),
             Some(backToHouse.copy(row = Some(1)))
           ).flatten)).as(StateType.Home)
@@ -765,12 +766,13 @@ case class HomeState(
     } yield res
 
   /** Книга рецептов — в библиотеке: что получалось в кубе на верстаке, по
-    * страницам. Без библиотеки (домик) — обратно в дом: пишется книга и так. */
+    * страницам, без отваров (см. [[HomeData.recipeBook]]). Без библиотеки
+    * (домик) — обратно в дом: пишется книга и так. */
   private def recipes(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     loadHome(user).flatMap { home =>
-      if (!home.house.exists(_.tier >= House.Townhouse.tier) || home.recipes.isEmpty) library(user, renderer)
+      if (!home.house.exists(_.tier >= House.Townhouse.tier) || home.recipeBook.isEmpty) library(user, renderer)
       else {
-        val (lines, total, cur) = ItemMenu.page(home.recipes, payload(ua, "p").flatMap(_.toIntOption).getOrElse(0), RecipesPerPage)
+        val (lines, total, cur) = ItemMenu.page(home.recipeBook, payload(ua, "p").flatMap(_.toIntOption).getOrElse(0), RecipesPerPage)
         val nav = List(
           Option.when(cur > 0)(Choice("HomeRecipes", content.text("common.prev"), data = Map("p" -> (cur - 1).toString), row = Some(0))),
           Option.when(cur < total - 1)(Choice("HomeRecipes", content.text("common.next"), data = Map("p" -> (cur + 1).toString), row = Some(0)))

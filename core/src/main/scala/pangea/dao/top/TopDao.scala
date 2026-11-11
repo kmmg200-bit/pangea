@@ -6,6 +6,7 @@ import doobie.implicits._
 import doobie.util.fragment.Fragment
 import doobie.util.transactor
 import pangea.model.hero.HeroId
+import pangea.model.home.RecipeNote
 import pangea.model.state.StateType
 import pangea.model.top.{TopBoard, TopKind, TopRow}
 import zio.interop.catz._
@@ -59,7 +60,19 @@ object TopDaoLive {
     // Имена через запятую; пустая строка — ни одного.
     case TopKind.Achievements => fr"coalesce(cardinality(string_to_array(nullif(h.achievements, ''), ',')), 0)"
     case TopKind.Alchemy      => jsonCount(fr"h.lore_data -> 'brewed'")
-    case TopKind.Recipes      => jsonCount(fr"h.home_data -> 'recipes'")
+    case TopKind.Recipes      => recipeCount
+  }
+
+  /** Записи книги рецептов, кроме отваров: их куб больше не пишет, а старые не
+    * в счёт — как и в библиотеке (см. `HomeData.recipeBook`). Нет списка — ноль. */
+  private def recipeCount: Fragment = {
+    val list = fr"h.home_data -> 'recipes'"
+    NonEmptyList.fromList(RecipeNote.BrewNames.toList.sorted) match {
+      case None => jsonCount(list)
+      case Some(brews) =>
+        fr"(select count(*) from jsonb_array_elements(case when jsonb_typeof(" ++ list ++ fr") = 'array' then" ++ list ++
+          fr"else '[]'::jsonb end) e where" ++ Fragments.notIn(fr"coalesce(e ->> 'result', '')", brews) ++ fr")"
+    }
   }
 
   /** Сколько в JSON-списке записей; нет списка (старая запись, дома нет) — ноль. */

@@ -2,10 +2,10 @@ package pangea.service.state.states.home
 
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.generator.item.MaterialGenerator
+import pangea.generator.item.{GemGenerator, MaterialGenerator}
 import pangea.model.hero.{AzatState, CubeStatus}
 import pangea.model.home.{HomeData, RecipeNote}
-import pangea.model.item.{BrewKind, Item, MaterialKind}
+import pangea.model.item.{BrewKind, GemKind, Item, MaterialKind}
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.state.UserAction
@@ -16,7 +16,8 @@ import zio.{Task, ZIO}
 
 /** Верстак ремесленника: вставленный куб Азата переезжает из Храма домой;
   * работает так же, сила — энергия дома (если есть алтарь Азата) или свои
-  * заряды с пополнением прямо на кубе; всё, что вышло, — в книгу рецептов. */
+  * заряды с пополнением прямо на кубе; всё, что вышло, кроме отваров, — в книгу
+  * рецептов. */
 object BenchSpec extends ZIOSpecDefault {
 
   private val userId   = UserId(1L)
@@ -27,6 +28,12 @@ object BenchSpec extends ZIOSpecDefault {
   private def herb(id: Long, kind: MaterialKind): Item = MaterialGenerator.item(kind).copy(id = id)
   /** Ромашка, календула, крапива — костоправный отвар, две склянки. */
   private val boneSet = List(herb(1L, MaterialKind.Chamomile), herb(2L, MaterialKind.Calendula), herb(3L, MaterialKind.Nettle))
+
+  private def ruby(id: Long): Item = GemGenerator.item(GemKind.Ruby, 1).copy(id = id)
+  /** Три расколотых рубина — камень грейдом выше: этот рецепт куб пишет в книгу. */
+  private val rubies   = List(ruby(11L), ruby(12L), ruby(13L))
+  private val rubyNote = RecipeNote(List.fill(3)(ruby(11L).name), GemGenerator.item(GemKind.Ruby, 2).name, 1)
+  private val brewNote = RecipeNote(List("Ромашка", "Календула", "Крапива"), "Костоправный отвар", 2)
 
   private def make(home: HomeData, azat: AzatState, silver: Long = 0L, doubloons: Long = 0L) =
     for {
@@ -132,10 +139,10 @@ object BenchSpec extends ZIOSpecDefault {
               assertTrue(back == StateType.Home)
     },
 
-    test("куб в доме с алтарём: энергия дома, без кнопок пополнения; вышедшее — в книгу рецептов, книга — в библиотеке") {
+    test("куб в доме с алтарём: энергия дома, без кнопок пополнения; вышедшее, кроме отваров, — в книгу рецептов, книга — в библиотеке") {
       val townhouse = HomeData(tier = 2, metJunona = true, charges = 100, furniture = List("artisan"))
       for {
-        t <- make(townhouse, active.copy(cubeHome = true, cubeItems = boneSet))
+        t <- make(townhouse, active.copy(cubeHome = true, cubeItems = boneSet ++ rubies))
         (home, cube, _, dao, r) = t
         _     <- cube.enter(testUser, r)
         menu  <- r.sentScreens.map(_.last)
@@ -147,23 +154,53 @@ object BenchSpec extends ZIOSpecDefault {
         _     <- home.action(testUser, tap("HomeRecipes", "p" -> "0"), r)
         book  <- r.sentScreens.map(_.last)
       } yield assertTrue(menu.text.contains("Энергия дома: 100/100") && !menu.choices.exists(_.id == "CubeRefillFull")) &&
-              // сила ушла из дома, заряды куба нетронуты
-              assertTrue(after.charges == 99 && a.cubeCharges == 10) &&
+              // сила ушла из дома — по заряду на рецепт, заряды куба нетронуты
+              assertTrue(after.charges == 98 && a.cubeCharges == 10) &&
               assertTrue(a.cubeItems.flatMap(_.brew) == List(BrewKind.BoneSetter, BrewKind.BoneSetter)) &&
-              assertTrue(after.recipes == List(RecipeNote(List("Ромашка", "Календула", "Крапива"), "Костоправный отвар", 2))) &&
+              // отвар сварен, но в книгу записан только камень
+              assertTrue(after.recipes == List(rubyNote)) &&
               assertTrue(lib.text.contains("В книге рецептов записей: 1.") && lib.choices.exists(_.id == "HomeRecipes")) &&
-              assertTrue(book.text.contains("• Ромашка + Календула + Крапива → Костоправный отвар ×2"))
+              assertTrue(book.text.contains("• " + rubyNote.line) && !book.text.contains("Костоправный"))
     },
 
-    test("куб в Храме: «Назад» — в зал Азата, книга рецептов пишется и здесь") {
+    test("старые записи об отварах в библиотеке не видны и не считаются; осталась одна такая — книги нет") {
+      val townhouse = HomeData(tier = 2, metJunona = true, charges = 100, furniture = List("artisan"))
       for {
-        t <- make(withBench, active.copy(cubeItems = boneSet))
+        t <- make(townhouse.copy(recipes = List(brewNote, rubyNote)), active)
+        (home, _, _, dao, r) = t
+        _     <- home.action(testUser, tap("HomeLibrary"), r)
+        lib   <- r.sentScreens.map(_.last)
+        _     <- home.action(testUser, tap("HomeRecipes", "p" -> "0"), r)
+        book  <- r.sentScreens.map(_.last)
+        _     <- dao.writeHomeData(userId, townhouse.copy(recipes = List(brewNote)).asJson)
+        _     <- home.action(testUser, tap("HomeLibrary"), r)
+        alone <- r.sentScreens.map(_.last)
+        _     <- home.action(testUser, tap("HomeRecipes", "p" -> "0"), r)
+        page  <- r.sentScreens.map(_.last)
+      } yield assertTrue(lib.text.contains("В книге рецептов записей: 1.")) &&
+              assertTrue(book.text.contains("• " + rubyNote.line) && !book.text.contains("Костоправный")) &&
+              assertTrue(!alone.text.contains("В книге рецептов") && !alone.choices.exists(_.id == "HomeRecipes")) &&
+              // книги для листания нет — снова библиотека
+              assertTrue(page.text == alone.text) &&
+              assertTrue(RecipeNote.isBrew(brewNote) && !RecipeNote.isBrew(rubyNote)) &&
+              assertTrue(townhouse.copy(recipes = List(brewNote, rubyNote)).recipeBook == List(rubyNote))
+    },
+
+    test("куб в Храме: «Назад» — в зал Азата, книга рецептов пишется и здесь; отвар — нет") {
+      for {
+        t <- make(withBench, active.copy(cubeItems = rubies))
         (_, cube, _, dao, r) = t
         _    <- cube.action(testUser, tap("CubeActivate"), r)
         home <- homeOf(dao)
         a    <- azatOf(dao)
         back <- cube.action(testUser, tap("LeaveCube"), r)
-      } yield assertTrue(home.recipes == List(RecipeNote(List("Ромашка", "Календула", "Крапива"), "Костоправный отвар", 2))) &&
+        t2   <- make(withBench, active.copy(cubeItems = boneSet))
+        (_, cube2, _, dao2, r2) = t2
+        _    <- cube2.action(testUser, tap("CubeActivate"), r2)
+        brewed <- homeOf(dao2)
+        bottles <- azatOf(dao2)
+      } yield assertTrue(home.recipes == List(rubyNote)) &&
+              assertTrue(brewed.recipes.isEmpty && bottles.cubeItems.flatMap(_.brew) == List(BrewKind.BoneSetter, BrewKind.BoneSetter)) &&
               assertTrue(a.cubeCharges == 9) &&
               assertTrue(back == StateType.HallAzat) &&
               assertTrue(RecipeNote(List("Череп", "Череп", "Череп"), "Расколотый череп", 1).line == "Череп ×3 → Расколотый череп")
