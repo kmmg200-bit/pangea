@@ -16,11 +16,15 @@ import scala.annotation.tailrec
   *     если он выпал, ролится 4-й (тоже 50%) → итог 2–4 предмета; редкость
   *     каждого: Blue 31 · Purple 35 · Violet 31 · Orange 3 (сумма = 100);
   *   - серебро выпадает гарантированно (`lvl×1020 ±20%`);
-  *   - дублоны — с шансом 80% (30–70), сверх серебра;
-  *   - ингредиенты минибоссов — с шансом 35%: ступень зоны плюс 0..1 штук, каждый —
-  *     любой из ингредиентов всех минибоссов поровну (новые боссы попадают сами);
-  *   - редкие травы (2 ранга) — только знающему их герою, с шансом 15%, тем же
-  *     счётом и тем же способом.
+  *   - дублоны — с шансом 80%: 30–70, умноженные на ступень зоны (как и цена
+  *     карты у подозрительного человека), сверх серебра;
+  *   - ингредиенты минибоссов — гарантированно по одному за каждую ступень
+  *     зоны выше Кинэта ([[sureCount]]: Кинэт — ни одного, Корабль на дереве —
+  *     один … Заброшенный Храм — пять), и с шансом 35% — ещё горсть: ступень
+  *     зоны плюс 0..1 штук; каждый — любой из ингредиентов всех минибоссов
+  *     поровну (новые боссы попадают сами);
+  *   - редкие травы (2 ранга) — только знающему их герою: столько же
+  *     гарантированно, и с шансом 15% — ещё горсть тем же счётом.
   */
 object TreasureHuntGenerator {
 
@@ -35,6 +39,14 @@ object TreasureHuntGenerator {
   /** Шанс (в %) горсти ингредиентов минибоссов и, для знающего, редких трав. */
   val IngredientChancePct: Long = 35L
   val RareHerbChancePct: Long   = 15L
+
+  /** Сколько ингредиентов минибоссов и (знающему) редких трав клад даёт
+    * наверняка — по одному за каждую ступень зоны выше Кинэта. */
+  val SurePerTier: Long = 1L
+
+  /** Наверняка в кладе зоны: Кинэт — ни одного, Корабль на дереве — один и
+    * дальше на один больше — Заброшенный Храм — пять. */
+  def sureCount(zone: MapZone): Long = SurePerTier * (zone.tier - 1).max(0).toLong
 
   /** Ингредиенты всех минибоссов — по одному от каждого, без повторов. */
   def bossIngredients: List[MaterialKind] =
@@ -61,13 +73,23 @@ object TreasureHuntGenerator {
     val (silver, r3)      = rollSilver(zone, r2b)                  // гарантированно
     val (doubloonRoll, r4) = r3.between(0L, 100L)
     val (doubloons, r5) =
-      if (doubloonRoll < 80) r4.between(30L, 71L)                  // 80% — 30..70
-      else                   (0L, r4)                              // 20% — без дублонов
-    val (ingredients, r6) = rollHandful(IngredientChancePct, bossIngredients, zone, r5)
+      if (doubloonRoll < 80) {                                     // 80% — 30..70 × ступень зоны
+        val (d, r) = r4.between(30L, 71L)
+        (d * zone.tier.toLong, r)
+      } else (0L, r4)                                              // 20% — без дублонов
+    val (ingredients, r6) = sureAndHandful(IngredientChancePct, bossIngredients, zone, r5)
     val (herbs, r7)       =
-      if (knowsRareHerbs) rollHandful(RareHerbChancePct, MaterialKind.herbsOfRank(2).toList, zone, r6)
+      if (knowsRareHerbs) sureAndHandful(RareHerbChancePct, MaterialKind.herbsOfRank(2).toList, zone, r6)
       else (Nil, r6)
     (Reward(items, gems, silver, doubloons, ingredients ++ herbs), r7)
+  }
+
+  /** Сколько-то наверняка ([[sureCount]]) и следом горсть с шансом
+    * `chancePct` (см. [[rollHandful]]). */
+  private def sureAndHandful(chancePct: Long, pool: List[MaterialKind], zone: MapZone, rng: Rng): (List[Item], Rng) = {
+    val (sure, r1) = rollSome(sureCount(zone), pool, rng)
+    val (more, r2) = rollHandful(chancePct, pool, zone, r1)
+    (sure ++ more, r2)
   }
 
   /** Горсть материалов: с шансом `chancePct` — ступень зоны плюс 0 или 1 штук
@@ -78,13 +100,17 @@ object TreasureHuntGenerator {
     if (roll >= chancePct || pool.isEmpty) (Nil, r1)
     else {
       val (extra, r2) = r1.between(0L, 2L) // 0 или 1 сверх ступени
-      val count       = zone.tier.toLong + extra
-      (1L to count).foldLeft((List.empty[Item], r2)) { case ((acc, r), _) =>
-        val (kind, rr) = r.pick(pool)
-        (acc :+ MaterialGenerator.item(kind), rr)
-      }
+      rollSome(zone.tier.toLong + extra, pool, r2)
     }
   }
+
+  /** `count` материалов, каждый поровну из `pool`. */
+  private def rollSome(count: Long, pool: List[MaterialKind], rng: Rng): (List[Item], Rng) =
+    if (pool.isEmpty) (Nil, rng)
+    else (1L to count).foldLeft((List.empty[Item], rng)) { case ((acc, r), _) =>
+      val (kind, rr) = r.pick(pool)
+      (acc :+ MaterialGenerator.item(kind), rr)
+    }
 
   // 2 гарантированно; 3-й — 50%; и лишь если он выпал, 4-й — тоже 50%.
   // Итог: 2 (50%), 3 (25%), 4 (25%).

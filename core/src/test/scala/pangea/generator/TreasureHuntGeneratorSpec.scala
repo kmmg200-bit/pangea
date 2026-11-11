@@ -60,10 +60,14 @@ object TreasureHuntGeneratorSpec extends ZIOSpecDefault {
       assertTrue(withDoubloons > 0 && withDoubloons < rewards.size)
     },
 
-    test("дублоны, если выпали, в диапазоне 30..70") {
-      val doubs = rewards.map(_.doubloons).filter(_ > 0L)
-      assertTrue(doubs.nonEmpty) &&
-        assertTrue(doubs.forall(d => d >= 30L && d <= 70L))
+    test("дублоны, если выпали, — 30..70, умноженные на ступень зоны: Кинэт 30..70 … Храм 180..420") {
+      val byZone = MapZone.values.toList.map { z =>
+        z -> (1 to 300).map(s => TreasureHuntGenerator.roll(z, Rng(s.toLong))._1.doubloons).filter(_ > 0L)
+      }
+      assertTrue(byZone.forall { case (z, ds) =>
+        ds.nonEmpty && ds.forall(d => d >= 30L * z.tier && d <= 70L * z.tier && d % z.tier == 0L)
+      }) &&
+        assertTrue(byZone.toMap.get(MapZone.TreeShip).exists(ds => ds.min >= 60L && ds.max <= 140L))
     },
 
     test("камней всегда от 1 до 5 штук") {
@@ -77,30 +81,38 @@ object TreasureHuntGeneratorSpec extends ZIOSpecDefault {
         assertTrue(gems.forall(_.gem.exists(_.grade == 1)))
     },
 
-    test("ингредиенты минибоссов: ~35% кладов, ступень зоны плюс 0..1 штук, любой ингредиент любого босса") {
+    test("ингредиенты минибоссов: наверняка по одному за ступень выше Кинэта, у ~35% кладов — ещё горсть (ступень плюс 0..1)") {
       import pangea.model.monster.MiniBoss
       // Клад отдаёт ингредиенты наборов — всех, у кого набор есть. Кровь
       // Крысиного короля вошла сюда вместе с набором «Крыса».
-      val pool = TreasureHuntGenerator.bossIngredients.toSet
+      val pool     = TreasureHuntGenerator.bossIngredients.toSet
+      val sure     = zone.tier - 1
       val handfuls = rewards.map(_.materials.filter(m => m.material.exists(pool.contains)))
-      val with_    = handfuls.count(_.nonEmpty)
+      val more     = handfuls.count(_.size > sure)
       assertTrue(MapZone.Kinet.tier == 1 && MapZone.DeadmansGorge.tier == 3 && MapZone.AbandonedTemple.tier == 6) &&
-        assertTrue(with_ > rewards.size * 28 / 100 && with_ < rewards.size * 42 / 100) &&
-        assertTrue(handfuls.forall(h => h.isEmpty || h.size == zone.tier || h.size == 1 + zone.tier)) &&
-        assertTrue(handfuls.exists(_.size == zone.tier) && handfuls.exists(_.size == 1 + zone.tier)) &&
+        assertTrue(more > rewards.size * 28 / 100 && more < rewards.size * 42 / 100) &&
+        assertTrue(handfuls.forall(h => h.size == sure || h.size == sure + zone.tier || h.size == sure + zone.tier + 1)) &&
+        assertTrue(handfuls.exists(_.size == sure) && handfuls.exists(_.size == sure + zone.tier) &&
+                   handfuls.exists(_.size == sure + zone.tier + 1)) &&
+        // наверняка: Кинэт — ни одного, Корабль на дереве — один … Храм — пять
+        assertTrue(MapZone.values.toList.map(TreasureHuntGenerator.sureCount) == List(0L, 1L, 2L, 3L, 4L, 5L)) &&
+        assertTrue((1 to 50).exists(s => TreasureHuntGenerator.roll(MapZone.Kinet, Rng(s.toLong))._1.materials.isEmpty)) &&
+        assertTrue((1 to 50).forall(s => TreasureHuntGenerator.roll(MapZone.TreeShip, Rng(s.toLong))._1.materials.nonEmpty)) &&
+        assertTrue((1 to 50).forall(s => TreasureHuntGenerator.roll(MapZone.AbandonedTemple, Rng(s.toLong))._1.materials.size >= 5)) &&
         // все ингредиенты встречаются, шкура волка и кровь короля в том числе
         assertTrue(handfuls.flatten.flatMap(_.material).toSet == pool) &&
         assertTrue(pool.contains(MiniBoss.RatKing.ingredient)) &&
         assertTrue(pool.size == MiniBoss.values.size)
     },
 
-    test("редкие травы — только знающему цветы 2 ранга, ~15%, тем же счётом") {
+    test("редкие травы — только знающему цветы 2 ранга: наверняка по одной за ступень выше Кинэта, у ~15% — ещё горсть") {
       val known   = (1 to 800).map(s => TreasureHuntGenerator.roll(zone, Rng(s.toLong), knowsRareHerbs = true)._1)
       val herbs   = known.map(_.materials.filter(_.material.exists(_.herbRank == 2)))
-      val with_   = herbs.count(_.nonEmpty)
+      val sure    = zone.tier - 1
+      val more    = herbs.count(_.size > sure)
       assertTrue(rewards.forall(!_.materials.exists(_.material.exists(_.isHerb)))) &&   // без знания трав нет
-        assertTrue(with_ > known.size * 10 / 100 && with_ < known.size * 20 / 100) &&
-        assertTrue(herbs.forall(h => h.isEmpty || h.size == zone.tier || h.size == 1 + zone.tier)) &&
+        assertTrue(more > known.size * 10 / 100 && more < known.size * 20 / 100) &&
+        assertTrue(herbs.forall(h => h.size == sure || h.size == sure + zone.tier || h.size == sure + zone.tier + 1)) &&
         assertTrue(herbs.flatten.flatMap(_.material).toSet == MaterialKind.herbsOfRank(2).toSet) &&
         // снаряжение и серебро от знания не меняются
         assertTrue(known.take(500).map(r => (r.silver, r.items.map(_.name))) == rewards.map(r => (r.silver, r.items.map(_.name))))

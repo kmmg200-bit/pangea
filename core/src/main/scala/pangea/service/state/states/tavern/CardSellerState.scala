@@ -5,6 +5,7 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.generator.item.TreasureMapGenerator
 import pangea.model.hero.Hero
+import pangea.model.item.MapZone
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
@@ -19,6 +20,9 @@ import java.util.concurrent.TimeUnit
  * [[CardSeller]] (раз в час, 25%); здесь — сам диалог: интро → «что это?» → цена →
  * покупка/отказ. Покупка списывает дублоны и выдаёт целую карту по уровню героя,
  * затем ставит 20-часовой кулдаун. Не хватает дублонов — продавец ждёт ещё час.
+ *
+ * Цена — за ту карту, что герой получит: катаная при появлении, умноженная на
+ * ступень зоны карты (см. [[CardSellerData.priceFor]]): Кинэт ×1 … Храм ×6.
  */
 case class CardSellerState(
   heroDao:        HeroDao,
@@ -47,14 +51,16 @@ case class CardSellerState(
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     branch.act(user, ua, renderer)
 
-  // Экран цены: цена берётся из durable-данных (стабильна на всё присутствие).
+  // Экран цены: цена берётся из durable-данных (стабильна на всё присутствие) и
+  // растёт со ступенью зоны карты, которую герой получит.
   private def showPrice(user: User, renderer: Renderer): Task[StateType] =
     for {
       now  <- nowMs
+      hero <- getHero(user)
       data <- CardSeller.load(heroDao, user.userId)
       res <- if (!data.present(now)) gone(user, renderer)
              else {
-               val price   = data.price.getOrElse(CardSellerData.PriceMax)
+               val price   = priceOf(data, hero)
                val choices = content.screen("cardSeller.price").choices
                renderer.show(user, Screen(
                  content.format("cardSeller.price.text", "price" -> price.toString), choices))
@@ -69,7 +75,7 @@ case class CardSellerState(
       data <- CardSeller.load(heroDao, user.userId)
       res <- if (!data.present(now)) gone(user, renderer)
              else {
-               val price = data.price.getOrElse(CardSellerData.PriceMax)
+               val price = priceOf(data, hero)
                if (hero.doubloons < price) notEnough(user, renderer)
                else finalizePurchase(user, hero, price, now, renderer)
              }
@@ -93,6 +99,11 @@ case class CardSellerState(
                    .as(StateType.Tavern)
              }
     } yield res
+
+  // Цена карты, которую герой получит: зона — по его уровню, как у самой карты
+  // (см. TreasureMapGenerator.create).
+  private def priceOf(data: CardSellerData, hero: Hero): Long =
+    CardSellerData.priceFor(data.price.getOrElse(CardSellerData.PriceMax), MapZone.forLevel(hero.lvl))
 
   // Не хватает дублонов: ожидание НЕ продлеваем — продавец ждёт свой исходный час.
   private def notEnough(user: User, renderer: Renderer): Task[StateType] =
