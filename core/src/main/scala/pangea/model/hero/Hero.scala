@@ -259,24 +259,8 @@ case class Hero(
     )
   }
 
-  /** Слоты активных навыков героя для боя: снимаются с того, что в обеих руках
-   *  (оружие, щит), и с нагрудника — ключ слота id предмета. Одинаковые умения не
-   *  складываются: с двух вещей — одна кнопка и одна перезарядка, как будто
-   *  умение одно. Плюс клейма на теле, которых нет на вещах (та же руна на вещи и
-   *  на теле — одна кнопка; id клейма отрицательный, см. `Rune.bodySlotId`).
-   *
-   *  Умения стрелка — только с луком или арбалетом в руках, прочие умения оружия
-   *  — только без них (см. `Skill.usableWith`): и с вещи, и с клейма. */
-  def activeSkillSlots: List[SkillSlotState] = {
-    val ranged = equipment.weapon.ranged
-    val worn = List(equipment.weapon, equipment.leftHand, equipment.chestPlate)
-      .flatMap(it => it.activeSkill.map(s => SkillSlotState(it.id, s, cooldown = s.initialCooldown)))
-      .filter(s => Skill.usableWith(s.skill, ranged))
-      .distinctBy(_.skill)
-    val wornSkills = worn.map(_.skill).toSet
-    worn ++ runes.brandedActives.filter(Skill.usableWith(_, ranged)).filterNot(wornSkills.contains).map(s =>
-      SkillSlotState(Rune.bodySlotId(s), s, cooldown = s.initialCooldown))
-  }
+  /** Слоты активных навыков героя для боя (см. [[Hero.activeSkillSlotsOf]]). */
+  def activeSkillSlots: List[SkillSlotState] = Hero.activeSkillSlotsOf(equipment, runes)
 
   /** Максимум Энергии: 5·Интеллект + 2·Ловкость + Энергия с экипировки + бусты
    *  Мастера Горна, за вычетом штрафа травм на энергию. Минимум 1. Интеллект и
@@ -452,6 +436,28 @@ object Hero {
     if (now == was) current
     else if (was <= 0L) 0L
     else current.max(0L) * now.max(0L) / was
+
+  /** Слоты активных навыков для боя: снимаются с того, что в обеих руках
+   *  (оружие, щит), и с нагрудника — ключ слота id предмета. Одинаковые умения не
+   *  складываются: с двух вещей — одна кнопка и одна перезарядка, как будто
+   *  умение одно. Плюс клейма на теле, которых нет на вещах (та же руна на вещи и
+   *  на теле — одна кнопка; id клейма отрицательный, см. `Rune.bodySlotId`).
+   *
+   *  Умения стрелка — только с луком или арбалетом в руках, прочие умения оружия
+   *  — только без них (см. `Skill.usableWith`): и с вещи, и с клейма.
+   *
+   *  Считается по одной экипировке и клеймам, без героя целиком: так же умения
+   *  на героях считает игровая статистика админ-панели. */
+  def activeSkillSlotsOf(equipment: Equipment, runes: RuneData): List[SkillSlotState] = {
+    val ranged = equipment.weapon.ranged
+    val worn = List(equipment.weapon, equipment.leftHand, equipment.chestPlate)
+      .flatMap(it => it.activeSkill.map(s => SkillSlotState(it.id, s, cooldown = s.initialCooldown)))
+      .filter(s => Skill.usableWith(s.skill, ranged))
+      .distinctBy(_.skill)
+    val wornSkills = worn.map(_.skill).toSet
+    worn ++ runes.brandedActives.filter(Skill.usableWith(_, ranged)).filterNot(wornSkills.contains).map(s =>
+      SkillSlotState(Rune.bodySlotId(s), s, cooldown = s.initialCooldown))
+  }
 
   /** Сколько очков герой вложил в характеристики: всё, что выше старта. */
   def spentPoints(hero: Hero): Long = {

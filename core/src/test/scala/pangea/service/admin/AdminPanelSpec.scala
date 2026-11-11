@@ -1,9 +1,12 @@
 package pangea.service.admin
 
-import pangea.dao.admin.{AdminDao, AdminStats}
+import pangea.dao.admin.{AdminDao, AdminStats, GameStats}
 import pangea.model.hero.Hero
-import pangea.model.item.{GemKind, ItemSet, ItemType, Rarity}
+import pangea.model.item.{GemKind, Item, ItemDetails, ItemSet, ItemType, Rarity}
+import pangea.model.rune.RuneData
+import pangea.model.skill.Skill
 import pangea.model.state.StateType
+import pangea.model.stats.BaseStats
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.Background
 import pangea.service.state.UserAction
@@ -11,8 +14,9 @@ import pangea.test._
 import zio.test._
 import zio.{Duration, Ref, Task, ZIO}
 
-/** Админ-панель: вход по паролю, выдача вещей, деньги и сводка по серверу.
-  * Панель живёт поверх игры — ни состояние героя, ни сцена от неё не меняются. */
+/** Админ-панель: вход по паролю, выдача вещей, деньги, сводка по серверу и
+  * игровая статистика. Панель живёт поверх игры — ни состояние героя, ни сцена
+  * от неё не меняются. */
 object AdminPanelSpec extends ZIOSpecDefault {
 
   private val userId   = UserId(1L)
@@ -26,12 +30,19 @@ object AdminPanelSpec extends ZIOSpecDefault {
   private val stubStats = AdminStats(
     heroes = 7L, activeToday = 3L, active7d = 5L,
     heroSilver = 1000L, vaultSilver = 500L, doubloons = 42L,
-    sets = List(AdminStats.SetRow(ItemSet.Hunter, 6, 54L), AdminStats.SetRow(ItemSet.Ghoul, 8, 32L)),
     levels = AdminStats.levelRows(List(3L, 17L, 40L, 99L, 150L), AdminDao.LevelStep, AdminDao.MaxLevel))
+
+  private val stubGame = GameStats(
+    heroes   = 5L,
+    sets     = List(GameStats.SetRow(ItemSet.Hunter, 6, 54L), GameStats.SetRow(ItemSet.Ghoul, 8, 32L)),
+    invested = BaseStats(agi = 10L, vit = 30L, str = 50L, int = 10L),
+    free     = 12L,
+    skills   = List(GameStats.SkillRow(Skill.CunningStrike, 3L, 1L), GameStats.SkillRow(Skill.QuickStrike, 2L, 0L)))
 
   /** Сводка — готовая, уровни прав — в памяти; адрес в ВК у каждого `vk<id>`. */
   private final class StubAdminDao(levels: Ref[Map[UserId, Int]]) extends AdminDao {
     def stats: Task[AdminStats] = ZIO.succeed(stubStats)
+    def gameStats: Task[GameStats] = ZIO.succeed(stubGame)
     def level(userId: UserId): Task[Int] = levels.get.map(_.getOrElse(userId, 0))
     def setLevel(userId: UserId, level: Int): Task[Unit] =
       levels.update(m => if (level <= 0) m - userId else m.updated(userId, level))
@@ -97,7 +108,7 @@ object AdminPanelSpec extends ZIOSpecDefault {
       } yield assertTrue(opened && ok) &&
               assertTrue(ask.text.contains("Пришлите пароль")) &&
               assertTrue(main.choices.map(_.id) ==
-                List("AdminItems", "AdminMoney", "AdminStats", AdminPanel.Level1Id, AdminPanel.NamesId,
+                List("AdminItems", "AdminMoney", "AdminStats", "AdminGameStats", AdminPanel.Level1Id, AdminPanel.NamesId,
                      AdminPanel.CancelId)) &&
               assertTrue(wrong.contains("Неверно") && !after)
     },
@@ -258,7 +269,7 @@ object AdminPanelSpec extends ZIOSpecDefault {
               assertTrue(after.silver == 10100L && after.doubloons == 105L)
     },
 
-    test("сводка по серверу показывает игроков, деньги и наборы") {
+    test("сводка по серверу показывает игроков, деньги и уровни; наборы — в игровой статистике") {
       for {
         t <- panel()
         (p, _, _, r) = t
@@ -268,10 +279,65 @@ object AdminPanelSpec extends ZIOSpecDefault {
       } yield assertTrue(stats.text.contains("всего героев: 7")) &&
               assertTrue(stats.text.contains("заходили сегодня (с 00:00 МСК): 3") && stats.text.contains("заходили за неделю: 5")) &&
               assertTrue(stats.text.contains("серебро всего: 1 500") && stats.text.contains("дублоны: 42")) &&
-              assertTrue(stats.text.contains("Охотник на 6: 54") && stats.text.contains("Упырь на 8: 32")) &&
+              assertTrue(!stats.text.contains("Наборы") && !stats.text.contains("Охотник на 6")) &&
               // полосы уровней по 25, включая пустые
               assertTrue(stats.text.contains("1–25: 2") && stats.text.contains("26–50: 1")) &&
               assertTrue(stats.text.contains("51–75: 0") && stats.text.contains("126–150: 1"))
+    },
+
+    test("игровая статистика: наборы, вложенные очки с долями, свободные очки и умения с клеймами") {
+      for {
+        t <- panel()
+        (p, _, _, r) = t
+        _    <- enter(p, r)
+        _    <- p.intercept(testUser, TestFixtures.hero(userId), tap("AdminGameStats"), r)
+        game <- r.sentScreens.map(_.last)
+      } yield assertTrue(game.text.contains("Считаем тех, кто заходил за неделю: 5")) &&
+              assertTrue(game.text.contains("Охотник на 6: 54") && game.text.contains("Упырь на 8: 32")) &&
+              assertTrue(game.text.contains("Сила: 50 (50%)") && game.text.contains("Телосложение: 30 (30%)") &&
+                         game.text.contains("Ловкость: 10 (10%)") && game.text.contains("Интеллект: 10 (10%)")) &&
+              assertTrue(game.text.contains("не распределено: 12")) &&
+              assertTrue(game.text.contains(s"${Skill.CunningStrike.label}: 3 (на теле — 1)")) &&
+              assertTrue(game.text.contains(s"${Skill.QuickStrike.label}: 2") &&
+                         !game.text.contains(s"${Skill.QuickStrike.label}: 2 (")) &&
+              assertTrue(game.choices.map(_.id) == List("AdminGameStats", "AdminMain"))
+    },
+
+    test("игровая статистика пустая — так и сказано, без деления на ноль") {
+      val text = AdminPanel.gameStatsText(GameStats.empty)
+      assertTrue(text.contains("никто не собрал и двух предметов набора")) &&
+      assertTrue(text.contains("никто ещё не вкладывал очки") && text.contains("не распределено: 0")) &&
+      assertTrue(text.contains("ни у кого нет активных умений"))
+    },
+
+    test("вложенные очки — только то, что выше старта; свободные — суммой") {
+      val s    = Hero.StartBaseStats
+      val none = RuneData()
+      val g = GameStats.of(List(
+        GameStats.HeroRow(TestFixtures.emptyEquipment, s, 4L, none),
+        GameStats.HeroRow(TestFixtures.emptyEquipment, s.copy(str = s.str + 6L, vit = s.vit + 2L), 0L, none),
+        GameStats.HeroRow(TestFixtures.emptyEquipment, s.copy(int = s.int + 3L), 8L, none)), AdminDao.MinWorn)
+      assertTrue(g.heroes == 3L && g.free == 12L) &&
+      assertTrue(g.invested == BaseStats(agi = 0L, vit = 2L, str = 6L, int = 3L)) &&
+      // ниже старта не бывает, но и в минус счёт не уходит
+      assertTrue(GameStats.invested(List(s.copy(agi = 1L))) == GameStats.Zero)
+    },
+
+    test("умения на героях — как в бою: два кинжала с одним умением — одно; клеймо — с пометкой «на теле»") {
+      def dagger(id: Long, skill: Skill): Item =
+        Item(id, "Кинжал", 1L, Rarity.Gray, ItemType.Weapon, attack = 1, accuracy = 0, energy = 0,
+          armor = 0, defence = 0, evasion = 0, details = ItemDetails.Weapon(skill))
+      val twoDaggers = TestFixtures.emptyEquipment.copy(
+        weapon = dagger(1L, Skill.CunningStrike), leftHand = dagger(2L, Skill.CunningStrike))
+      val bare = TestFixtures.emptyEquipment
+      val rows = GameStats.skillRows(List(
+        twoDaggers -> RuneData(),                                              // с двух кинжалов — одно
+        twoDaggers -> RuneData(active = List(Skill.CunningStrike.entryName)),  // и на вещи, и клеймом
+        bare       -> RuneData(active = List(Skill.QuickStrike.entryName)),    // только клеймом
+        bare       -> RuneData()))                                             // умений нет — не в счёте
+      assertTrue(rows == List(
+        GameStats.SkillRow(Skill.CunningStrike, 2L, 1L),
+        GameStats.SkillRow(Skill.QuickStrike, 1L, 1L)))
     },
 
     test("панель не трогает ни состояние героя, ни сцену") {
@@ -315,7 +381,7 @@ object AdminPanelSpec extends ZIOSpecDefault {
       val six   = TestFixtures.wearingSet(ItemSet.Hunter, 6)
       val eight = TestFixtures.wearingSet(ItemSet.Ghoul, 8)
       val one   = TestFixtures.wearingSet(ItemSet.Hunter, 1)
-      val rows  = AdminStats.setRows(List(six, six, eight, one), AdminDao.MinWorn)
+      val rows  = GameStats.setRows(List(six, six, eight, one), AdminDao.MinWorn)
       assertTrue(rows.exists(r => r.set == ItemSet.Hunter && r.worn == 6 && r.heroes == 2)) &&
       assertTrue(rows.exists(r => r.set == ItemSet.Ghoul && r.worn == 8 && r.heroes == 1)) &&
       assertTrue(!rows.exists(_.worn < AdminDao.MinWorn))

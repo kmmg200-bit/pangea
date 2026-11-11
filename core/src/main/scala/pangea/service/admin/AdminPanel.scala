@@ -1,6 +1,6 @@
 package pangea.service.admin
 
-import pangea.dao.admin.{AdminDao, AdminStats}
+import pangea.dao.admin.{AdminDao, AdminStats, GameStats}
 import pangea.dao.hero.HeroDao
 import pangea.domain.Rng
 import pangea.engine.{Choice, ChoiceColor, Renderer, Screen}
@@ -26,6 +26,8 @@ object AdminScreen {
   case object Items    extends AdminScreen
   case object Money    extends AdminScreen
   case object Stats    extends AdminScreen
+  /** Игровая статистика: наборы, вложенные очки, умения на героях. */
+  case object Game     extends AdminScreen
 
   /** Каталог: разделы и листание внутри раздела. */
   case object Sections                                  extends AdminScreen
@@ -162,6 +164,7 @@ class AdminPanelLive(
       case Some("AdminItems")                   => goTo(user, AdminScreen.Items, renderer)
       case Some("AdminSections")                => goTo(user, AdminScreen.Sections, renderer)
       case Some("AdminStats")                   => goTo(user, AdminScreen.Stats, renderer)
+      case Some("AdminGameStats")               => goTo(user, AdminScreen.Game, renderer)
       case Some("AdminMoney")                   => goTo(user, AdminScreen.Money, renderer)
       case Some("AdminEquip")                   => goTo(user, AdminScreen.EquipType, renderer)
       case Some(Level1Id)                       => toggleLevel1(user, renderer)
@@ -230,8 +233,9 @@ class AdminPanelLive(
           Choice("AdminItems", "🎁 Вещи", color = ChoiceColor.Positive, row = Some(0)),
           Choice("AdminMoney", "💰 Деньги", color = ChoiceColor.Positive, row = Some(0)),
           Choice("AdminStats", "📊 Статистика", row = Some(1)),
-          if (level >= Level1) Choice(Level1Id, "✅ Админ 1", color = ChoiceColor.Positive, row = Some(1))
-          else Choice(Level1Id, "Админ 1", row = Some(1)),
+          Choice("AdminGameStats", "🎮 Игровая статистика", row = Some(1)),
+          if (level >= Level1) Choice(Level1Id, "✅ Админ 1", color = ChoiceColor.Positive, row = Some(2))
+          else Choice(Level1Id, "Админ 1", row = Some(2)),
           Choice(NamesId, "🏷 Имена из ВК", row = Some(2)),
           cancelButton.copy(row = Some(3)))))
       }
@@ -291,6 +295,14 @@ class AdminPanelLive(
         case Left(e)  => renderer.show(user, Screen(s"Статистика не собралась: ${e.getMessage}", List(back("AdminMain", 0))))
         case Right(s) => renderer.show(user, Screen(statsText(s), List(
           Choice("AdminStats", "🔄 Обновить", row = Some(0)), back("AdminMain", 1))))
+      }
+
+    case AdminScreen.Game =>
+      adminDao.gameStats.either.flatMap {
+        case Left(e)  =>
+          renderer.show(user, Screen(s"Игровая статистика не собралась: ${e.getMessage}", List(back("AdminMain", 0))))
+        case Right(g) => renderer.show(user, Screen(gameStatsText(g), List(
+          Choice("AdminGameStats", "🔄 Обновить", row = Some(0)), back("AdminMain", 1))))
       }
   }
 
@@ -452,11 +464,9 @@ object AdminPanel {
 
   def typeLabel(t: ItemType): String = t.entryName
 
-  /** Сводка по серверу одним сообщением. */
+  /** Сводка по серверу одним сообщением. Наборы — в игровой статистике (см.
+    * [[gameStatsText]]). */
   def statsText(s: AdminStats): String = {
-    val sets =
-      if (s.sets.isEmpty) "  никто не собрал и двух предметов набора"
-      else s.sets.map(r => s"  ${r.set.label} на ${r.worn}: ${r.heroes}").mkString("\n")
     val levels =
       if (s.levels.forall(_.heroes == 0L)) "  за неделю никто не заходил"
       else s.levels.map(r => s"  ${r.from}–${r.to}: ${r.heroes}").mkString("\n")
@@ -478,10 +488,39 @@ object AdminPanel {
        |  за неделю: ${s.fetLottery7d}
        |
        |📈 Уровни тех, кто заходил за неделю
-       |$levels
+       |$levels""".stripMargin
+  }
+
+  /** Игровая сводка одним сообщением — по тем, кто заходил за неделю: наборы,
+    * вложенные очки характеристик (с долей каждой) и свободные, активные
+    * умения на героях (сколько из них — клеймом на теле). */
+  def gameStatsText(g: GameStats): String = {
+    val sets =
+      if (g.sets.isEmpty) "  никто не собрал и двух предметов набора"
+      else g.sets.map(r => s"  ${r.set.label} на ${r.worn}: ${r.heroes}").mkString("\n")
+    val b     = g.invested
+    val total = b.str + b.vit + b.agi + b.int
+    def stat(name: String, n: Long): String = s"  $name: ${amount(n)} (${math.round(n * 100.0 / total)}%)"
+    val points =
+      if (total <= 0L) "  никто ещё не вкладывал очки"
+      else List(stat("Сила", b.str), stat("Телосложение", b.vit), stat("Ловкость", b.agi), stat("Интеллект", b.int))
+        .mkString("\n")
+    val skills =
+      if (g.skills.isEmpty) "  ни у кого нет активных умений"
+      else g.skills.map(r => s"  ${r.skill.label}: ${r.heroes}" + (if (r.onBody > 0L) s" (на теле — ${r.onBody})" else ""))
+        .mkString("\n")
+    s"""🎮 Игра
+       |Считаем тех, кто заходил за неделю: ${g.heroes}
        |
        |🛡 Наборы (сколько предметов надето: сколько героев)
-       |$sets""".stripMargin
+       |$sets
+       |
+       |💪 Вложенные очки характеристик (без старта, расы, зелий и достижений)
+       |$points
+       |  не распределено: ${amount(g.free)}
+       |
+       |⚔ Активные умения на героях (сколько героев)
+       |$skills""".stripMargin
   }
 
   val live: ZLayer[
