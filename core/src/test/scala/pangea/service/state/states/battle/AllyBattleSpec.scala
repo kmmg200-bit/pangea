@@ -829,9 +829,29 @@ object AllyBattleSpec extends ZIOSpecDefault {
         screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
         a        = after.group.allies.head
       } yield assertTrue(targets.head == ("Себе" -> Some("1"))) &&
-              assertTrue(targets(1)._2.contains("2") && targets(1)._1.startsWith("2. Йорген Кремень")) &&
+              // на кнопке — по имени, без фамилии
+              assertTrue(targets(1)._2.contains("2") && targets(1)._1.startsWith("2. Йорген ❤ ") &&
+                targets(1)._1.endsWith("% 🧥 100%") && !targets(1)._1.contains("Кремень")) &&
               assertTrue(a.hp > 100L) &&
               assertTrue(screens.contains("«Малое исцеление» — Йорген Кремень: +"))
+    },
+
+    test("союзник на кнопке цели — по имени без фамилии; кого зовут по виду, у того имя целиком") {
+      val stats = AllyKind.Human.stats(lvl)
+      def at(kind: AllyKind, form: Option[String] = None) =
+        BattleAlly(kind, 2, hp = stats.hp, armor = stats.armor, energy = 0L, stats = stats, lvl = lvl,
+          undead = form.map(UndeadForm(_, lvl, stats)))
+      assertTrue(at(AllyKind.Human).callName == "Йорген" && at(AllyKind.Gnome).callName == "Брамбл") &&
+      assertTrue(at(AllyKind.Murloc).callName == "Плюх") &&
+      // дружинники и эльф из заданий: звание перед именем не в счёт
+      assertTrue(at(AllyKind.SquadGnome, Some("Старшина Ульфрик")).callName == "Ульфрик") &&
+      assertTrue(at(AllyKind.SquadGnome, Some("Ингрид Крепь")).callName == "Ингрид") &&
+      assertTrue(at(AllyKind.HedgeElf, Some("Элиар Тихая Ветвь")).callName == "Элиар") &&
+      assertTrue(at(AllyKind.CaravanKhajiit, Some("Ра'Тхар")).callName == "Ра'Тхар") &&
+      // названные по виду — целиком
+      assertTrue(at(AllyKind.Rat, Some("Чумная крыса")).callName == "Чумная крыса") &&
+      assertTrue(at(AllyKind.Undead, Some("Тёмный волк")).callName == "Тёмный волк") &&
+      assertTrue(at(AllyKind.MurlocKin, Some("Мурлок-собрат")).callName == "Мурлок-собрат")
     },
 
     test("при живом герое союзник, которому некого бить, в конце раунда шагает к врагу") {

@@ -30,15 +30,14 @@ case class Monster(
 
   /** Как называется его природа игроку: «Нежить-Орк» вместо просто «Орк». */
   def raceName: String = if (undead) s"${Monster.UndeadPrefix}-$race" else race.toString
-
-  /** Имя для кнопки: у отмеченного тьмой полное имя с меткой не влезает в
-    * кнопку (лимит [[pangea.engine.Choice.MaxLabelLength]]), поэтому вместо
-    * пафосного имени — просто раса: «Отмеченный тьмой Гоблин». */
-  def shortName: String = if (marked) s"${Monster.MarkedPrefix} $race" else name
 }
 
 object Monster {
   val MarkedPrefix: String = "Отмеченный тьмой"
+
+  /** Значок отмеченного тьмой на кнопке выбора цели: метку словами кнопка не
+    * вмещает, а отличать таких надо (см. `MonsterSlot.targetName`). */
+  val MarkedBadge: String = "⚫"
 
   /** Приставка поднятого: «Нежить-Орк раб». */
   val UndeadPrefix: String = "Нежить"

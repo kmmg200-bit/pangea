@@ -3501,9 +3501,10 @@ case class BattleState(
     targetChoices(battle, "Attack", content.text("battle.group.attackLabel"), support = false,
       heroTargets(hero, battle))
 
-  /** Экран выбора цели: моб напротив и соседи по местам, с их полосками.
-    * Подпись кнопки ограничена по длине, поэтому имя — короткое (у отмеченного
-    * тьмой — только раса), а что всё равно не влезло, срезается. */
+  /** Экран выбора цели: моб напротив и соседи по местам, с их здоровьем и
+    * бронёй в процентах. Моб на кнопке — «Раса-ранг», именной — по имени (см.
+    * `MonsterSlot.targetName`), союзник — по имени без фамилии (см.
+    * `BattleAlly.callName`). */
   private def targetScreen(hero: Hero, battle: SoloPveBattle, itemId: Long): Screen = {
     val slot       = battle.slotByItem(itemId)
     val skillLabel = slot.map(_.skill.label).getOrElse("")
@@ -3568,15 +3569,13 @@ case class BattleState(
           data = Map("target" -> battle.group.heroPos.toString), row = Some(0))
         me :: supportAllies(battle).zipWithIndex.map { case (a, i) =>
           pangea.engine.Choice(choiceId,
-            pangea.engine.Choice.fit(content.format("battle.group.targetAlly",
-              "n" -> a.position.toString, "name" -> a.name, "hp" -> a.hpPct.toString, "armor" -> a.armorPct.toString)),
+            targetLabel("battle.group.targetAlly", a.position, a.callName, a.hpPct, a.armorPct),
             data = Map("target" -> a.position.toString), row = Some(1 + i / BattleState.AlliesPerRow))
         }
       } else
         (enemies ++ spots).sorted.zipWithIndex.flatMap { case (pos, i) =>
           val text = battle.monsterAt(pos) match {
-            case Some(m) => Some(content.format("battle.group.targetLabel",
-                              "n" -> pos.toString, "monster" -> m.shortName, "hp" -> m.hpPct.toString))
+            case Some(m) => Some(targetLabel("battle.group.targetLabel", pos, m.targetName, m.hpPct, m.armorPct))
             case None    => Option.when(spots.contains(pos))(content.format("battle.group.moveToFree", "n" -> pos.toString))
           }
           text.map(t => pangea.engine.Choice(
@@ -3589,6 +3588,16 @@ case class BattleState(
       color = pangea.engine.ChoiceColor.Negative, row = Some(targets.size))
     val title  = if (spots.isEmpty) "battle.group.chooseTarget" else "battle.group.chooseSpot"
     Screen(content.format(title, "skill" -> label), targets :+ cancel)
+  }
+
+  /** Подпись кнопки цели: место, имя, здоровье и броня. В предел ВК не
+    * влезает — короче становится имя, а место и проценты остаются целыми. */
+  private def targetLabel(key: String, pos: Int, name: String, hp: Long, armor: Long): String = {
+    def label(n: String) = content.format(key, "n" -> pos.toString, "name" -> n,
+      "hp" -> hp.toString, "armor" -> armor.toString)
+    val over = label(name).length - pangea.engine.Choice.MaxLabelLength
+    if (over <= 0) label(name)
+    else pangea.engine.Choice.fit(label(name.take((name.length - over - 1).max(1)) + "…"))
   }
 
   /** Применение активного навыка. Проверки (слот существует / готов / хватает

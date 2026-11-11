@@ -479,9 +479,9 @@ object GroupBattleSpec extends ZIOSpecDefault {
               assertTrue(after.group.round == 0)
     },
 
-    test("кнопки выбора цели влезают в лимит подписи даже у отмеченного тьмой с длинным именем") {
+    test("кнопка цели — «Раса-ранг» с здоровьем и бронёй; отмеченный тьмой — с ⚫ вместо длинной метки") {
       val h = heroWithSkills(Skill.SweepingStrike, Skill.MinorHeal)
-      // Самое длинное имя в игре, да ещё с меткой тьмы — полностью не влезет.
+      // Самое длинное имя в игре, да ещё с меткой тьмы — на кнопке его нет.
       val chief = Monster(0L, lvl, Race.Goblin, Rarity.Mythical,
         FightStats(atk = 20, hp = 1000, armor = 0, defence = 0, evasion = 0, accuracy = 9999, energy = 0),
         marked = true)
@@ -494,8 +494,43 @@ object GroupBattleSpec extends ZIOSpecDefault {
         labels   = ask.choices.filter(_.id == "Skill_101").map(_.label)
       } yield assertTrue(labels.size == 2) &&
               assertTrue(labels.forall(_.length <= pangea.engine.Choice.MaxLabelLength)) &&
-              assertTrue(labels.head == "1. Отмеченный тьмой Гоблин ❤ 100%") &&
+              assertTrue(labels.head == "1. ⚫ Гоблин-4 ❤ 100% 🧥 0%") &&
               assertTrue(chief.name == "Отмеченный тьмой Хобгоблин — предводитель банды")
+    },
+
+    test("на кнопке цели: ранг 1–4 — «Раса-ранг», нежить — «Нежить-Раса-ранг», именной и минибосс — по имени") {
+      def mob(rarity: Rarity, race: Race = Race.Goblin, undead: Boolean = false, name: Option[String] = None) =
+        Monster(0L, lvl, race, rarity,
+          FightStats(atk = 20, hp = 1000, armor = 200, defence = 0, evasion = 0, accuracy = 9999, energy = 0),
+          customName = name, undead = undead)
+      val b = SoloPveBattle.fromGroup(List(mob(Rarity.Common), mob(Rarity.Uncommon, Race.Orc, undead = true),
+                mob(Rarity.Rare), mob(Rarity.Legendary), mob(Rarity.Legendary, name = Some("Шныга Трёхпалый"))),
+                hero(), Nil)
+      val names = (1 to 5).toList.flatMap(b.monsterAt).map(_.targetName)
+      assertTrue(names == List("Гоблин-1", "Нежить-Орк-2", "Гоблин-3", "Эззи Повелитель Гоблинов", "Шныга Трёхпалый")) &&
+      assertTrue(Rarity.values.map(_.rank).toList == List(1, 2, 3, 4, 5)) &&
+      assertTrue(b.copy(bossKind = Some(pangea.model.monster.MiniBoss.values.head.entryName))
+        .monsterAt(b.group.activePos).exists(_.targetName == pangea.model.monster.MiniBoss.values.head.monsterName))
+    },
+
+    test("на кнопке цели — броня в процентах; длинное имя именного срезается, а проценты целы") {
+      val h = heroWithSkills(Skill.SweepingStrike, Skill.MinorHeal)
+      val stats = FightStats(atk = 20, hp = 1000, armor = 200, defence = 0, evasion = 0, accuracy = 9999, energy = 0)
+      val named = Monster(0L, lvl, Race.Elf, Rarity.Legendary, stats, customName = Some("Меллион Говорящий с Корой"))
+      val plain = Monster(0L, lvl, Race.Elf, Rarity.Rare, stats)
+      val b0    = SoloPveBattle.fromGroup(List(named, plain), h, Nil)
+      // у второго — половина брони
+      val b     = b0.copy(group = b0.group.copy(others = b0.group.others.map(_.copy(currentArmor = 100L))))
+      for {
+        t <- makeState(h, b)
+        (state, _, r) = t
+        _      <- state.action(testUser, tap("Skill_101"), r)
+        ask    <- r.sentScreens.map(_.last)
+        labels  = ask.choices.filter(_.id == "Skill_101").map(_.label)
+      } yield assertTrue(labels.size == 2) &&
+              assertTrue(labels.forall(_.length <= pangea.engine.Choice.MaxLabelLength)) &&
+              assertTrue(labels.head.startsWith("1. Меллион Говорящий") && labels.head.endsWith("… ❤ 100% 🧥 100%")) &&
+              assertTrue(labels(1) == "2. Эльф-3 ❤ 100% 🧥 50%")
     },
 
     test("легендарный в конце первого раунда зовёт 2–3 сородичей 3–4 ранга") {

@@ -3884,7 +3884,8 @@ battle:
     chooseTarget: "🎯 {skill} — в кого?"
     # Таран: среди целей есть и свободные места.
     chooseSpot: "🎯 {skill} — куда?"
-    targetLabel: "{n}. {monster} ❤ {hp}%"
+    # Цель на кнопке: моб — «Раса-ранг», именной — по имени (MonsterSlot.targetName).
+    targetLabel: "{n}. {name} ❤ {hp}% 🧥 {armor}%"
     targetSelf: "Себе"
     targetAlly: "{n}. {name} ❤ {hp}% 🧥 {armor}%"
     supportAlly: "💚 «{skill}» — {name}: +{amount} {what}."

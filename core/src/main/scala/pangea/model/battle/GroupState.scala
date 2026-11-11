@@ -50,6 +50,13 @@ final case class BattleAlly(
   /** Нежить ли он: миазмы её лечат, а живых — травят. */
   def isUndead: Boolean = kind.race == Race.Undead
   def name: String  = undead.map(_.name).getOrElse(kind.name)
+
+  /** Как звать союзника на кнопке выбора цели — коротко, по имени, без фамилии
+    * и прозвища: «Йорген Кремень» — Йорген, «Старшина Ульфрик» — Ульфрик.
+    * Поднятые, крысы и мурлоки-собратья названы по виду («Чумная крыса»,
+    * «Тёмный волк») — у них имя целиком. */
+  def callName: String = if (BattleAlly.NamedByKind.contains(kind)) name else BattleAlly.firstName(name)
+
   def alive: Boolean = hp > 0L
 
   /** Пользуется ли умениями наёмников (фляга, починка, удары): крыса — нет,
@@ -67,6 +74,21 @@ final case class BattleAlly(
 }
 
 object BattleAlly {
+
+  /** Союзники, которых зовут по виду, а не по имени: имя у них целиком (см.
+    * [[BattleAlly.callName]]). */
+  val NamedByKind: Set[AllyKind] = Set(AllyKind.Undead, AllyKind.Rat, AllyKind.MurlocKin)
+
+  /** Звание перед именем: «Старшина Ульфрик» — это Ульфрик. */
+  private val Titles: Set[String] = Set("Старшина")
+
+  /** Имя без фамилии и прозвища — первое слово, а за званием — следующее. */
+  def firstName(full: String): String =
+    full.split(' ').toList.filter(_.nonEmpty) match {
+      case title :: name :: _ if Titles.contains(title) => name
+      case first :: _                                   => first
+      case Nil                                          => full
+    }
 
   /** Союзник выходит в бой. `undeadBoostPct` — насколько сильнее становится
     * нежить от «Некроманта» (порог 4); `freshUndead` — выходит ли она целой,
@@ -153,8 +175,21 @@ final case class MonsterSlot(
   def name: String =
     boss.flatMap(pangea.model.monster.MiniBoss.byName).map(_.monsterName).getOrElse(toMonster.name)
 
-  /** Имя для кнопки — см. `Monster.shortName`. */
-  def shortName: String = toMonster.shortName
+  /** Как зовут моба на кнопке выбора цели. Именного — по имени: легендарного,
+    * минибосса и того, кому имя дала сцена (на арене так зовут бойцов
+    * соперника). Остальных — «Раса-ранг»: «Гоблин-3», «Нежить-Орк-2», ранг 1 —
+    * самый слабый (см. [[Rarity.rank]]). Отмеченного тьмой выделяет
+    * [[Monster.MarkedBadge]] впереди: «⚫ Гоблин-3»; полное имя с меткой — на
+    * экране боя, над кнопками. */
+  def targetName: String = {
+    val m    = toMonster
+    val base =
+      if (boss.isDefined || customName.isDefined || m.rarity == Rarity.Legendary)
+        boss.flatMap(pangea.model.monster.MiniBoss.byName).map(_.monsterName).orElse(customName)
+          .getOrElse(m.copy(marked = false, undead = false).name)
+      else s"${m.raceName}-${m.rarity.rank}"
+    if (marked) s"${Monster.MarkedBadge} $base" else base
+  }
 
   def alive: Boolean = currentHp > 0L
 

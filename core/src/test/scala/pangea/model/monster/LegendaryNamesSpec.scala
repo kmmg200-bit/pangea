@@ -53,10 +53,11 @@ object LegendaryNamesSpec extends ZIOSpecDefault {
       assertTrue(names.forall(n => Monster.legendaryNames.getOrElse(Race.Elf, Nil).contains(n)))
     },
 
-    test("«Отмеченный тьмой» встаёт перед именем, а кнопка берёт расу") {
+    test("«Отмеченный тьмой» встаёт перед именем, а на кнопке цели вместо метки — ⚫") {
       val m = legendary(Race.Demon, Some("Велиар")).copy(marked = true)
+      val b = SoloPveBattle.fromGroup(List(m), hero, Nil)
       assertTrue(m.name == s"${Monster.MarkedPrefix} Велиар") &&
-      assertTrue(m.shortName == s"${Monster.MarkedPrefix} ${Race.Demon}") &&
+      assertTrue(b.monsterAt(b.group.activePos).exists(_.targetName == "⚫ Велиар")) &&
       assertTrue(legendary(Race.Demon, Some("Велиар")).name == "Велиар")
     },
 
