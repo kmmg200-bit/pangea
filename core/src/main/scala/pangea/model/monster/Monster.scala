@@ -30,6 +30,16 @@ case class Monster(
 
   /** Как называется его природа игроку: «Нежить-Орк» вместо просто «Орк». */
   def raceName: String = if (undead) s"${Monster.UndeadPrefix}-$race" else race.toString
+
+  /** Короткое имя для кнопки выбора цели: то же, что на экране боя, а длинное —
+    * сокращённое ([[Monster.shortNames]]): «Хобгоблин», а не «Хобгоблин —
+    * предводитель банды». Своё имя (именной, сюжетный) кнопка берёт сама; метку
+    * тьмы ставит значком; поднятый — «Нежить-Орк воин». */
+  def shortName: String = {
+    val base = Monster.shortNames.getOrElse((race, rarity),
+      Monster.namesByRaceRarity.getOrElse((race, rarity), s"$rarity $race"))
+    if (undead) s"${Monster.UndeadPrefix}-$base" else base
+  }
 }
 
 object Monster {
@@ -115,6 +125,19 @@ object Monster {
     // ── Дракон ─────────────────────────────────────────────────────────────
     // Один на всю расу, см. MonsterGenerator.dragon.
     (Race.Dragon, Rarity.Legendary) -> "Дракон"
+  )
+
+  /** Короткие имена для кнопки выбора цели — только там, где полное длинное.
+    * У остальных на кнопке то же имя, что и на экране боя (см. [[Monster.shortName]]). */
+  val shortNames: Map[(Race, Rarity), String] = Map(
+    (Race.Murloc, Rarity.Rare)      -> "Мурлок-убийца",
+    (Race.Elf, Rarity.Common)       -> "Эльф-раб",
+    (Race.Orc, Rarity.Mythical)     -> "Орк-командир",
+    (Race.Goblin, Rarity.Common)    -> "Гоблин-раб",
+    (Race.Goblin, Rarity.Mythical)  -> "Хобгоблин",
+    (Race.Human, Rarity.Mythical)   -> "Капитан разбойников",
+    (Race.Khajiit, Rarity.Rare)     -> "Солдат когтя",
+    (Race.Khajiit, Rarity.Mythical) -> "Капитан когтя"
   )
 
   /** Имена легендарных: у каждой расы свой список, из него имя и берётся при

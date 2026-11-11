@@ -177,17 +177,17 @@ final case class MonsterSlot(
 
   /** Как зовут моба на кнопке выбора цели. Именного — по имени: легендарного,
     * минибосса и того, кому имя дала сцена (на арене так зовут бойцов
-    * соперника). Остальных — «Раса-ранг»: «Гоблин-3», «Нежить-Орк-2», ранг 1 —
-    * самый слабый (см. [[Rarity.rank]]). Отмеченного тьмой выделяет
-    * [[Monster.MarkedBadge]] впереди: «⚫ Гоблин-3»; полное имя с меткой — на
-    * экране боя, над кнопками. */
+    * соперника). Остальных — коротким именем: тем же, что на экране боя, а
+    * длинное — сокращённым («Хобгоблин», см. [[Monster.shortName]]). Отмеченного
+    * тьмой выделяет [[Monster.MarkedBadge]] впереди: «⚫ Ловкий гоблин»; полное
+    * имя с меткой — на экране боя, над кнопками. */
   def targetName: String = {
     val m    = toMonster
     val base =
       if (boss.isDefined || customName.isDefined || m.rarity == Rarity.Legendary)
         boss.flatMap(pangea.model.monster.MiniBoss.byName).map(_.monsterName).orElse(customName)
           .getOrElse(m.copy(marked = false, undead = false).name)
-      else s"${m.raceName}-${m.rarity.rank}"
+      else m.shortName
     if (marked) s"${Monster.MarkedBadge} $base" else base
   }
 

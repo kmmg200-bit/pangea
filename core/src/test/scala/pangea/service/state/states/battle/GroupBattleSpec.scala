@@ -479,7 +479,7 @@ object GroupBattleSpec extends ZIOSpecDefault {
               assertTrue(after.group.round == 0)
     },
 
-    test("кнопка цели — «Раса-ранг» с здоровьем и бронёй; отмеченный тьмой — с ⚫ вместо длинной метки") {
+    test("кнопка цели — короткое имя со здоровьем и бронёй; отмеченный тьмой — с ⚫ вместо длинной метки") {
       val h = heroWithSkills(Skill.SweepingStrike, Skill.MinorHeal)
       // Самое длинное имя в игре, да ещё с меткой тьмы — на кнопке его нет.
       val chief = Monster(0L, lvl, Race.Goblin, Rarity.Mythical,
@@ -494,11 +494,11 @@ object GroupBattleSpec extends ZIOSpecDefault {
         labels   = ask.choices.filter(_.id == "Skill_101").map(_.label)
       } yield assertTrue(labels.size == 2) &&
               assertTrue(labels.forall(_.length <= pangea.engine.Choice.MaxLabelLength)) &&
-              assertTrue(labels.head == "1. ⚫ Гоблин-4 ❤ 100% 🧥 0%") &&
+              assertTrue(labels.head == "1. ⚫ Хобгоблин ❤ 100% 🧥 0%") &&
               assertTrue(chief.name == "Отмеченный тьмой Хобгоблин — предводитель банды")
     },
 
-    test("на кнопке цели: ранг 1–4 — «Раса-ранг», нежить — «Нежить-Раса-ранг», именной и минибосс — по имени") {
+    test("на кнопке цели: короткое имя моба, нежить — «Нежить-…», именной и минибосс — по своему имени") {
       def mob(rarity: Rarity, race: Race = Race.Goblin, undead: Boolean = false, name: Option[String] = None) =
         Monster(0L, lvl, race, rarity,
           FightStats(atk = 20, hp = 1000, armor = 200, defence = 0, evasion = 0, accuracy = 9999, energy = 0),
@@ -507,8 +507,7 @@ object GroupBattleSpec extends ZIOSpecDefault {
                 mob(Rarity.Rare), mob(Rarity.Legendary), mob(Rarity.Legendary, name = Some("Шныга Трёхпалый"))),
                 hero(), Nil)
       val names = (1 to 5).toList.flatMap(b.monsterAt).map(_.targetName)
-      assertTrue(names == List("Гоблин-1", "Нежить-Орк-2", "Гоблин-3", "Эззи Повелитель Гоблинов", "Шныга Трёхпалый")) &&
-      assertTrue(Rarity.values.map(_.rank).toList == List(1, 2, 3, 4, 5)) &&
+      assertTrue(names == List("Гоблин-раб", "Нежить-Орк воин", "Ловкий гоблин", "Эззи Повелитель Гоблинов", "Шныга Трёхпалый")) &&
       assertTrue(b.copy(bossKind = Some(pangea.model.monster.MiniBoss.values.head.entryName))
         .monsterAt(b.group.activePos).exists(_.targetName == pangea.model.monster.MiniBoss.values.head.monsterName))
     },
@@ -530,7 +529,22 @@ object GroupBattleSpec extends ZIOSpecDefault {
       } yield assertTrue(labels.size == 2) &&
               assertTrue(labels.forall(_.length <= pangea.engine.Choice.MaxLabelLength)) &&
               assertTrue(labels.head.startsWith("1. Меллион Говорящий") && labels.head.endsWith("… ❤ 100% 🧥 100%")) &&
-              assertTrue(labels(1) == "2. Эльф-3 ❤ 100% 🧥 50%")
+              assertTrue(labels(1) == "2. Эльф следопыт ❤ 100% 🧥 50%")
+    },
+
+    test("короткие имена: сокращены только длинные, и любая кнопка с ними — в пределе ВК, целиком") {
+      val ordinary = Monster.namesByRaceRarity.keys.filter(_._2 != Rarity.Legendary).toList
+      def short(race: Race, rarity: Rarity) =
+        Monster(0L, lvl, race, rarity, FightStats(atk = 1, hp = 1, armor = 0, defence = 0, evasion = 0, accuracy = 1, energy = 0))
+          .shortName
+      // самая длинная кнопка: двузначное место, ⚫ и полные проценты. У нежити с
+      // длинным именем («Нежить-Капитан разбойников») имя срежет targetLabel —
+      // проценты останутся
+      val widest = ordinary.map { case (race, rarity) => s"11. ⚫ ${short(race, rarity)} ❤ 100% 🧥 100%" }
+      assertTrue(short(Race.Goblin, Rarity.Mythical) == "Хобгоблин" && short(Race.Human, Rarity.Mythical) == "Капитан разбойников") &&
+      assertTrue(short(Race.Khajiit, Rarity.Rare) == "Солдат когтя" && short(Race.Orc, Rarity.Uncommon) == "Орк воин") &&
+      assertTrue(Monster.shortNames.keySet.subsetOf(Monster.namesByRaceRarity.keySet)) &&
+      assertTrue(widest.forall(_.length <= pangea.engine.Choice.MaxLabelLength))
     },
 
     test("легендарный в конце первого раунда зовёт 2–3 сородичей 3–4 ранга") {
