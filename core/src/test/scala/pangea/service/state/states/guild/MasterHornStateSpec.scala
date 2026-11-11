@@ -1,12 +1,12 @@
 package pangea.service.state.states.guild
 
-import pangea.engine.SceneContent
-import pangea.model.quest.{DailyKind, DailyNpc, DailyQuests, DailyRates, DailyTask}
+import pangea.engine.{Choice, SceneContent}
+import pangea.model.quest.{DailyKind, DailyNpc, DailyQuests, DailyRates, DailyTask, NpcQuest, NpcQuestProgress}
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
-import pangea.service.state.{DailyQuestLog, UserAction}
+import pangea.service.state.{DailyQuestLog, NpcQuestLog, UserAction}
 import pangea.test.{TestBankRepository, TestFixtures, TestHeroDao, TestInventoryRepository, TestRenderer}
-import zio.ZIO
+import zio.{Task, ZIO}
 import zio.test._
 
 object MasterHornStateSpec extends ZIOSpecDefault {
@@ -27,6 +27,13 @@ object MasterHornStateSpec extends ZIOSpecDefault {
       renderer <- TestRenderer.make
       content  <- ZIO.attempt(SceneContent.load())
     } yield (MasterHornState(heroDao, invRepo, content), heroDao, renderer)
+
+  /** Кнопки последнего показанного экрана — меню Горна. */
+  private def lastMenu(renderer: TestRenderer): Task[List[Choice]] =
+    renderer.sentScreens.map(_.lastOption.toList.flatMap(_.choices))
+
+  private def label(choices: List[Choice], id: String): Option[String] =
+    choices.find(_.id == id).map(_.label)
 
   override def spec = suite("MasterHornState")(
 
@@ -101,6 +108,38 @@ object MasterHornStateSpec extends ZIOSpecDefault {
               assertTrue(saved.taken && saved.kind == DailyKind.HornReputation && saved.from == 95L) &&
               // наберёт теперь 60 — наказ готов: потраченное отрабатывать не нужно
               assertTrue(saved.withCounter(hero.guildReputation + 60L).ready)
+    },
+
+    test("меню: на кнопке каждой характеристики — цена её следующего улучшения в репутации, после улучшения — новая") {
+      for {
+        t <- makeState(reputation = 100L, silver = 100L)
+        (state, _, renderer) = t
+        _      <- state.enter(testUser, renderer)
+        before <- lastMenu(renderer)
+        _      <- state.action(testUser, tap("ImproveArmor"), renderer)
+        _      <- state.action(testUser, tap("ConfirmImprove"), renderer)
+        _      <- state.action(testUser, tap("CancelImprove"), renderer)
+        after  <- lastMenu(renderer)
+        stats   = before.filter(_.id.startsWith("Improve"))
+      } yield assertTrue(stats.size == 7 && stats.forall(_.label.endsWith(" — 🎖 5"))) &&
+              assertTrue(label(before, "ImproveArmor").contains("Броня — 🎖 5")) &&
+              assertTrue(label(before, "ImproveInventory").contains("Вместимость инвентаря — 🎖 5")) &&
+              assertTrue(label(before, "LeaveMasterHorn").contains("↩ Назад")) &&
+              // второе улучшение брони: ⌈35 × 1,2 − 30⌉ = 12; остальные не дорожают
+              assertTrue(label(after, "ImproveArmor").contains("Броня — 🎖 12")) &&
+              assertTrue(label(after, "ImproveEvasion").contains("Уклонение — 🎖 5"))
+    },
+
+    test("меню: пока по заданию Горна улучшение даром — на кнопках «даром», а не цена") {
+      for {
+        t <- makeState(reputation = 100L, silver = 0L)
+        (state, heroDao, renderer) = t
+        _    <- NpcQuestLog.modify(heroDao, userId)(_.updated(NpcQuest.Horn, NpcQuestProgress(step = 2, counter = 100L)))
+        _    <- state.enter(testUser, renderer)
+        menu <- lastMenu(renderer)
+        stats = menu.filter(_.id.startsWith("Improve"))
+      } yield assertTrue(stats.size == 7 && stats.forall(c => c.label.endsWith(" — даром") && !c.label.contains("🎖"))) &&
+              assertTrue(label(menu, "ImproveAttack").contains("Атака — даром"))
     },
 
     test("LeaveMasterHorn → переход в TrainingHall") {

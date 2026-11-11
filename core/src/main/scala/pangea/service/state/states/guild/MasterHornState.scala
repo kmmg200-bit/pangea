@@ -6,7 +6,7 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.model.hero.{Hero, MasterHornBoosts}
 import pangea.model.item.{QuestItemKind, Rarity}
-import pangea.model.quest.NpcQuest
+import pangea.model.quest.{NpcQuest, NpcQuests}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
@@ -88,8 +88,10 @@ case class MasterHornState(
           copies <- if (StoryFaceQuest.toHorn(quests)) hasStory(hero, QuestItemKind.StoryCopies) else ZIO.succeed(false)
           story   = Option.when(cloak)(content.choice("HornStory", "story.storyMark.horn.label"))
           face    = Option.when(copies)(content.choice("HornFace", "story.storyFace.horn.label"))
+          free    = isFree(quests)
+          stats   = front.map(c => statOf(c.id).fold(c)(stat => c.copy(label = priceLabel(c.label, hero, stat, free))))
           _    <- renderer.show(user, CityExit.on(base.copy(
-                    choices = front ++ quest.button(quests).toList ++ daily.button(work).toList ++ story.toList ++
+                    choices = stats ++ quest.button(quests).toList ++ daily.button(work).toList ++ story.toList ++
                       face.toList ++ back), content))
         } yield ()
       }
@@ -184,7 +186,14 @@ case class MasterHornState(
 
   /** Улучшение даром — пока задание на втором шаге. */
   private def freeImprove(user: User): Task[Boolean] =
-    quest.load(user).map(_.onStep(NpcQuest.Horn, 2))
+    quest.load(user).map(isFree)
+
+  /** Подпись кнопки характеристики в меню: сколько репутации стоит её
+    * следующее улучшение (серебра уходит столько же), а пока по заданию
+    * улучшение даром — так и написано. */
+  private def priceLabel(label: String, hero: Hero, stat: Stat, free: Boolean): String =
+    if (free) content.format("guild.masterHorn.freeLabel", "stat" -> label)
+    else content.format("guild.masterHorn.costLabel", "stat" -> label, "cost" -> cost(hero, stat).toString)
 
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     branch.act(user, ua, renderer)
@@ -315,6 +324,14 @@ object MasterHornState {
     case object Energy        extends Stat("Энергия", 1)
     case object Inventory     extends Stat("Вместимость инвентаря", 1)
   }
+
+  /** Характеристика под кнопкой меню: «ImproveArmor» — Броня. Кнопки меню
+    * названы по характеристикам, поэтому ищем по имени. */
+  private def statOf(action: String): Option[Stat] =
+    Stat.values.find(stat => s"Improve${stat.entryName}" == action)
+
+  /** Улучшение даром — пока задание Горна на втором шаге. */
+  private def isFree(quests: NpcQuests): Boolean = quests.onStep(NpcQuest.Horn, 2)
 
   /** Накопленный прирост стата от Мастера Горна (кратен `stat.step`). */
   def boostsFor(hero: Hero, stat: Stat): Long = boostsFor(hero.masterHornBoosts, stat)
