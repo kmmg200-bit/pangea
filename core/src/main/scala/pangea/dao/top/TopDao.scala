@@ -12,21 +12,23 @@ import zio.interop.catz._
 import zio.{Task, ZLayer}
 
 /** Топы героев. В топ идут только те, кто прошёл регистрацию; админов в нём
-  * нет — их герои часто тестовые. При равенстве выше тот, у кого выше уровень
-  * и опыт, а дальше — кто раньше начал (меньший номер героя). */
+  * нет — их герои часто тестовые, — и тех, кого прячет Зелье исчезновения
+  * Фета. При равенстве выше тот, у кого выше уровень и опыт, а дальше — кто
+  * раньше начал (меньший номер героя). */
 trait TopDao {
 
   /** Снимок топа: весь порядок героев одним запросом — по нему место любого
-    * героя — и строки первых `size`. */
-  def board(kind: TopKind, size: Int): Task[TopBoard]
+    * героя — и строки первых `size`. `nowMs` — сейчас: по нему видно, кого
+    * зелье ещё прячет. */
+  def board(kind: TopKind, size: Int, nowMs: Long): Task[TopBoard]
 }
 
 final class TopDaoLive(xa: transactor.Transactor[Task]) extends TopDao {
   import TopDaoLive._
 
-  override def board(kind: TopKind, size: Int): Task[TopBoard] =
+  override def board(kind: TopKind, size: Int, nowMs: Long): Task[TopBoard] =
     (for {
-      order   <- (fr"select h.id," ++ ranked ++ fr"," ++ valueColumn(kind) ++ fr"from heroes h order by" ++ orderBy(kind))
+      order   <- (fr"select h.id," ++ ranked(nowMs) ++ fr"," ++ valueColumn(kind) ++ fr"from heroes h order by" ++ orderBy(kind))
                    .query[(HeroId, Boolean, Long)].to[Vector]
       details <- NonEmptyList.fromList(TopBoard.firsts(order, size)) match {
                    case None      => doobie.free.connection.pure(List.empty[TopRow])
@@ -40,9 +42,11 @@ final class TopDaoLive(xa: transactor.Transactor[Task]) extends TopDao {
 
 object TopDaoLive {
 
-  /** В топе ли герой: прошёл регистрацию и не админ. */
-  private val ranked: Fragment =
-    fr"(h.state <> ${StateType.Registration: StateType} and not exists" ++
+  /** В топе ли герой: прошёл регистрацию, не админ и не спрятан Зельем
+    * исчезновения (см. FetShopState). Спрятанному, как и админу, своё место
+    * видно всё равно — оно считается по тому же порядку. */
+  private def ranked(nowMs: Long): Fragment =
+    fr"(h.state <> ${StateType.Registration: StateType} and coalesce(h.top_hidden_until, 0) <= $nowMs and not exists" ++
       fr"(select 1 from admins a where a.user_id = h.user_id))"
 
   /** Чем топ меряет героя. Имена колонок — свои, снаружи не приходят. Из

@@ -654,7 +654,7 @@ final class MiniAppLive(
     topCache.get.map(_.get(kind).filter(c => ms - c.at < MiniApp.TopTtlMs)).flatMap {
       case Some(fresh) => ZIO.succeed(fresh.board)
       case None =>
-        tops.board(kind, MiniApp.TopSize).tap(board => topCache.update(_ + (kind -> MiniApp.CachedTop(ms, board))))
+        tops.board(kind, MiniApp.TopSize, ms).tap(board => topCache.update(_ + (kind -> MiniApp.CachedTop(ms, board))))
     }
 
   /** Куб читается без записи, как и всё в просмотре: отдыхи благословения

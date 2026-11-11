@@ -60,7 +60,9 @@ case class HeroStatsState(
       hero  <- SquadDuty.settle(heroDao, content, user, hero0, now, renderer)
       azat  <- AzatData.load(heroDao, user.userId, now)
       keeps <- hasStorage(hero)
-      _     <- renderer.show(user, buildStatsScreen(hero, now, azat.blessingUntil, azat.instantRests, keeps))
+      // Зелье исчезновения Фета: срок — в карточке, рядом с благословением.
+      gone  <- heroDao.readTopHiddenUntil(user.userId)
+      _     <- renderer.show(user, buildStatsScreen(hero, now, azat.blessingUntil, azat.instantRests, keeps, gone))
     } yield ()
 
   /** Есть ли у героя хранилище сверх сумки. Репозитория нет — значит и хранилищ
@@ -162,7 +164,7 @@ case class HeroStatsState(
   }
 
   private def buildStatsScreen(hero: Hero, nowMs: Long, blessingUntil: Option[Long], instantRests: Int,
-                               hasStorage: Boolean): Screen = {
+                               hasStorage: Boolean, vanishUntil: Option[Long] = None): Screen = {
     val traumaLine = hero.traumaRemainingText(nowMs).map { remaining =>
       val names = hero.activeTraumas(nowMs).map(_.name)
       val namesStr = if (names.isEmpty) "Травмы" else names.mkString(", ")
@@ -190,7 +192,7 @@ case class HeroStatsState(
       Some(AppButton.choice(content, row = Some(3))),
       Some(content.choice("Back", "heroStats.leave").copy(color = ChoiceColor.Negative, row = Some(3)))
     ).flatten
-    Screen(hero.getInfo(nowMs, blessingUntil, instantRests) + traumaLine, choices)
+    Screen(hero.getInfo(nowMs, blessingUntil, instantRests, vanishUntil) + traumaLine, choices)
   }
 
   private def getHero(user: User): Task[Hero] =

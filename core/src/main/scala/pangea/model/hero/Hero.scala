@@ -328,17 +328,22 @@ case class Hero(
    *  Азата) и `instantRests` (сколько быстрых отдыхов в запасе) живут в
    *  `azat_data`, а не в самом герое, поэтому приходят параметрами. У
    *  благословения пишем, сколько ему ещё идти. Отдыхи показываем и без
-   *  благословения: заряды остаются, даже когда оно кончилось.
+   *  благословения: заряды остаются, даже когда оно кончилось. `vanishUntil` —
+   *  до какого момента Зелье исчезновения Фета прячет героя из рейтингов (живёт
+   *  в своей колонке): пока прячет — тоже срок.
    *
    *  У четырёх характеристик — силы, тела, ловкости и ума — число текущее, со
    *  всем, что сейчас действует, а в скобках за ним родное: до расы, травм и
    *  зелий. Скобки появляются только там, где числа разошлись. Остальные
    *  строки — как и были, одним числом. */
-  def getInfo(nowMs: Long, blessingUntil: Option[Long] = None, instantRests: Int = 0): String = {
+  def getInfo(nowMs: Long, blessingUntil: Option[Long] = None, instantRests: Int = 0,
+              vanishUntil: Option[Long] = None): String = {
     val c = card(nowMs)
     val (effB, natB, eff) = (c.stats, c.native, c.fight)
     val blessingLine = blessingUntil.filter(_ > nowMs)
                          .fold("")(until => s"\n ✨ Благословение: ещё ${pangea.util.TimeLeft.format(until - nowMs)}")
+    val vanishLine   = vanishUntil.filter(_ > nowMs)
+                         .fold("")(until => s"\n 🌫 Исчезновение: ещё ${pangea.util.TimeLeft.format(until - nowMs)}")
     val frozenLine   = if (c.expFrozen) "\n ❄ Опыт остановлен" else ""
     val restedLine   = c.restedLeftMs.fold("") { ms =>
       s"\n 🛏 Выспались дома: +${pangea.model.home.HomeRates.RestedExpPct}% опыта, ещё ${HeroCard.restedLeft(ms)}"
@@ -346,7 +351,7 @@ case class Hero(
     val restsLine    = if (instantRests > 0) s"\n ⚡ Быстрых отдыхов: $instantRests" else ""
     import Hero.withNative
     s"""${c.race}, Уровень ${c.lvl}  ☠ Убито: ${c.kills}
-       | ${c.exp}/${c.neededExp} опыта$frozenLine$restedLine$blessingLine$restsLine
+       | ${c.exp}/${c.neededExp} опыта$frozenLine$restedLine$blessingLine$vanishLine$restsLine
        |
        | 💪 СИЛ ${withNative(effB.str, natB.str)}  ТЕЛО ${withNative(effB.vit, natB.vit)}
        | 🏃 ЛОВ ${withNative(effB.agi, natB.agi)}  ИНТ ${withNative(effB.int, natB.int)}

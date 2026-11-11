@@ -16,6 +16,7 @@ import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.state.{CityExit, HedgeSongQuest, NpcQuestDialog, QuestSupport, StackMove, State, StrayCasketQuest, UserAction}
+import pangea.util.TimeLeft
 import zio.{Random, Task, ZIO}
 
 /** Лавка Фета в Торговом доме: сборные артефакты Азата. Каждый стоит
@@ -25,7 +26,10 @@ import zio.{Random, Task, ZIO}
  *  кто принёс ветвь живой изгороди, — и в четвёртый раз (см.
  *  [[HeroArtifacts.maxTier]]). С краю прилавка — три
  *  зелья ([[FetPotion]]) по [[FetShopState.PotionPriceDoubloons]] дублонов: их
- *  выпивают сразу, при покупке. И два купона — каждый своей сценой: на смену
+ *  выпивают сразу, при покупке. Рядом — Зелье исчезновения: склянка за
+ *  [[FetShopState.VanishPriceDoubloons]] прячет героя из рейтингов на
+ *  [[FetShopState.VanishDays]] дней, склянок можно взять сколько угодно разом, а
+ *  туман развеять раньше срока — даром. И два купона — каждый своей сценой: на смену
  *  расы за [[FetShopState.CouponPriceDoubloons]] (см. RaceQuestState) и на смену
  *  имени за [[FetShopState.NameCouponPriceDoubloons]] (см. NameChangeState). Оба
  *  ложатся в сумку, а в ход идут с карточки предмета. И беспроигрышная лотерея:
@@ -68,6 +72,13 @@ case class FetShopState(
       "FetPotion"     -> Target.Run { (u, ua, r) => withPotion(ua)(showPotion(u, _, r)).as(StateType.FetShop) },
       "FetPotionBuy"  -> Target.Run { (u, ua, r) => withPotion(ua)(confirmPotion(u, _, r)).as(StateType.FetShop) },
       "FetPotionYes"  -> Target.Run { (u, ua, r) => withPotion(ua)(drinkPotion(u, _, r)).as(StateType.FetShop) },
+      // Зелье исчезновения: склянок сколько угодно разом — числом в чате.
+      "FetVanish"        -> Target.Run { (u, _, r)  => showVanish(u, r).as(StateType.FetShop) },
+      "FetVanishBuy"     -> Target.Run { (u, _, r)  => confirmVanish(u, 1, r).as(StateType.FetShop) },
+      "FetVanishYes"     -> Target.Run { (u, ua, r) => drinkVanish(u, payloadCount(ua), r).as(StateType.FetShop) },
+      "FetVanishLift"    -> Target.Run { (u, _, r)  => confirmLift(u, r).as(StateType.FetShop) },
+      "FetVanishLiftYes" -> Target.Run { (u, _, r)  => liftVanish(u, r).as(StateType.FetShop) },
+      "Text"             -> Target.Run { (u, ua, r) => onText(u, ua, r).as(StateType.FetShop) },
       "FetCoupon"     -> Target.Run { (u, _, r)  => showCoupon(u, r).as(StateType.FetShop) },
       "FetCouponBuy"  -> Target.Run { (u, _, r)  => confirmCoupon(u, r).as(StateType.FetShop) },
       "FetCouponYes"  -> Target.Run { (u, _, r)  => buyCoupon(u, r).as(StateType.FetShop) },
@@ -101,13 +112,18 @@ case class FetShopState(
       val goods = ArtifactKind.values.toList.zipWithIndex.map { case (k, i) =>
         Choice("FetGoods", content.text(s"artifact.${k.key}.title"), data = Map("kind" -> k.entryName), row = Some(i))
       }
-      val potions = FetPotion.values.toList.zipWithIndex.map { case (p, i) =>
-        Choice("FetPotion", content.text(s"fet.potions.${p.key}.title"), data = Map("potion" -> p.entryName),
-          row = Some(ArtifactKind.values.size + i))
+      // Зелья — по два в ряд, Зелье исчезновения последним: рядов у ВК десять,
+      // и все они уже заняты.
+      val potionButtons = FetPotion.values.toList.map { p =>
+        Choice("FetPotion", content.text(s"fet.potions.${p.key}.title"), data = Map("potion" -> p.entryName))
+      } :+ Choice("FetVanish", content.text("fet.vanish.title"))
+      val potions = potionButtons.zipWithIndex.map { case (c, i) =>
+        c.copy(row = Some(ArtifactKind.values.size + i / FetShopState.PotionsPerRow))
       }
+      val potionRows = (potionButtons.size + FetShopState.PotionsPerRow - 1) / FetShopState.PotionsPerRow
       // Лотерея — своим рядом под зельями. Рядов теперь до десяти — столько,
       // сколько держит клавиатура ВК: новому товару — в общий ряд.
-      val lotteryRow = ArtifactKind.values.size + FetPotion.values.size
+      val lotteryRow = ArtifactKind.values.size + potionRows
       val lottery    = if (itemRepo.isEmpty) Nil
                        else List(Choice("FetRunes", content.text("fet.runes.title"), row = Some(lotteryRow)))
       // Оба купона — в одном ряду: у ВК не больше десяти рядов на клавиатуре.
@@ -126,11 +142,14 @@ case class FetShopState(
       val talk      = (quest.button(quests).toList ++ strayBtn.toList ++ branchBtn.toList)
                         .map(_.copy(row = Some(questRow)))
       val leaveRow = questRow + (if (talk.isEmpty) 0 else 1)
-      renderer.show(user, Screen(content.text("fet.counter"),
-        goods ++ potions ++ lottery ++ coupons ++ talk ++ List(
-          Choice("LeaveFetShop", content.text("fet.leave"),
-            color = ChoiceColor.Negative, row = Some(leaveRow)),
-          CityExit.button(content, Some(leaveRow)))))
+      // У прилавка число в чате уже ничего не значит: карточка Зелья
+      // исчезновения закрыта.
+      heroDao.writeSceneData(user.userId, Json.Null) *>
+        renderer.show(user, Screen(content.text("fet.counter"),
+          goods ++ potions ++ lottery ++ coupons ++ talk ++ List(
+            Choice("LeaveFetShop", content.text("fet.leave"),
+              color = ChoiceColor.Negative, row = Some(leaveRow)),
+            CityExit.button(content, Some(leaveRow)))))
     }
 
   // ── «Живая кожа» ──────────────────────────────────────────────
@@ -391,6 +410,126 @@ case class FetShopState(
       ZIO.when(capped != hero.fightStats)(heroDao.updateFightStats(user.userId, capped)).unit
   }
 
+  // ── Зелье исчезновения ────────────────────────────────────────────────────
+
+  /** Карточка: рассказ Фета, сколько ещё держится туман и «Развеять», пока он
+    * держится. Пока карточка открыта, число в чате — сколько склянок взять
+    * (см. [[onText]]). */
+  private def showVanish(user: User, renderer: Renderer): Task[Unit] =
+    for {
+      now   <- nowMs
+      until <- heroDao.readTopHiddenUntil(user.userId)
+      left   = until.filter(_ > now).map(u => TimeLeft.format(u - now))
+      _     <- heroDao.writeSceneData(user.userId, Json.obj(FetShopState.VanishKey -> Json.True))
+      text   = content.format("fet.vanish.pitch", "days" -> FetShopState.VanishDays.toString) +
+                 left.fold("")(l => "\n\n" + content.format("fet.vanish.state", "left" -> l))
+      buttons = List(
+                  Some(Choice("FetVanishBuy",
+                    Choice.fit(content.format("fet.potionBuyLabel", "price" -> FetShopState.VanishPriceDoubloons.toString)),
+                    color = ChoiceColor.Positive, row = Some(0))),
+                  left.map(_ => Choice("FetVanishLift", content.text("fet.vanish.liftLabel"), row = Some(0))),
+                  Some(Choice("FetShop", content.text("fet.back"), color = ChoiceColor.Negative, row = Some(1)))
+                ).flatten
+      _     <- renderer.show(user, Screen(text, buttons))
+    } yield ()
+
+  /** Сколько склянок взять — числом в чате, пока открыта карточка зелья. В
+    * другое время число у прилавка ничего не значит — снова прилавок. */
+  private def onText(user: User, ua: UserAction, renderer: Renderer): Task[Unit] =
+    heroDao.readSceneData(user.userId).flatMap { scene =>
+      val onCard = scene.flatMap(_.hcursor.get[Boolean](FetShopState.VanishKey).toOption).contains(true)
+      if (!onCard) showShop(user, renderer)
+      else ua.text.trim match {
+        // Пустое (картинка, стикер, перезапуск сцены) — снова карточка.
+        case "" => showVanish(user, renderer)
+        case t  => t.toIntOption.filter(_ >= 1) match {
+          case Some(n) => confirmVanish(user, n, renderer)
+          case None    => renderer.show(user, Screen(content.text("fet.vanish.badCount"), Nil))
+        }
+      }
+    }
+
+  /** «Выпить столько-то за столько-то? Туман продержится …» — срок с учётом
+    * остатка. Дублонов не хватает — Фет так и говорит, клавиатура карточки
+    * остаётся: можно написать число поменьше. */
+  private def confirmVanish(user: User, n: Int, renderer: Renderer): Task[Unit] =
+    for {
+      now   <- nowMs
+      hero  <- getHero(user)
+      until <- heroDao.readTopHiddenUntil(user.userId)
+      price  = FetShopState.VanishPriceDoubloons * n
+      left   = TimeLeft.format(FetShopState.vanishUntil(until, now, n) - now)
+      title  = content.text("fet.vanish.title")
+      _ <- if (hero.doubloons < price)
+             renderer.show(user, Screen(content.format("fet.notEnough", "price" -> price.toString), Nil))
+           else
+             renderer.show(user, Screen(
+               if (n == 1) content.format("fet.vanish.confirmOne", "title" -> title, "price" -> price.toString, "left" -> left)
+               else content.format("fet.vanish.confirmMany", "title" -> title, "count" -> n.toString,
+                      "price" -> price.toString, "left" -> left),
+               List(
+                 Choice("FetVanishYes", content.text("fet.confirmYes"), color = ChoiceColor.Positive,
+                   data = Map("n" -> n.toString), row = Some(0)),
+                 Choice("FetVanish", content.text("fet.confirmNo"), color = ChoiceColor.Negative, row = Some(0))
+               ), inline = true))
+    } yield ()
+
+  /** Выпить `n` склянок: дублоны — Фету, к сроку тумана — по неделе за каждую.
+    * Дублонов уже не хватает (потратил, пока думал) — ничего не тратим. */
+  private def drinkVanish(user: User, n: Int, renderer: Renderer): Task[Unit] =
+    for {
+      now   <- nowMs
+      hero  <- getHero(user)
+      until <- heroDao.readTopHiddenUntil(user.userId)
+      price  = FetShopState.VanishPriceDoubloons * n
+      _ <- if (hero.doubloons < price)
+             renderer.show(user, Screen(content.format("fet.notEnough", "price" -> price.toString), backRow))
+           else {
+             val after = FetShopState.vanishUntil(until, now, n)
+             heroDao.updateDoubloons(user.userId, hero.doubloons - price) *>
+               heroDao.updateTopHiddenUntil(user.userId, Some(after)) *>
+               renderer.show(user, Screen(content.format("fet.vanish.done",
+                 "count" -> n.toString, "left" -> TimeLeft.format(after - now)), Nil)) *>
+               showShop(user, renderer)
+           }
+    } yield ()
+
+  /** «Развеять туман?» — бесплатно, но выпитое Фет не вернёт. Тумана уже нет —
+    * снова карточка. */
+  private def confirmLift(user: User, renderer: Renderer): Task[Unit] =
+    for {
+      now   <- nowMs
+      until <- heroDao.readTopHiddenUntil(user.userId)
+      _ <- until.filter(_ > now) match {
+             case None => showVanish(user, renderer)
+             case Some(u) =>
+               renderer.show(user, Screen(content.format("fet.vanish.liftConfirm", "left" -> TimeLeft.format(u - now)),
+                 List(
+                   Choice("FetVanishLiftYes", content.text("fet.vanish.liftYes"), color = ChoiceColor.Positive, row = Some(0)),
+                   Choice("FetVanish", content.text("fet.confirmNo"), color = ChoiceColor.Negative, row = Some(0))
+                 ), inline = true))
+           }
+    } yield ()
+
+  /** Развеять туман: рейтинги снова видят героя. Денег Фет не берёт. */
+  private def liftVanish(user: User, renderer: Renderer): Task[Unit] =
+    for {
+      now   <- nowMs
+      until <- heroDao.readTopHiddenUntil(user.userId)
+      _ <- if (!until.exists(_ > now)) showVanish(user, renderer)
+           else heroDao.updateTopHiddenUntil(user.userId, None) *>
+             renderer.show(user, Screen(content.text("fet.vanish.lifted"), Nil)) *>
+             showShop(user, renderer)
+    } yield ()
+
+  /** Сколько склянок обещало подтверждение: его число едет в кнопке. */
+  private def payloadCount(ua: UserAction): Int =
+    ua.payload.flatMap(p => jawn.decode[Map[String, String]](p).toOption)
+      .flatMap(_.get("n")).flatMap(_.toIntOption).filter(_ >= 1).getOrElse(1)
+
+  private def nowMs: Task[Long] =
+    ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
+
   private def withPotion(ua: UserAction)(f: FetPotion => Task[Unit]): Task[Unit] =
     ua.payload
       .flatMap(p => jawn.decode[Map[String, String]](p).toOption.flatMap(_.get("potion")))
@@ -601,6 +740,24 @@ object FetShopState {
 
   /** Почём у Фета каждое зелье. */
   val PotionPriceDoubloons: Long = 100L
+
+  /** Сколько зелий в ряду клавиатуры прилавка. */
+  val PotionsPerRow: Int = 2
+
+  /** Зелье исчезновения: почём склянка и на сколько дней она прячет героя из
+    * рейтингов. */
+  val VanishPriceDoubloons: Long = 150L
+  val VanishDays: Int            = 7
+  val VanishMs: Long             = VanishDays.toLong * 24L * 60L * 60L * 1000L
+
+  /** Метка в `scene_data`: открыта карточка Зелья исчезновения — число в чате
+    * значит, сколько склянок взять. */
+  val VanishKey: String = "fetVanish"
+
+  /** До какого момента туман продержится после ещё `n` склянок: срок
+    * прибавляется к остатку, а кончился — отсчёт от сейчас. */
+  def vanishUntil(current: Option[Long], nowMs: Long, n: Int): Long =
+    current.filter(_ > nowMs).getOrElse(nowMs) + n.toLong * VanishMs
 
   /** Почём купон на смену расы. */
   val CouponPriceDoubloons: Long = 100L

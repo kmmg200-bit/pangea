@@ -150,6 +150,13 @@ object Queries {
   def updateExpFrozen(userId: UserId, frozen: Boolean): Fragment =
     sql"update $tableName set exp_frozen = $frozen where user_id = $userId"
 
+  /** Зелье исчезновения: до какого момента герой спрятан из рейтингов. */
+  def readTopHiddenUntil(userId: UserId): Fragment =
+    sql"select top_hidden_until from $tableName where user_id = $userId"
+
+  def updateTopHiddenUntil(userId: UserId, until: Option[Long]): Fragment =
+    sql"update $tableName set top_hidden_until = $until where user_id = $userId"
+
   def updateName(userId: UserId, name: String): Fragment =
     sql"update $tableName set name = $name where user_id = $userId"
 

@@ -37,6 +37,10 @@ trait HeroDao {
   def addBrews(userId: UserId, n: Long): Task[Unit]
   /** Остановить или запустить опыт (зелья Фета, см. [[pangea.model.hero.Hero.expFrozen]]). */
   def updateExpFrozen(userId: UserId, frozen: Boolean): Task[Unit]
+  /** До какого момента Зелье исчезновения Фета прячет героя из рейтингов (см.
+    * [[pangea.dao.top.TopDao]]); None — не прячет. */
+  def readTopHiddenUntil(userId: UserId): Task[Option[Long]]
+  def updateTopHiddenUntil(userId: UserId, until: Option[Long]): Task[Unit]
   /** Занято ли имя другим героем (без учёта регистра). */
   def nameTaken(userId: UserId, name: String): Task[Boolean]
   /** Дать герою имя. `false` — его только что занял другой: уникальность
