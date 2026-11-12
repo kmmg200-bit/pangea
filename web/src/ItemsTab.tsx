@@ -163,7 +163,8 @@ function BrewQuestion(props: { ask: BrewAskView; busy: boolean; onUse: (arg: str
 /** Что сделать с вещью из сумки — те же кнопки, что на её карточке в боте. */
 function BagActs(props: { data: InventoryView; item: ItemView; acts: Acts; onDone: () => void }) {
   const { data, item, acts } = props
-  // Открытый вопрос: название действия или `belt` — что снять с полного пояса.
+  // Открытый вопрос: название действия, `belt` — что снять с полного пояса,
+  // `crush` — колоть ли камень.
   const [ask, setAsk] = useState<string | null>(null)
   const act = data.bagActs.find((a) => a.item === item.id)
   if (!act) return null
@@ -195,7 +196,25 @@ function BagActs(props: { data: InventoryView; item: ItemView; acts: Acts; onDon
             Распаковать
           </button>
         )}
+        {act.crush && (
+          <button className="equip-off" disabled={acts.busy} onClick={() => setAsk('crush')}>
+            Расколоть камень
+          </button>
+        )}
       </div>
+      {ask === 'crush' && act.crush && (
+        <div className="buy-confirm">
+          <p className="buy-ask">{act.crush}</p>
+          <div className="buy-row">
+            <button className="buy-yes" disabled={acts.busy} onClick={() => finish(() => api.bagCrushGem(item.id))}>
+              Ломать
+            </button>
+            <button className="buy-no" onClick={() => setAsk(null)}>
+              Передумал
+            </button>
+          </div>
+        </div>
+      )}
       {brew && (
         <BrewQuestion
           ask={brew}

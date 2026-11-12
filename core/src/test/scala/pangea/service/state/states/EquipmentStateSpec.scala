@@ -87,10 +87,10 @@ object EquipmentStateSpec extends ZIOSpecDefault {
       } yield assertTrue(confirm.text.contains("Сломать")) &&
               assertTrue(updated.equipment.weapon.id == gemSword.id) &&
               assertTrue(updated.equipment.weapon.sockets == List(None)) &&
-              // безупречный изумруд — грейд 4, значит четыре горсти пыли
-              assertTrue(inv.items.data.count(_.material.contains(MaterialKind.EmeraldDust)) == 4) &&
+              // безупречный изумруд — грейд 4, по две горсти на грейд — восемь
+              assertTrue(inv.items.data.count(_.material.contains(MaterialKind.EmeraldDust)) == 8) &&
               // у каждой горсти свой номер из базы: с общим −1 снятие одной убирало все
-              assertTrue(inv.items.data.map(_.id).forall(_ > 0L) && inv.items.data.map(_.id).distinct.size == 4)
+              assertTrue(inv.items.data.map(_.id).forall(_ > 0L) && inv.items.data.map(_.id).distinct.size == 8)
     },
 
     test("enter → показывает список слотов кнопками") {

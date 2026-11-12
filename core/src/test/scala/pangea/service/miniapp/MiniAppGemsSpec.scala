@@ -7,7 +7,8 @@ import pangea.model.barrel.Barrel
 import pangea.model.home.HomeData
 import pangea.model.inventory.Inventory
 import pangea.model.inventory.Inventory.Items
-import pangea.model.item.{BeltSlot, FlaskKind, Gem, GemKind, Item, ItemDetails, ItemType, Rarity}
+import pangea.generator.item.{GemGenerator, MaterialGenerator}
+import pangea.model.item.{BeltSlot, FlaskKind, Gem, GemKind, Item, ItemDetails, ItemType, MaterialKind, Rarity}
 import pangea.service.state.states.InventoryState
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.equipment.GemWork
@@ -131,6 +132,107 @@ object MiniAppGemsSpec extends ZIOSpecDefault {
         ok   <- work.chisel(user, hero, inv, flask, worn = true, stone, say)
         said <- lines.get
       } yield assertTrue(!ok, said.isEmpty)
+    },
+
+    // ── «Расколоть камень» из сумки ─────────────────────────────────────────
+    test("раскол камня из сумки: камень уходит, пыли — по грейду, слова — как в боте") {
+      val sapphire = GemGenerator.item(GemKind.Sapphire, 2).copy(id = 77L)
+      for {
+        t <- crushing(List(sapphire))
+        (hero, bag, work, say, lines, c) = t
+        found <- work.crush(user, hero, sapphire, say)
+        said  <- lines.get
+        grit   = Gem(GemKind.Sapphire, 2)
+      } yield assertTrue(
+        found,
+        !bag.snapshot.exists(_.id == 77L),
+        bag.snapshot.count(_.material.contains(MaterialKind.SapphireDust)) == 4,  // по две на грейд
+        said == Vector(c.format("inventory.breakGemDone", "gem" -> grit.displayName,
+          "count" -> "4", "dust" -> grit.dust.displayName))
+      )
+    },
+    test("сумка полна — пыль места не занимает, камень колется") {
+      val sapphire = GemGenerator.item(GemKind.Sapphire, 2).copy(id = 77L)
+      val junk     = (1 to 19).map(i => helm().copy(id = 100L + i)).toList
+      for {
+        t <- crushing(sapphire :: junk)
+        (hero, bag, work, say, lines, _) = t
+        found <- work.crush(user, hero, sapphire, say)
+        said  <- lines.get
+      } yield assertTrue(
+        found,
+        !bag.snapshot.exists(_.id == 77L),
+        bag.snapshot.count(_.material.contains(MaterialKind.SapphireDust)) == 4,
+        said.exists(_.contains("рассыпался"))
+      )
+    },
+    test("ломка из гнезда при пыли под пределом — камень цел в гнезде") {
+      val heap = (1 to Item.HoardLimit).map(i => MaterialGenerator.item(gem.dust).copy(id = 1000L + i)).toList
+      for {
+        c     <- ZIO.attempt(SceneContent.load())
+        hero   = TestFixtures.hero(userId).copy(equipment = TestFixtures.emptyEquipment.copy(helmet = helm(Some(gem))))
+        dao   <- TestHeroDao.withHero(userId, hero)
+        bag    = TestInventoryRepository.withItems(heap)
+        lines <- Ref.make(Vector.empty[String])
+        done  <- new GemWork(dao, bag, TestItemRepository.make, c).breakWorn(user, hero, hero.equipment.helmet, 0,
+                   new MiniApp.Collect(lines))
+        saved <- dao.getHeroByUserId(userId).someOrFailException
+        said  <- lines.get
+      } yield assertTrue(
+        done,
+        saved.equipment.helmet.sockets == List(Some(gem)),
+        bag.snapshot.size == Item.HoardLimit,
+        said == Vector(s"🪨 ${gem.dust.displayName}: больше ${Item.HoardLimit} горстей не унести — камень цел.")
+      )
+    },
+    test("пыли этого вида уже под предел — камень цел") {
+      val sapphire = GemGenerator.item(GemKind.Sapphire, 1).copy(id = 77L)
+      val heap     = (1 to Item.HoardLimit).map(i =>
+                       MaterialGenerator.item(MaterialKind.SapphireDust).copy(id = 1000L + i)).toList
+      for {
+        t <- crushing(sapphire :: heap)
+        (hero, bag, work, say, lines, _) = t
+        found <- work.crush(user, hero, sapphire, say)
+        said  <- lines.get
+      } yield assertTrue(
+        found,
+        bag.snapshot.exists(_.id == 77L),
+        bag.snapshot.count(_.material.contains(MaterialKind.SapphireDust)) == Item.HoardLimit,
+        said == Vector(s"🪨 ${MaterialKind.SapphireDust.displayName}: больше ${Item.HoardLimit} горстей не унести — камень цел.")
+      )
+    },
+    test("не камень — колоть нечего, ничего не сказано") {
+      for {
+        t <- crushing(List(helm()))
+        (hero, bag, work, say, lines, _) = t
+        found <- work.crush(user, hero, helm(), say)
+        said  <- lines.get
+      } yield assertTrue(!found, said.isEmpty, bag.snapshot.size == 1)
+    },
+    test("в сумке у камня — «Расколоть» с вопросом, как в боте; у шлема — нет") {
+      val sapphire = GemGenerator.item(GemKind.Sapphire, 2).copy(id = 77L)
+      for {
+        c   <- ZIO.attempt(SceneContent.load())
+        hero = TestFixtures.hero(userId)
+        v    = MiniAppView.inventory(hero, Inventory(1L, hero.id, 20L, Items(List(sapphire, helm()))),
+                 MiniAppView.Stores(HeroArtifacts.empty(hero.id), Barrel.empty(hero.id), BankVault.empty(hero.id), HomeData.empty),
+                 c, _.name, 0L)
+        grit = Gem(GemKind.Sapphire, 2)
+      } yield assertTrue(
+        v.bagActs.find(_.item == 77L).flatMap(_.crush).contains(c.format("inventory.crushGemConfirm",
+          "gem" -> grit.displayName, "dust" -> grit.dust.displayName, "count" -> "4")),
+        v.bagActs.find(_.item == 20L).forall(_.crush.isEmpty)
+      )
     }
   )
+
+  /** Камень колют из сумки: герой ни во что не одет, в сумке — `items`. */
+  private def crushing(items: List[Item]) =
+    for {
+      c     <- ZIO.attempt(SceneContent.load())
+      hero   = TestFixtures.hero(userId)
+      dao   <- TestHeroDao.withHero(userId, hero)
+      bag    = TestInventoryRepository.withItems(items)
+      lines <- Ref.make(Vector.empty[String])
+    } yield (hero, bag, new GemWork(dao, bag, TestItemRepository.make, c), new MiniApp.Collect(lines), lines, c)
 }

@@ -86,6 +86,10 @@ trait MiniApp {
     * боте; не в бою. */
   def unpack(hero: Hero, itemId: Long): Task[InventoryActionView]
 
+  /** Расколоть камень `itemId` из сумки — как кнопкой «Расколоть камень» на
+    * его карточке в боте; не в бою. */
+  def crush(hero: Hero, itemId: Long): Task[InventoryActionView]
+
   /** Надеть комплект со стойки №`n` — обменяться с ней надетым, как кнопкой
     * стойки дома. Только в городе. */
   def rack(hero: Hero, n: Int): Task[InventoryActionView]
@@ -437,6 +441,24 @@ final class MiniAppLive(
           case Some(item) => bundleWork.unpack(fresh.id, inv, item).map(_.getOrElse(content.text("stack.gone")))
         }
       }
+    }
+
+  /** Те же правила и слова, что у карточки камня в боте ([[GemWork.crush]]).
+    * Камня уже нет — так и сказать. */
+  override def crush(hero: Hero, itemId: Long): Task[InventoryActionView] =
+    notInBattle(hero, content.text("battle.belt.notInBattle")) { fresh =>
+      for {
+        user  <- users.getUserById(fresh.userId).someOrFail(new Throwable(s"Нет игрока ${fresh.userId.value}"))
+        lines <- Ref.make(Vector.empty[String])
+        say    = new MiniApp.Collect(lines)
+        gone   = say.show(user, Screen(content.text("socketing.gemGone"), Nil))
+        inv   <- inventories.get(fresh.id).mapError(e => new Throwable(e.toString))
+        _     <- inv.items.data.find(_.id == itemId) match {
+                   case None       => gone
+                   case Some(item) => gemWork.crush(user, fresh, item, say).flatMap(found => ZIO.unless(found)(gone).unit)
+                 }
+        said  <- lines.get
+      } yield said.mkString("\n\n")
     }
 
   /** Под локом игрока, героя перечитываем уже под ним. В бою — ничего не

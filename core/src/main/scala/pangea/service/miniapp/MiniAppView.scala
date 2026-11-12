@@ -145,9 +145,10 @@ object MiniAppView {
   /** Чем можно воспользоваться из сумки: `item` — как в списке вещей, `brew` —
     * что можно сделать с отваром, `belt` — кладётся ли на пояс, `beltFull` — на
     * поясе нет места, и вот вопрос, что снять, `unpack` — это стопка, её можно
-    * распаковать. */
+    * распаковать, `crush` — это камень, его можно расколоть, и вот вопрос
+    * перед этим (те же слова, что в боте). */
   final case class BagActView(item: Long, brew: List[BrewAskView], belt: Boolean, beltFull: Option[String],
-                              unpack: Boolean)
+                              unpack: Boolean, crush: Option[String])
 
   /** Вещи героя. `gearLocked` — почему снаряжение и комплект со стойки сейчас
     * не сменить: герой в бою; `storesAway` — почему дотянуться удастся не до
@@ -450,10 +451,13 @@ object MiniAppView {
   private def bagActs(h: Hero, inv: Inventory, content: SceneContent, now: Long): List[BagActView] =
     if (MiniApp.inBattle(h)) Nil
     else InventoryState.listed(inv.items.data).flatMap { case (item, _) =>
-      val asks = brewAsks(h, item, content, now)
-      val slot = BeltSlot.of(item)
-      Option.when(asks.nonEmpty || slot.isDefined || item.isBundle)(
-        BagActView(item.id, asks, slot.isDefined, slot.flatMap(beltFull(h, _, content)), unpack = item.isBundle))
+      val asks  = brewAsks(h, item, content, now)
+      val slot  = BeltSlot.of(item)
+      val crush = item.gem.map(g => content.format("inventory.crushGemConfirm",
+                    "gem" -> g.displayName, "dust" -> g.dust.displayName, "count" -> g.dustYield.toString))
+      Option.when(asks.nonEmpty || slot.isDefined || item.isBundle || crush.isDefined)(
+        BagActView(item.id, asks, slot.isDefined, slot.flatMap(beltFull(h, _, content)), unpack = item.isBundle,
+          crush = crush))
     }
 
   private def beltFull(h: Hero, slot: BeltSlot, content: SceneContent): Option[String] = {

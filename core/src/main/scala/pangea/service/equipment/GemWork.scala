@@ -25,8 +25,9 @@ final class GemWork(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemRe
                     content: SceneContent) {
 
   /** Сломать камень из гнезда `socket` надетой вещи: камень крошится в пыль
-    * своего вида, пыль — в сумку. Места под неё нет — сказать и ничего не
-    * трогать. `false` — такого камня в гнезде нет, сказать нечего. */
+    * своего вида, пыль — в сумку. Пыли этого вида под предел ([[dustFull]]) —
+    * сказать и ничего не трогать. `false` — такого камня в гнезде нет, сказать
+    * нечего. */
   def breakWorn(user: User, hero: Hero, item: Item, socket: Int, renderer: Renderer): Task[Boolean] =
     GemBreaking.breakSocket(item, socket) match {
       case None => ZIO.succeed(false)
@@ -34,22 +35,52 @@ final class GemWork(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemRe
         for {
           now   <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
           inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
-          count  = gem.dustYield
           // Рубин уходит из гнезда — максимум здоровья падает, и запасы с ним.
           broken = hero.reequip(hero.equipment.replacing(emptied), now)
           _ <-
-            if (inv.freeSlots < count)
-              renderer.show(user, Screen(content.format("equipment.breakGemNoRoom", "count" -> count.toString), Nil))
+            if (dustFull(inv, gem)) renderer.show(user, Screen(dustFullLine(gem), Nil))
             else
               heroDao.updateEquipmentAndFightStats(user.userId, broken.equipment, broken.fightStats) *>
-                // Каждая горсть — со своим номером из базы: без него горсти
-                // разных видов делили −1, и снятие одной убирало из сумки все.
-                BeltContents.persist(Some(itemRepo), hero.id, List.fill(count)(MaterialGenerator.item(gem.dust)))
-                  .flatMap(ZIO.foreachDiscard(_)(d => inventoryRepo.addItem(hero.id, d).mapError(asThrowable))) *>
+                grantDust(hero, gem) *>
                 renderer.show(user, Screen(content.format("equipment.breakGemDone",
-                  "gem" -> gem.displayName, "count" -> count.toString, "dust" -> gem.dust.displayName), Nil))
+                  "gem" -> gem.displayName, "count" -> gem.dustYield.toString, "dust" -> gem.dust.displayName), Nil))
         } yield true
     }
+
+  /** Расколоть камень, лежащий в сумке отдельной вещью: он крошится в пыль
+    * своего вида, пыль — в сумку. Пыли этого вида под предел ([[dustFull]]) —
+    * камень цел, и сказано почему; камень уходит только вместе с выданной
+    * пылью. `false` — это не камень, сказать нечего. */
+  def crush(user: User, hero: Hero, item: Item, renderer: Renderer): Task[Boolean] =
+    item.gem match {
+      case None => ZIO.succeed(false)
+      case Some(gem) =>
+        for {
+          inv <- inventoryRepo.get(hero.id).mapError(asThrowable)
+          _ <-
+            if (dustFull(inv, gem)) renderer.show(user, Screen(dustFullLine(gem), Nil))
+            else
+              inventoryRepo.removeItem(item.id, hero.id).mapError(asThrowable) *> grantDust(hero, gem) *>
+                renderer.show(user, Screen(content.format("inventory.breakGemDone",
+                  "gem" -> gem.displayName, "count" -> gem.dustYield.toString, "dust" -> gem.dust.displayName), Nil))
+        } yield true
+    }
+
+  /** Пыль места в сумке не занимает (см. `Inventory.occupied`), но одного вида
+    * её не больше [[Item.HoardLimit]] горстей: если столько, сколько даст камень,
+    * уже не унести, камень не трогаем. */
+  def dustFull(inv: Inventory, gem: Gem): Boolean =
+    MaterialGenerator.item(gem.dust).hoardKey.exists(k => inv.hoardCount(k) + gem.dustYield > Item.HoardLimit)
+
+  /** Отказ: пыли этого вида под предел, камень цел. */
+  def dustFullLine(gem: Gem): String =
+    content.format("inventory.gemDustFull", "dust" -> gem.dust.displayName, "n" -> Item.HoardLimit.toString)
+
+  /** Пыль за камень — в сумку. Каждая горсть — со своим номером из базы: без
+    * него горсти разных видов делили −1, и снятие одной убирало из сумки все. */
+  def grantDust(hero: Hero, gem: Gem): Task[Unit] =
+    BeltContents.persist(Some(itemRepo), hero.id, List.fill(gem.dustYield)(MaterialGenerator.item(gem.dust)))
+      .flatMap(ZIO.foreachDiscard(_)(d => inventoryRepo.addItem(hero.id, d).mapError(asThrowable)))
 
   /** Вставить камень `gem` в надетую вещь `targetId`, в первое свободное гнездо.
     * `spend` убирает камень оттуда, где он лежал. `false` — вещи нет или

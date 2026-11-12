@@ -13,12 +13,12 @@ object WeaponDustSpec extends ZIOSpecDefault {
   override def spec = suite("Пыль камней")(
 
     // ── Сколько пыли даёт камень ─────────────────────────────────────────────
-    test("надколотый даёт единицу, каждый следующий грейд — на одну больше") {
-      assertTrue(Gem(GemKind.Ruby, 1).dustYield == 1) &&
-      assertTrue(Gem(GemKind.Ruby, 2).dustYield == 2) &&
-      assertTrue(Gem(GemKind.Ruby, 3).dustYield == 3) &&
-      assertTrue(Gem(GemKind.Ruby, 4).dustYield == 4) &&
-      assertTrue(Gem(GemKind.Ruby, 5).dustYield == 5)
+    test("по две горсти на грейд: надколотый — 2, безупречный — 8, идеальный — 10") {
+      assertTrue(Gem(GemKind.Ruby, 1).dustYield == 2) &&
+      assertTrue(Gem(GemKind.Ruby, 2).dustYield == 4) &&
+      assertTrue(Gem(GemKind.Ruby, 3).dustYield == 6) &&
+      assertTrue(Gem(GemKind.Ruby, 4).dustYield == 8) &&
+      assertTrue(Gem(GemKind.Ruby, 5).dustYield == 10)
     },
 
     test("у каждого камня своя пыль, у черепа — чёрный порошок") {

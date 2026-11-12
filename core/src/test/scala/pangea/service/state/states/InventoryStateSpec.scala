@@ -343,8 +343,23 @@ object InventoryStateSpec extends ZIOSpecDefault {
         dusts  = inv.items.data.filter(_.material.contains(MaterialKind.RubyDust))
         log   <- renderer.sentScreens.map(_.map(_.text).mkString("\n"))
       } yield assertTrue(blade.sockets == List(None, Some(Gem(GemKind.Topaz, 1)))) &&
-              assertTrue(dusts.size == 3) &&
+              assertTrue(dusts.size == 6) &&   // грейд 3 — по две горсти на грейд
               assertTrue(log.contains("рассыпался"))
+    },
+
+    test("пыли под предел — камень из гнезда вещи в сумке цел, вещь с ним") {
+      val heap = (1 to Item.HoardLimit).map(i => dustItem(MaterialKind.RubyDust, 2000L + i)).toList
+      for {
+        quad                       <- makeState(baseHero, socketedSword :: heap)
+        (state, _, invRepo, renderer) = quad
+        _     <- state.action(testUser, selectItem(socketedSword.id), renderer)
+        _     <- state.action(testUser, breakSlot(0), renderer)   // рубин грейда 3
+        inv   <- invRepo.get(baseHero.id)
+        blade  = inv.items.data.find(_.id == socketedSword.id).get
+        log   <- renderer.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(blade.sockets == socketedSword.sockets) &&
+              assertTrue(inv.items.data.count(_.material.contains(MaterialKind.RubyDust)) == Item.HoardLimit) &&
+              assertTrue(log.contains("не унести — камень цел"))
     },
 
     test("камень в сумке крошится целиком: сам пропадает, остаётся его пыль") {
@@ -359,7 +374,7 @@ object InventoryStateSpec extends ZIOSpecDefault {
         inv   <- invRepo.get(baseHero.id)
       } yield assertTrue(offer.text.contains("Растолочь")) &&
               assertTrue(!inv.items.data.exists(_.id == stone.id)) &&
-              assertTrue(inv.items.data.count(_.material.contains(MaterialKind.SapphireDust)) == 2)
+              assertTrue(inv.items.data.count(_.material.contains(MaterialKind.SapphireDust)) == 4)
     },
 
     // ── Пыль на оружие ───────────────────────────────────────────────────────

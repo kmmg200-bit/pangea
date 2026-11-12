@@ -6,7 +6,7 @@ import pangea.model.item.{BrewEffect, BrewKind}
 import io.circe.{Decoder, Encoder, jawn}
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
-import pangea.generator.item.{MaterialGenerator, TreasureMapGenerator}
+import pangea.generator.item.TreasureMapGenerator
 import pangea.model.hero.{Equipment, Hero, WeaponDust}
 import pangea.model.inventory.Inventory
 import pangea.model.item.{BeltSlot, Bundling, Chisel, Gem, GemBreaking, Item, ItemDetails, ItemStack, ItemType, MaterialKind, QuestItemKind, RefillSource, TrophyKind}
@@ -1325,8 +1325,9 @@ case class InventoryState(
           GemBreaking.breakSocket(item, idx) match {
             case None => showList(user, renderer)
             case Some((emptied, gem)) =>
-              inventoryRepo.updateItem(hero.id, emptied).mapError(e => new Throwable(e.toString)) *>
-                grantDust(user, hero, gem, renderer, showList(user, renderer), backToCard(user, renderer))
+              grantDust(user, hero, gem, renderer,
+                inventoryRepo.updateItem(hero.id, emptied).mapError(e => new Throwable(e.toString)),
+                showList(user, renderer), backToCard(user, renderer))
           }
         }
     }
@@ -1349,38 +1350,27 @@ case class InventoryState(
       }
     }
 
+  /** Правила и слова — общие с приложением ([[GemWork.crush]]). */
   private def doCrush(user: User, renderer: Renderer): Task[StateType] =
     withSelected(user, renderer) { (item, hero) =>
-      item.gem match {
-        case None => showList(user, renderer)
-        case Some(gem) =>
-          inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)) *>
-            grantDust(user, hero, gem, renderer, backToCard(user, renderer), backToCard(user, renderer))
-      }
+      gemWork.crush(user, hero, item, renderer).flatMap(found =>
+        if (found) backToCard(user, renderer) else showList(user, renderer))
     }
 
-  /** Выдаёт пыль за сломанный камень. Пыль кладётся отдельными предметами, поэтому
-    * место в сумке проверяем заранее: лучше отказать, чем потерять часть пыли.
-    * `andThen` — куда уйти после: раскрошенный камень из стопки возвращает на
-    * карточку стопки, камень из гнезда — в список. `noRoom` — куда уйти, если
-    * пыль не влезла: на ту же карточку, ничего не потеряв. */
-  private def grantDust(user: User, hero: Hero, gem: Gem, renderer: Renderer,
-                        andThen: => Task[StateType], noRoom: => Task[StateType]): Task[StateType] =
+  /** Выдаёт пыль за камень из гнезда вещи в сумке. Пыль места не занимает, но
+    * одного вида её не больше предела ([[GemWork.dustFull]]): тогда камень цел —
+    * `spend` (выбить его из гнезда) не случается. `andThen` — куда уйти после (в
+    * список), `refused` — куда, если не вышло (на ту же карточку). */
+  private def grantDust(user: User, hero: Hero, gem: Gem, renderer: Renderer, spend: Task[Unit],
+                        andThen: => Task[StateType], refused: => Task[StateType]): Task[StateType] =
     for {
-      inv   <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
-      count  = gem.dustYield
-      free   = inv.freeSlots
+      inv <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       res <-
-        if (free < count)
-          renderer.show(user, Screen(content.format("inventory.breakGemNoRoom", "count" -> count.toString), Nil)) *>
-            noRoom
+        if (gemWork.dustFull(inv, gem)) renderer.show(user, Screen(gemWork.dustFullLine(gem), Nil)) *> refused
         else
-          ZIO.foreachDiscard(1 to count) { _ =>
-            itemRepository.persist(hero.id, MaterialGenerator.item(gem.dust))
-              .flatMap(persisted => inventoryRepo.addItem(hero.id, persisted).mapError(e => new Throwable(e.toString)))
-          } *>
+          spend *> gemWork.grantDust(hero, gem) *>
             renderer.show(user, Screen(content.format("inventory.breakGemDone",
-              "gem" -> gem.displayName, "count" -> count.toString, "dust" -> gem.dust.displayName), Nil)) *>
+              "gem" -> gem.displayName, "count" -> gem.dustYield.toString, "dust" -> gem.dust.displayName), Nil)) *>
             andThen
     } yield res
 

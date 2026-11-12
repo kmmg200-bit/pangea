@@ -3563,7 +3563,6 @@ equipment:
   breakGemYes: "💥 Ломать"
   breakGemNo: "↩ Передумал"
   breakGemDone: "{gem} рассыпался. Вы собрали {count} × {dust}."
-  breakGemNoRoom: "❌ В сумке нет места: нужно {count} свободных ячеек под пыль."
   unequipBtn: "🔓 Снять"
   back:
     label: "↩ Назад"
@@ -5815,10 +5814,11 @@ inventory:
   breakGemOption: "💥 {gem}"
   breakGemConfirm: "Сломать {gem}? Камень рассыплется навсегда, останется {count} × {dust}."
   crushGemConfirm: "Растолочь {gem}? Камня больше не будет, останется {count} × {dust}."
+  # Пыли этого вида уже под предел: колоть или ломать не стали, камень цел.
+  gemDustFull: "🪨 {dust}: больше {n} горстей не унести — камень цел."
   breakGemYes: "💥 Ломать"
   breakGemNo: "↩ Передумал"
   breakGemDone: "{gem} рассыпался. Вы собрали {count} × {dust}."
-  breakGemNoRoom: "❌ В сумке нет места: нужно {count} свободных ячеек под пыль."
   # «Резец рунописца»: переписать узор на вещи — надетой или в сумке.
   chisel:
     use:

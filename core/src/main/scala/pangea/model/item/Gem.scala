@@ -103,9 +103,9 @@ case class Gem(kind: GemKind, grade: Int) {
   /** Имя с учётом грейда: «Надколотый череп», «Череп», «Идеальный череп». */
   def displayName: String = Gem.gradeName(kind, grade)
 
-  /** Сколько пыли останется, если камень сломать: надколотый даёт единицу,
-    * каждый следующий грейд — на одну больше. */
-  def dustYield: Int = grade.max(Gem.MinGrade).min(Gem.MaxGrade)
+  /** Сколько пыли останется, если камень расколоть или сломать из гнезда: по
+    * [[Gem.DustPerGrade]] горсти на грейд — надколотый даёт 2, безупречный 8. */
+  def dustYield: Int = Gem.DustPerGrade * grade.max(Gem.MinGrade).min(Gem.MaxGrade)
 
   /** Вид пыли, в которую крошится этот камень. */
   def dust: MaterialKind = MaterialKind.dustOf(kind)
@@ -123,6 +123,9 @@ object Gem {
 
   val MinGrade: Int = 1
   val MaxGrade: Int = 5
+
+  /** Горстей пыли за каждый грейд расколотого или сломанного камня. */
+  val DustPerGrade: Int = 2
 
   /** Приставки грейдов (индекс = grade-1). Грейд 3 — базовое имя без приставки. */
   private val gradePrefix: Vector[String] =
