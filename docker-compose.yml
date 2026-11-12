@@ -36,6 +36,8 @@ services:
       VK_TOKEN: ${VK_TOKEN}
       VK_SECRET: ${VK_SECRET:-}
       VK_LONG_POLL: ${VK_LONG_POLL:-false}
+      # Гильдейское сообщество: беседы гильдий (см. README). Пусто — его нет.
+      VK_TOKEN_FOR_GROUP_CHATS: ${VK_TOKEN_FOR_GROUP_CHATS:-}
       VK_APP_SECRET: ${VK_APP_SECRET:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       TBANK_TERMINAL_KEY: ${TBANK_TERMINAL_KEY:-}
@@ -83,6 +85,8 @@ services:
       VK_TOKEN: ${VK_TOKEN}
       VK_SECRET: ${VK_SECRET:-}
       VK_LONG_POLL: ${VK_LONG_POLL:-false}
+      # Гильдейское сообщество: беседы гильдий (см. README). Пусто — его нет.
+      VK_TOKEN_FOR_GROUP_CHATS: ${VK_TOKEN_FOR_GROUP_CHATS:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     depends_on:
       postgres:
