@@ -50,6 +50,30 @@ object TreasureMobsStateSpec extends ZIOSpecDefault {
       } yield assertTrue(result == StateType.TreasureMobsFight)
     },
 
+    test("чужая кнопка или текст — тот же экран с теми же мобами; цепочка цела, герой у сундука") {
+      for {
+        t <- makeState
+        (state, renderer, heroDao) = t
+        _      <- state.enter(testUser, renderer)
+        before <- heroDao.readSceneData(userId)
+        button <- state.action(testUser, tap("FindEvent"), renderer)
+        typed  <- state.action(testUser, UserAction("привет", None), renderer)
+        after  <- heroDao.readSceneData(userId)
+        screens <- renderer.sentScreens
+      } yield assertTrue(button == StateType.TreasureMobs && typed == StateType.TreasureMobs) &&
+              assertTrue(after == before) &&
+              assertTrue(screens.size == 3 && screens.map(_.text).distinct.size == 1) &&
+              assertTrue(screens.forall(_.choices.map(_.id).toSet == Set("AttackMobs", "LeaveMobs")))
+    },
+
+    test("сцены нет (стёрли) — показывать нечего: в лабиринт") {
+      for {
+        t <- makeState
+        (state, renderer, _) = t
+        result <- state.action(testUser, tap("FindEvent"), renderer)
+      } yield assertTrue(result == StateType.Dungeon)
+    },
+
     test("Уйти → scene_data очищается, переход в Dungeon") {
       for {
         t <- makeState
