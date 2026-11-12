@@ -905,44 +905,16 @@ case class InventoryState(
     } yield res
 
   /** Трактат: бросок интеллект ÷ 2 процентов (+2 % за каждую прошлую неудачу);
-    * осилил — знание и книга уходит, нет — час на переварить, потом снова. */
+    * осилил — знание и книга уходит, нет — час на переварить, потом снова.
+    * Общее с Mini App — [[HerbLore.readTreatise]]; потом — к списку. */
   private def readTreatise(user: User, renderer: Renderer): Task[StateType] =
     for {
-      now   <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
       hero  <- getHero(user)
       scene <- readScene(user)
       inv   <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
-      // Трактат — та книга, по которой есть чему научиться.
-      book   = for {
-                 item      <- scene.selectedId.flatMap(id => inv.items.data.find(_.id == id))
-                 kind      <- item.questItem
-                 knowledge <- HerbLore.knowledgeOf(kind)
-               } yield (item, kind, knowledge)
-      res <- book match {
-        case Some((item, kind, knowledge)) =>
-          for {
-            lore <- HerbLore.readLore(heroDao, user.userId)
-            until = lore.bookCooldowns.getOrElse(kind.entryName, 0L)
-            _ <- if (now < until)
-                   renderer.show(user, Screen(content.format("knowledge.readCooldown",
-                     "mins" -> (((until - now) + 59999L) / 60000L).max(1L).toString), Nil))
-                 else for {
-                   roll <- Random.nextIntBetween(1, 101)
-                   _    <- renderer.show(user, Screen(content.text("knowledge.readSpent"), Nil))
-                   _    <- if (roll <= HerbLore.readingChance(hero, now, lore.failuresOf(kind.entryName)))
-                             HerbLore.writeLore(heroDao, user.userId, lore.learn(knowledge, alone = false).bookMastered(kind.entryName)) *>
-                               inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)) *>
-                               renderer.show(user, Screen(
-                                 content.text("knowledge.readSuccess") + "\n" +
-                                   content.format("knowledge.gained", "title" -> knowledge.title), Nil))
-                           else
-                             HerbLore.writeLore(heroDao, user.userId, lore.bookFailed(kind.entryName, now + HerbLore.ReadingCooldownMs)) *>
-                               renderer.show(user, Screen(content.text("knowledge.readFailed"), Nil))
-                 } yield ()
-            r <- showList(user, renderer)
-          } yield r
-        case _ => showList(user, renderer)
-      }
+      _     <- ZIO.foreachDiscard(scene.selectedId.flatMap(id => inv.items.data.find(_.id == id)))(book =>
+                 HerbLore.readTreatise(heroDao, inventoryRepo, content, user, hero, book, renderer))
+      res   <- showList(user, renderer)
     } yield res
 
   /** Карта Кельвина: только из города; если Мариса ждёт — спросить, брать ли её. */

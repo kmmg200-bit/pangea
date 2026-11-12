@@ -88,7 +88,8 @@ export interface BrewAskView {
 
 /** Чем можно воспользоваться из сумки. `beltFull` — на поясе нет места, и вот вопрос, что снять;
  *  `unpack` — это стопка, её можно распаковать; `crush` — это камень, его можно расколоть, и вот
- *  вопрос перед этим; `dust` — это пыль, ею посыпают надетое оружие. */
+ *  вопрос перед этим; `dust` — это пыль, ею посыпают надетое оружие; `read` — это трактат, его
+ *  можно читать. */
 export interface BagActView {
   item: number
   brew: BrewAskView[]
@@ -97,6 +98,7 @@ export interface BagActView {
   unpack: boolean
   crush: string | null
   dust: boolean
+  read: boolean
 }
 
 export interface HeroView {

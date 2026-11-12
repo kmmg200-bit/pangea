@@ -2,13 +2,15 @@ package pangea.service.state
 
 import io.circe.syntax.EncoderOps
 import pangea.dao.hero.HeroDao
-import pangea.engine.SceneContent
+import pangea.engine.{Renderer, SceneContent, Screen}
 import pangea.model.hero.{Hero, Knowledge, LoreData}
 import pangea.generator.item.MaterialGenerator
 import pangea.model.item.{Item, ItemStack, MaterialKind, QuestItemKind}
 import pangea.model.user.{User, UserId}
 import pangea.repository.inventory.InventoryRepository
 import zio.{Random, Task, ZIO}
+
+import java.util.concurrent.TimeUnit
 
 /** Травы и знания о них — общее для поляны, Густаво и инвентаря: что герой
   * узнаёт в сорванном цветке, почём Густаво берёт травы, как читается трактат,
@@ -218,4 +220,36 @@ object HerbLore {
     * прошлую неудачу с этой книгой. */
   def readingChance(hero: Hero, nowMs: Long, failures: Int): Long =
     hero.effectiveBaseStats(nowMs).int / ReadingIntDivisor + failures.toLong * ReadingFailureBonusPct
+
+  /** Прочитать трактат `book` — с его карточки в боте и в приложении. Бросок —
+    * [[readingChance]]: осилил — знание по книге, и она уходит из сумки; нет —
+    * час «переварить» ([[ReadingCooldownMs]]), потом снова. Рано — сказать,
+    * через сколько. `false` — это не трактат, сказать нечего. */
+  def readTreatise(heroDao: HeroDao, inventoryRepo: InventoryRepository, content: SceneContent,
+                   user: User, hero: Hero, book: Item, renderer: Renderer): Task[Boolean] =
+    book.questItem.flatMap(kind => knowledgeOf(kind).map(kind -> _)) match {
+      case None => ZIO.succeed(false)
+      case Some((kind, knowledge)) =>
+        for {
+          now  <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+          lore <- readLore(heroDao, user.userId)
+          until = lore.bookCooldowns.getOrElse(kind.entryName, 0L)
+          _ <- if (now < until)
+                 renderer.show(user, Screen(content.format("knowledge.readCooldown",
+                   "mins" -> (((until - now) + 59999L) / 60000L).max(1L).toString), Nil))
+               else for {
+                 roll <- Random.nextIntBetween(1, 101)
+                 _    <- renderer.show(user, Screen(content.text("knowledge.readSpent"), Nil))
+                 _    <- if (roll <= readingChance(hero, now, lore.failuresOf(kind.entryName)))
+                           writeLore(heroDao, user.userId, lore.learn(knowledge, alone = false).bookMastered(kind.entryName)) *>
+                             inventoryRepo.removeItem(book.id, hero.id).mapError(e => new Throwable(e.toString)) *>
+                             renderer.show(user, Screen(
+                               content.text("knowledge.readSuccess") + "\n" +
+                                 content.format("knowledge.gained", "title" -> knowledge.title), Nil))
+                         else
+                           writeLore(heroDao, user.userId, lore.bookFailed(kind.entryName, now + ReadingCooldownMs)) *>
+                             renderer.show(user, Screen(content.text("knowledge.readFailed"), Nil))
+               } yield ()
+        } yield true
+    }
 }

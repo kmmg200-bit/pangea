@@ -94,6 +94,10 @@ trait MiniApp {
     * «Применить на оружие» на её карточке в боте; не в бою. */
   def dust(hero: Hero, itemId: Long): Task[InventoryActionView]
 
+  /** Прочитать трактат `itemId` из сумки — как кнопкой «Читать» на его
+    * карточке в боте; не в бою. */
+  def read(hero: Hero, itemId: Long): Task[InventoryActionView]
+
   /** Надеть комплект со стойки №`n` — обменяться с ней надетым, как кнопкой
     * стойки дома. Только в городе. */
   def rack(hero: Hero, n: Int): Task[InventoryActionView]
@@ -456,6 +460,11 @@ final class MiniAppLive(
     * Горсти уже нет — так и сказать. */
   override def dust(hero: Hero, itemId: Long): Task[InventoryActionView] =
     bagAct(hero, itemId, content.text("stack.gone"))(gemWork.sprinkle)
+
+  /** Тот же бросок и те же слова, что у карточки трактата в боте
+    * ([[HerbLore.readTreatise]]). Книги уже нет — так и сказать. */
+  override def read(hero: Hero, itemId: Long): Task[InventoryActionView] =
+    bagAct(hero, itemId, content.text("stack.gone"))(HerbLore.readTreatise(heroDao, inventories, content, _, _, _, _))
 
   /** Вещь `itemId` из сумки — в дело `act`, общее с её карточкой в боте; не в
     * бою. Вещи уже нет или дело не про неё (`act` ответил `false`) — сказать

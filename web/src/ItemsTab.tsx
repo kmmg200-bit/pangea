@@ -177,6 +177,11 @@ function BagActs(props: { data: InventoryView; item: ItemView; acts: Acts; onDon
   return (
     <div className="move">
       <div className="equip-acts">
+        {act.read && (
+          <button className="equip-off" disabled={acts.busy} onClick={() => finish(() => api.bagRead(item.id))}>
+            Читать
+          </button>
+        )}
         {act.brew.map((a) => (
           <button key={a.action} className="equip-off" disabled={acts.busy} onClick={() => setAsk(a.action)}>
             {a.label}
@@ -391,8 +396,8 @@ function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; a
 /** «Вещи»: при себе, в городе и в доме. Закрытое хранилище видно с замком —
   * нажал, и написано, как его открыть. Вещь из любого хранилища — в любое,
   * которое её возьмёт (из карточки вещи), — в городе; вне города — между тем,
-  * что при себе. Комплект со стойки — на героя, отвар, пыль и пояс — из
-  * карточки вещи в сумке, камень в гнездо — из сумки и Ларца, где угодно.
+  * что при себе. Комплект со стойки — на героя, отвар, пыль, трактат и пояс —
+  * из карточки вещи в сумке, камень в гнездо — из сумки и Ларца, где угодно.
   * Выбросить — из карточки вещи, откуда её можно и
   * переложить. В бою — ни то ни другое. Бот проверит это сам, под тем же замком, что и ходы в чате. Что
   * сказал бот — всплывает над нижней панелью. */

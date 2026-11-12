@@ -82,6 +82,7 @@ export const api = {
   bagUnpack: (item: number) => post<InventoryActionView>(`bag/unpack?item=${item}`),
   bagCrushGem: (item: number) => post<InventoryActionView>(`bag/crush-gem?item=${item}`),
   bagDust: (item: number) => post<InventoryActionView>(`bag/dust?item=${item}`),
+  bagRead: (item: number) => post<InventoryActionView>(`bag/read?item=${item}`),
   rackWear: (n: number) => post<InventoryActionView>(`racks/wear?n=${n}`),
   storeMove: (from: string, to: string, item: number, all: boolean) =>
     post<InventoryActionView>(`storages/move?from=${from}&to=${to}&item=${item}&all=${all}`),
