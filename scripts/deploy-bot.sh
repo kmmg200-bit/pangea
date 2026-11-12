@@ -64,3 +64,15 @@ echo "Лог старого за 5 минут: $saved"
 docker rm "$old" >/dev/null
 docker compose up -d --no-deps --no-recreate --scale app=1 app
 echo "$(date +%T) Готово: $(docker compose ps app --format '{{.Name}} — {{.Status}}')"
+
+# Кэш сборки: каждая сборка бота оставляет ~290 МБ слоёв, которые следующей уже
+# не нужны, — копию app.jar с шагами после неё, `sbt app/assembly`, исходники и
+# контекст. Базовые образы, зависимости sbt и npm, apt-get остаются; слои
+# последней сборки — тоже (until=1h): тот же код выкладывается из кэша. Запись
+# с потомками BuildKit не удаляет, поэтому — от последнего шага к первому;
+# номера шагов — по Dockerfile. Сбой здесь выкладку не трогает: она готова.
+for f in "chmod.+entrypoint" "stage-1.8/9" "stage-1.7/9" "app/target/scala-2.13/app.jar" \
+         "sbt.app/assembly" "builder.+9/10.+COPY" "local.source.for.context"; do
+  docker builder prune -f --filter "description~=$f" --filter until=1h >/dev/null 2>&1 || true
+done
+echo "$(date +%T) Кэш сборки: $(docker builder du 2>/dev/null | awk '/^Total:/{print $2}')"
