@@ -36,7 +36,7 @@ import pangea.service.state.states.arena.ArenaBattle
 import pangea.service.state.states.battle.BattleState.{ArenaOwnActions, Victim}
 import pangea.service.schedule.Scheduler
 import pangea.service.state.{AzatData, BarrelThievesQuest, BeltContents, BigDealQuest, BoardProgress, BramblQuest, HedgeSongQuest, HotGoodsQuest,
-  JorgenQuest, LostSquadQuest, PlukhQuest,
+  FaelinQuest, JorgenQuest, LostSquadQuest, PlukhQuest,
   MarisaQuest, NpcQuestLog, State, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest, UserAction, KillLogData}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
@@ -6795,7 +6795,7 @@ object BattleState {
     Set(MurlocQuest.RaidStory, LostSquadQuest.EscortStory, HedgeSongQuest.WaveStory, BarrelThievesQuest.FightStory,
       StoryMarkQuest.FightStory, StoryPowderQuest.FightStory, StoryListQuest.FightStory, StoryFaceQuest.FightStory,
       StoryToolQuest.FightStory, HotGoodsQuest.FightStory, BigDealQuest.AmbushStory, JorgenQuest.LairStory,
-      BramblQuest.HallStory, PlukhQuest.HuntStory)
+      BramblQuest.HallStory, PlukhQuest.HuntStory, FaelinQuest.RootsStory)
 
   /** Умение союзника, выбранное на ход. Удар несёт свою цель: без цели его
     * в выборе просто нет, и доставать её потом неоткуда. */

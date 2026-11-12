@@ -20,7 +20,7 @@ import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.{AzatData, BarrelThievesQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HotGoodsQuest, JorgenQuest, LostSquadQuest, MarisaQuest,
-  MurlocQuest, PlukhQuest, QuestOutcomeLog, State, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest,
+  FaelinQuest, MurlocQuest, PlukhQuest, QuestOutcomeLog, State, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest,
   StrayCasketQuest, UserAction}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
@@ -78,6 +78,9 @@ case class DeathState(
       // Смерть в бою с ловчими (багор Плюха): штрафы обычные, печать при герое —
       // позвать их можно снова; проснуться в лабиринте.
       plukhHunt     = battle.exists(_.story.contains(PlukhQuest.HuntStory))
+      // Смерть у старых корней (лук Фаэлина): штрафы обычные, срубленный лук при
+      // герое — к корням можно вернуться; проснуться в лабиринте.
+      faelinRoots   = battle.exists(_.story.contains(FaelinQuest.RootsStory))
       // Смерть на складе у причала: штрафы обычные, украденное всё ещё у банды —
       // по следу можно идти снова; проснуться в порту.
       thieves       = battle.exists(_.story.contains(BarrelThievesQuest.FightStory))
@@ -179,6 +182,7 @@ case class DeathState(
                       else if (jorgenLair) Json.obj("wakeLines" -> List("jorgen.lair.death").asJson)
                       else if (bramblHall) Json.obj("wakeLines" -> List("bramblLock.hall.death").asJson)
                       else if (plukhHunt) Json.obj("wakeLines" -> List("plukhGaff.hunt.death").asJson)
+                      else if (faelinRoots) Json.obj("wakeLines" -> List("faelinBow.roots.death").asJson)
                       else if (thieves) Json.obj(
                         "wakeTo"    -> (StateType.HarborQuarter: StateType).asJson,
                         "wakeLines" -> List("barrelThieves.death").asJson)

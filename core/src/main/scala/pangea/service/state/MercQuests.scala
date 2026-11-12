@@ -17,8 +17,9 @@ import zio.{Task, ZIO}
   * разговором за столом, до найма («Поговорить» на карточке, см.
   * MercenariesState). Выполнено — потолок наёмника у этого героя растёт на
   * [[AllyRates.QuestGrowth]]: при каждом найме ([[grown]]) и сразу — у того,
-  * кто уже при герое ([[grow]]). Задания есть у Йоргена ([[JorgenQuest]]),
-  * Брамбла ([[BramblQuest]]) и Плюха ([[PlukhQuest]]). */
+  * кто уже при герое ([[grow]]). Задания у всех четверых: Йорген
+  * ([[JorgenQuest]]), Брамбл ([[BramblQuest]]), Плюх ([[PlukhQuest]]) и Фаэлин
+  * ([[FaelinQuest]]). */
 object MercQuests {
 
   /** Чьё это задание — если у наёмника оно есть. */
@@ -26,6 +27,7 @@ object MercQuests {
     case AllyKind.Human => Some(NpcQuest.JorgenDebt)
     case AllyKind.Gnome => Some(NpcQuest.BramblLock)
     case AllyKind.Murloc => Some(NpcQuest.PlukhGaff)
+    case AllyKind.Elf    => Some(NpcQuest.FaelinBow)
     case _              => None
   }
 
@@ -34,6 +36,7 @@ object MercQuests {
     case AllyKind.Human => Some(JorgenQuest.Level)
     case AllyKind.Gnome => Some(BramblQuest.Level)
     case AllyKind.Murloc => Some(PlukhQuest.Level)
+    case AllyKind.Elf    => Some(FaelinQuest.Level)
     case _              => None
   }
 
@@ -42,6 +45,7 @@ object MercQuests {
     case AllyKind.Human => Some("jorgen")
     case AllyKind.Gnome => Some("bramblLock")
     case AllyKind.Murloc => Some("plukhGaff")
+    case AllyKind.Elf    => Some("faelinBow")
     case _              => None
   }
 
@@ -51,6 +55,7 @@ object MercQuests {
     case AllyKind.Human => Some(QuestItemKind.JorgenRoster)
     case AllyKind.Gnome => Some(QuestItemKind.BramblCast)
     case AllyKind.Murloc => Some(QuestItemKind.SnowwalkerSeal)
+    case AllyKind.Elf    => Some(QuestItemKind.CutBow)
     case _              => None
   }
 
@@ -61,6 +66,7 @@ object MercQuests {
     case AllyKind.Human => JorgenQuest.take(heroDao, inventory, items, userId, hero, nowMs)
     case AllyKind.Gnome => BramblQuest.take(heroDao, inventory, items, userId, hero, nowMs)
     case AllyKind.Murloc => PlukhQuest.take(heroDao, inventory, items, userId, hero, nowMs)
+    case AllyKind.Elf    => FaelinQuest.take(heroDao, inventory, items, userId, hero, nowMs)
     case _              => ZIO.succeed(false)
   }
 

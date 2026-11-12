@@ -27,7 +27,7 @@ import pangea.service.state.states.murloc.MurlocVillageState
 import pangea.service.state.states.race.RaceQuestState
 import pangea.service.state.{BarrelThievesQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HerbLore, HotGoodsQuest, ItemMenu,
   JorgenQuest,
-  MarisaQuest, MurlocQuest, NpcQuestLog, PlukhQuest, QuestGoods, SlotChoice, StackMove, State,
+  FaelinQuest, MarisaQuest, MurlocQuest, NpcQuestLog, PlukhQuest, QuestGoods, SlotChoice, StackMove, State,
   StoryBrandQuest, StoryFaceQuest, StoryLine, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest, StrayCasketQuest,
   UiScene, UserAction}
 import zio.{Random, Task, ZIO}
@@ -122,6 +122,7 @@ case class InventoryState(
       "StoryCacheGo"      -> Target.Run { (u, _,  r) => goCache(u, r) },
       "JorgenLairGo"      -> Target.Run { (u, _,  r) => goJorgenLair(u, r) },
       "PlukhHuntGo"       -> Target.Run { (u, _,  r) => goPlukhHunt(u, r) },
+      "FaelinRootsGo"     -> Target.Run { (u, _,  r) => goFaelinRoots(u, r) },
       "StoryPortGo"       -> Target.Run { (u, _,  r) => goPort(u, r) },
       "StoryMeetGo"       -> Target.Run { (u, _,  r) => goMeeting(u, r) },
       "StorySojkaGo"      -> Target.Run { (u, _,  r) => goSojka(u, r) },
@@ -149,7 +150,7 @@ case class InventoryState(
         StateType.StrayCasket, StateType.BarrelThieves, StateType.StoryCache, StateType.StoryWarehouse,
         StateType.StoryMeeting, StateType.StoryBridge, StateType.StorySojka, StateType.StoryArchive, StateType.StoryBindery,
         StateType.StoryGraveyard, StateType.BartiHouse, StateType.BartiCaravan, StateType.JorgenLair,
-        StateType.PlukhHunt) ++ BackpackOrigins
+        StateType.PlukhHunt, StateType.FaelinRoots) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.
@@ -598,6 +599,9 @@ case class InventoryState(
         // Список отряда Йоргена: «Идти к логову» огненных.
         case Some(QuestItemKind.JorgenRoster) if JorgenQuest.toLair(quests) =>
           Some(content.choice("JorgenLairGo", "jorgen.card.goLabel").copy(row = Some(0)))
+        // Срубленный лук Фаэлина: «Вернуть лук изгороди».
+        case Some(QuestItemKind.CutBow) if FaelinQuest.toRoots(quests) =>
+          Some(content.choice("FaelinRootsGo", "faelinBow.card.goLabel").copy(row = Some(0)))
         // Печать Сноходцев, зов перевёрнут: «Позвать ловчих».
         case Some(QuestItemKind.SnowwalkerSeal) if PlukhQuest.toHunt(quests) =>
           Some(content.choice("PlukhHuntGo", "plukhGaff.card.huntLabel").copy(row = Some(0)))
@@ -803,6 +807,19 @@ case class InventoryState(
                 else if (!from.exists(StateType.cityStates.contains))
                   renderer.show(user, Screen(content.text(refusalKey), Nil)) *> backToCard(user, renderer)
                 else ZIO.succeed(scene)
+    } yield res
+
+  /** Вернуть срубленный лук изгороди с его карточки: только в лабиринте
+    * («Персонаж» открыт из него) — старые корни там, у живой стены. */
+  private def goFaelinRoots(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      from   <- heroDao.readReturnState(user.userId)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      res    <- if (!FaelinQuest.toRoots(quests)) backToCard(user, renderer)
+                else if (!from.contains(StateType.Dungeon))
+                  renderer.show(user, Screen(content.text("faelinBow.card.onlyInLabyrinth"), Nil)) *>
+                    backToCard(user, renderer)
+                else ZIO.succeed(StateType.FaelinRoots)
     } yield res
 
   /** Позвать ловчих Сноходцев с карточки печати: только в лабиринте
@@ -1720,6 +1737,10 @@ object InventoryState {
         s"${item.displayTitle}\n${difficulty(BramblQuest.Level)}\n\n${QuestItemKind.BramblCast.description}"
       case Some(QuestItemKind.FamilyLock) =>
         s"${item.displayTitle}\n${difficulty(BramblQuest.Level)}\n\n${QuestItemKind.FamilyLock.description}"
+      // Отданный лук: срубленное — вернуть изгороди, к старым корням.
+      case Some(QuestItemKind.CutBow) =>
+        s"${item.displayTitle}\n${difficulty(FaelinQuest.Level)}\n\n${QuestItemKind.CutBow.description}" +
+          (if (FaelinQuest.toRoots(quests)) "\n\n" + content.text("faelinBow.card.hint") else "")
       // Чужой багор: печать — к Густаво, потом с карточки — позвать ловчих.
       case Some(QuestItemKind.SnowwalkerSeal) =>
         val now = if (PlukhQuest.toGustavo(quests)) content.text("plukhGaff.card.toGustavo")

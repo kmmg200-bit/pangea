@@ -13,8 +13,8 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.purse.Purse
 import pangea.model.hero.Achievement
-import pangea.service.state.{BramblQuest, CityExit, HedgeSongQuest, JorgenQuest, LostSquadQuest, MercQuests, NpcQuestLog,
-  PlukhQuest, QuestSupport, SquadDuty, State, UserAction}
+import pangea.service.state.{BramblQuest, CityExit, FaelinQuest, HedgeSongQuest, JorgenQuest, LostSquadQuest, MercQuests,
+  NpcQuestLog, PlukhQuest, QuestSupport, SquadDuty, State, UserAction}
 import pangea.util.TimeLeft
 import zio.{Task, ZIO}
 
@@ -142,6 +142,8 @@ case class MercenariesState(
         // «Чужой багор» идёт — Плюх о нём.
         case AllyKind.Murloc if PlukhQuest.toGustavo(quests) => content.text("plukhGaff.card.tavernGustavo")
         case AllyKind.Murloc if PlukhQuest.toHunt(quests)    => content.text("plukhGaff.card.tavernHunt")
+        // «Отданный лук» идёт — Фаэлин о нём (ветвь брата в сумке — важнее, см. выше).
+        case AllyKind.Elf if FaelinQuest.toRoots(quests)     => content.text("faelinBow.card.tavern")
         case k => content.text(s"mercenaries.${key(k)}.story")
       }
       val price = kind match {
