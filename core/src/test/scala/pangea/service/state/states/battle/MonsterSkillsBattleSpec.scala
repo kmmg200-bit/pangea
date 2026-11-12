@@ -72,7 +72,7 @@ object MonsterSkillsBattleSpec extends ZIOSpecDefault {
         _                            <- state.action(testUser, tap("Attack"), renderer)
         screens                      <- renderer.sentScreens
         joined                        = screens.map(_.text).mkString("\n")
-      } yield assertTrue(joined.contains("делает быстрые атаки")) // QuickStrike шаблон
+      } yield assertTrue(joined.contains("«Быстрый удар» —")) // QuickStrike шаблон
     },
 
     test("CrushingStrike моба бьёт мимо большой брони игрока — hp падает") {
@@ -92,7 +92,7 @@ object MonsterSkillsBattleSpec extends ZIOSpecDefault {
         joined                        = screens.map(_.text).mkString("\n")
       } yield assertTrue(updated.fightStats.hp < 500L) &&
               assertTrue(updated.fightStats.armor > 0L) &&
-              assertTrue(joined.contains("бьёт плашмя"))
+              assertTrue(joined.contains("«Дробящий удар» —"))
     },
 
     test("HealingFlask и EmergencyRepair исключены из applicable при полных hp/armor") {
@@ -120,8 +120,8 @@ object MonsterSkillsBattleSpec extends ZIOSpecDefault {
         _      <- state.action(testUser, tap("Attack"), renderer)
         after  <- heroDao.readActiveBattle(userId).map(_.flatMap(_.as[SoloPveBattle].toOption).get)
         joined <- renderer.sentScreens.map(_.map(_.text).mkString("\n"))
-      } yield assertTrue(!joined.contains("делает быстрые атаки")) &&
-              assertTrue(!joined.contains("бьёт плашмя")) &&
+      } yield assertTrue(!joined.contains("«Быстрый удар» —")) &&
+              assertTrue(!joined.contains("«Дробящий удар» —")) &&
               // зато в конце раунда энергия накопилась: обычный моб 1 уровня даёт 13
               assertTrue(after.monsterCurrentEnergy == MonsterEnergy.regen(1L, Rarity.Common))
     },
@@ -135,7 +135,7 @@ object MonsterSkillsBattleSpec extends ZIOSpecDefault {
         _      <- state.action(testUser, tap("Attack"), renderer)
         after  <- heroDao.readActiveBattle(userId).map(_.flatMap(_.as[SoloPveBattle].toOption).get)
         joined <- renderer.sentScreens.map(_.map(_.text).mkString("\n"))
-      } yield assertTrue(joined.contains("делает быстрые атаки")) &&
+      } yield assertTrue(joined.contains("«Быстрый удар» —")) &&
               // потратил всё, что было, и тут же накопил реген раунда
               assertTrue(after.monsterCurrentEnergy == MonsterEnergy.regen(1L, Rarity.Common))
     },
@@ -170,8 +170,8 @@ object MonsterSkillsBattleSpec extends ZIOSpecDefault {
         screens                      <- renderer.sentScreens
         joined                        = screens.map(_.text).mkString("\n")
       } yield assertTrue(result == pangea.model.state.StateType.Death) &&
-              assertTrue(!joined.contains("делает быстрые атаки")) &&
-              assertTrue(!joined.contains("бьёт плашмя"))
+              assertTrue(!joined.contains("«Быстрый удар» —")) &&
+              assertTrue(!joined.contains("«Дробящий удар» —"))
     }
   )
 }

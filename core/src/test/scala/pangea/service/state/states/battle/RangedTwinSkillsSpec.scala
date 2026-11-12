@@ -121,7 +121,7 @@ object RangedTwinSkillsSpec extends ZIOSpecDefault {
         _     <- state.action(testUser, aimed("Skill_101", 4), r)
         after <- battleOf(dao)
         log   <- r.sentScreens.map(_.map(_.text).mkString("\n"))
-      } yield assertTrue(log.contains("Стрела раскололась о врага") && log.contains("Осколки стрелы задевают")) &&
+      } yield assertTrue(log.contains("🏹 «Расщепляющий выстрел» →") && log.contains("Осколки стрелы задевают")) &&
               assertTrue(!log.contains("Дуга удара")) &&
               // цель на четвёртом и её соседи на третьем и пятом (пятый луку не
               // достать — но осколкам всё равно), где бы они ни стояли после раунда
@@ -136,7 +136,7 @@ object RangedTwinSkillsSpec extends ZIOSpecDefault {
         _     <- state.action(testUser, aimed("Skill_101", 4), r)
         after <- battleOf(dao)
         log   <- r.sentScreens.map(_.map(_.text).mkString("\n"))
-      } yield assertTrue(log.contains("Зазубренный наконечник вошёл глубоко")) &&
+      } yield assertTrue(log.contains("🩸 «Кровопускающий выстрел» →")) &&
               assertTrue(after.group.others.exists(m => m.currentHp < full && m.effects.monsterBleed.isDefined))
     }
   )

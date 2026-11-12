@@ -627,7 +627,9 @@ object AllyBattleSpec extends ZIOSpecDefault {
               assertTrue(thawed.group.allyAt(2).exists(a => a.coldCut == 0 && a.burn.isEmpty)) &&
               assertTrue(said2.contains("Йорген Кремень: пламя растопило лёд")) &&
               assertTrue(venom.group.allyAt(2).exists(_.poison.isDefined)) &&
-              assertTrue(said3.contains("Йорген Кремень: отравленное оружие оставило яд")) &&
+              // яд от оружия — пометкой в строке удара, отдельной строки нет
+              assertTrue("""бьёт Йорген Кремень на \d+ урона и травит 🟢""".r.findFirstIn(said3).isDefined) &&
+              assertTrue(!said3.contains("отравленное оружие")) &&
               assertTrue(clean.group.allyAt(2).exists(a => a.poison.isEmpty && a.hp < a.stats.hp))
     },
 
@@ -740,7 +742,7 @@ object AllyBattleSpec extends ZIOSpecDefault {
         after   <- battleOf(dao)
         screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
         a        = after.group.allies.head
-      } yield assertTrue(screens.contains("выпивает из своей фляги и восстанавливает 125 хп")) &&
+      } yield assertTrue(screens.contains("🧪 Йорген Кремень: «Исцеляющая фляга» — +125 HP.")) &&
               // лечит до потолка и не выше: 500 было, 625 максимум
               assertTrue(a.hp == 625L) &&
               assertTrue(a.energy == 500L - 40L + 35L)
@@ -928,7 +930,7 @@ object AllyBattleSpec extends ZIOSpecDefault {
         after   <- battleOf(dao)
         said     = screens.map(_.text).mkString("\n")
       } yield assertTrue(!screens.exists(_.text.contains("в кого?"))) &&
-              assertTrue(said.contains("Применив руну вы исцеляетесь")) &&
+              assertTrue(said.contains("💚 «Малое исцеление»: +")) &&
               assertTrue(after.slotByItem(202L).exists(_.uses == 1)) &&
               // лечение ему не досталось (в конце раунда он сам шагнул к врагу)
               assertTrue(after.group.allies.headOption.exists(_.hp == 100L))

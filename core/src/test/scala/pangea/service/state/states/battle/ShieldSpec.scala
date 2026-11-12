@@ -159,7 +159,7 @@ object ShieldSpec extends ZIOSpecDefault {
               // после Блока раунд идёт: моб не ударил, щит поднят, бонусное действие потрачено
               assertTrue(midHp == h.fightStats.hp && mid.monsterCurrentHp == monster.fightStats.hp) &&
               assertTrue(mid.heroShieldUp && mid.consumableUsedThisRound && mid.midRound) &&
-              assertTrue(shown.contains("Блок поднят")) &&
+              assertTrue(shown.contains("🛡 «Блок»: урон по вам −")) &&
               // и ударил герой после Блока сам; откат Блока в этом раунде не тикнул
               assertTrue(after.monsterCurrentHp < monster.fightStats.hp) &&
               assertTrue(after.skillSlots.find(_.itemId == 301L).exists(_.cooldown == 2)) &&
@@ -251,7 +251,7 @@ object ShieldSpec extends ZIOSpecDefault {
         _      <- state.action(testUser, tap("Skill_301"), r)
         battle <- battleOf(dao)
         log    <- r.sentScreens.map(_.map(_.text).mkString("\n"))
-      } yield assertTrue(battle.heroBlockPct == 60L && log.contains("слабее на 60%"))
+      } yield assertTrue(battle.heroBlockPct == 60L && log.contains("−60% до конца раунда"))
     }
   )
 }

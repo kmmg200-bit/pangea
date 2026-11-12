@@ -998,7 +998,7 @@ object BattleStateSpec extends ZIOSpecDefault {
         skillSlots = List(pangea.model.battle.SkillSlotState(weapon.id, pangea.model.skill.Skill.SweepingStrike)))
       // Урон самого умения берём из его строки: за ним в том же ходу идёт
       // обычная атака, и по HP моба их не разделить.
-      val Dealt = raw"нанеся ему (\d+) урона".r
+      val Dealt = raw"«Размашистый удар» → [^:\n]+: (\d+) урона".r
       def skillDamage(said: String): Long =
         Dealt.findFirstMatchIn(said).map(_.group(1).toLong).getOrElse(-1L)
       // Первый бросок хода с умением — бросок крита, дальше удар моба и разброс

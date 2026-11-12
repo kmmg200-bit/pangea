@@ -189,7 +189,7 @@ object BowSkillsSpec extends ZIOSpecDefault {
         _     <- state.action(testUser, aimed("Skill_101", 1), r)
         after <- battleOf(dao)
         log   <- r.sentScreens.map(_.map(_.text).mkString("\n"))
-      } yield assertTrue(log.contains("Вы отпрыгиваете на позицию 3") && log.contains("Выстрел в прыжке")) &&
+      } yield assertTrue(log.contains("Вы отпрыгиваете на позицию 3") && log.contains("🏹 «Отскок» →")) &&
               // бывшая пара ранена и осталась на первом — не напротив героя (а на
               // третье, напротив него, может прибежать подкрепление)
               assertTrue(after.group.heroPos == 3) &&

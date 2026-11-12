@@ -212,12 +212,12 @@ object FlaskBattleSpec extends ZIOSpecDefault {
         log5 <- r.sentScreens.map(_.map(_.text).mkString("\n"))
       } yield assertTrue(b0.effects.heroSmokeTurns == FlaskRates.SmokeRounds + 1 && log4.contains("Дымная фляга разбивается")) &&
               assertTrue(log4.contains("Дым держится")) &&
-              assertTrue(!log4.contains("атаковал вас сбоку") && !log4.contains("ударил сбоку") && !log4.contains("исцелил")) &&
+              assertTrue(!log4.contains("атаковал вас сбоку") && !log4.contains("ударил сбоку") && !log4.contains("«Исцеляющая фляга» →")) &&
               // активный моб в паре всё это время бил
               assertTrue(u4.fightStats.hp < 50000L && log4.contains("наносит")) &&
               // дым ещё держится на последнем тике, после пятого раунда — рассеялся
               assertTrue(b4.effects.heroSmokeTurns == 1 && b5.effects.heroSmokeTurns == 0) &&
-              assertTrue(log5.contains("атаковал вас сбоку") && log5.contains("исцелил")) &&
+              assertTrue(log5.contains("атаковал вас сбоку") && log5.contains("«Исцеляющая фляга» →")) &&
               assertTrue(b5.monsterCurrentHp > b4.monsterCurrentHp) // активного подлечили
     },
 

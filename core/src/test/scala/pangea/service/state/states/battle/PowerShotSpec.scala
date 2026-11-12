@@ -80,7 +80,7 @@ object PowerShotSpec extends ZIOSpecDefault {
 
   private def shotSlot(b: SoloPveBattle) = b.slotByItem(101L).get
 
-  private val shotLine = """Мощный выстрел ×([0-9,]+): (\d+) урона""".r
+  private val shotLine = """«Мощный выстрел» ×([0-9,]+) → [^:\n]+: (\d+) урона""".r
 
   /** Натянуть, `holds` раз потянуть дальше и спустить «Атакой»: множитель и урон выстрела. */
   private def shootAfter(holds: Int) =
@@ -103,7 +103,7 @@ object PowerShotSpec extends ZIOSpecDefault {
         after  <- battleOf(dao)
         screen <- r.sentScreens.map(_.last)
         log    <- r.sentScreens.map(_.map(_.text).mkString("\n"))
-      } yield assertTrue(log.contains("Вы натягиваете тетиву")) &&
+      } yield assertTrue(log.contains("🏹 «Мощный выстрел»: тетива натянута.")) &&
               assertTrue(after.monsterCurrentHp == full && shotSlot(after).aim.contains(0)) &&
               assertTrue(shotSlot(after).cooldown == 0 && shotSlot(after).uses == 0) &&
               // ход ушёл: моб ответил, раунд кончился
@@ -126,7 +126,7 @@ object PowerShotSpec extends ZIOSpecDefault {
         fourth <- battleOf(dao)
         said   <- r.sentScreens.map(_.map(_.text).mkString("\n"))
       } yield assertTrue(shotSlot(third).aim.contains(3) && third.roundsFought == 4) &&
-              assertTrue(said.contains("Тетива натянута ещё туже: мощный выстрел ×2,5.")) &&
+              assertTrue(said.contains("🏹 «Мощный выстрел»: тетива туже — ×2,5.")) &&
               assertTrue(screen.text.contains("Тетива натянута до предела: мощный выстрел ×2,5.")) &&
               assertTrue(!screen.choices.exists(_.label.startsWith("🏹 Тянуть дальше"))) &&
               assertTrue(said.contains("дальше не потянуть") && fourth.roundsFought == 4 && shotSlot(fourth).aim.contains(3))
@@ -141,7 +141,7 @@ object PowerShotSpec extends ZIOSpecDefault {
         _     <- state.action(testUser, tap("Attack"), r)
         after <- battleOf(dao)
         log   <- r.sentScreens.map(_.map(_.text).mkString("\n"))
-      } yield assertTrue(log.contains("🏹 Мощный выстрел ×1,5:")) &&
+      } yield assertTrue(log.contains("🏹 «Мощный выстрел» ×1,5 →")) &&
               assertTrue(after.monsterCurrentHp < full) &&
               assertTrue(shotSlot(after).aim.isEmpty && shotSlot(after).cooldown == Skill.PowerShot.cooldown) &&
               assertTrue(shotSlot(after).uses == 1)

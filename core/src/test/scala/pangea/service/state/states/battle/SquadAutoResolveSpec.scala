@@ -172,7 +172,7 @@ object SquadAutoResolveSpec extends ZIOSpecDefault {
         hero <- heroOf(dao)
         text <- said(r)
         now  <- zio.Clock.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS)
-      } yield assertTrue(text.contains("применяет «Дробящий удар» по Йорген Кремень")) &&
+      } yield assertTrue(text.contains("«Дробящий удар» → Йорген Кремень")) &&
               assertTrue(text.contains("Йорген Кремень воспользовался свитком и телепортировался с боя")) &&
               // он был последним — отложенная смерть героя
               assertTrue(out == StateType.Death) &&

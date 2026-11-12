@@ -68,7 +68,7 @@ object MonsterSkill extends Enum[MonsterSkill] {
 
   case object QuickStrike extends MonsterSkill(
     label    = "Быстрый удар",
-    template = "{name} делает быстрые атаки на {} урона!"
+    template = "👹 {name}: «Быстрый удар» — {} урона."
   ) {
     def applicable(battle: SoloPveBattle): Boolean = true
 
@@ -93,7 +93,7 @@ object MonsterSkill extends Enum[MonsterSkill] {
 
   case object CrushingStrike extends MonsterSkill(
     label    = "Дробящий удар",
-    template = "{name} бьёт плашмя прямо по голове, нанеся {} урона!"
+    template = "👹 {name}: «Дробящий удар» — {} урона."
   ) {
     def applicable(battle: SoloPveBattle): Boolean = true
 
@@ -112,7 +112,7 @@ object MonsterSkill extends Enum[MonsterSkill] {
 
   case object HealingFlask extends MonsterSkill(
     label    = "Исцеляющая фляга",
-    template = "{name} выпивает из своей фляги и восстанавливает {} HP!"
+    template = "👹 {name}: «Исцеляющая фляга» — +{} HP."
   ) {
     /** Фляга есть у того, кто носит пояс: зверью и сооружениям её не достать —
       * ни себе, ни соседу (см. `BattleState.selfAid`/`allyAid`). */
@@ -145,7 +145,7 @@ object MonsterSkill extends Enum[MonsterSkill] {
 
   case object EmergencyRepair extends MonsterSkill(
     label    = "Экстренная починка",
-    template = "{name} выливает металлическую жижу на свои доспехи. Повреждения в его брони затягиваются на глазах! Восстановлено {} брони."
+    template = "👹 {name}: «Экстренная починка» — +{} брони."
   ) {
     /** Латать доспех нечем и некому, если доспеха нет: это умение смертных. */
     override val races: Set[Race] = Race.mortals.toSet
@@ -166,13 +166,13 @@ object MonsterSkill extends Enum[MonsterSkill] {
    *  героя срезает урон процентно, как и у прочих ударов. */
   case object DirtyStrike extends MonsterSkill(
     label    = "Грязный удар",
-    template = "{name} делает грязную атаку на {} урона! Вы чувствуете как по вашему телу медленно растекается яд."
+    template = "👹 {name}: «Грязный удар» — {} урона, яд 🟢."
   ) {
     val DamageFactor: Double = 0.6
     val PoisonPct: Int       = Poison.OnHit
 
     /** Строка удара, когда яд не взялся: героя бережёт змеиная сыворотка. */
-    val WardedTemplate: String = "{name} делает грязную атаку на {} урона! Но змеиная сыворотка не даёт яду взяться."
+    val WardedTemplate: String = "👹 {name}: «Грязный удар» — {} урона; змеиная сыворотка: яд не взялся."
 
     override val races: Set[Race]   = Set(Race.Murloc)
     override val costFactor: Double = MonsterEnergy.RacialCostFactor

@@ -103,8 +103,8 @@ object ElementComboSpec extends ZIOSpecDefault {
         (after, log) = r
       } yield assertTrue(log.contains("не смог применить умение")) &&
               // ни быстрых атак, ни удара плашмя — умение застряло
-              assertTrue(!log.contains("делает быстрые атаки")) &&
-              assertTrue(!log.contains("бьёт плашмя")) &&
+              assertTrue(!log.contains("«Быстрый удар» —")) &&
+              assertTrue(!log.contains("«Дробящий удар» —")) &&
               // тик в начале хода моба съел один заряд, остался последний
               assertTrue(after.effects.monsterSkillBlockedTurns == 1)
     },

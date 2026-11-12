@@ -2507,6 +2507,11 @@ case class BattleState(
   private def strikeBy(battle: SoloPveBattle): String =
     powderElement(battle).fold("")(e => content.text(s"battle.strikeBy.${e.entryName}"))
 
+  /** Удар, оставивший в ране яд (отравленное оружие), помечен прямо в своей
+    * строке: « и травит 🟢». Отдельной строки о яде нет. */
+  private def poisonMark(poisoned: Boolean): String =
+    if (poisoned) content.text("battle.poisonedStrike") else ""
+
   /** Доли урона по броне и HP от стихии удара моба. У каменного элементаля
     * свой раскол, он важнее — там это природа удара, а не стихия. */
   private def powderSplit(battle: SoloPveBattle): Option[(Double, Double)] =
@@ -3056,14 +3061,15 @@ case class BattleState(
                 if (battle.boss.isDefined) "battle.elemental.ignites" else "battle.mobIgnites")),
               Option.when(fireWarded)(content.text("battle.ward.fire")),
               Option.when(thawed)(content.text("battle.elements.thawHero")),
-              Option.when(poisons && !poisonWarded)(content.text("battle.mobPoisons")),
+              // Яд от оружия — пометкой в строке самого удара (см. poisonMark).
               Option.when(poisonWarded)(content.text("battle.ward.poison")),
               Option.when(mobProc && procElement.contains(Element.Cold) && !quenched && !coldWarded)(content.text("battle.mobColdBite")),
               Option.when(coldWarded)(content.text("battle.ward.cold")),
               Option.when(quenched)(content.text("battle.elements.quenchHero")),
               Option.when(mobProc && procElement.contains(Element.Air))(content.text("battle.mobAirBoost"))
             ).flatten
-          } yield MobStrike(newHp, newArmor + restoredArmor, landed, lines, battleAfterAtk)
+          } yield MobStrike(newHp, newArmor + restoredArmor, landed, lines, battleAfterAtk,
+                    poisoned = poisons && !poisonWarded)
   }
 
   /** Умение моба поверх обычной атаки: самое дорогое по карману, оплачивается
@@ -3148,7 +3154,7 @@ case class BattleState(
         if (hitRoll > dodge)
           mobStrike(hero, ticked, buffedEff, nowMs).map { st =>
             val line  = content.format("battle.mobHit", "damage" -> st.damage.toString, "monster" -> ticked.monsterName,
-                          "elem" -> strikeBy(ticked))
+                          "elem" -> (strikeBy(ticked) + poisonMark(st.poisoned)))
             val lines = if (st.mirrored) st.extraLines else line :: st.extraLines
             (st.newHp, st.newArmor, lines.mkString("\n"), st.battle)
           }
@@ -3828,7 +3834,8 @@ case class BattleState(
                closeMod).toLong.max(1L)
       // Спущенная стрела «Мощного выстрела» тетиву отпускает.
       bumped = aimed.updateSlot(slot.itemId)(s => s.copy(cooldown = s.skill.cooldown, uses = s.uses + 1, aim = None))
-      tmpl = slot.skill.hitTemplate
+      // Строка умения: «Умение» → цель: урон. Цель — тот, кого бьют (`aimed`).
+      tmpl = slot.skill.hitTemplate.replace("{target}", aimed.monsterName)
       // Урон, срезанный защитой моба (для эффектов, которые «упираются» в защиту).
       // Дебаф Холода снижает итоговое %-снижение цели на monsterColdDefenceCut п.п.;
       // временный дебаф защиты (комбо) режет саму защиту (effectiveMonsterDefence).
@@ -3895,9 +3902,7 @@ case class BattleState(
           // Урон без защиты; выживший отлетает в конец строя, а последний
           // выходит на его место — базовая атака и ответ идут уже по нему.
           // Сооружение с места не сдвинуть; минибосса — можно.
-          val line: Long => String = dealt =>
-            tmpl.replaceFirst("\\{\\}", java.util.regex.Matcher.quoteReplacement(aimed.monsterName))
-                .replaceFirst("\\{\\}", dealt.toString)
+          val line: Long => String = dealt => tmpl.replace("{}", dealt.toString)
           val thrown: (Hero, SoloPveBattle, Vector[String]) => Task[TurnResult] = (h, b, lines) =>
             if (b.monsterCurrentHp <= 0) next(h, b, lines)
             else if (BattleState.isTower(b))
@@ -5362,11 +5367,11 @@ case class BattleState(
             else if (bites) poisoned.copy(coldCut = poisoned.coldCut + Element.Cold.DefenceReductionCut)
             else poisoned
           after    = if (airy) tmp.copy(effects = tmp.effects.copy(mobAirBoostTurns = Element.Air.ProcTurns)) else tmp
-          line     = content.format("battle.ally.mobHit", "monster" -> tmp.monsterName, "name" -> a.name, "damage" -> (armorDmg + hpDmg).toString)
+          line     = content.format("battle.ally.mobHit", "monster" -> tmp.monsterName, "name" -> a.name,
+                       "damage" -> (armorDmg + hpDmg).toString, "poison" -> poisonMark(poisons))
           extras   = List(
             Option.when(ignites && !thawed)(content.format("battle.ally.ignites", "name" -> a.name)),
             Option.when(thawed)(content.format("battle.ally.thaw", "name" -> a.name)),
-            Option.when(poisons)(content.format("battle.ally.poisons", "name" -> a.name)),
             Option.when(bites && !quenched)(content.format("battle.ally.coldBite", "name" -> a.name)),
             Option.when(quenched)(content.format("battle.ally.quench", "name" -> a.name)),
             Option.when(airy)(content.text("battle.mobAirBoost"))
@@ -5606,7 +5611,7 @@ case class BattleState(
                 if (hitRoll > dodge)
                   mobStrike(hero, tmp, effWithAir(hero, tmp, nowMs), nowMs).map { st =>
                     val line = content.format("battle.group.sideHit", "monster" -> tmp.monsterName, "damage" -> st.damage.toString,
-                                 "elem" -> strikeBy(tmp))
+                                 "elem" -> (strikeBy(tmp) + poisonMark(st.poisoned)))
                     val head = if (st.mirrored) Vector.empty[String] else Vector(line)
                     (hero.copy(fightStats = hero.fightStats.copy(hp = st.newHp, armor = st.newArmor)), st.battle,
                       head ++ st.extraLines)
@@ -5746,10 +5751,10 @@ case class BattleState(
       val paid   = caster.copy(monsterCurrentEnergy = (caster.monsterCurrentEnergy - skill.cost(caster.monsterLvl)).max(0L))
       val (line, healed) =
         if (skill == MonsterSkill.HealingFlask)
-          (content.format("battle.group.healedAlly", "monster" -> caster.monsterName,
+          (content.format("battle.group.healedAlly", "monster" -> caster.monsterName, "target" -> tgt.monsterName,
             "hp" -> (cast.battle.monsterCurrentHp - tgt.monsterCurrentHp).toString), cast.battle)
         else
-          (content.format("battle.group.repairedAlly", "monster" -> caster.monsterName,
+          (content.format("battle.group.repairedAlly", "monster" -> caster.monsterName, "target" -> tgt.monsterName,
             "armor" -> (cast.battle.monsterCurrentArmor - tgt.monsterCurrentArmor).toString), cast.battle)
       val updated = n match {
         case Left(_)  => healed.copy(group = battle.group)                          // активный
@@ -6925,7 +6930,9 @@ object BattleState {
     extraLines: List[String],
     battle:     SoloPveBattle,
     /** Удар ушёл в призрачную копию: героя он не тронул, и строки об уроне не будет. */
-    mirrored:   Boolean = false)
+    mirrored:   Boolean = false,
+    /** Удар оставил в ране яд — строка удара помечена (см. `poisonMark`). */
+    poisoned:   Boolean = false)
 
   /** Удар союзника: бой после него, кого бил, сколько снял, добил ли соседа. */
   /** Удар союзника: `slew` — добитый стоял в строю и уходит в павшие со своей

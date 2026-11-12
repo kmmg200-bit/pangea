@@ -261,7 +261,7 @@ object GroupBattleSpec extends ZIOSpecDefault {
         _       <- state.action(testUser, aimed("Attack", 1), r)
         after   <- battleOf(dao)
         screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
-      } yield assertTrue(screens.contains("исцелил вашего врага")) &&
+      } yield assertTrue("""«Исцеляющая фляга» → [^:\n]+: \+\d+ HP\.""".r.findFirstIn(screens).isDefined) &&
               assertTrue(after.group.others.head.currentHp > 500L) &&
               // лекарь заплатил энергией
               assertTrue(after.group.others(1).currentEnergy < MonsterEnergy.maxEnergy(lvl))
@@ -678,7 +678,7 @@ object GroupBattleSpec extends ZIOSpecDefault {
         after <- battleOf(dao)
         all   <- r.sentScreens.map(_.map(_.text).mkString("\n"))
       } yield assertTrue(after.group.others.head.currentHp == 1000L - 258L) &&
-              assertTrue(all.contains("нанеся ему 516 урона"))
+              assertTrue("""🌀 «Размашистый удар» → [^:\n]+: 516 урона\.""".r.findFirstIn(all).isDefined)
     },
 
     test("Размашистый удар по мобу в паре: соседу цели — половина урона, дальний под номером 3 цел") {
@@ -736,7 +736,7 @@ object GroupBattleSpec extends ZIOSpecDefault {
       } yield assertTrue(after.monsterCurrentHp < 794L) &&
               assertTrue(byPos(2).currentHp == 794L) &&
               assertTrue(byPos(3).currentHp == 1000L) &&
-              assertTrue(screens.contains("вихре стали") && screens.contains("Вихрь настигает")) &&
+              assertTrue(screens.contains("🌪 «Вихрь клинка» →") && screens.contains("Вихрь настигает")) &&
               // цель и так напротив — шагать некуда
               assertTrue(after.group.heroPos == 1 && !screens.contains("Вы перемещаетесь"))
     },
@@ -757,7 +757,7 @@ object GroupBattleSpec extends ZIOSpecDefault {
               assertTrue(after.monsterCurrentHp < 794L) &&
               assertTrue(byPos(1).currentHp == 794L && byPos(3).currentHp == 794L) &&
               assertTrue(byPos(4).currentHp == 1000L) &&
-              assertTrue(screens.contains("Вы перемещаетесь на место 2, напротив цели.") && screens.contains("вихре стали"))
+              assertTrue(screens.contains("Вы перемещаетесь на место 2, напротив цели.") && screens.contains("🌪 «Вихрь клинка» →"))
     },
 
     test("Вихрь клинка: место напротив цели занято союзником — меняются местами") {
@@ -823,7 +823,7 @@ object GroupBattleSpec extends ZIOSpecDefault {
               // порез 2249 и первый тик крови (2% от 10000) в фазе мобов вне пары
               assertTrue(side.currentHp == 10000L - 2249L - 200L) &&
               assertTrue(side.effects.monsterBleed.exists(_.pct == 2)) &&
-              assertTrue(screens.contains("пошла кровь") && screens.contains("Порез задевает"))
+              assertTrue(screens.contains("кровотечение 2%") && screens.contains("Порез задевает"))
     },
 
     test("Боевой клич: цели не спрашивает, всем в досягаемости — дебаф защиты и запертое умение, потом базовая атака") {
@@ -838,7 +838,7 @@ object GroupBattleSpec extends ZIOSpecDefault {
         screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
         byPos    = after.group.entries.toMap
       } yield assertTrue(!screens.contains("в кого?")) &&
-              assertTrue(screens.contains("слабеет на 10% на 2 хода")) &&
+              assertTrue(screens.contains("📣 «Боевой клич»: защита врагов рядом −10% на 2 хода.")) &&
               // к концу раунда дебафы оттикали по разу: 2 → 1 хода, замок 2 → 1
               assertTrue(after.effects.monsterDefenceDebuff.contains(pangea.model.battle.TimedDefenceDebuff(10, 1))) &&
               assertTrue(after.effects.monsterSkillBlockedTurns == 1) &&
@@ -863,7 +863,7 @@ object GroupBattleSpec extends ZIOSpecDefault {
       } yield assertTrue(after.group.paired && after.monsterStats.hp == 3000L && after.monsterCurrentHp < 3000L) &&
               assertTrue(byPos(3).stats.hp == 1000L && byPos(3).currentHp == 875L) &&
               assertTrue(byPos(2).currentHp == 2000L) &&
-              assertTrue(screens.contains("отшвыриваете") && screens.contains("отлетает в конец строя"))
+              assertTrue(screens.contains("💥 «Отбросить» →") && screens.contains("отлетает в конец строя"))
     },
 
     test("Отбросить последнего (или единственного) — просто удар, строй не меняется") {
@@ -876,7 +876,7 @@ object GroupBattleSpec extends ZIOSpecDefault {
         after   <- battleOf(dao)
         screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
       } yield assertTrue(after.group.paired && after.monsterCurrentHp < 875L) &&
-              assertTrue(screens.contains("отшвыриваете") && !screens.contains("отлетает в конец строя"))
+              assertTrue(screens.contains("💥 «Отбросить» →") && !screens.contains("отлетает в конец строя"))
     },
 
     test("Отбросить башню рядом: удар проходит, а с места она не сходит") {

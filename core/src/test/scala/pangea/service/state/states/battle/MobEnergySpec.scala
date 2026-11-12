@@ -135,7 +135,7 @@ object MobEnergySpec extends ZIOSpecDefault {
       for {
         r <- strike(h, mobBattle(Race.Murloc, energy = MonsterEnergy.maxEnergy(lvl)), seedTurn(0))
         (after, _, log) = r
-      } yield assertTrue(log.contains("грязную атаку")) &&
+      } yield assertTrue(log.contains("«Грязный удар» —")) &&
               assertTrue(after.effects.heroPoison.isDefined)
     },
 
@@ -144,7 +144,7 @@ object MobEnergySpec extends ZIOSpecDefault {
       // Последний бросок — шанс яда: 1 — травит, 99 — мимо.
       def poisonAfter(race: Race, roll: Int) =
         strike(h, mobBattle(race, energy = 0L), seedTurn(roll)).map { case (after, _, log) =>
-          (after.effects.heroPoison.isDefined, log.contains("Отравленное оружие"))
+          (after.effects.heroPoison.isDefined, log.contains("и травит 🟢"))
         }
       for {
         murloc <- poisonAfter(Race.Murloc, 1)
@@ -214,7 +214,7 @@ object MobEnergySpec extends ZIOSpecDefault {
       for {
         r <- strike(h, b, seedTurn(0))
         (after, _, log) = r
-      } yield assertTrue(log.contains("медленно растекается яд")) &&
+      } yield assertTrue(log.contains("урона, яд 🟢.")) &&
               assertTrue(after.effects.heroPoison.isDefined)
     },
 

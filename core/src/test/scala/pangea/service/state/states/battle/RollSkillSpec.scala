@@ -87,7 +87,7 @@ object RollSkillSpec extends ZIOSpecDefault {
         log   <- r.sentScreens.map(_.map(_.text).mkString("\n"))
         _     <- state.action(testUser, tap("Wait"), r)
         later <- battleOf(dao)
-      } yield assertTrue(log.contains("Вы перекатываетесь на место 4") && log.contains("+15% к уклонению")) &&
+      } yield assertTrue(log.contains("💨 «Перекат»: на место 4") && log.contains("+15% к уклонению")) &&
               assertTrue(first.group.heroPos == 4 && first.heroBattleState.dodgeBonus == 15L) &&
               assertTrue(first.slotByItem(202L).exists(s => s.cooldown == Skill.Roll.cooldown && s.uses == 1)) &&
               // отошедший герой не в паре — враг шагнул к нему
@@ -140,7 +140,7 @@ object RollSkillSpec extends ZIOSpecDefault {
     },
 
     test("«Отбросить» бьёт плечом, а не щитом; у «Переката» свой рунный камень") {
-      assertTrue(Skill.Shove.hitTemplate == "Ударом плеча вы отшвыриваете {} — {} урона!") &&
+      assertTrue(Skill.Shove.hitTemplate == "💥 «Отбросить» → {target}: {} урона.") &&
       assertTrue(Skill.Shove.description.startsWith("Наплечники этого доспеха") && !Skill.Shove.description.contains("Умбон")) &&
       assertTrue(Skill.Shove.effect == Skill.Effect.Knockback) &&
       assertTrue(RuneStone.look(Rune.Active(Skill.Roll)).genitive == "Переката") &&

@@ -255,7 +255,7 @@ object ArenaPlacesSpec extends ZIOSpecDefault {
         hit  <- texts(r)
         after = fight(fights)
       } yield assertTrue(spot.contains("с места Тараном не сойти") && stay.isTurn(oneId) && stay.a.pos == 1) &&
-              assertTrue(hit.contains("врезаетесь во врага") && hit.contains("Таран не сдвинул вас с места")) &&
+              assertTrue(hit.contains("⚔ «Таран» →") && hit.contains("Таран не сдвинул вас с места")) &&
               assertTrue(after.a.pos == 1 && after.isTurn(twoId))
     },
 
