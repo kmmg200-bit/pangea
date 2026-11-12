@@ -7,7 +7,7 @@ import io.circe.{Decoder, Encoder, jawn}
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.generator.item.TreasureMapGenerator
-import pangea.model.hero.{Equipment, Hero, WeaponDust}
+import pangea.model.hero.{Equipment, Hero}
 import pangea.model.inventory.Inventory
 import pangea.model.item.{BeltSlot, Bundling, Chisel, Gem, GemBreaking, Item, ItemDetails, ItemStack, ItemType, MaterialKind, QuestItemKind, RefillSource, TrophyKind}
 import pangea.model.monster.Race
@@ -1495,33 +1495,12 @@ case class InventoryState(
 
   // ── Пыль на оружие ─────────────────────────────────────────────────────────
 
-  /** Посыпает надетое оружие выбранной пылью. Горсть тратится в любом случае —
-    * даже когда магия даёт всполох или покрытие идёт четвёртым слоем. */
+  /** Посыпает надетое оружие выбранной пылью — общим с Mini App
+    * [[GemWork.sprinkle]]: горсть тратится в любом случае. Не пыль — к списку. */
   private def sprinkleDust(user: User, renderer: Renderer): Task[StateType] =
     withSelected(user, renderer) { (item, hero) =>
-      item.material.filter(_.gem.isDefined) match {
-        case None => showList(user, renderer)
-        case Some(_) if hero.equipment.unarmed =>
-          renderer.show(user, Screen(content.text("inventory.dustNoWeapon"), Nil)) *> backToCard(user, renderer)
-        case Some(dust) =>
-          val outcome = WeaponDust.sprinkle(dust, hero.weaponDust, hero.equipment.handGems)
-          val line = outcome match {
-            // Сколько слоёв уже на оружии, игрок держит в голове сам — не считаем за него.
-            case WeaponDust.Outcome.Applied(_) =>
-              content.format("inventory.dustApplied",
-                "dust"   -> dust.displayName,
-                "weapon" -> hero.equipment.mainWeapon.name)
-            case WeaponDust.Outcome.Clash(_) =>
-              content.format("inventory.dustClash", "dust" -> dust.displayName,
-                "pct" -> WeaponDust.PenaltyPct.toString)
-            case WeaponDust.Outcome.Overload(_) =>
-              content.format("inventory.dustOverload", "pct" -> WeaponDust.PenaltyPct.toString)
-          }
-          inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)) *>
-            heroDao.updateWeaponDust(user.userId, outcome.next) *>
-            renderer.show(user, Screen(line, Nil)) *>
-            backToCard(user, renderer)
-      }
+      gemWork.sprinkle(user, hero, item, renderer).flatMap(found =>
+        if (found) backToCard(user, renderer) else showList(user, renderer))
     }
 
   /** Положить расходник на пояс: что и как — у [[BeltWork]], общего с Mini App;

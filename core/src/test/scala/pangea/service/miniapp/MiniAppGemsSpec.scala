@@ -223,8 +223,78 @@ object MiniAppGemsSpec extends ZIOSpecDefault {
           "gem" -> grit.displayName, "dust" -> grit.dust.displayName, "count" -> "4")),
         v.bagActs.find(_.item == 20L).forall(_.crush.isEmpty)
       )
+    },
+
+    // ── «Применить на оружие» у пыли ────────────────────────────────────────
+    test("пыль на оружие: горсть уходит, слой ложится, слова — как в боте") {
+      val grit = MaterialGenerator.item(MaterialKind.TopazDust).copy(id = 88L)
+      for {
+        t <- dusting(List(grit), armed = true)
+        (hero, dao, bag, work, say, lines, c) = t
+        found <- work.sprinkle(user, hero, grit, say)
+        saved <- dao.getHeroByUserId(userId).someOrFailException
+        said  <- lines.get
+      } yield assertTrue(
+        found,
+        bag.snapshot.isEmpty,
+        saved.weaponDust.layers == List(MaterialKind.TopazDust),
+        said == Vector(c.format("inventory.dustApplied", "dust" -> MaterialKind.TopazDust.displayName,
+          "weapon" -> "Меч"))
+      )
+    },
+    test("оружие не надето — сыпать не на что, горсть в сумке") {
+      val grit = MaterialGenerator.item(MaterialKind.TopazDust).copy(id = 88L)
+      for {
+        t <- dusting(List(grit), armed = false)
+        (hero, dao, bag, work, say, lines, c) = t
+        found <- work.sprinkle(user, hero, grit, say)
+        saved <- dao.getHeroByUserId(userId).someOrFailException
+        said  <- lines.get
+      } yield assertTrue(
+        found,
+        bag.snapshot.map(_.id) == List(88L),
+        saved.weaponDust.isEmpty,
+        said == Vector(c.text("inventory.dustNoWeapon"))
+      )
+    },
+    test("не пыль — сыпать нечего, ничего не сказано") {
+      for {
+        t <- dusting(List(helm()), armed = true)
+        (hero, _, bag, work, say, lines, _) = t
+        found <- work.sprinkle(user, hero, helm(), say)
+        said  <- lines.get
+      } yield assertTrue(!found, said.isEmpty, bag.snapshot.size == 1)
+    },
+    test("в сумке у пыли — «Применить на оружие»; у камня и шлема — нет") {
+      val grit     = MaterialGenerator.item(MaterialKind.TopazDust).copy(id = 88L)
+      val sapphire = GemGenerator.item(GemKind.Sapphire, 2).copy(id = 77L)
+      for {
+        c   <- ZIO.attempt(SceneContent.load())
+        hero = TestFixtures.hero(userId)
+        v    = MiniAppView.inventory(hero, Inventory(1L, hero.id, 20L, Items(List(grit, sapphire, helm()))),
+                 MiniAppView.Stores(HeroArtifacts.empty(hero.id), Barrel.empty(hero.id), BankVault.empty(hero.id), HomeData.empty),
+                 c, _.name, 0L)
+      } yield assertTrue(
+        v.bagActs.find(_.item == 88L).exists(_.dust),
+        v.bagActs.find(_.item == 77L).forall(!_.dust),
+        v.bagActs.find(_.item == 20L).forall(!_.dust)
+      )
     }
   )
+
+  /** Пыль сыплют из сумки: в сумке — `items`, в правой руке — меч, если `armed`. */
+  private def dusting(items: List[Item], armed: Boolean) = {
+    val sword = Item(40L, "Меч", 1L, Rarity.Blue, ItemType.Weapon, attack = 5, accuracy = 0, energy = 0, armor = 0,
+      defence = 0, evasion = 0)
+    for {
+      c     <- ZIO.attempt(SceneContent.load())
+      hero   = TestFixtures.hero(userId).copy(equipment =
+                 if (armed) TestFixtures.emptyEquipment.copy(weapon = sword) else TestFixtures.emptyEquipment)
+      dao   <- TestHeroDao.withHero(userId, hero)
+      bag    = TestInventoryRepository.withItems(items)
+      lines <- Ref.make(Vector.empty[String])
+    } yield (hero, dao, bag, new GemWork(dao, bag, TestItemRepository.make, c), new MiniApp.Collect(lines), lines, c)
+  }
 
   /** Камень колют из сумки: герой ни во что не одет, в сумке — `items`. */
   private def crushing(items: List[Item]) =

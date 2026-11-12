@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { api } from './api'
 import { BagTab, matches, sortItems } from './BagTab'
 import { Silver } from './icons'
-import { groupLabels, presentGroups, type Group as Kind } from './kinds'
+import { groupLabels, kindOf, presentGroups, type Group as Kind } from './kinds'
 import type { BrewAskView, InventoryActionView, InventoryView, ItemView, StorageView } from './types'
 import { BeltSwap, Chips, Empty, ItemRow, ItemText, num, Segment, Sheet, Toolbar, useToast } from './ui'
 
@@ -182,6 +182,11 @@ function BagActs(props: { data: InventoryView; item: ItemView; acts: Acts; onDon
             {a.label}
           </button>
         ))}
+        {act.dust && (
+          <button className="equip-off" disabled={acts.busy} onClick={() => finish(() => api.bagDust(item.id))}>
+            Применить на оружие
+          </button>
+        )}
         {act.belt && (
           <button
             className="equip-off"
@@ -225,6 +230,46 @@ function BagActs(props: { data: InventoryView; item: ItemView; acts: Acts; onDon
       )}
       {ask === 'belt' && act.beltFull && belt && (
         <BeltSwap ask={act.beltFull} belt={belt} busy={acts.busy} onPick={(cell) => finish(() => api.beltPut(item.id, cell))} />
+      )}
+    </div>
+  )
+}
+
+/** «Вставить в предмет» у камня из сумки или Ларца — как на его карточке в
+  * боте: в надетую вещь со свободным гнездом, в первое свободное. Огонь и Холод
+  * в одном оружии рассыпаются оба — об этом скажет бот. Вставлять некуда или
+  * герой в бою — кнопки нет. */
+function GemInsert(props: { data: InventoryView; from: string; item: ItemView; acts: Acts; onDone: () => void }) {
+  const { data, from, item, acts } = props
+  const [pick, setPick] = useState(false)
+  const inStock = data.gemStock.some((g) => g.from === from && g.item.id === item.id)
+  const targets = data.equipment.flatMap((slot) => (slot.freeSocket && slot.item ? [{ slot, worn: slot.item }] : []))
+  if (!inStock || data.gearLocked || targets.length === 0) return null
+  return (
+    <div className="move">
+      <div className="equip-acts">
+        <button className="equip-off" disabled={acts.busy} onClick={() => setPick(!pick)}>
+          Вставить в предмет
+        </button>
+      </div>
+      {pick && (
+        <>
+          <div className="sub-title">Куда вставить?</div>
+          <div className="list gem-list">
+            {targets.map(({ slot, worn }) => (
+              <ItemRow
+                key={slot.index}
+                item={worn}
+                // Слот — там, где вид вещи его не называет: руки, кольца.
+                note={slot.name !== kindOf(worn).label ? ` · ${slot.name}` : undefined}
+                onOpen={() => {
+                  acts.run(() => api.equipInsertGem(slot.index, from, item.id))
+                  props.onDone()
+                }}
+              />
+            ))}
+          </div>
+        </>
       )}
     </div>
   )
@@ -346,8 +391,9 @@ function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; a
 /** «Вещи»: при себе, в городе и в доме. Закрытое хранилище видно с замком —
   * нажал, и написано, как его открыть. Вещь из любого хранилища — в любое,
   * которое её возьмёт (из карточки вещи), — в городе; вне города — между тем,
-  * что при себе. Комплект со стойки — на героя, отвар и пояс — из карточки вещи
-  * в сумке, где угодно. Выбросить — из карточки вещи, откуда её можно и
+  * что при себе. Комплект со стойки — на героя, отвар, пыль и пояс — из
+  * карточки вещи в сумке, камень в гнездо — из сумки и Ларца, где угодно.
+  * Выбросить — из карточки вещи, откуда её можно и
   * переложить. В бою — ни то ни другое. Бот проверит это сам, под тем же замком, что и ходы в чате. Что
   * сказал бот — всплывает над нижней панелью. */
 export function ItemsTab(props: { data: InventoryView; onChange: (v: InventoryView) => void }) {
@@ -406,6 +452,7 @@ export function ItemsTab(props: { data: InventoryView; onChange: (v: InventoryVi
               {open.from === BAG ? 'В сумке' : 'Здесь'}: {open.item.count} шт.
             </p>
           )}
+          <GemInsert data={props.data} from={open.from} item={open.item} acts={acts} onDone={() => setOpen(null)} />
           {open.from === BAG && <BagActs data={props.data} item={open.item} acts={acts} onDone={() => setOpen(null)} />}
           <MovePanel data={props.data} from={open.from} item={open.item} acts={acts} onDone={() => setOpen(null)} />
           <DropPanel data={props.data} from={open.from} item={open.item} acts={acts} onDone={() => setOpen(null)} />

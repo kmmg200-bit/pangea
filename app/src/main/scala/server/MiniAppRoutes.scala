@@ -75,6 +75,10 @@ final class MiniAppRoutes(app: MiniApp) {
     case req @ POST -> Root / "api" / "app" / "bag" / "crush-gem" :? ItemParam(id) =>
       asPlayer(req)(hero => app.crush(hero, id).flatMap(view => Ok(view.asJson)))
 
+    // Пыль из сумки: посыпать надетое оружие. Меняет игру — только POST.
+    case req @ POST -> Root / "api" / "app" / "bag" / "dust" :? ItemParam(id) =>
+      asPlayer(req)(hero => app.dust(hero, id).flatMap(view => Ok(view.asJson)))
+
     case req @ POST -> Root / "api" / "app" / "belt" / "put" :? ItemParam(id) +& BeltCellParam(slot) =>
       asPlayer(req)(hero => app.gear(hero, GearAct.BeltPut(id, slot)).flatMap(view => Ok(view.asJson)))
 

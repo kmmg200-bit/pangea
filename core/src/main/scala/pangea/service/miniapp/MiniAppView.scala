@@ -146,15 +146,17 @@ object MiniAppView {
     * что можно сделать с отваром, `belt` — кладётся ли на пояс, `beltFull` — на
     * поясе нет места, и вот вопрос, что снять, `unpack` — это стопка, её можно
     * распаковать, `crush` — это камень, его можно расколоть, и вот вопрос
-    * перед этим (те же слова, что в боте). */
+    * перед этим (те же слова, что в боте), `dust` — это пыль, ею посыпают
+    * надетое оружие. */
   final case class BagActView(item: Long, brew: List[BrewAskView], belt: Boolean, beltFull: Option[String],
-                              unpack: Boolean, crush: Option[String])
+                              unpack: Boolean, crush: Option[String], dust: Boolean)
 
   /** Вещи героя. `gearLocked` — почему снаряжение и комплект со стойки сейчас
     * не сменить: герой в бою; `storesAway` — почему дотянуться удастся не до
     * всех хранилищ: герой не в городе или в бою; `gemStock` — камни, которые
-    * можно вставить в гнездо; `bagActs` — отвары, что кладётся на пояс, и
-    * стопки, пусто в бою; `drops` — что можно выбросить прямо сейчас. */
+    * можно вставить в гнездо; `bagActs` — отвары, что кладётся на пояс,
+    * стопки, камни и пыль, пусто в бою; `drops` — что можно выбросить прямо
+    * сейчас. */
   final case class InventoryView(
     hero:       HeroView,
     capacity:   Long,
@@ -455,9 +457,11 @@ object MiniAppView {
       val slot  = BeltSlot.of(item)
       val crush = item.gem.map(g => content.format("inventory.crushGemConfirm",
                     "gem" -> g.displayName, "dust" -> g.dust.displayName, "count" -> g.dustYield.toString))
-      Option.when(asks.nonEmpty || slot.isDefined || item.isBundle || crush.isDefined)(
+      // Пыль сыплют на надетое оружие — с карточки, как в боте.
+      val dust  = item.material.exists(_.gem.isDefined)
+      Option.when(asks.nonEmpty || slot.isDefined || item.isBundle || crush.isDefined || dust)(
         BagActView(item.id, asks, slot.isDefined, slot.flatMap(beltFull(h, _, content)), unpack = item.isBundle,
-          crush = crush))
+          crush = crush, dust = dust))
     }
 
   private def beltFull(h: Hero, slot: BeltSlot, content: SceneContent): Option[String] = {

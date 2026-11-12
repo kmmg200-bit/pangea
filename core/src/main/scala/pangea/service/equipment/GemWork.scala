@@ -4,9 +4,9 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.{Renderer, SceneContent, Screen}
 import pangea.generator.item.MaterialGenerator
 import pangea.model.battle.Element
-import pangea.model.hero.{Equipment, Hero}
+import pangea.model.hero.{Equipment, Hero, WeaponDust}
 import pangea.model.inventory.Inventory
-import pangea.model.item.{Chisel, Gem, GemBreaking, Item, ItemType, PassiveKind}
+import pangea.model.item.{Chisel, Gem, GemBreaking, Item, ItemType, MaterialKind, PassiveKind}
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
@@ -16,11 +16,11 @@ import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
 
-/** Камни в гнёздах и резец без экрана. Одно на бота — карточки слота и сумки,
-  * экран вставки — и на Mini App: правила у них одни. Всё меняет героя, поэтому
-  * зовётся под локом игрока: в боте его держит ход, в приложении — сам запрос.
-  * Что сказать игроку, идёт в `renderer`: бот показывает в чате, приложение
-  * собирает в ответ. */
+/** Камни в гнёздах, их пыль на оружии и резец без экрана. Одно на бота —
+  * карточки слота и сумки, экран вставки — и на Mini App: правила у них одни.
+  * Всё меняет героя, поэтому зовётся под локом игрока: в боте его держит ход,
+  * в приложении — сам запрос. Что сказать игроку, идёт в `renderer`: бот
+  * показывает в чате, приложение собирает в ответ. */
 final class GemWork(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemRepo: ItemRepository,
                     content: SceneContent) {
 
@@ -66,11 +66,42 @@ final class GemWork(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemRe
         } yield true
     }
 
+  /** Посыпать надетое оружие горстью пыли `dust` — с её карточки в боте и в
+    * приложении. Горсть тратится в любом случае — даже когда магия даёт
+    * всполох или покрытие идёт четвёртым слоем. Сколько слоёв уже на оружии,
+    * игрок держит в голове сам — не считаем за него. Оружие не надето —
+    * сказать и ничего не трогать. `false` — это не пыль, сказать нечего. */
+  def sprinkle(user: User, hero: Hero, dust: Item, renderer: Renderer): Task[Boolean] =
+    dust.material.filter(_.gem.isDefined) match {
+      case None => ZIO.succeed(false)
+      case Some(_) if hero.equipment.unarmed =>
+        renderer.show(user, Screen(content.text("inventory.dustNoWeapon"), Nil)).as(true)
+      case Some(kind) =>
+        val outcome = WeaponDust.sprinkle(kind, hero.weaponDust, hero.equipment.handGems)
+        val line = outcome match {
+          case WeaponDust.Outcome.Applied(_) =>
+            content.format("inventory.dustApplied",
+              "dust"   -> kind.displayName,
+              "weapon" -> hero.equipment.mainWeapon.name)
+          case WeaponDust.Outcome.Clash(_) =>
+            content.format("inventory.dustClash", "dust" -> kind.displayName,
+              "pct" -> WeaponDust.PenaltyPct.toString)
+          case WeaponDust.Outcome.Overload(_) =>
+            content.format("inventory.dustOverload", "pct" -> WeaponDust.PenaltyPct.toString)
+        }
+        inventoryRepo.removeItem(dust.id, hero.id).mapError(asThrowable) *>
+          heroDao.updateWeaponDust(user.userId, outcome.next) *>
+          renderer.show(user, Screen(line, Nil)).as(true)
+    }
+
   /** Пыль места в сумке не занимает (см. `Inventory.occupied`), но одного вида
     * её не больше [[Item.HoardLimit]] горстей: если столько, сколько даст камень,
     * уже не унести, камень не трогаем. */
-  def dustFull(inv: Inventory, gem: Gem): Boolean =
-    MaterialGenerator.item(gem.dust).hoardKey.exists(k => inv.hoardCount(k) + gem.dustYield > Item.HoardLimit)
+  def dustFull(inv: Inventory, gem: Gem): Boolean = hoardFull(inv, gem.dust, gem.dustYield)
+
+  /** Ещё `count` горстей пыли `dust` не унести: её этого вида уже под предел. */
+  private def hoardFull(inv: Inventory, dust: MaterialKind, count: Int): Boolean =
+    MaterialGenerator.item(dust).hoardKey.exists(k => inv.hoardCount(k) + count > Item.HoardLimit)
 
   /** Отказ: пыли этого вида под предел, камень цел. */
   def dustFullLine(gem: Gem): String =
@@ -110,9 +141,9 @@ final class GemWork(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemRe
     * остаётся РОВНО одна горсть своей пыли — вспышка съедает камни целиком, грейд
     * тут ничего не добавляет (в отличие от спокойной ломки, см. `GemBreaking`).
     *
-    * Пыли нужно две ячейки. Считаем их уже после того, как вставляемый камень ушёл
-    * оттуда, где лежал: из сумки он сам освобождает одну. Не хватило — камни всё
-    * равно потеряны, но пыль высыпается мимо сумки, и об этом честно сообщаем. */
+    * Пыль места в сумке не занимает, но одного вида её не больше
+    * [[Item.HoardLimit]] горстей — как и при ломке: если горсть одного из двух
+    * видов уже не унести, вспышки нет, оба камня целы, и сказано почему. */
   private def annihilate(
       user:     User,
       hero:     Hero,
@@ -124,23 +155,24 @@ final class GemWork(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemRe
   ): Task[Unit] = {
     val cleaned = removeOpposite(item, inserted)
     val after   = hero.reequip(hero.equipment.replacing(cleaned), nowMs)
-    val lost    = item.socketedGems.find(isOpposite(_, inserted))
-    val dusts   = (inserted :: lost.toList).map(_.dust)
-    for {
-      _   <- heroDao.updateEquipmentAndFightStats(user.userId, after.equipment, after.fightStats)
-      _   <- spend
-      inv <- inventoryRepo.get(hero.id).mapError(asThrowable)
-      room = inv.freeSlots >= dusts.size
-      // Каждая горсть — со своим номером из базы: без него горсти делили −1, и
-      // снятие одной (в куб, в ячейку) убирало из сумки все.
-      _   <- ZIO.when(room)(ZIO.foreachDiscard(dusts)(kind =>
-               itemRepo.persist(hero.id, MaterialGenerator.item(kind))
-                 .flatMap(d => inventoryRepo.addItem(hero.id, d).mapError(asThrowable))))
-      line = if (room)
-               content.format("socketing.annihilate", "dust" -> dusts.map(_.displayName).mkString(", "))
-             else content.text("socketing.annihilateNoRoom")
-      _   <- renderer.show(user, Screen(line, Nil))
-    } yield ()
+    val gems    = inserted :: item.socketedGems.find(isOpposite(_, inserted)).toList
+    inventoryRepo.get(hero.id).mapError(asThrowable).flatMap { inv =>
+      gems.find(g => hoardFull(inv, g.dust, 1)) match {
+        case Some(full) => renderer.show(user, Screen(dustFullLine(full), Nil))
+        case None =>
+          for {
+            _ <- heroDao.updateEquipmentAndFightStats(user.userId, after.equipment, after.fightStats)
+            _ <- spend
+            // Каждая горсть — со своим номером из базы: без него горсти делили −1, и
+            // снятие одной (в куб, в ячейку) убирало из сумки все.
+            _ <- ZIO.foreachDiscard(gems)(g =>
+                   itemRepo.persist(hero.id, MaterialGenerator.item(g.dust))
+                     .flatMap(d => inventoryRepo.addItem(hero.id, d).mapError(asThrowable)))
+            _ <- renderer.show(user, Screen(content.format("socketing.annihilate",
+                   "dust" -> gems.map(_.dust.displayName).mkString(", ")), Nil))
+          } yield ()
+      }
+    }
   }
 
   private def isWeapon(item: Item): Boolean =

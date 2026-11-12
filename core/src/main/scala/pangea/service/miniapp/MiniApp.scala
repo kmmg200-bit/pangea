@@ -90,6 +90,10 @@ trait MiniApp {
     * его карточке в боте; не в бою. */
   def crush(hero: Hero, itemId: Long): Task[InventoryActionView]
 
+  /** Посыпать надетое оружие горстью пыли `itemId` из сумки — как кнопкой
+    * «Применить на оружие» на её карточке в боте; не в бою. */
+  def dust(hero: Hero, itemId: Long): Task[InventoryActionView]
+
   /** Надеть комплект со стойки №`n` — обменяться с ней надетым, как кнопкой
     * стойки дома. Только в городе. */
   def rack(hero: Hero, n: Int): Task[InventoryActionView]
@@ -446,16 +450,28 @@ final class MiniAppLive(
   /** Те же правила и слова, что у карточки камня в боте ([[GemWork.crush]]).
     * Камня уже нет — так и сказать. */
   override def crush(hero: Hero, itemId: Long): Task[InventoryActionView] =
+    bagAct(hero, itemId, content.text("socketing.gemGone"))(gemWork.crush)
+
+  /** Те же правила и слова, что у карточки пыли в боте ([[GemWork.sprinkle]]).
+    * Горсти уже нет — так и сказать. */
+  override def dust(hero: Hero, itemId: Long): Task[InventoryActionView] =
+    bagAct(hero, itemId, content.text("stack.gone"))(gemWork.sprinkle)
+
+  /** Вещь `itemId` из сумки — в дело `act`, общее с её карточкой в боте; не в
+    * бою. Вещи уже нет или дело не про неё (`act` ответил `false`) — сказать
+    * `gone`. */
+  private def bagAct(hero: Hero, itemId: Long, gone: String)(
+      act: (User, Hero, Item, Renderer) => Task[Boolean]): Task[InventoryActionView] =
     notInBattle(hero, content.text("battle.belt.notInBattle")) { fresh =>
       for {
         user  <- users.getUserById(fresh.userId).someOrFail(new Throwable(s"Нет игрока ${fresh.userId.value}"))
         lines <- Ref.make(Vector.empty[String])
         say    = new MiniApp.Collect(lines)
-        gone   = say.show(user, Screen(content.text("socketing.gemGone"), Nil))
+        tell   = say.show(user, Screen(gone, Nil))
         inv   <- inventories.get(fresh.id).mapError(e => new Throwable(e.toString))
         _     <- inv.items.data.find(_.id == itemId) match {
-                   case None       => gone
-                   case Some(item) => gemWork.crush(user, fresh, item, say).flatMap(found => ZIO.unless(found)(gone).unit)
+                   case None       => tell
+                   case Some(item) => act(user, fresh, item, say).flatMap(found => ZIO.unless(found)(tell).unit)
                  }
         said  <- lines.get
       } yield said.mkString("\n\n")

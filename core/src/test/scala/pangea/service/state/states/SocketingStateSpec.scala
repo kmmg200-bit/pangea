@@ -3,7 +3,7 @@ package pangea.service.state.states
 import io.circe.Json
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.generator.item.GemGenerator
+import pangea.generator.item.{GemGenerator, MaterialGenerator}
 import pangea.model.hero.Equipment
 import pangea.model.item.{Gem, GemKind, Item, ItemType, MaterialKind, Rarity}
 import pangea.model.state.StateType
@@ -36,33 +36,30 @@ object SocketingStateSpec extends ZIOSpecDefault {
     withEquipment(TestFixtures.emptyEquipment.copy(weapon = w), gemKind)
 
   /** Аннигиляция камнем заданного грейда. */
-  private def makeStateWithGrade(w: Item, gemKind: GemKind, grade: Int) = {
-    val gemItem = GemGenerator.item(gemKind, grade).copy(id = 77L)
-    for {
-      dao      <- TestHeroDao.withHero(userId,
-                    TestFixtures.hero(userId).copy(
-                      equipment = TestFixtures.emptyEquipment.copy(weapon = w)))
-      _        <- dao.writeSceneData(userId, Json.obj(UiScene.Socketing -> SocketingState.Scene(gemItem.id).asJson))
-      invRepo   = TestInventoryRepository.withItems(List(gemItem))
-      renderer <- TestRenderer.make
-      content  <- ZIO.attempt(SceneContent.load())
-    } yield (SocketingState(dao, invRepo, content, TestItemRepository.make), dao, invRepo, renderer)
-  }
+  private def makeStateWithGrade(w: Item, gemKind: GemKind, grade: Int) =
+    bagState(w, GemGenerator.item(gemKind, grade).copy(id = 77L), Nil)
 
   /** Сумка забита: вместимость ровно равна числу лежащих в ней предметов. */
-  private def fullBagState(w: Item, gemKind: GemKind) = {
-    val gemItem = GemGenerator.item(gemKind, 1).copy(id = 77L)
-    val filler  = (1 to 19).map(i => GemGenerator.item(GemKind.Amethyst, 1).copy(id = 100L + i)).toList
+  private def fullBagState(w: Item, gemKind: GemKind) =
+    bagState(w, GemGenerator.item(gemKind, 1).copy(id = 77L),
+      (1 to 19).map(i => GemGenerator.item(GemKind.Amethyst, 1).copy(id = 100L + i)).toList)
+
+  /** При камне в сумке — пыль `dust` под предел: больше горсти не унести. */
+  private def hoardState(w: Item, gemKind: GemKind, dust: MaterialKind) =
+    bagState(w, GemGenerator.item(gemKind, 1).copy(id = 77L),
+      (1 to Item.HoardLimit).map(i => MaterialGenerator.item(dust).copy(id = 1000L + i)).toList)
+
+  /** Оружие `w`; в сумке — камень `gemItem` (на него указывает сцена) и `rest`. */
+  private def bagState(w: Item, gemItem: Item, rest: List[Item]) =
     for {
       dao      <- TestHeroDao.withHero(userId,
                     TestFixtures.hero(userId).copy(
                       equipment = TestFixtures.emptyEquipment.copy(weapon = w)))
       _        <- dao.writeSceneData(userId, Json.obj(UiScene.Socketing -> SocketingState.Scene(gemItem.id).asJson))
-      invRepo   = TestInventoryRepository.withItems(gemItem :: filler)
+      invRepo   = TestInventoryRepository.withItems(gemItem :: rest)
       renderer <- TestRenderer.make
       content  <- ZIO.attempt(SceneContent.load())
     } yield (SocketingState(dao, invRepo, content, TestItemRepository.make), dao, invRepo, renderer)
-  }
 
   /** То же, но со всей экипировкой сразу — для проверки страниц. */
   private def withEquipment(eq: Equipment, gemKind: GemKind) = {
@@ -152,18 +149,47 @@ object SocketingStateSpec extends ZIOSpecDefault {
               assertTrue(dusts.count(_ == MaterialKind.SapphireDust) == 1)
     },
 
-    test("места в сумке нет — камни всё равно гибнут, но пыль не достаётся") {
-      // Сумка забита под завязку: вставляемый камень освободит одну ячейку,
-      // а под две горсти нужно две.
+    test("сумка забита — пыль места не занимает: камни гибнут, обе горсти в сумке") {
       for {
         t <- fullBagState(weapon(List(Some(Gem(GemKind.Sapphire, 1)), None)), GemKind.Ruby)
         (state, dao, invRepo, renderer) = t
         _       <- state.action(testUser, pickTarget(50L), renderer)
         w       <- weaponOf(dao)
         screens <- renderer.sentScreens
+        dusts    = invRepo.snapshot.flatMap(_.material)
       } yield assertTrue(w.socketedGems.isEmpty) &&
-              assertTrue(invRepo.snapshot.flatMap(_.material).isEmpty) &&
-              assertTrue(screens.last.text.contains("не нашлось места"))
+              assertTrue(!invRepo.snapshot.exists(_.id == 77L)) &&
+              assertTrue(dusts.size == 2) &&
+              assertTrue(dusts.toSet == Set[MaterialKind](MaterialKind.RubyDust, MaterialKind.SapphireDust)) &&
+              assertTrue(screens.last.text.contains("Вы собрали"))
+    },
+
+    test("рубиновой пыли под предел — вспышки нет: оба камня целы, сказано почему") {
+      for {
+        t <- hoardState(weapon(List(Some(Gem(GemKind.Sapphire, 1)), None)), GemKind.Ruby, MaterialKind.RubyDust)
+        (state, dao, invRepo, renderer) = t
+        _       <- state.action(testUser, pickTarget(50L), renderer)
+        w       <- weaponOf(dao)
+        screens <- renderer.sentScreens
+      } yield assertTrue(w.socketedGems == List(Gem(GemKind.Sapphire, 1))) &&
+              assertTrue(invRepo.snapshot.exists(_.id == 77L)) &&
+              assertTrue(invRepo.snapshot.count(_.material.contains(MaterialKind.RubyDust)) == Item.HoardLimit) &&
+              assertTrue(screens.last.text ==
+                s"🪨 ${MaterialKind.RubyDust.displayName}: больше ${Item.HoardLimit} горстей не унести — камень цел.")
+    },
+
+    test("сапфировой пыли под предел — так же: камень из оружия тоже не рассыпать") {
+      for {
+        t <- hoardState(weapon(List(Some(Gem(GemKind.Sapphire, 1)), None)), GemKind.Ruby, MaterialKind.SapphireDust)
+        (state, dao, invRepo, renderer) = t
+        _       <- state.action(testUser, pickTarget(50L), renderer)
+        w       <- weaponOf(dao)
+        screens <- renderer.sentScreens
+      } yield assertTrue(w.socketedGems == List(Gem(GemKind.Sapphire, 1))) &&
+              assertTrue(invRepo.snapshot.exists(_.id == 77L)) &&
+              assertTrue(!invRepo.snapshot.exists(_.material.contains(MaterialKind.RubyDust))) &&
+              assertTrue(screens.last.text ==
+                s"🪨 ${MaterialKind.SapphireDust.displayName}: больше ${Item.HoardLimit} горстей не унести — камень цел.")
     },
 
     test("сапфир в оружие с рубином — симметрично") {
