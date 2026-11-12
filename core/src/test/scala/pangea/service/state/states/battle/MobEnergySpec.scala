@@ -144,7 +144,7 @@ object MobEnergySpec extends ZIOSpecDefault {
       // Последний бросок — шанс яда: 1 — травит, 99 — мимо.
       def poisonAfter(race: Race, roll: Int) =
         strike(h, mobBattle(race, energy = 0L), seedTurn(roll)).map { case (after, _, log) =>
-          (after.effects.heroPoison.isDefined, log.contains("и травит 🟢"))
+          (after.effects.heroPoison.isDefined, log.contains("вы отравлены 🟢"))
         }
       for {
         murloc <- poisonAfter(Race.Murloc, 1)

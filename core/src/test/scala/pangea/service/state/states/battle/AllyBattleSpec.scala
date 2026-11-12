@@ -628,12 +628,12 @@ object AllyBattleSpec extends ZIOSpecDefault {
               assertTrue(said2.contains("♨️ Йорген Кремень: пламя и холод погасили друг друга.")) &&
               assertTrue(venom.group.allyAt(2).exists(_.poison.isDefined)) &&
               // яд от оружия — пометкой в строке удара, отдельной строки нет
-              assertTrue("""бьёт Йорген Кремень на \d+ урона и травит 🟢""".r.findFirstIn(said3).isDefined) &&
+              assertTrue("""бьёт Йорген Кремень на \d+ урона, отравлен 🟢""".r.findFirstIn(said3).isDefined) &&
               assertTrue(!said3.contains("отравленное оружие")) &&
               assertTrue(clean.group.allyAt(2).exists(a => a.poison.isEmpty && a.hp < a.stats.hp))
     },
 
-    test("Фаэлин травит через раз: бросок 50 — яд и «и травит 🟢» в строке удара, 99 — ни того ни другого; нежить яд не берёт") {
+    test("Фаэлин травит через раз: бросок 50 — яд и «отравлен 🟢» в строке удара, 99 — ни того ни другого; нежить яд не берёт") {
       val h = hero(allies = List(ally(AllyKind.Elf, pos = 2)))
       def shoot(roll: Int, race: Race) =
         for {
@@ -648,9 +648,9 @@ object AllyBattleSpec extends ZIOSpecDefault {
         venom <- shoot(50, Race.Orc)
         clean <- shoot(99, Race.Orc)
         dead  <- shoot(50, Race.Undead)
-      } yield assertTrue(venom._1 && venom._2.contains("⚔ Фаэлин Тихострел бьёт") && venom._2.contains("урона и травит 🟢")) &&
-              assertTrue(!clean._1 && clean._2.contains("⚔ Фаэлин Тихострел бьёт") && !clean._2.contains("и травит 🟢")) &&
-              assertTrue(!dead._1 && dead._2.contains("⚔ Фаэлин Тихострел бьёт") && !dead._2.contains("и травит 🟢"))
+      } yield assertTrue(venom._1 && venom._2.contains("⚔ Фаэлин Тихострел бьёт") && venom._2.contains("урона, отравлен 🟢")) &&
+              assertTrue(!clean._1 && clean._2.contains("⚔ Фаэлин Тихострел бьёт") && !clean._2.contains("отравлен 🟢")) &&
+              assertTrue(!dead._1 && dead._2.contains("⚔ Фаэлин Тихострел бьёт") && !dead._2.contains("отравлен 🟢"))
     },
 
     test("герой лежит, а последний союзник уходит по свитку — смерть, отложенная до этого момента") {

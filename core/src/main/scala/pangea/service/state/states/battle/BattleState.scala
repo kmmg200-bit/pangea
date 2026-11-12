@@ -2502,10 +2502,15 @@ case class BattleState(
   private def strikeBy(battle: SoloPveBattle): String =
     powderElement(battle).fold("")(e => content.text(s"battle.strikeBy.${e.entryName}"))
 
-  /** Удар, оставивший в ране яд (отравленное оружие), помечен прямо в своей
-    * строке: « и травит 🟢». Отдельной строки о яде нет. */
+  /** Удар, оставивший в ране яд (отравленное оружие, стрелы Фаэлина), помечен
+    * прямо в своей строке: «, отравлен 🟢» — у союзника и у врага. Отдельной
+    * строки о яде нет. */
   private def poisonMark(poisoned: Boolean): String =
     if (poisoned) content.text("battle.poisonedStrike") else ""
+
+  /** То же, когда отравлен герой: «, вы отравлены 🟢». */
+  private def heroPoisonMark(poisoned: Boolean): String =
+    if (poisoned) content.text("battle.poisonedYou") else ""
 
   /** Прок воздуха в ударе моба: ему точность и уклонение на несколько ходов. */
   private def airBoostLine(monster: String): String =
@@ -3155,7 +3160,7 @@ case class BattleState(
         if (hitRoll > dodge)
           mobStrike(hero, ticked, buffedEff, nowMs).map { st =>
             val line  = content.format("battle.mobHit", "damage" -> st.damage.toString, "monster" -> ticked.monsterName,
-                          "elem" -> (strikeBy(ticked) + poisonMark(st.poisoned)))
+                          "elem" -> (strikeBy(ticked) + heroPoisonMark(st.poisoned)))
             val lines = if (st.mirrored) st.extraLines else line :: st.extraLines
             (st.newHp, st.newArmor, lines.mkString("\n"), st.battle)
           }
@@ -5629,7 +5634,7 @@ case class BattleState(
                 if (hitRoll > dodge)
                   mobStrike(hero, tmp, effWithAir(hero, tmp, nowMs), nowMs).map { st =>
                     val line = content.format("battle.group.sideHit", "monster" -> tmp.monsterName, "damage" -> st.damage.toString,
-                                 "elem" -> (strikeBy(tmp) + poisonMark(st.poisoned)))
+                                 "elem" -> (strikeBy(tmp) + heroPoisonMark(st.poisoned)))
                     val head = if (st.mirrored) Vector.empty[String] else Vector(line)
                     (hero.copy(fightStats = hero.fightStats.copy(hp = st.newHp, armor = st.newArmor)), st.battle,
                       head ++ st.extraLines)

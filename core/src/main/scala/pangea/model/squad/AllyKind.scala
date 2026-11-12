@@ -129,7 +129,8 @@ object AllyKind extends Enum[AllyKind] {
 
   /** Фаэлин Тихострел: эльф-лучник. Стихии нет — вместо неё яд на
     * наконечниках, через раз. Тоньше Плюха, зато бьёт издалека, как лук героя,
-    * и растёт так же — до десятого. */
+    * и растёт так же — до десятого. На цветочной поляне с ним цветов больше
+    * (см. `FlowerMeadowState.ElfBonusFlowers`). */
   case object Elf extends AllyKind("Фаэлин Тихострел", Race.Elf, None, maxLvl = 10L,
     hpPerLvl = 70L, armorPerLvl = 60L, atkPerLvl = 35L, energyPerLvl = 100L,
     accuracyPerLvl = 170L, defencePerLvl = 20L, evasionPerLvl = 170L) {

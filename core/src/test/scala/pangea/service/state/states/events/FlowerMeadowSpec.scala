@@ -60,6 +60,28 @@ object FlowerMeadowSpec extends ZIOSpecDefault {
       assertTrue(ev(67) == StateType.Spring && ev(38) == StateType.FlowerMeadow && ev(99) == StateType.ElementalLair)
     },
 
+    test("Фаэлин в отряде — в строю или в резерве: цветов на два больше и его слова над поляной; без него — как было") {
+      import pangea.model.squad.{Ally, AllyKind, Squad}
+      val inRanks   = hero().copy(squad = Squad.empty.hire(AllyKind.Elf, 10L, 0L))
+      val inReserve = hero().copy(squad = Squad(reserve = List(Ally(AllyKind.Elf, 0, 100L, 100L, 0L))))
+      def enter(h: Hero) =
+        for {
+          t <- meadow(h)
+          (state, dao, _, _, r) = t
+          _     <- TestRandom.feedInts(2) *> TestRandom.feedLongs(150000L)
+          _     <- state.enter(testUser, r)
+          scene <- sceneOf(dao)
+          said  <- texts(r)
+        } yield (scene.map(_.left), said)
+      for {
+        ranks   <- enter(inRanks)
+        reserve <- enter(inReserve)
+        alone   <- enter(hero())
+      } yield assertTrue(ranks._1.contains(2 + FlowerMeadowState.ElfBonusFlowers) && ranks._2.contains("Фаэлин опускает лук")) &&
+              assertTrue(reserve._1.contains(4) && reserve._2.contains("Фаэлин опускает лук")) &&
+              assertTrue(alone._1.contains(2) && !alone._2.contains("Фаэлин"))
+    },
+
     test("вход: 2–6 цветов, таймер на 2–3 минуты, кнопки «Персонаж» и красная «Уйти»; уйти — через подтверждение") {
       for {
         t <- meadow(hero())

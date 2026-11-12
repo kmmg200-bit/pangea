@@ -10,6 +10,7 @@ import pangea.model.hero.Hero
 import pangea.model.item.MaterialKind
 import pangea.model.monster.{MiniBoss, Monster, Rarity}
 import pangea.model.schedule.TaskKind
+import pangea.model.squad.AllyKind
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
@@ -24,7 +25,7 @@ import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
 
-/** Поляна цветов (5% в лабиринте). Герой собирает 2–6 цветов, по одному каждые
+/** Поляна цветов (2% в лабиринте). Герой собирает 2–6 цветов, по одному каждые
   * 2–3 минуты — «афк», как осмотр логова элементаля. Что именно сорвано, зависит
   * от знаний: без «Знаний о цветах» нужного ранга это «странный цветок», и с
   * каждым таким есть шанс (интеллект ÷ 4 %) самому понять, какие цветы ценные.
@@ -34,7 +35,11 @@ import java.util.concurrent.TimeUnit
   *
   * С каждым сорванным цветком есть шанс (3%), что сзади подкрадётся Белый волк:
   * подготовиться нельзя, бой начинается тут же. Добыча с него возвращает на
-  * поляну — если цветы ещё остались, таймер ставится заново. */
+  * поляну — если цветы ещё остались, таймер ставится заново.
+  *
+  * Фаэлин в отряде — в строю или в резерве — знает, где смотреть: цветов на
+  * поляне на [[FlowerMeadowState.ElfBonusFlowers]] больше, и он говорит об этом
+  * над поляной. */
 case class FlowerMeadowState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
@@ -65,9 +70,11 @@ case class FlowerMeadowState(
       _ <- scene match {
         case None =>
           for {
-            count <- Random.nextIntBetween(MinFlowers, MaxFlowers + 1)
+            hero  <- getHero(user)
+            elf    = hero.squad.has(AllyKind.Elf)
+            count <- Random.nextIntBetween(MinFlowers, MaxFlowers + 1).map(_ + (if (elf) ElfBonusFlowers else 0))
             _     <- scheduleNext(user, now, MeadowScene(count, 0L))
-            _     <- renderer.show(user, meadowScreen(intro = true))
+            _     <- renderer.show(user, meadowScreen(intro = true, elf = elf))
           } yield ()
         // Вернулись с добычи после волка: цветок сорван, таймер ставится заново.
         case Some(s) if s.nextAt <= 0L =>
@@ -86,13 +93,16 @@ case class FlowerMeadowState(
     branch.act(user, ua, renderer)
 
   /** Описание поляны — только при первом входе; дальше короткое «вы бродите».
-    * Цветы приходят сами — рядом с «Персонажем» кнопка приложения. */
-  private def meadowScreen(intro: Boolean): Screen =
-    Screen(content.text(if (intro) "flowerMeadow.enter.text" else "flowerMeadow.waiting"), List(
+    * Под описанием — Фаэлин, если он в отряде (`elf`). Цветы приходят сами —
+    * рядом с «Персонажем» кнопка приложения. */
+  private def meadowScreen(intro: Boolean, elf: Boolean = false): Screen = {
+    val text = content.text(if (intro) "flowerMeadow.enter.text" else "flowerMeadow.waiting")
+    Screen(if (elf) text + "\n\n" + content.text("flowerMeadow.elfHelps") else text, List(
       content.choice("OpenCharacter", "common.character").copy(row = Some(0)),
       AppButton.choice(content, row = Some(0)),
       content.choice("LeaveMeadow", "flowerMeadow.leave").copy(color = ChoiceColor.Negative, row = Some(1))
     ))
+  }
 
   /** Очередной цветок: ранг 98/2, вид случайный, узнан ли — по знаниям. Каждый
     * цветок возвращает 2% от потолка энергии — поляна «лечит душу и тело».
@@ -205,6 +215,9 @@ case class FlowerMeadowState(
 object FlowerMeadowState {
   val MinFlowers: Int  = 2
   val MaxFlowers: Int  = 6
+
+  /** Фаэлин в отряде — цветов на столько больше: он знает, где смотреть. */
+  val ElfBonusFlowers: Int = 2
   val MinDelayMs: Long = 2L * 60L * 1000L
   val MaxDelayMs: Long = 3L * 60L * 1000L
 
