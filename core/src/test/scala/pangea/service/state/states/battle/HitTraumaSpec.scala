@@ -62,7 +62,7 @@ object HitTraumaSpec extends ZIOSpecDefault {
         hurt <- round(h, SoloPveBattle.from(monster(10000L), h), 60, 99, 1, 0, 99)
         safe <- round(h, SoloPveBattle.from(monster(10000L), h), 60, 99, 50, 99)
       } yield assertTrue(hurt._1.traumaNames == List(Trauma.light.head.name) && hurt._1.traumaUntil.isDefined) &&
-              assertTrue(hurt._2.contains("Удар пришёлся неудачно — вы получили травму")) &&
+              assertTrue(hurt._2.contains("🩸 Травма: «")) &&
               assertTrue(safe._1.traumaNames.isEmpty && !safe._2.contains("травму"))
     },
 
@@ -72,7 +72,7 @@ object HitTraumaSpec extends ZIOSpecDefault {
         hurt <- round(h, SoloPveBattle.from(monster(20000L), h), 60, 99, 50, 0, 99)
         safe <- round(h, SoloPveBattle.from(monster(20000L), h), 60, 99, 51, 99)
       } yield assertTrue(hurt._1.fightStats.hp > 0L && hurt._1.traumaNames.size == 1) &&
-              assertTrue(hurt._2.contains("Удар был сокрушительным — вы получили травму")) &&
+              assertTrue(hurt._2.contains("💥 Сокрушительный удар: травма «")) &&
               assertTrue(safe._1.traumaNames.isEmpty && !safe._2.contains("травму"))
     },
 
@@ -95,7 +95,8 @@ object HitTraumaSpec extends ZIOSpecDefault {
         r <- round(h, b, 60, 1, 99, 1, 0, 99)
         (u, log) = r
       } yield assertTrue(u.traumaNames.size == 1) &&
-              assertTrue(log.contains("атаковал вас сбоку") && log.contains("вы получили травму"))
+              assertTrue(log.contains("атаковал вас сбоку") &&
+                         (log.contains("🩸 Травма: «") || log.contains("💥 Сокрушительный удар: травма «")))
     }
   )
 }

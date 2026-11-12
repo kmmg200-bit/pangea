@@ -78,7 +78,7 @@ object ElementComboSpec extends ZIOSpecDefault {
         r <- turn(b, 60, 1, 1, 99)
         (after, log) = r
         armorLost = b.monsterCurrentArmor - after.monsterCurrentArmor
-      } yield assertTrue(log.contains("сковали и душу")) &&
+      } yield assertTrue(log.contains("⚡❄️ Молния и холод →")) &&
               assertTrue(BattleState.ComboArmorCutPct == 10L) &&
               // 10% потолка брони плюс обычный урон по броне от удара
               assertTrue(armorLost >= 1000L) && assertTrue(armorLost < 2000L)
@@ -92,16 +92,16 @@ object ElementComboSpec extends ZIOSpecDefault {
               assertTrue(after.effects.monsterColdDefenceCut > 0) &&
               // Молния: выжженная энергия — и ровно одной строкой
               assertTrue(after.monsterCurrentEnergy < MonsterEnergy.maxEnergy(lvl)) &&
-              assertTrue(log.contains("выжгла")) &&
+              assertTrue(log.contains("⚡ Молния → ")) &&
               // о выжиге сообщает ровно одна строка, а не две подряд
-              assertTrue(log.linesIterator.count(_.contains("выжгла")) == 1)
+              assertTrue(log.linesIterator.count(_.contains("⚡ Молния → ")) == 1)
     },
 
     test("после комбо моб не применяет умение в свой ближайший ход") {
       for {
         r <- turn(battle(), 60, 1, 1, 99)
         (after, log) = r
-      } yield assertTrue(log.contains("не смог применить умение")) &&
+      } yield assertTrue(log.linesIterator.exists(l => l.startsWith("🧊 ") && l.endsWith(": умение заблокировано."))) &&
               // ни быстрых атак, ни удара плашмя — умение застряло
               assertTrue(!log.contains("«Быстрый удар» —")) &&
               assertTrue(!log.contains("«Дробящий удар» —")) &&
@@ -120,7 +120,7 @@ object ElementComboSpec extends ZIOSpecDefault {
         _      <- state.action(testUser, tap("Attack"), r)
         log    <- r.sentScreens.map(_.map(_.text).mkString)
         after  <- dao.readActiveBattle(userId).map(_.flatMap(_.as[SoloPveBattle].toOption).get)
-      } yield assertTrue(!log.contains("не смог применить умение")) &&
+      } yield assertTrue(!log.linesIterator.exists(l => l.startsWith("🧊 ") && l.endsWith(": умение заблокировано."))) &&
               assertTrue(after.effects.monsterSkillBlockedTurns == 0)
     },
 
@@ -129,7 +129,7 @@ object ElementComboSpec extends ZIOSpecDefault {
         r <- turn(battle(), 60, 1, 99, 99) // Холод прошёл, Молния мимо
         (after, log) = r
       } yield assertTrue(after.effects.monsterColdDefenceCut > 0) &&
-              assertTrue(!log.contains("сковали и душу")) &&
+              assertTrue(!log.contains("⚡❄️ Молния и холод →")) &&
               assertTrue(after.effects.monsterSkillBlockedTurns == 0)
     }
   )

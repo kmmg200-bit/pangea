@@ -160,7 +160,7 @@ object NecromancerSetSpec extends ZIOSpecDefault {
         h     <- dao.getHeroByUserId(userId).map(_.get)
         said  <- r.sentScreens.map(_.map(_.text).mkString("\n"))
       } yield assertTrue(after.effects.heroPoison.isEmpty && after.effects.heroBleed.isEmpty) &&
-              assertTrue(said.contains("Мёртвой плоти ни яд, ни кровь не страшны")) &&
+              assertTrue(said.contains("🕯 «Некромант»: вы нежить, яд и кровь сошли.")) &&
               // от яда и крови он не потерял ни одного HP (мобу бить его нечем)
               assertTrue(h.fightStats.hp >= before) &&
               // и это видно в профиле
@@ -187,7 +187,7 @@ object NecromancerSetSpec extends ZIOSpecDefault {
               // прогноз у HP героя обещает ровно это…
               assertTrue(shown.contains(s"🔥-$once)")) &&
               // …и тик в конце раунда ровно столько и снимает
-              assertTrue(said.contains(s"Пламя снимает с вас $once HP"))
+              assertTrue(said.contains(s"🔥 Пламя: −$once HP."))
     },
 
     test("порог 10: миазмы тратят энергию, лечат нежить и гноят живых") {
@@ -206,7 +206,7 @@ object NecromancerSetSpec extends ZIOSpecDefault {
         merc    = after.group.allyAt(3).get
       } yield // герой заплатил силой, а аура сказала о себе одной строкой на поле
               assertTrue(hAfter.fightStats.energy < h.maxEnergy(0L)) &&
-              assertTrue(said.contains("Миазмы держат поле боя в руках")) &&
+              assertTrue(said.contains("🟣 Миазмы: −")) &&
               // нежить окрепла, наёмник сгнил, моб из плоти — тоже, и всё это
               // молча: строки по каждому задетому больше нет
               assertTrue(risen.hp > 400L && merc.hp < 500L) &&
@@ -228,7 +228,7 @@ object NecromancerSetSpec extends ZIOSpecDefault {
         after <- battleOf(dao)
         said  <- r.sentScreens.map(_.map(_.text).mkString("\n"))
         merc   = after.group.allyAt(2)
-      } yield assertTrue(said.contains("«Малое исцеление» — ") && said.contains("Миазмы держат поле боя в руках")) &&
+      } yield assertTrue(said.contains("«Малое исцеление» — ") && said.contains("🟣 Миазмы: −")) &&
               assertTrue(merc.exists(m => m.hp < m.stats.hp))
     },
 
@@ -247,7 +247,7 @@ object NecromancerSetSpec extends ZIOSpecDefault {
         _      <- state.action(testUser, tap("Miasma"), r)
         prefs  <- dao.readBattlePrefs(userId).map(_.flatMap(_.as[BattlePrefs].toOption).get)
         screen <- r.sentScreens.map(_.last)
-      } yield assertTrue(said.contains("Сил держать миазмы больше нет")) &&
+      } yield assertTrue(said.contains("🟣 Миазмы рассеялись: не хватило энергии.")) &&
               assertTrue(!prefs.miasma && BattlePrefs.default.miasma) &&
               assertTrue(screen.choices.exists(c => c.id == "Miasma" && c.label.contains("выкл")))
     },
@@ -277,7 +277,7 @@ object NecromancerSetSpec extends ZIOSpecDefault {
         said  <- r.sentScreens.map(_.map(_.text).mkString("\n"))
         h     <- dao.getHeroByUserId(userId).map(_.get)
         risen  = h.squad.allies.headOption
-      } yield assertTrue(said.contains("поднимается на ваш зов")) &&
+      } yield assertTrue(said.contains("💀 «Некромант»: ")) &&
               // после боя он ушёл с героем, на двое суток
               assertTrue(risen.exists(_.kind == AllyKind.Undead)) &&
               assertTrue(risen.exists(_.hiredUntil > 0L)) &&
@@ -341,7 +341,7 @@ object NecromancerSetSpec extends ZIOSpecDefault {
         after <- dao.getHeroByUserId(userId).map(_.get)
       } yield assertTrue(white.group.darkWolf.exists(_.position == 2)) &&
               // прежнего не добивал враг — строки о павшем от удара нет
-              assertTrue(said.contains("вцепляется в вашего прежнего волка") && !said.contains("Последний удар выбивает")) &&
+              assertTrue(said.contains("побеждает прежнего волка") && !said.contains("Последний удар выбивает")) &&
               // после боя волк в отряде один — новый, того уровня, каким пал Белый
               assertTrue(after.squad.darkWolves.map(w => w.position -> w.lvlAt(after.lvl)) == List(2 -> lvl)) &&
               assertTrue(after.squad.allies.size == 1)

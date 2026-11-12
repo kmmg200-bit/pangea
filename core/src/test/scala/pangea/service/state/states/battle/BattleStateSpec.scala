@@ -321,7 +321,7 @@ object BattleStateSpec extends ZIOSpecDefault {
         (hpAt51, burnAt51, _)       = over
       } yield assertTrue(hpAt50 == 10L) && // лечения не осталось
               assertTrue(burnAt50.isEmpty) && // пламя выгорело целиком
-              assertTrue(logAt50.contains("огонь на вас погас")) &&
+              assertTrue(logAt50.contains("🔥 Пламя: лечение −") && logAt50.contains("%, огонь погас.")) &&
               assertTrue(hpAt51 == 10L) &&
               // 51 − 50 = 1%, и в конце раунда этот остаток ещё тикнет и подрастёт
               assertTrue(burnAt51.exists(_ >= 1))
@@ -356,7 +356,7 @@ object BattleStateSpec extends ZIOSpecDefault {
           // Итоговое HP сравнивать нельзя: у горящего его же и подъедает огонь.
           // Смотрим на саму строку регенерации — сколько она вылечила.
         } yield screens.map(_.text).mkString
-          .linesIterator.find(_.contains("Регенерация восстанавливает")).getOrElse("")
+          .linesIterator.find(_.contains("💚 Регенерация: +")).getOrElse("")
       }
       for {
         clean  <- regenTick(None)
@@ -413,7 +413,7 @@ object BattleStateSpec extends ZIOSpecDefault {
         _        <- state.action(testUser, tap("Attack"), renderer)
         after    <- renderer.sentScreens
       } yield assertTrue(promised.isDefined) &&
-              assertTrue(promised.exists(n => after.exists(_.text.contains(s"Яд снимает с вас $n HP"))))
+              assertTrue(promised.exists(n => after.exists(_.text.contains(s"🟢 Яд: −$n HP."))))
     },
 
     test("герой-нежить: яд и кровь у HP не пишутся — тик гасит их без урона; огонь — с наценкой нежити") {
@@ -537,7 +537,7 @@ object BattleStateSpec extends ZIOSpecDefault {
         after   <- dao.getHeroByUserId(userId).map(_.get)
         screens <- renderer.sentScreens.map(_.map(_.text).mkString("\n"))
       } yield assertTrue(after.weaponDust.layers.contains(pangea.model.item.MaterialKind.RubyDust)) &&
-              assertTrue(screens.contains("лёг на оружие")) &&
+              assertTrue(screens.contains("на оружии до конца боя")) &&
               assertTrue(beltSlots(after.equipment.belt) ==
                 List(BeltSlot.Dust(pangea.model.item.MaterialKind.RubyDust, count = 0)))
     },
@@ -700,8 +700,8 @@ object BattleStateSpec extends ZIOSpecDefault {
       } yield assertTrue(after.fightStats.hp == (100L + 999L).min(maxHp)) &&
               // и об этом сказано: одна строка в конце раунда на всё выпитое, с
               // настоящим приростом HP, а не с тем, что лечение хотело дать
-              assertTrue(log.contains(s"Вампиризм восстановил $drunk HP!")) &&
-              assertTrue(once(log, "Вампиризм восстановил"))
+              assertTrue(log.contains(s"🩸 Вампиризм: +$drunk HP.")) &&
+              assertTrue(once(log, "🩸 Вампиризм: +"))
     },
 
     test("кровь поминают один раз за раунд — одной строкой тика, общей для всех DoT") {
@@ -716,7 +716,7 @@ object BattleStateSpec extends ZIOSpecDefault {
         _             <- state.action(testUser, tap("Attack"), r)
         // первый экран — лог раунда; второй, с шапкой боя, тут не при чём
         round         <- r.sentScreens.map(_.map(_.text).headOption.getOrElse(""))
-      } yield assertTrue(round.contains("Кровотечение снимает 999 HP")) &&
+      } yield assertTrue("""🔴 Кровотечение → [^:\n]+: 999 урона\.""".r.findFirstIn(round).isDefined) &&
               // приписок (🔴 -999 ❤) к строкам удара больше нет: число одно, место одно
               assertTrue(once(round, "999")) &&
               assertTrue(!round.contains("🔴 -999"))
@@ -744,7 +744,7 @@ object BattleStateSpec extends ZIOSpecDefault {
               assertTrue(ghoul.KillHpRestorePct == 10L && ghoul.KillArmorRestorePct == 10L) &&
               assertTrue(after.fightStats.hp == 10L + lifesteal + maxHp * ghoul.KillHpRestorePct / 100L) &&
               assertTrue(after.fightStats.armor == 100L * ghoul.KillArmorRestorePct / 100L) &&
-              assertTrue(screens.exists(_.text.contains("жуткий пир")))
+              assertTrue(screens.exists(_.text.contains("🧛 Пир «Упыря»: +")))
     },
 
     test("без набора «Упырь» пира при победе нет") {
@@ -758,7 +758,7 @@ object BattleStateSpec extends ZIOSpecDefault {
         after         <- dao.getHeroByUserId(userId).map(_.get)
         screens       <- r.sentScreens
       } yield assertTrue(after.fightStats.hp == 10L) &&
-              assertTrue(!screens.exists(_.text.contains("жуткий пир")))
+              assertTrue(!screens.exists(_.text.contains("🧛 Пир «Упыря»: +")))
     },
 
     // ── Набор «Дикое пламя» ───────────────────────────────────────────────────
@@ -914,7 +914,7 @@ object BattleStateSpec extends ZIOSpecDefault {
         _             <- state.action(testUser, tap("Attack"), r)
         screens       <- r.sentScreens
         text           = screens.map(_.text).mkString("\n")
-      } yield assertTrue(text.contains("Промах не в счёт")) &&
+      } yield assertTrue(text.contains("🏹 «Охотник»: промах — бьёте снова.")) &&
               assertTrue(text.split("промахивается").length - 1 >= 1)
     },
 
@@ -932,7 +932,7 @@ object BattleStateSpec extends ZIOSpecDefault {
         _             <- state.action(testUser, tap("Attack"), r)
         screens       <- r.sentScreens
         text           = screens.map(_.text).mkString("\n")
-      } yield assertTrue(text.split("Промах не в счёт").length - 1 == 1)
+      } yield assertTrue(text.split("«Охотник»: промах").length - 1 == 1)
     },
 
     test("«Охотник» 6: при неудачном броске повтора нет") {
@@ -972,7 +972,7 @@ object BattleStateSpec extends ZIOSpecDefault {
       } yield assertTrue(pangea.model.item.ItemSet.Hunter.BlockSkillChancePct == 10L) &&
               assertTrue(hero.sets.blockSkillChancePct == 10L) &&
               // прокнуло — урона нет, не прокнуло — есть
-              assertTrue(blocked._1 == 500L && blocked._2.contains("срываете его приём")) &&
+              assertTrue(blocked._1 == 500L && blocked._2.contains("🏹 «Охотник»: приём врага сорван.")) &&
               assertTrue(passed._1 < 500L && !passed._2.contains("срываете его приём"))
     },
 

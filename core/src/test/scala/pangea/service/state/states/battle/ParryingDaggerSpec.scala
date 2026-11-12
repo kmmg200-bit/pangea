@@ -121,7 +121,7 @@ object ParryingDaggerSpec extends ZIOSpecDefault {
         (dealt, after, log, mid) = dodged
       } yield assertTrue(mid.heroCounterReady && mid.monsterCurrentHp == monster.fightStats.hp && mid.midRound) &&
               // ответ — сверх своего удара
-              assertTrue(log.contains("Контрудар!") && dealt > struck._1) &&
+              assertTrue(log.contains("🗡 «Контрудар»: уворот и ответный удар.") && dealt > struck._1) &&
               // стойка отработала и снята; умение — на перезарядке, в этом раунде не тикнуло
               assertTrue(!after.heroCounterReady && after.skillSlots.find(_.itemId == 401L).exists(_.cooldown == 3)) &&
               assertTrue(struck._1 > 0L && !struck._3.contains("Контрудар!"))

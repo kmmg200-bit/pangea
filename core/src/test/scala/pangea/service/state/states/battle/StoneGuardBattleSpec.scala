@@ -183,7 +183,7 @@ object StoneGuardBattleSpec extends ZIOSpecDefault {
         (guardedArmor, gLog) = guarded
       } yield assertTrue(plainArmor == 0L) && // до порога 12 броня так и осталась выбитой
               assertTrue(guardedArmor == 10000L * ItemSet.StoneGuard.ArmorRestorePct / 100L) &&
-              assertTrue(gLog.contains("Камень отзывается на вашу рану"))
+              assertTrue(gLog.contains("🗿 «Каменный страж»: +"))
     },
 
     test("порог 12 не срабатывает, пока герой и так сидит ниже порога") {

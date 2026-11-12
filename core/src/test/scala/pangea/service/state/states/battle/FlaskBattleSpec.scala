@@ -112,7 +112,7 @@ object FlaskBattleSpec extends ZIOSpecDefault {
         (u, _, log, _, _) = r
         maxArmor = h.effectiveMaxArmor(0L)
       } yield assertTrue(u.fightStats.armor == (10L + maxArmor * 25L / 100L).min(maxArmor)) &&
-              assertTrue(log.contains("Фляга кузнеца: восстановлено")) &&
+              assertTrue(log.contains("🧪 Фляга кузнеца: +")) &&
               assertTrue(charges(u) == 5)
     },
 
@@ -136,13 +136,13 @@ object FlaskBattleSpec extends ZIOSpecDefault {
         cold  <- splash(FlaskKind.Cold)
         bolt  <- splash(FlaskKind.Lightning)
         air   <- splash(FlaskKind.Air)
-      } yield assertTrue(fire._1.effects.monsterBurn.contains(Burn(Burn.Initial)) && fire._2.contains("объят ярким пламенем")) &&
-              assertTrue(cold._1.effects.monsterColdDefenceCut == Element.Cold.DefenceReductionCut && cold._2.contains("сковал защиту")) &&
-              assertTrue(bolt._1.monsterCurrentEnergy == 0L && bolt._2.contains("выжгла")) &&
-              assertTrue(air._1.effects.airBoostTurns == Element.Air.ProcTurns && air._2.contains("Шквальный ветер")) &&
+      } yield assertTrue(fire._1.effects.monsterBurn.contains(Burn(Burn.Initial)) && fire._2.contains("🔥 Враг горит.")) &&
+              assertTrue(cold._1.effects.monsterColdDefenceCut == Element.Cold.DefenceReductionCut && cold._2.contains("❄️ Холод: защита врага −10%.")) &&
+              assertTrue(bolt._1.monsterCurrentEnergy == 0L && bolt._2.contains("⚡ Молния → ")) &&
+              assertTrue(air._1.effects.airBoostTurns == Element.Air.ProcTurns && air._2.contains("💨 Ветер: ваши")) &&
               // урона фляга не наносит, моб цел
               assertTrue(fire._1.monsterCurrentHp == 100000L) &&
-              assertTrue(fire._2.contains("Вы плеснули во врага"))
+              assertTrue(fire._2.contains("🧪 Огненная фляга → "))
     },
 
     test("огненная фляга об огненного элементаля — пламя гаснет, горения нет") {
@@ -168,8 +168,8 @@ object FlaskBattleSpec extends ZIOSpecDefault {
         (_, after2, log2, _, _) = r2
         e1 = after1.get.effects
       } yield assertTrue(e1.heroPoison.contains(Poison(10 - Poison.HealCut)) && e1.heroBleed.isEmpty) &&
-              assertTrue(log1.contains("🟢 Лечение ослабляет яд: осталось 6%.")) &&
-              assertTrue(after2.get.effects.heroPoison.isEmpty && log2.contains("🟢 Лечение вывело яд без остатка."))
+              assertTrue(log1.contains("🟢 Лечение: яда осталось 6%.")) &&
+              assertTrue(after2.get.effects.heroPoison.isEmpty && log2.contains("🟢 Лечение: яд снят."))
     },
 
     test("фляга очищения снимает горение, яд, кровь и дебафы с героя") {
@@ -210,8 +210,8 @@ object FlaskBattleSpec extends ZIOSpecDefault {
         _   <- state.action(testUser, aimed("Attack", 1), r)
         b5  <- dao.readActiveBattle(userId).map(_.flatMap(_.as[SoloPveBattle].toOption).get)
         log5 <- r.sentScreens.map(_.map(_.text).mkString("\n"))
-      } yield assertTrue(b0.effects.heroSmokeTurns == FlaskRates.SmokeRounds + 1 && log4.contains("Дымная фляга разбивается")) &&
-              assertTrue(log4.contains("Дым держится")) &&
+      } yield assertTrue(b0.effects.heroSmokeTurns == FlaskRates.SmokeRounds + 1 && log4.contains("💨 Дымная фляга: ")) &&
+              assertTrue(log4.contains("💨 Дым: мобы вне пары")) &&
               assertTrue(!log4.contains("атаковал вас сбоку") && !log4.contains("ударил сбоку") && !log4.contains("«Исцеляющая фляга» →")) &&
               // активный моб в паре всё это время бил
               assertTrue(u4.fightStats.hp < 50000L && log4.contains("наносит")) &&
@@ -250,7 +250,7 @@ object FlaskBattleSpec extends ZIOSpecDefault {
               assertTrue(h4.fightStats.hp == 10000L + 3L * (dealt * 30L / 100L)) &&
               assertTrue(h5.fightStats.hp == h4.fightStats.hp) && // четвёртый удар уже не лечит
               // отчитывается он одной строкой в конце раунда, как реген
-              assertTrue(log.contains("Вампиризм восстановил"))
+              assertTrue(log.contains("🩸 Вампиризм: +"))
     },
 
     test("фляга яда: пока оружие смазано, удары по HP травят; фляга крови — пускают кровь; сошла — нет") {
@@ -316,7 +316,7 @@ object FlaskBattleSpec extends ZIOSpecDefault {
         lucky   <- kill(2, 5)
         unlucky <- kill(2, 50)
         full    <- kill(6, 5)
-      } yield assertTrue(lucky._1 == 3 && lucky._2.contains("напилась крови: +1 заряд (3/6)")) &&
+      } yield assertTrue(lucky._1 == 3 && lucky._2.contains("🧛 Вампирская фляга: +1 заряд (3/6).")) &&
               assertTrue(unlucky._1 == 2 && !unlucky._2.contains("напилась крови")) &&
               assertTrue(full._1 == 6 && !full._2.contains("напилась крови"))
     },
@@ -350,7 +350,7 @@ object FlaskBattleSpec extends ZIOSpecDefault {
                 BeltSlot.Flask(FlaskKind.Vampiric, ItemRarity.Blue, 1),
                 // склянку пояс добрал из сумки — глоток крови её не стёр
                 BeltSlot.Brew(BrewKind.WortDecoction))) &&
-              assertTrue(log.contains("напилась крови: +1 заряд (1/6)")) &&
+              assertTrue(log.contains("🧛 Вампирская фляга: +1 заряд (1/6).")) &&
               assertTrue(inv.snapshot.isEmpty)
     },
 

@@ -204,7 +204,7 @@ object MobEnergySpec extends ZIOSpecDefault {
       for {
         r <- strike(h, poisoned, seedTurn())
         (_, _, log) = r
-      } yield assertTrue(log.contains("Яд снимает с вас")) &&
+      } yield assertTrue(log.contains("🟢 Яд: −")) &&
               assertTrue(!log.contains("Гниль разъедает"))
     },
 
@@ -248,7 +248,7 @@ object MobEnergySpec extends ZIOSpecDefault {
         r <- strike(h, frosty, seedTurn(1))
         (after, _, log) = r
       } yield assertTrue(after.effects.heroColdDefenceCut == pangea.model.battle.Element.Cold.DefenceReductionCut) &&
-              assertTrue(log.contains("защита держит хуже")) &&
+              assertTrue(log.contains("❄️ Холод: ваша защита −10%.")) &&
               // срез не затухает: следующий прок добавит ещё столько же
               assertTrue(after.effects.heroColdDefenceCut > 0)
     },
@@ -272,7 +272,7 @@ object MobEnergySpec extends ZIOSpecDefault {
       for {
         r <- strike(h, windy, seedTurn(1))
         (after, _, log) = r
-      } yield assertTrue(log.contains("Ветер подхватывает врага")) &&
+      } yield assertTrue(log.contains("💨 Ветер → ")) &&
               // буст вешается уже ПОСЛЕ тика начала раунда, поэтому все ходы целы
               assertTrue(after.effects.mobAirBoostTurns == pangea.model.battle.Element.Air.ProcTurns)
     },
@@ -288,7 +288,7 @@ object MobEnergySpec extends ZIOSpecDefault {
               assertTrue(after.effects.heroColdDefenceCut == 0) &&
               assertTrue(after.effects.mobAirBoostTurns == 0) &&
               // демон — не элементаль: строка поджога своя
-              assertTrue(log.contains("Огненный удар поджёг вас") && !log.contains("элементаля"))
+              assertTrue(log.contains("🔥 Вас подожгли.") && !log.contains("элементаля"))
     },
 
     // ── Молния ────────────────────────────────────────────────────────────────
@@ -301,7 +301,7 @@ object MobEnergySpec extends ZIOSpecDefault {
                TestRandom.feedInts(60, 1, 90, 0) *> TestRandom.feedLongs(100L, 100L))
         (after, _, log) = r
         burned = full * pangea.model.battle.Element.LightningEnergyBurnPct / 100L
-      } yield assertTrue(log.contains("выжгла")) &&
+      } yield assertTrue(log.contains("⚡ Молния → ")) &&
               // строка одна: и про разряд, и про сожжённую энергию
               assertTrue(log.linesIterator.count(_.contains("Молния")) == 1) &&
               // сожгли 30% потолка, потом моб потратил на умение и добрал реген

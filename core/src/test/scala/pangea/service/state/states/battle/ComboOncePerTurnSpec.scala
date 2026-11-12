@@ -29,11 +29,11 @@ object ComboOncePerTurnSpec extends ZIOSpecDefault {
   private val lvl = 10L
 
   /** Строка комбо Огонь+Воздух и строка комбо Молния+Холод. */
-  private val FireAir   = "Огонь и воздух, объединив усилия"
-  private val LightCold = "сковали и душу"
-  private val Steam     = "Огонь и холод в одном ударе гасят друг друга"
-  private val AirSingle = "Шквальный ветер"
-  private val Lightning = "выжгла"
+  private val FireAir   = "🔥💨 Огонь и воздух →"
+  private val LightCold = "⚡❄️ Молния и холод →"
+  private val Steam     = "Огонь и холод в одном ударе погасили друг друга"
+  private val AirSingle = "💨 Ветер: ваши"
+  private val Lightning = "⚡ Молния → "
 
   /** Все броски по 10: проки стихий (шанс 30%) срабатывают, промахов (бросок не
     * выше 5) нет. */

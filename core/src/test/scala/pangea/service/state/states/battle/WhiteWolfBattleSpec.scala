@@ -144,7 +144,7 @@ object WhiteWolfBattleSpec extends ZIOSpecDefault {
               assertTrue(10000L - calmHero.fightStats.armor == dealt) &&
               assertTrue(calmHero.fightStats.hp == 500000L) &&
               assertTrue(calmAfter.get.effects.heroColdDefenceCut == 0 && !calmLog.contains("Морозный удар")) &&
-              assertTrue(coldLog.contains("Морозный удар сковывает вас")) &&
+              assertTrue(coldLog.contains("❄️ Холод: ваша защита −")) &&
               assertTrue(coldAfter.get.effects.heroColdDefenceCut == Element.Cold.DefenceReductionCut)
     },
 
@@ -158,7 +158,7 @@ object WhiteWolfBattleSpec extends ZIOSpecDefault {
               assertTrue(log.contains("критический удар")) &&
               assertTrue(after.get.bossFirstSkillSpent) &&
               assertTrue(after.get.effects.heroBleed.contains(Bleed(wolf.FangsBleedPct))) &&
-              assertTrue(log.contains("Рана кровоточит") && log.contains("Кровотечение снимает с вас")) &&
+              assertTrue(log.contains("Рана кровоточит") && log.contains("🔴 Кровотечение: −")) &&
               assertTrue(after.get.bossTurn == 1) &&
               // 400 − 14 + 28 упирается в потолок 400: реген 14 × BossLvL перекрывает цену умения
               assertTrue(after.get.monsterCurrentEnergy == (400L - wolf.FangsCostPerLvl * bossLvl + wolf.energyRegen(bossLvl)).min(400L)) &&
@@ -242,7 +242,7 @@ object WhiteWolfBattleSpec extends ZIOSpecDefault {
         _    <- state.action(testUser, UserAction("", Some("""{"action":"BeltUse","slot":"0"}""")), r)
         healed <- dao.readActiveBattle(userId).map(_.flatMap(_.as[SoloPveBattle].toOption))
       } yield assertTrue(500000L - u.fightStats.hp == maxHp * 2L / 100L) &&
-              assertTrue(log.contains(s"Кровотечение снимает с вас ${maxHp * 2L / 100L} HP")) &&
+              assertTrue(log.contains(s"🔴 Кровотечение: −${maxHp * 2L / 100L} HP.")) &&
               assertTrue(after.get.effects.heroBleed.contains(Bleed(2))) &&
               assertTrue(healed.exists(_.effects.heroBleed.isEmpty))
     },
@@ -260,8 +260,8 @@ object WhiteWolfBattleSpec extends ZIOSpecDefault {
         // минибоссу — вдвое меньше (см. BossPercentDamage)
         expected = maxHp * 10L / 100L * 120L / 100L * pangea.model.monster.BossPercentDamage.Pct / 100L
       // Яд и кровь говорят одной строкой на двоих — разными остались имя и значок.
-      } yield assertTrue(log.contains(s"Яд снимает $expected HP") &&
-                         log.contains(s"Кровотечение снимает $expected HP")) &&
+      } yield assertTrue(s"🟢 Яд → [^:\\n]+: $expected урона\\.".r.findFirstIn(log).isDefined &&
+                         s"🔴 Кровотечение → [^:\\n]+: $expected урона\\.".r.findFirstIn(log).isDefined) &&
               assertTrue(after.get.monsterCurrentHp == maxHp - 2L * expected) // удар героя ушёл в броню
     },
 

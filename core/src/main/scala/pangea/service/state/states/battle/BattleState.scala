@@ -1323,9 +1323,7 @@ case class BattleState(
       hitRoll <- if (sureHit || ambush) ZIO.succeed(101) else Random.nextIntBetween(1, 101)
       mobDodge   = mobDodgeChance(buffedEff.accuracy, battle)
       // Попадание считается как hitRoll(1..100) > dodge, т.е. фактический шанс =
-      // 100 - floor(dodge). Округляем ТАК ЖЕ, как экран боя (см. buildBattleScreen),
-      // иначе при дробном dodge сообщение расходится с экраном на 1.
-      heroHitPct = 100 - mobDodge.toInt
+      // 100 - floor(dodge) — тот же, что на экране боя (см. buildBattleScreen).
       result <-
         if (hitRoll > mobDodge) {
           for {
@@ -1486,7 +1484,7 @@ case class BattleState(
               else respond(thornedHero, thornedBattle, nowMs, log4, skip, vampGained)
           } yield r
         } else {
-          val attackLine = content.format("battle.miss", "chance" -> heroHitPct.toString)
+          val attackLine = content.text("battle.miss")
           val missLog    = log :+ attackLine
           // «Охотник» (порог 6): промах можно переиграть — но не больше одного
           // повтора за раунд, поэтому повторный заход идёт с canRepeat = false.
@@ -1654,12 +1652,9 @@ case class BattleState(
     }
   }
 
-  /** «Пустынь» (порог 6): попутный ветер, только что поднятый Воздухом, держится
-    * дольше. Только что — значит, его срок ровно тот, что ставит прок. */
-  private def longerWind(hero: Hero, fired: Set[Element], b: SoloPveBattle): SoloPveBattle =
-    if (fired(Element.Air) && hero.sets.airTurnsBonus > 0 && b.effects.airBoostTurns == Element.Air.ProcTurns)
-      b.copy(effects = b.effects.copy(airBoostTurns = Element.Air.ProcTurns + hero.sets.airTurnsBonus))
-    else b
+  /** Сколько ходов держится попутный ветер, поднятый Воздухом героя (с оружия
+    * или из фляги): «Пустынь» (порог 6) прибавляет к нему ход. */
+  private def heroAirTurns(hero: Hero): Int = Element.Air.ProcTurns + hero.sets.airTurnsBonus
 
   /** «Преисподняя» (порог 6): по горящему врагу удар и умение сильнее. */
   private def burningMult(hero: Hero, battle: SoloPveBattle): Double =
@@ -2512,6 +2507,11 @@ case class BattleState(
   private def poisonMark(poisoned: Boolean): String =
     if (poisoned) content.text("battle.poisonedStrike") else ""
 
+  /** Прок воздуха в ударе моба: ему точность и уклонение на несколько ходов. */
+  private def airBoostLine(monster: String): String =
+    content.format("battle.mobAirBoost", "monster" -> monster,
+      "pct" -> Element.Air.ProcBonusPct.toString, "turns" -> Element.Air.ProcTurns.toString)
+
   /** Доли урона по броне и HP от стихии удара моба. У каменного элементаля
     * свой раскол, он важнее — там это природа удара, а не стихия. */
   private def powderSplit(battle: SoloPveBattle): Option[(Double, Double)] =
@@ -2728,8 +2728,7 @@ case class BattleState(
         Random.nextIntBetween(1, 101).map(roll => e -> (roll <= chance))
       }.map { rolls =>
         val fired          = rolls.collect { case (e, true) => e }.toSet
-        val (procced, log) = applyProcs(battle, fired)
-        (longerWind(hero, fired, procced), log)
+        applyProcs(battle, fired, heroAirTurns(hero))
       }
   }
 
@@ -2737,7 +2736,7 @@ case class BattleState(
     * одиночные. Чистая функция — ею же пользуется стихийная фляга, у которой прок
     * гарантирован. Иммунитеты цели соблюдает сама (итог — через `withEffects`):
     * кого огонь не берёт, того прок Огня не поджигает. */
-  private def applyProcs(battle: SoloPveBattle, fired: Set[Element]): (SoloPveBattle, Vector[String]) = {
+  private def applyProcs(battle: SoloPveBattle, fired: Set[Element], airTurns: Int): (SoloPveBattle, Vector[String]) = {
     val maxHp      = battle.monsterStats.hp
     val maxArmor   = MonsterSkill.monsterMaxArmor(battle)
     // Огонь и холод гасят друг друга. Сработали оба в одном ударе — ни пламя, ни
@@ -2786,7 +2785,7 @@ case class BattleState(
         b = hurt.battle
         log = log :+ (
           if (hurt.absorbed) content.format("battle.comboFireAirHeld", "monster" -> b.monsterName)
-          else content.format("battle.comboFireAir", "damage" -> hurt.hp.toString))
+          else content.format("battle.comboFireAir", "monster" -> b.monsterName, "damage" -> hurt.hp.toString))
         log = log ++ capLine(hurt)
       }
       // Горение после взрыва — по тем же правилам огня и холода; кого огонь не
@@ -2807,7 +2806,8 @@ case class BattleState(
       b = hurt.battle.copy(
         effects = hurt.battle.effects.copy(monsterSkillBlockedTurns = BattleState.ComboSkillBlockTurns)
       )
-      log = (log :+ content.text("battle.comboLightningCold")) ++ capLine(hurt)
+      log = (log :+ content.format("battle.comboLightningCold", "monster" -> b.monsterName,
+        "armor" -> hurt.armor.toString)) ++ capLine(hurt)
     }
 
     // Одиночные проки стихий — идут своим чередом, в том числе после комбо.
@@ -2858,9 +2858,10 @@ case class BattleState(
                 "armor" -> MiniBoss.StoneElemental.BurnedMaxArmorCut.toString)
       }
     }
+    // Попутный ветер: срок — `airTurns` (у героя с «Пустынью» дольше, см. heroAirTurns).
     if (fired(Element.Air) && !fireAir) {
-      b = b.copy(effects = b.effects.copy(airBoostTurns = Element.Air.ProcTurns))
-      log = log :+ Element.Air.procText
+      b = b.copy(effects = b.effects.copy(airBoostTurns = airTurns))
+      log = log :+ Element.Air.procText.replace("{turns}", airTurns.toString)
     }
     if (fired(Element.Lightning)) {
       // Выжиг энергии: снимаем долю от ПОТОЛКА, поэтому эффект не зависит от
@@ -2869,7 +2870,7 @@ case class BattleState(
       // про сам разряд, и про сожжённую энергию.
       val (burnt, lost) = BattleState.burnEnergy(b, Element.LightningEnergyBurnPct)
       b = burnt
-      log = log :+ content.format("battle.lightningBurn", "energy" -> lost.toString)
+      log = log :+ content.format("battle.lightningBurn", "monster" -> b.monsterName, "energy" -> lost.toString)
     }
     if (fireAir || lightCold) b = b.copy(comboUsed = true)
     (b.withEffects(b.effects), log)
@@ -3050,7 +3051,8 @@ case class BattleState(
               effects          = effectsAfterHit
             )
             lines = List(
-              Option.when(impenTriggered)(content.text("battle.impenetrable")),
+              Option.when(impenTriggered)(content.format("battle.impenetrable",
+                "pct" -> hero.passives.impenetrableReductionPct.toString)),
               Option.when(slipped)(content.text("battle.deepSlip")),
               Option.when(toughTriggered)(content.format("battle.toughness", "armor" -> restoredArmor.toString)),
               Option.when(thorned.hp > 0)(content.format("battle.thorns", "damage" -> thorned.hp.toString, "monster" -> battle.monsterName)),
@@ -3063,10 +3065,11 @@ case class BattleState(
               Option.when(thawed)(content.text("battle.elements.thawHero")),
               // Яд от оружия — пометкой в строке самого удара (см. poisonMark).
               Option.when(poisonWarded)(content.text("battle.ward.poison")),
-              Option.when(mobProc && procElement.contains(Element.Cold) && !quenched && !coldWarded)(content.text("battle.mobColdBite")),
+              Option.when(mobProc && procElement.contains(Element.Cold) && !quenched && !coldWarded)(content.format("battle.mobColdBite",
+                "cut" -> Element.Cold.DefenceReductionCut.toString)),
               Option.when(coldWarded)(content.text("battle.ward.cold")),
               Option.when(quenched)(content.text("battle.elements.quenchHero")),
-              Option.when(mobProc && procElement.contains(Element.Air))(content.text("battle.mobAirBoost"))
+              Option.when(mobProc && procElement.contains(Element.Air))(airBoostLine(battle.monsterName))
             ).flatten
           } yield MobStrike(newHp, newArmor + restoredArmor, landed, lines, battleAfterAtk,
                     poisoned = poisons && !poisonWarded)
@@ -3146,8 +3149,6 @@ case class BattleState(
       buffedEff = effWithAir(hero, ticked, nowMs)
       hitRoll <- Random.nextIntBetween(1, 101)
       dodge = playerDodgeChance(hero, ticked, nowMs)
-      // Тот же порядок округления, что на экране боя: 100 - floor(dodge).
-      mobHitPct = 100 - dodge.toInt
 
       // 1) Обычная атака моба — обновляем hp/armor героя и (для Шипастого/Крепкости) бой.
       atkResult <-
@@ -3159,7 +3160,7 @@ case class BattleState(
             (st.newHp, st.newArmor, lines.mkString("\n"), st.battle)
           }
         else {
-          val missLine = content.format("battle.mobMiss", "monster" -> ticked.monsterName, "chance" -> mobHitPct.toString)
+          val missLine = content.format("battle.mobMiss", "monster" -> ticked.monsterName)
           // Контрудар: герой увернулся — и тут же бьёт в ответ, наверняка. Раз за раунд.
           if (ticked.heroCounterReady)
             playerStrike(hero, ticked.copy(heroCounterReady = false), nowMs, Vector.empty, skip,
@@ -3186,7 +3187,8 @@ case class BattleState(
           ZIO.succeed((battleAfterAtk, heroAfterAtk, ""))
         // Скован комбо Молния+Холод: умение застряло, и круг минибосса тоже стоит.
         else if (battleAfterAtk.effects.monsterSkillBlockedTurns > 0)
-          ZIO.succeed((battleAfterAtk, heroAfterAtk, content.text("battle.skillBlocked")))
+          ZIO.succeed((battleAfterAtk, heroAfterAtk,
+            content.format("battle.skillBlocked", "monster" -> battleAfterAtk.monsterName)))
         // Минибосс не выбирает умение: он идёт строго по своему кругу.
         else if (battleAfterAtk.boss.isDefined)
           bossTurnCast(heroAfterAtk, battleAfterAtk, nowMs, Victim.Hero)
@@ -4288,6 +4290,7 @@ case class BattleState(
           val newStats   = hero.fightStats.copy(hp = newHp, energy = newEnergy)
           val msg = content.format(
             "battle.flaskUsed",
+            "flask"  -> flaskName,
             "healed" -> healed.toString,
             "hp"     -> newHp.toString,
             "max"    -> maxHp.toString,
@@ -4307,7 +4310,7 @@ case class BattleState(
         case FlaskEffect.ArmorPercent(pct) =>
           val maxArmor = hero.effectiveMaxArmor(nowMs)
           val newArmor = (hero.fightStats.armor + (maxArmor * pct / 100L).max(1L)).min(maxArmor).max(hero.fightStats.armor)
-          val msg = content.format("battle.flaskArmor",
+          val msg = content.format("battle.flaskArmor", "flask" -> flaskName,
             "armor" -> (newArmor - hero.fightStats.armor).toString, "cur" -> newArmor.toString, "max" -> maxArmor.toString)
           TurnResult(hero.copy(fightStats = hero.fightStats.copy(armor = newArmor)),
             battle, Vector(msg) ++ qhLog, Outcome.Continue, endsRound = false)
@@ -4316,7 +4319,7 @@ case class BattleState(
         case FlaskEffect.EnergyPercent(pct) =>
           val maxEn = hero.maxEnergy(nowMs)
           val newEn = (hero.fightStats.energy + (maxEn * pct / 100L).max(1L)).min(maxEn).max(hero.fightStats.energy)
-          val msg = content.format("battle.flaskEnergy",
+          val msg = content.format("battle.flaskEnergy", "flask" -> flaskName,
             "energy" -> (newEn - hero.fightStats.energy).toString, "cur" -> newEn.toString, "max" -> maxEn.toString)
           TurnResult(hero.copy(fightStats = hero.fightStats.copy(energy = newEn)),
             battle, Vector(msg) ++ qhLog, Outcome.Continue, endsRound = false)
@@ -4325,10 +4328,9 @@ case class BattleState(
         // цели в силе: огненного элементаля пламя не берёт, элементалю и
         // нежити прок ложится как обычный (см. withEffects).
         case FlaskEffect.Splash(element) =>
-          val (splashed, procLog) = applyProcs(battle, Set(element))
-          val procced = longerWind(hero, Set(element), splashed)
+          val (procced, procLog) = applyProcs(battle, Set(element), heroAirTurns(hero))
           val guarded = procced.withEffects(procced.effects)
-          val head = content.format("battle.flaskSplash", "flask" -> flaskName)
+          val head = content.format("battle.flaskSplash", "flask" -> flaskName, "monster" -> battle.monsterName)
           val lines =
             if (element == Element.Fire && guarded.boss.exists(_.immuneToBurn))
               Vector(head, content.text("battle.burnImmune"))
@@ -4726,7 +4728,7 @@ case class BattleState(
           case None    => done(hero, battle, Vector(content.text("battle.belt.askAgain")))
           case Some(p) =>
             done(hero, battle.copy(group = battle.group.copy(pendingShift = Some(p))),
-              Vector(content.format("battle.belt.shimmer", "n" -> p.toString)))
+              Vector(content.format("battle.belt.shimmer", "brew" -> kind.label, "n" -> p.toString)))
         }
 
       // Великанье зелье: предел здоровья выше до конца боя, прибавка налита сразу.
@@ -4754,7 +4756,7 @@ case class BattleState(
       // Зеркальный настой: копии встают тут же, в этом бою.
       case BrewEffect.Mirror(copies) =>
         done(hero, battle.copy(effects = battle.effects.copy(heroMirrors = copies)),
-          Vector(content.format("battle.belt.mirrors", "count" -> copies.toString)))
+          Vector(content.format("battle.belt.mirrors", "brew" -> kind.label, "count" -> copies.toString)))
 
       // Волчий зов: запах держится час и сгорит на ближайшей встрече.
       case BrewEffect.WolfCall =>
@@ -5305,7 +5307,7 @@ case class BattleState(
           dealt    = hurt.dealt
           // Прок стихии считается молча — строки его в лог союзника не идут.
           procRoll <- if (newHp > 0L) Random.nextIntBetween(1, 101) else ZIO.succeed(100)
-          procced  = if (newHp > 0L && procRoll <= Element.ProcChancePct) applyProcs(hit, elem.toSet)._1 else hit
+          procced  = if (newHp > 0L && procRoll <= Element.ProcChancePct) applyProcs(hit, elem.toSet, Element.Air.ProcTurns)._1 else hit
           guarded  = procced.withEffects(procced.effects)
           // Этим ударом добил — был жив до него, а после него нет.
           killed   = tmp.monsterCurrentHp > 0L && guarded.monsterCurrentHp <= 0L
@@ -5372,9 +5374,10 @@ case class BattleState(
           extras   = List(
             Option.when(ignites && !thawed)(content.format("battle.ally.ignites", "name" -> a.name)),
             Option.when(thawed)(content.format("battle.ally.thaw", "name" -> a.name)),
-            Option.when(bites && !quenched)(content.format("battle.ally.coldBite", "name" -> a.name)),
+            Option.when(bites && !quenched)(content.format("battle.ally.coldBite", "name" -> a.name,
+              "cut" -> Element.Cold.DefenceReductionCut.toString)),
             Option.when(quenched)(content.format("battle.ally.quench", "name" -> a.name)),
-            Option.when(airy)(content.text("battle.mobAirBoost"))
+            Option.when(airy)(airBoostLine(tmp.monsterName))
           ).flatten
           result   =
             if (hurt.alive) (after.copy(group = after.group.updateAlly(a.position)(_ => hurt)), line +: extras.toVector)
@@ -6316,8 +6319,11 @@ case class BattleState(
         val slot       = if (crumbles) Item.NoItem else item.copy(details = spent)
         val heroAfter0 = heroFed.copy(equipment = heroFed.equipment.copy(additionalWeapon = slot))
 
+        // Числа граней — для строк аметиста и бриллианта; остальным они не нужны.
         val line = content.format(s"battle.divine.${kind.entryName}",
-          "damage" -> blow.toString, "heal" -> healed.toString, "foes" -> foes.toString)
+          "damage" -> blow.toString, "heal" -> healed.toString, "foes" -> foes.toString,
+          "pct" -> DivineRates.TrueStrikePct.toString, "rounds" -> DivineRates.BuffRounds.toString,
+          "haste" -> (DivineRates.HastePctPerFoe * foes).toString)
         val log  = Vector(line) ++
           (if (crumbles) Vector(content.format("battle.divine.crumbled", "name" -> kind.itemName)) else Vector.empty)
 
@@ -6383,7 +6389,7 @@ case class BattleState(
       val hit      = hurt.battle
       // Стихия и яд ложатся молча: строки проков только засорили бы экран.
       val alive   = hit.monsterCurrentHp > 0L
-      val procced = if (alive) element.map(e => applyProcs(hit, Set(e))._1).getOrElse(hit) else hit
+      val procced = if (alive) element.map(e => applyProcs(hit, Set(e), Element.Air.ProcTurns)._1).getOrElse(hit) else hit
       val venomed =
         if (poisons && alive)
           procced.withEffects(procced.effects.copy(
@@ -6655,7 +6661,7 @@ case class BattleState(
         fightStats = res.hero.fightStats.copy(hp = BattleState.BubbleHp),
         statBoosts = res.hero.statBoosts.without(BrewRates.BubbleBoost))
       res.copy(hero = saved, outcome = Outcome.Continue,
-        log = res.log :+ content.text("battle.bubbleSaved"))
+        log = res.log :+ content.format("battle.bubbleSaved", "hp" -> BattleState.BubbleHp.toString))
     }
 
   /** Сколько склянок грибной смеси в сумке героя. Сумка может быть недоступна

@@ -148,7 +148,7 @@ object RottenJoeBattleSpec extends ZIOSpecDefault {
               assertTrue(after.exists(_.effects.heroPoison.isDefined)) &&
               assertTrue(u.fightStats.hp < 500000L) && // яд уже отгрыз своё
               // тикает он общей для всех DoT строкой: своё у Джо — само отравление
-              assertTrue(log.contains("Яд снимает с вас"))
+              assertTrue(log.contains("🟢 Яд: −"))
     },
 
     test("широкий удар бьёт на три четверти атаки") {

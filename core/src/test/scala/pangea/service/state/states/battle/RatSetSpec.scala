@@ -104,7 +104,7 @@ object RatSetSpec extends ZIOSpecDefault {
         log    <- r.sentScreens.map(_.map(_.text).mkString("\n"))
         // наложился он на 3%, а к концу раунда уже тикнул и ослаб, как любой яд
       } yield assertTrue(after.effects.monsterPoison.contains(Poison(ItemSet.Rat.PoisonPct - Poison.DecayPerRound))) &&
-              assertTrue(log.contains("отравлен") && log.contains("Яд снимает")) &&
+              assertTrue(log.contains("отравлен") && log.contains("🟢 Яд → ")) &&
               assertTrue(ItemSet.Rat.PoisonChancePct == 30L && ItemSet.Rat.PoisonPct == 3)
     },
 
@@ -132,7 +132,7 @@ object RatSetSpec extends ZIOSpecDefault {
               // встала рядом с героем, и «домом» её не записали: она не из отряда
               assertTrue(rat.exists(a => a.position == 2 && a.home == 0)) &&
               assertTrue(rat.exists(a => a.hp == a.stats.hp && a.hp > 0L)) &&
-              assertTrue(log.contains("Из-под ваших ног выскакивает Крыса")) &&
+              assertTrue(log.contains("🐀 «Крыса»: Крыса встаёт в строй")) &&
               assertTrue(ItemSet.Rat.SummonChancePct == 5L)
     },
 
@@ -155,7 +155,7 @@ object RatSetSpec extends ZIOSpecDefault {
         log    <- r.sentScreens.map(_.map(_.text).mkString("\n"))
         rat     = after.group.allies.headOption
       } yield assertTrue(rat.exists(a => a.kind == AllyKind.Rat && a.name == "Чумная крыса")) &&
-              assertTrue(log.contains("Из-под ваших ног выскакивает Чумная крыса")) &&
+              assertTrue(log.contains("🐀 «Крыса»: Чумная крыса встаёт в строй")) &&
               // второй раз на том же раунде не приходит
               assertTrue(after.group.hasRatAlly)
     },

@@ -78,7 +78,7 @@ object BrewBattleSpec extends ZIOSpecDefault {
         res   <- state.action(testUser, tap("Attack"), r)
         hero  <- dao.getHeroByUserId(userId).map(_.get)
         said  <- texts(r)
-      } yield assertTrue(res == StateType.Battle && said.contains("плёнку")) &&
+      } yield assertTrue(res == StateType.Battle && said.contains("🫧 Плёнка лопнула: смертельный удар не прошёл, у вас 1 HP.")) &&
               assertTrue(hero.fightStats.hp == 1L) &&
               // плёнка лопнула: второй раз она не выручит
               assertTrue(!hero.statBoosts.hasActive(BrewRates.BubbleBoost, 0L))
@@ -175,7 +175,7 @@ object BrewBattleSpec extends ZIOSpecDefault {
         after  <- battleOf(dao)
         said   <- texts(r)
         blow    = BrewRates.MushroomDamagePerLvl * lvl
-      } yield assertTrue(res == StateType.Battle && said.contains("Склянка лопается")) &&
+      } yield assertTrue(res == StateType.Battle && said.contains("🍄 Грибная смесь: всем врагам по ")) &&
               // досталось и тому, кто в паре, и тем, кто в строю
               assertTrue(after.monsterCurrentHp == 100000L - blow) &&
               assertTrue(after.group.others.forall(_.currentHp == 100000L - blow)) &&
@@ -221,7 +221,7 @@ object BrewBattleSpec extends ZIOSpecDefault {
         _      <- state.action(testUser, tap("Attack"), r)
         third  <- dao.getHeroByUserId(userId).map(_.get)
         last   <- battleOf(dao)
-      } yield assertTrue(said.contains("рассекает пустоту")) &&
+      } yield assertTrue(said.contains(" бьёт копию. Копий осталось: ")) &&
               assertTrue(first.fightStats.hp == drunk.fightStats.hp && first.fightStats.armor == drunk.fightStats.armor) &&
               assertTrue(mid.effects.heroMirrors == 1) &&
               assertTrue(second.fightStats.hp == drunk.fightStats.hp) &&

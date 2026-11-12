@@ -161,7 +161,7 @@ object RoseBattleSpec extends ZIOSpecDefault {
       } yield assertTrue(slots(hero2) == List(BeltSlot.Rose(RoseKind.Green, 0))) &&
               // брать из ячейки больше нечего — в списке пояса её нет
               assertTrue(BattleState.beltUsable(hero2).isEmpty) &&
-              assertTrue(screens.contains("осыпается лепестками")) &&
+              assertTrue(screens.contains("осыпается: остался голый стебель.")) &&
               // зелёная травит — яд лёг на врага
               assertTrue(after.effects.monsterPoison.isDefined)
     },

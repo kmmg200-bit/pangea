@@ -159,7 +159,7 @@ object AllyBattleSpec extends ZIOSpecDefault {
         _       <- state.action(testUser, tap("Attack"), r)
         after   <- battleOf(dao)
         screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
-      } yield assertTrue(screens.contains("воспользовался свитком")) &&
+      } yield assertTrue(screens.contains(": свиток — ушёл из боя.")) &&
               // Напротив героя пусто, но моб на соседнем месте — они достают друг
               // друга, и занимать место перед ним он не идёт.
               assertTrue(!after.group.paired && after.group.activePos == 1 && after.group.heroPos == 2) &&
@@ -181,7 +181,7 @@ object AllyBattleSpec extends ZIOSpecDefault {
         after   <- battleOf(dao)
       } yield assertTrue(screens.contains("Эльф капитан") && screens.contains("осыпаются грудой")) &&
               // про свиток ему сказать нечего: он не наёмник
-              assertTrue(!screens.contains("воспользовался свитком")) &&
+              assertTrue(!screens.contains(": свиток — ушёл из боя.")) &&
               // с песка он убран, а из отряда уйдёт насовсем по концу боя
               assertTrue(after.group.allies.isEmpty) &&
               assertTrue(after.group.alliesGone.exists(_.undead.isDefined))
@@ -205,7 +205,7 @@ object AllyBattleSpec extends ZIOSpecDefault {
         updated <- dao.getHeroByUserId(userId).map(_.get)
         now     <- zio.Clock.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS)
       } yield assertTrue(result == StateType.Loot) &&
-              assertTrue(screens.contains("воспользовался свитком")) &&
+              assertTrue(screens.contains(": свиток — ушёл из боя.")) &&
               // и в отряде его после боя нет — ушёл в отлучку
               assertTrue(!updated.squad.has(AllyKind.Human) && updated.squad.isAway(AllyKind.Human, now))
     },
@@ -373,11 +373,11 @@ object AllyBattleSpec extends ZIOSpecDefault {
       } yield assertTrue(down == StateType.Battle && b1.group.heroDown) &&
               // упавший получил травму, и о ней сказано рядом с падением
               assertTrue(updated.traumaNames.size == 1 && updated.traumaUntil.isDefined) &&
-              assertTrue(scr1.contains("Падение не прошло даром — новая травма: «" + updated.traumaNames.head + "»")) &&
+              assertTrue(scr1.contains("⚠ Падение: травма «" + updated.traumaNames.head + "»")) &&
               // лежачему жать нечего: кнопок нет, и клавиатура убрана
               assertTrue(lying.choices.isEmpty && lying.hideKeyboard) &&
               assertTrue(sched.exists(s => s.kind == TaskKind.SquadFight && s.expectedState == StateType.Battle && s.fireAt == 30000L)) &&
-              assertTrue(scr1.contains("оседаете на землю") && scr1.contains("Отряд дерётся за вас")) &&
+              assertTrue(scr1.contains("💀 Вы падаете. Отряд бьётся без вас") && scr1.contains("Отряд дерётся за вас")) &&
               assertTrue(same == b1) &&
               assertTrue(t1 == StateType.Battle && b2.group.slain.size == 1 && b2.group.others.isEmpty) &&
               assertTrue(t2 == StateType.Battle && b3.monsterCurrentHp < 1000L && b3.group.heroDown) &&
@@ -622,10 +622,10 @@ object AllyBattleSpec extends ZIOSpecDefault {
         _      <- s4.action(testUser, tap("SquadTick"), r3)
         clean  <- battleOf(d4)
       } yield assertTrue(cold.group.allyAt(2).exists(_.coldCut == Element.Cold.DefenceReductionCut)) &&
-              assertTrue(said1.contains("Йорген Кремень: морозный удар сковывает")) &&
+              assertTrue(said1.contains("❄️ Йорген Кремень: холод, защита −10%.")) &&
               assertTrue(said1.contains("% ❄️ VS")) &&
               assertTrue(thawed.group.allyAt(2).exists(a => a.coldCut == 0 && a.burn.isEmpty)) &&
-              assertTrue(said2.contains("Йорген Кремень: пламя растопило лёд")) &&
+              assertTrue(said2.contains("♨️ Йорген Кремень: пламя и холод погасили друг друга.")) &&
               assertTrue(venom.group.allyAt(2).exists(_.poison.isDefined)) &&
               // яд от оружия — пометкой в строке удара, отдельной строки нет
               assertTrue("""бьёт Йорген Кремень на \d+ урона и травит 🟢""".r.findFirstIn(said3).isDefined) &&
@@ -646,7 +646,7 @@ object AllyBattleSpec extends ZIOSpecDefault {
         result  <- state.action(testUser, tap("SquadTick"), r)
         screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
       } yield assertTrue(down == StateType.Battle && result == StateType.Death) &&
-              assertTrue(screens.contains("оседаете на землю") && screens.contains("Последний из отряда"))
+              assertTrue(screens.contains("💀 Вы падаете. Отряд бьётся без вас") && screens.contains("Последний из отряда"))
     },
 
     test("сюжетный бой (squad = false) идёт без отряда: герой один, на месте 1") {
@@ -780,7 +780,7 @@ object AllyBattleSpec extends ZIOSpecDefault {
         fled    <- state.action(testUser, tap("ConfirmFlee"), r)
         updated <- dao.getHeroByUserId(userId).map(_.get)
         now     <- zio.Clock.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS)
-      } yield assertTrue(screens.contains("Йорген Кремень воспользовался свитком и телепортировался с боя")) &&
+      } yield assertTrue(screens.contains("📜 Йорген Кремень: свиток — ушёл из боя.")) &&
               assertTrue(after.group.allies.isEmpty && after.group.alliesGone.map(_.kind) == List(AllyKind.Human)) &&
               assertTrue(fled == StateType.Dungeon) &&
               assertTrue(!updated.squad.has(AllyKind.Human)) &&
@@ -894,8 +894,8 @@ object AllyBattleSpec extends ZIOSpecDefault {
               // яд: 10 − 4 лечением, и в конце раунда тик — ещё −2
               assertTrue(a.exists(_.poison.contains(Poison(10 - Poison.HealCut - Poison.DecayPerRound)))) &&
               assertTrue(screens.contains("«Малое исцеление» — Йорген Кремень: +")) &&
-              assertTrue(screens.contains("🟢 Йорген Кремень: лечение ослабляет яд — осталось 6%.")) &&
-              assertTrue(screens.contains("🔥 Йорген Кремень: пламя пожирает лечение — оно слабее на 54%. Зато огонь погас."))
+              assertTrue(screens.contains("🟢 Йорген Кремень: лечение — яда осталось 6%.")) &&
+              assertTrue(screens.contains("🔥 Йорген Кремень: пламя — лечение −54%, огонь погас."))
     },
 
     test("лечение достаёт только до соседей: дальнего в списке нет, а нацелить на него — ход не тратится") {

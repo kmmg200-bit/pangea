@@ -137,7 +137,7 @@ object RaceSetMurlocGnomeSpec extends ZIOSpecDefault {
       for {
         six  <- attack(hero(Race.Human, ItemSet.DeepMother, 6, evasion = 0L), hitter, rolls)
         five <- attack(hero(Race.Human, ItemSet.DeepMother, 5, evasion = 0L), hitter, rolls)
-      } yield assertTrue(six._4.contains("соскальзывает по чешуе") && !five._4.contains("соскальзывает")) &&
+      } yield assertTrue(six._4.contains("🐸 Чешуя «Матери Глубин»") && !five._4.contains("Чешуя «Матери Глубин»")) &&
               assertTrue(lost(five) > 0L && lost(six) == lost(five) / 2)
     },
 
@@ -153,7 +153,7 @@ object RaceSetMurlocGnomeSpec extends ZIOSpecDefault {
         again <- enter(murloc, one._1)
       } yield assertTrue(kin(one._1).size == 1 && kin(two._1).size == 2) &&
               assertTrue(kin(one._1).forall(a => a.stats == stats && a.hp == stats.hp && a.lvl == 10L && a.home == 0)) &&
-              assertTrue(one._2.contains("Из воды выходит Мурлок-собрат")) &&
+              assertTrue(one._2.contains("🐸 «Мать Глубин»: Мурлок-собрат встаёт в строй")) &&
               assertTrue(kin(human._1).isEmpty && kin(late._1).isEmpty) &&
               // вернулся в бой из снаряжения — второй раз не выходят
               assertTrue(kin(again._1).size == 1) &&
@@ -190,7 +190,7 @@ object RaceSetMurlocGnomeSpec extends ZIOSpecDefault {
         gnome <- under(Race.Gnome, 1000000L, 400L)
         human <- under(Race.Human, 1000000L, 400L)
         bare  <- under(Race.Gnome, 0L, 500000L)
-      } yield assertTrue(gnome._2.exists(_.effects.heroStunnedTurns == 0) && gnome._4.contains("с ног вас не сбить")) &&
+      } yield assertTrue(gnome._2.exists(_.effects.heroStunnedTurns == 0) && gnome._4.contains("⛏ «Подгорный мастер»: с ног не сбить.")) &&
               assertTrue(gnome._3.traumaNames.isEmpty && !gnome._4.contains("сбивает Вас с ног")) &&
               // человеку в том же наборе скрытый шаг не дан: сбит и с травмой
               assertTrue(human._2.exists(_.effects.heroStunnedTurns == MiniBoss.StoneElemental.BurstDebuffTurns)) &&

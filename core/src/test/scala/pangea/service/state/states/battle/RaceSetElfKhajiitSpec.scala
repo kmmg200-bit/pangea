@@ -97,7 +97,7 @@ object RaceSetElfKhajiitSpec extends ZIOSpecDefault {
         first  <- run(hero(Race.Human, ItemSet.QuietGrove, 6, accuracy = 1L), slippery, miss)
         second <- run(hero(Race.Human, ItemSet.QuietGrove, 6, accuracy = 1L), slippery.copy(heroStruck = true), miss)
         bare   <- run(hero(Race.Human, ItemSet.QuietGrove, 5, accuracy = 1L), slippery, miss)
-      } yield assertTrue(first._2.contains("Удар из засады")) &&
+      } yield assertTrue(first._2.contains("🌿 Засада «Тихой рощи»")) &&
               // оружия в руках нет — вполсилы: (1×3 + 500) × 0,5 × 1,5 = 377
               assertTrue(first._2.contains("Вы наносите 377 урона") && first._1.heroStruck) &&
               assertTrue(second._2.contains("промахиваетесь") && !second._2.contains("Удар из засады")) &&
@@ -108,7 +108,7 @@ object RaceSetElfKhajiitSpec extends ZIOSpecDefault {
       for {
         nine  <- run(hero(Race.Human, ItemSet.QuietGrove, 9), struck, hitAndAllPass)
         eight <- run(hero(Race.Human, ItemSet.QuietGrove, 8), struck, hitAndAllPass)
-      } yield assertTrue(nine._2.contains("ослаблен: −15% к атаке на 2 раунда")) &&
+      } yield assertTrue(nine._2.contains(": атака −15% на 2 раунда.")) &&
               // один раунд из двух уже прошёл
               assertTrue(nine._1.effects.monsterWeakenedPct == 15L && nine._1.effects.monsterWeakenedTurns == 1) &&
               assertTrue(eight._1.effects.monsterWeakenedTurns == 0 && !eight._2.contains("ослаблен"))
@@ -139,7 +139,10 @@ object RaceSetElfKhajiitSpec extends ZIOSpecDefault {
         five <- run(withAirFlask(hero(Race.Human, ItemSet.Desert, 5)), tough, belt, action = "BeltUse\",\"slot\":\"0")
       } yield assertTrue(HeroSets(Map(ItemSet.Desert -> 6)).airChanceBonusPct == 10L) &&
               assertTrue(six._1.effects.airBoostTurns == Element.Air.ProcTurns + 1) &&
-              assertTrue(five._1.effects.airBoostTurns == Element.Air.ProcTurns)
+              assertTrue(five._1.effects.airBoostTurns == Element.Air.ProcTurns) &&
+              // и в строке прока — тот же срок
+              assertTrue(six._2.contains(s"💨 Ветер: ваши точность и уклонение +10% на ${Element.Air.ProcTurns + 1} хода.")) &&
+              assertTrue(five._2.contains(s"💨 Ветер: ваши точность и уклонение +10% на ${Element.Air.ProcTurns} хода."))
     },
 
     test("«Пустынь» 9: Ришелье платит на 10% больше и продаёт на 10% дешевле") {

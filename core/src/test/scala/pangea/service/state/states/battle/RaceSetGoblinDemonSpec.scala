@@ -95,7 +95,7 @@ object RaceSetGoblinDemonSpec extends ZIOSpecDefault {
       for {
         six  <- run(hero(Race.Human, ItemSet.Trickster, 6), tough)
         five <- run(hero(Race.Human, ItemSet.Trickster, 5), tough)
-      } yield assertTrue(six._3.contains("Грязный приём") && six._3.contains("теряет 30 энергии")) &&
+      } yield assertTrue(six._3.contains("👺 Грязный приём «Пройдохи» → ") && six._3.contains(": −30 энергии.")) &&
               assertTrue(!five._3.contains("Грязный приём")) &&
               assertTrue(ItemSet.Trickster.EnergyBurnChancePct == 20L && ItemSet.Trickster.EnergyBurnPct == 30L)
     },

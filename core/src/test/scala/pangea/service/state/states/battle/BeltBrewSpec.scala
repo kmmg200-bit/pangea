@@ -396,7 +396,7 @@ object BeltBrewSpec extends ZIOSpecDefault {
         log    <- r.sentScreens.map(_.map(_.text).mkString("\n"))
       } yield assertTrue(mid.effects.heroPoison.isEmpty) &&
               assertTrue(mid.effects.warded(Ward.Poison) && !mid.effects.warded(Ward.Bleed)) &&
-              assertTrue(log.contains("яд отступает")) &&
+              assertTrue(log.contains("яд снят, до конца боя новый не возьмёт")) &&
               assertTrue(log.contains("и так на вас")) &&
               assertTrue(slots(after) == List(BeltSlot.Brew(BrewKind.SnakeSerum, 0), BeltSlot.Brew(BrewKind.SnakeSerum))) &&
               assertTrue(fight.effects.warded(Ward.Poison))
@@ -451,7 +451,7 @@ object BeltBrewSpec extends ZIOSpecDefault {
         mid <- battleOf(dao)
         log <- r.sentScreens.map(_.map(_.text).mkString("\n"))
       } yield assertTrue(mid.effects.heroRegen.contains(Regen(12, Some(5)))) &&
-              assertTrue(log.contains("12% здоровья в раунд, 5 раундов подряд")) &&
+              assertTrue(log.contains("+12% HP в раунд, 5 раундов.")) &&
               // пять раундов лечения, все по 12%
               assertTrue(steps.size == 5 && steps.forall(_.pct == 12)) &&
               // живучий сбор слабеет, как раньше

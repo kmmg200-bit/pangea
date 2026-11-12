@@ -68,7 +68,7 @@ object FireColdSpec extends ZIOSpecDefault {
                ints = List(60, 1), longs = List(100L))
         (after, log) = t
       } yield assertTrue(after.effects.monsterBurn.isEmpty && after.effects.monsterColdDefenceCut == 0) &&
-              assertTrue(log.contains("Холод гасит пламя"))
+              assertTrue(log.contains(": холод и пламя погасили друг друга."))
     },
 
     test("огонь по замёрзшему мобу: лёд тает, пламя не занимается") {
@@ -78,7 +78,7 @@ object FireColdSpec extends ZIOSpecDefault {
                ints = List(60, 1), longs = List(100L))
         (after, log) = t
       } yield assertTrue(after.effects.monsterColdDefenceCut == 0 && after.effects.monsterBurn.isEmpty) &&
-              assertTrue(log.contains("Пламя растапливает лёд"))
+              assertTrue(log.contains(": пламя и холод погасили друг друга."))
     },
 
     test("рубин в одном мече, сапфир в другом — так можно; сработали оба в одном ударе — только пар") {
@@ -89,7 +89,7 @@ object FireColdSpec extends ZIOSpecDefault {
                      ints = List(60, 1, 1), longs = List(100L))
       } yield assertTrue(h.gems.weaponElements.size == 2) &&
               assertTrue(clean._1.effects.monsterBurn.isEmpty && clean._1.effects.monsterColdDefenceCut == 0) &&
-              assertTrue(clean._2.contains("только пар")) &&
+              assertTrue(clean._2.contains("♨️ Огонь и холод в одном ударе погасили друг друга.")) &&
               // что на цели уже было, то и осталось
               assertTrue(burning._1.effects.monsterBurn.isDefined && burning._1.effects.monsterColdDefenceCut == 0)
     },
@@ -101,7 +101,7 @@ object FireColdSpec extends ZIOSpecDefault {
                ints = List(60, 1), longs = List(100L))
         (after, log) = t
       } yield assertTrue(after.effects.heroBurn.isEmpty && after.effects.heroColdDefenceCut == 0) &&
-              assertTrue(log.contains("Холод гасит пламя на вас"))
+              assertTrue(log.contains("♨️ На вас холод и пламя погасили друг друга."))
     },
 
     test("поджог демона по замёрзшему герою: лёд тает, пламя не занимается") {
@@ -111,7 +111,7 @@ object FireColdSpec extends ZIOSpecDefault {
                ints = List(60, 1), longs = List(100L))
         (after, log) = t
       } yield assertTrue(after.effects.heroColdDefenceCut == 0 && after.effects.heroBurn.isEmpty) &&
-              assertTrue(log.contains("Пламя растапливает лёд на вас"))
+              assertTrue(log.contains("♨️ На вас пламя и холод погасили друг друга."))
     }
   )
 }

@@ -212,7 +212,7 @@ object RaceSetHumanOrcSpec extends ZIOSpecDefault {
       for {
         orc   <- attack(wounded(hero(Race.Orc, ItemSet.Horde, 12), 30L), tough, cleanHit)
         human <- attack(wounded(hero(Race.Human, ItemSet.Horde, 12), 30L), tough, cleanHit)
-      } yield assertTrue(orc._4.contains("Вампиризм восстановил")) &&
+      } yield assertTrue(orc._4.contains("🩸 Вампиризм: +")) &&
               assertTrue(!human._4.contains("Вампиризм восстановил"))
     }
   )

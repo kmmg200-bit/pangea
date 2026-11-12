@@ -101,7 +101,7 @@ object KillsInMobTurnSpec extends ZIOSpecDefault {
       } yield assertTrue(h.sets.feastsOnKill) &&
               // сосед пал от раны, а не от удара: герой бил того, кто напротив
               assertTrue(b1.group.slain.size == 1 && b1.monsterCurrentHp > 0L) &&
-              assertTrue(said.contains("жуткий пир")) &&
+              assertTrue(said.contains("🧛 Пир «Упыря»: +")) &&
               assertTrue(after.fightStats.hp > 100L)
     },
 
@@ -114,7 +114,7 @@ object KillsInMobTurnSpec extends ZIOSpecDefault {
         (_, b1, said) = res
       } yield assertTrue(b1.group.slain.size == 1) &&
               assertTrue(b1.group.allies.headOption.exists(_.kills == 1)) &&
-              assertTrue(!said.contains("жуткий пир"))
+              assertTrue(!said.contains("🧛 Пир «Упыря»: +"))
     },
 
     test("«Преисподняя» 12 у демона: сосед истёк кровью в свой ход — напор возвращает энергию") {
@@ -135,7 +135,7 @@ object KillsInMobTurnSpec extends ZIOSpecDefault {
         (_, b1, said) = res
       } yield assertTrue(h.sets.riseChancePct > 0L) &&
               assertTrue(b1.group.slain.size == 1) &&
-              assertTrue(said.contains("поднимается на ваш зов")) &&
+              assertTrue(said.contains("💀 «Некромант»: ")) &&
               assertTrue(b1.group.allies.exists(_.undead.isDefined))
     }
   )

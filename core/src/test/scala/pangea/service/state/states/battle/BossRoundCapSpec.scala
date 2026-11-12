@@ -152,7 +152,7 @@ object BossRoundCapSpec extends ZIOSpecDefault {
         t <- strike(h, b)
         (after, log) = t
       } yield assertTrue(after.exists(_.monsterCurrentHp == stats.hp - hpCap)) &&
-              assertTrue(log.contains(s"Яд снимает $hpCap HP")) &&
+              assertTrue(s"🟢 Яд → [^:\\n]+: $hpCap урона\\.".r.findFirstIn(log).isDefined) &&
               assertTrue(log.contains("Белый Волк держится: больше за этот раунд с него не снять"))
     },
 
@@ -185,9 +185,9 @@ object BossRoundCapSpec extends ZIOSpecDefault {
         pt <- strike(h, poisoned(plainWolf(h)))
         (plainAfter, plainLog) = pt
       } yield assertTrue(bossAfter.exists(_.monsterCurrentHp == stats.hp - 120L)) &&
-              assertTrue(bossLog.contains("Яд снимает 120 HP")) &&
+              assertTrue("""🟢 Яд → [^:\n]+: 120 урона\.""".r.findFirstIn(bossLog).isDefined) &&
               assertTrue(plainAfter.exists(_.monsterCurrentHp == stats.hp - 200L)) &&
-              assertTrue(plainLog.contains("Яд снимает 200 HP"))
+              assertTrue("""🟢 Яд → [^:\n]+: 200 урона\.""".r.findFirstIn(plainLog).isDefined)
     },
 
     test("взрыв Огня с Воздухом снимает с босса 15% HP вместо 30%, с рядового — 30%") {
@@ -197,8 +197,8 @@ object BossRoundCapSpec extends ZIOSpecDefault {
         (_, bossLog) = bt
         pt <- strike(h, plainWolf(h), procsFire)
         (_, plainLog) = pt
-      } yield assertTrue(bossLog.contains(s"наносят чудовищный урон… (-${stats.hp * 15L / 100L})")) &&
-              assertTrue(plainLog.contains(s"наносят чудовищный урон… (-${stats.hp * 30L / 100L})"))
+      } yield assertTrue(s"🔥💨 Огонь и воздух → [^:\\n]+: ${stats.hp * 15L / 100L} урона\\.".r.findFirstIn(bossLog).isDefined) &&
+              assertTrue(s"🔥💨 Огонь и воздух → [^:\\n]+: ${stats.hp * 30L / 100L} урона\\.".r.findFirstIn(plainLog).isDefined)
     },
 
     test("святая вода жжёт мёртвого минибосса вдвое слабее: 2,5% максимума HP вместо 5%") {

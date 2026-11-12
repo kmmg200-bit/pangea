@@ -90,7 +90,7 @@ object DivineBattleSpec extends ZIOSpecDefault {
         updated <- dao.getHeroByUserId(userId).map(_.get)
         screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
       } yield assertTrue(result == StateType.Battle) &&
-              assertTrue(screens.contains(s"Все получили $blow урона")) &&
+              assertTrue(screens.contains(s"всем врагам по $blow урона")) &&
               assertTrue(after.monsterCurrentHp == 100000L - (blow - mobArmor)) &&
               assertTrue(after.group.others.forall(_.currentHp == 100000L - (blow - mobArmor))) &&
               assertTrue(after.monsterCurrentArmor == 0L) &&                // броню снесло первой
@@ -128,7 +128,7 @@ object DivineBattleSpec extends ZIOSpecDefault {
         screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
         drained  = blow * 3 * DivineRates.DrainPct / 100L   // броня тоже идёт в счёт отнятого
       } yield assertTrue(updated.fightStats.hp == 1000L + drained) &&
-              assertTrue(screens.contains(s"вы восстановили $drained хп"))
+              assertTrue(screens.contains(s"вам +$drained HP."))
     },
 
     test("стихийные божественного оружия кладут свою стихию на каждого врага без броска: огонь жжёт, холод режет защиту") {
@@ -208,7 +208,7 @@ object DivineBattleSpec extends ZIOSpecDefault {
         _       <- state.action(testUser, tap("UseDivine"), r)
         last    <- r.sentScreens.map(_.map(_.text).mkString("\n"))
       } yield assertTrue(DivineKind.chargesFor(ItemRarity.Gray) == 6 && DivineKind.chargesFor(ItemRarity.Orange) == 12) &&
-              assertTrue(screens.contains("рассыпается прямо в ваших руках")) &&
+              assertTrue(screens.contains("рассыпается в пыль.")) &&
               assertTrue(updated.equipment.additionalWeapon.itemType == ItemType.NoItem) &&
               assertTrue(last.contains("В доп. слоте нет божественного оружия"))
     },

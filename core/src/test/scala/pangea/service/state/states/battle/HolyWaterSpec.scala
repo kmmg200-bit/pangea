@@ -212,7 +212,7 @@ object HolyWaterSpec extends ZIOSpecDefault {
         _     <- state.action(testUser, useSlot(1), r)
         h2    <- dao.getHeroByUserId(userId).map(_.get)
         again <- texts(r)
-      } yield assertTrue(b1.holyWater && said.contains("окропляете поле святой водой")) &&
+      } yield assertTrue(b1.holyWater && said.contains("💧 Святая вода на поле до конца боя.")) &&
               assertTrue(slotsOf(h1) == List(BeltSlot.HolyWater(count = 0), BeltSlot.HolyWater())) &&
               assertTrue(again.contains("уже на поле") && slotsOf(h2) == slotsOf(h1))
     },
@@ -230,7 +230,7 @@ object HolyWaterSpec extends ZIOSpecDefault {
         dead   <- round(undead = true)
         living <- round(undead = false)
       } yield assertTrue(dead._1 >= 5000L && dead._1 < 6000L) &&
-              assertTrue(dead._2.contains("Святая вода жжёт мёртвых: каждый теряет по 5% здоровья")) &&
+              assertTrue(dead._2.contains("💧 Святая вода: каждый мёртвый −5% HP.")) &&
               // живому досталось только от удара, и вода о себе промолчала
               assertTrue(living._1 < 1000L && !living._2.contains("Святая вода жжёт"))
     },
@@ -250,7 +250,7 @@ object HolyWaterSpec extends ZIOSpecDefault {
       } yield assertTrue(said1.contains("Святая вода и миазмы тьмы гасят друг друга")) &&
               // ни тьмы, ни воды: мобу досталось только от удара
               assertTrue(!said1.contains("Миазмы держат поле боя") && 100000L - b1.monsterCurrentHp < 1000L) &&
-              assertTrue(said2.contains("Святая вода жжёт мёртвых") && said2.contains("Святая вода жжёт и вас")) &&
+              assertTrue(said2.contains("💧 Святая вода: каждый мёртвый") && said2.contains("Святая вода жжёт и вас")) &&
               assertTrue(b1.monsterCurrentHp - b2.monsterCurrentHp >= 5000L)
     },
 
@@ -278,7 +278,7 @@ object HolyWaterSpec extends ZIOSpecDefault {
               // слабее, чем рядовых мёртвых: 2,5% максимума вместо 5% (урон от
               // процентов по минибоссу, см. BossPercentDamage); удар героя —
               // меньше тысячи (см. выше)
-              assertTrue(empty._2.contains("Некромант выдохся") && empty._2.contains("Святая вода жжёт мёртвых")) &&
+              assertTrue(empty._2.contains("Некромант выдохся") && empty._2.contains("💧 Святая вода: каждый мёртвый")) &&
               assertTrue(empty._1 >= 2500L && empty._1 < 3500L)
     },
 
