@@ -89,7 +89,7 @@ object MoneyTransferSpec extends ZIOSpecDefault {
     },
 
     test("строка о передаче денег — в ту беседу, где написали «Передать», а не в торговую") {
-      val general = 2000000001L
+      val general = pangea.service.sender.ChatTarget.Peer(2000000001L, pangea.model.vk.Community.Main)
       for {
         t <- chat(silver = 500L, doubloons = 100L)
         (handler, _, _, _, players, _) = t

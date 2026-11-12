@@ -9,8 +9,10 @@ import pangea.model.hero.{Hero, HeroId}
 import pangea.model.item.{Item, ItemStack}
 import pangea.model.state.StateType
 import pangea.model.user.{User, UserId}
+import pangea.model.vk.Community
 import pangea.repository.inventory.InventoryRepository
 import pangea.service.parcel.{TransferTarget, Transfers}
+import pangea.service.sender.ChatTarget
 import pangea.service.{Background, ErrorLog}
 import pangea.service.state.states.parcel.TransferState._
 import pangea.service.state.{ItemMenu, State, UserAction}
@@ -136,7 +138,7 @@ case class TransferState(
         case Some(item) =>
           val target = TransferTarget(HeroId(scene.toHeroId), UserId(scene.toUserId), scene.toName)
           for {
-            shipment <- transfers.send(user, hero, target, batch(inv.items.data, item, scene.count), now, scene.chat)
+            shipment <- transfers.send(user, hero, target, batch(inv.items.data, item, scene.count), now, scene.chatTarget)
             // Доставка ждёт лок получателя, а наш занят этим ходом — пусть
             // идёт отдельно и начнётся, как только получатель освободится.
             _        <- background.fork(shipment.handOver
@@ -207,8 +209,16 @@ object TransferState {
     // Беседа, где написали «Передать» (`peer_id`): туда уйдёт строка о
     // передаче. Option: в сценах, начатых до этого поля, его нет — их строка
     // уходит в торговую беседу, как раньше.
-    chat:     Option[Long] = None
-  )
+    chat:     Option[Long] = None,
+    // Беседа гильдейского сообщества: номера бесед у сообществ совпадают. В
+    // сценах, начатых раньше, поля нет — это беседа основного.
+    guildChat: Option[Boolean] = None
+  ) {
+
+    /** Беседа, куда уйдёт строка о передаче, — номер вместе с сообществом. */
+    def chatTarget: Option[ChatTarget.Peer] =
+      chat.map(ChatTarget.Peer(_, if (guildChat.contains(true)) Community.Guilds else Community.Main))
+  }
   object TransferScene {
     implicit val encoder: Encoder[TransferScene] = deriveEncoder
     implicit val decoder: Decoder[TransferScene] = deriveDecoder

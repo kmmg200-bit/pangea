@@ -19,7 +19,7 @@ class VkPlayers(api: Api, heroDao: HeroDao) extends Players {
 
   def announceTrade(message: String): Task[Unit] = api.sendToChat(ChatTarget.Trade, message)
 
-  def announceAt(peerId: Long, message: String): Task[Unit] = api.sendToChat(ChatTarget.Peer(peerId), message)
+  def announceAt(chat: ChatTarget.Peer, message: String): Task[Unit] = api.sendToChat(chat, message)
 
   def notify(user: User, message: String): Task[Unit] = api.sendMessage(user, message, Nil, None)
 

@@ -1,6 +1,7 @@
 package pangea.engine
 
 import pangea.model.user.User
+import pangea.service.sender.ChatTarget
 import zio.Task
 
 trait Players {
@@ -13,9 +14,9 @@ trait Players {
     * известно, в какой беседе её затеяли (см. [[announceAt]]). */
   def announceTrade(message: String): Task[Unit]
 
-  /** Строка в беседу `peerId` — туда, где затеяли дело: передачу из рук в руки
+  /** Строка в беседу `chat` — туда, где затеяли дело: передачу из рук в руки
     * видно там же, где о ней договорились. */
-  def announceAt(peerId: Long, message: String): Task[Unit]
+  def announceAt(chat: ChatTarget.Peer, message: String): Task[Unit]
 
   /** Письмо игроку в личные сообщения — например, продавцу о том, что его лот
     * купили. Клавиатуру прошлого экрана не трогает. */

@@ -10,10 +10,18 @@ object InboxEventSpec extends ZIOSpecDefault {
 
   override def spec = suite("Событие очереди ВК")(
 
-    test("ключ сообщения — peer, id и cmid: личка и беседа различаются") {
+    test("ключ сообщения — peer, id и cmid: личка и беседа различаются; у основного сообщества — прежний") {
       assertTrue(
-        InboxEvent.messageKey(7L, 100L, 0L) == "m:7:100:0",
-        InboxEvent.messageKey(2000000001L, 0L, 33710L) == "m:2000000001:0:33710"
+        InboxEvent.messageKey(Community.Main, 7L, 100L, 0L) == "m:7:100:0",
+        InboxEvent.messageKey(Community.Main, 2000000001L, 0L, 33710L) == "m:2000000001:0:33710"
+      )
+    },
+
+    test("беседа гильдейского сообщества с тем же номером и cmid — другой ключ: сообщения не глушат друг друга") {
+      assertTrue(
+        InboxEvent.messageKey(Community.Guilds, 2000000001L, 0L, 33710L) == "g:2000000001:0:33710",
+        InboxEvent.messageKey(Community.Guilds, 2000000001L, 0L, 33710L) !=
+          InboxEvent.messageKey(Community.Main, 2000000001L, 0L, 33710L)
       )
     },
 

@@ -12,6 +12,7 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.user.UserRepository
 import pangea.service.chat.ChatCommand
 import pangea.service.chat.ChatCommand.Money
+import pangea.service.sender.ChatTarget
 import pangea.service.payout.Payouts
 import pangea.service.purse.Purse
 import pangea.service.state.PlayerLock
@@ -109,7 +110,7 @@ final case class Transfers(
     query:  String,
     count:  Int,
     now:    Long,
-    chat:   Option[Long] = None
+    chat:   Option[ChatTarget.Peer] = None
   ): Task[Transfers.Outcome] =
     for {
       inv <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
@@ -136,7 +137,7 @@ final case class Transfers(
     target: TransferTarget,
     items:  List[Item],
     now:    Long,
-    chat:   Option[Long] = None
+    chat:   Option[ChatTarget.Peer] = None
   ): Task[Transfers.Shipment] =
     ship(sender, target, items, now, chat)(item =>
       inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)))
@@ -192,7 +193,7 @@ final case class Transfers(
     query:  String,
     count:  Int,
     now:    Long,
-    chat:   Option[Long] = None
+    chat:   Option[ChatTarget.Peer] = None
   ): Task[Transfers.Outcome] =
     for {
       vault <- bank.get(hero.id).mapError(e => new Throwable(e.toString))
@@ -221,7 +222,7 @@ final case class Transfers(
 
   /** Вещи — в посылки получателю: `take` убирает каждую оттуда, где она лежит
     * (сумка или хранилище), плюс строка в беседу (см. [[log]]). */
-  private def ship(sender: User, target: TransferTarget, items: List[Item], now: Long, chat: Option[Long])(
+  private def ship(sender: User, target: TransferTarget, items: List[Item], now: Long, chat: Option[ChatTarget.Peer])(
       take: Item => Task[Unit]): Task[Transfers.Shipment] =
     for {
       name <- players.getDisplayName(sender).orElse(ZIO.succeed(content.text("transfer.someone")))
@@ -317,7 +318,7 @@ final case class Transfers(
     * никому. Самого героя получателя здесь не трогаем — его пишут только под
     * его собственным локом. Зачислить не вышло — всё снятое возвращается. */
   def sendSilver(sender: User, hero: Hero, target: TransferTarget, amount: Long,
-                 chat: Option[Long] = None): Task[Transfers.Outcome] =
+                 chat: Option[ChatTarget.Peer] = None): Task[Transfers.Outcome] =
     tooLittle(Money.Silver, amount) match {
       case Some(refusal) => ZIO.succeed(Transfers.Outcome.Forbidden(refusal))
       case None =>
@@ -340,7 +341,7 @@ final case class Transfers(
     * как у [[sendSilver]]: получателю в ячейку или в город, а не вышло —
     * снятое возвращается в ячейку. */
   def sendSilverFromVault(sender: User, hero: Hero, target: TransferTarget, amount: Long,
-                          chat: Option[Long] = None): Task[Transfers.Outcome] =
+                          chat: Option[ChatTarget.Peer] = None): Task[Transfers.Outcome] =
     tooLittle(Money.Silver, amount) match {
       case Some(refusal) => ZIO.succeed(Transfers.Outcome.Forbidden(refusal))
       case None =>
@@ -364,7 +365,7 @@ final case class Transfers(
   /** Серебро получателю: в ячейку, а не приняла — ждёт его в городе; письмо и
     * строка в беседу. Зачислить не вышло — `refund` возвращает снятое. */
   private def deliverSilver(sender: User, target: TransferTarget, amount: Long, refund: Task[Unit],
-                            chat: Option[Long]): Task[Unit] =
+                            chat: Option[ChatTarget.Peer]): Task[Unit] =
     for {
       intoVault <- bank.depositSilver(target.heroId, amount).either.flatMap {
                      case Right(_) => ZIO.succeed(true)
@@ -408,7 +409,7 @@ final case class Transfers(
   /** Дублоны дошли: письмо получателю, строка в беседу. Возвращает ответ
     * отправителю. */
   def doubloonsDelivered(sender: User, target: TransferTarget, amount: Long,
-                         chat: Option[Long] = None): Task[String] =
+                         chat: Option[ChatTarget.Peer] = None): Task[String] =
     tellMoney(sender, target, Transfers.moneyLine(Money.Doubloons, amount), Transfers.Landed.Hand, chat)
       .as(sentLine(Money.Doubloons, amount, target))
 
@@ -433,7 +434,7 @@ final case class Transfers(
 
   /** Письмо получателю — где теперь его деньги, — и строка в торговую беседу. */
   private def tellMoney(sender: User, target: TransferTarget, line: String, landed: Transfers.Landed,
-                        chat: Option[Long]): Task[Unit] =
+                        chat: Option[ChatTarget.Peer]): Task[Unit] =
     for {
       fromName <- players.getDisplayName(sender).orElse(ZIO.succeed(content.text("transfer.someone")))
       receiver <- userRepo.getUserById(target.userId).option.map(_.flatten)
@@ -453,7 +454,7 @@ final case class Transfers(
   /** Строка о передаче: передача — дело публичное. Письмо получателю уходит
     * с доставкой ([[handOver]]) — когда уже ясно, где вещи. */
   private def announce(sender: User, fromName: String, target: TransferTarget, items: List[Item],
-                       chat: Option[Long]): Task[Unit] =
+                       chat: Option[ChatTarget.Peer]): Task[Unit] =
     for {
       receiver <- userRepo.getUserById(target.userId).option.map(_.flatten)
       _        <- log(chat, content.format("transfer.announce",
@@ -462,10 +463,10 @@ final case class Transfers(
                     "what" -> items.headOption.fold("")(what(_, items.size)))).ignore
     } yield ()
 
-  /** Лог передачи — в ту беседу, где её затеяли (`chat` — её `peer_id`): там
+  /** Лог передачи — в ту беседу, где её затеяли (`chat`): там
     * о ней договаривались, там её и видят. Беседа не известна — передачу
     * начали до того, как её стали запоминать, — в торговую, как раньше. */
-  private def log(chat: Option[Long], text: String): Task[Unit] =
+  private def log(chat: Option[ChatTarget.Peer], text: String): Task[Unit] =
     chat.fold(players.announceTrade(text))(players.announceAt(_, text))
 
   /** Кликабельное упоминание игрока в ВК. */

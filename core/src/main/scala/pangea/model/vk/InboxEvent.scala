@@ -43,9 +43,15 @@ object InboxEvent {
 
   /** Ключ от повторов сообщения: одно сообщение приходит и по Callback, и по
     * Long Poll, а ВК ещё и повторяет Callback. В беседах ВК шлёт `id = 0`, и
-    * сообщение различает `cmid`. */
-  def messageKey(peerId: Long, messageId: Long, conversationMessageId: Long): String =
-    s"m:$peerId:$messageId:$conversationMessageId"
+    * сообщение различает `cmid`. Номера бесед у сообществ совпадают — у
+    * гильдейского своя приставка, у основного ключ прежний. */
+  def messageKey(community: Community, peerId: Long, messageId: Long, conversationMessageId: Long): String = {
+    val prefix = community match {
+      case Community.Main   => "m"
+      case Community.Guilds => "g"
+    }
+    s"$prefix:$peerId:$messageId:$conversationMessageId"
+  }
 
   /** Ключ события группы: ВК метит каждое событие своим `event_id`. Нет его —
     * ключом становится само событие (повтор пришёл бы тем же текстом). */

@@ -1,6 +1,8 @@
 package pangea.service.chat
 
 import pangea.model.hero.Achievement
+import pangea.model.vk.Community
+import pangea.service.sender.ChatTarget
 
 /** Команды, которые бот слушает в общей беседе Пангеи: «Передать» в ответ
  *  (или пересылкой) на сообщение того, кому передают, — вещь или деньги, —
@@ -41,10 +43,23 @@ object ChatCommand {
     * и сама беседа (`peer_id`): иначе команда в торговой беседе под тем же
     * номером, что и прошлая в общей, сошла бы за повтор и пропала.
     *
+    * Номера бесед у сообществ совпадают, поэтому беседы гильдейского
+    * сообщества идут в ключе после всех бесед основного ([[GuildsChatShift]]);
+    * у основного ключ прежний.
+    *
     * Ключ возвращается отрицательным: личные сообщения считаются
     * положительными, и два потока не должны мешать друг другу. */
-  def eventKey(peerId: Long, id: Long, conversationMessageId: Option[Long]): Long =
-    -((peerId - ChatPeerBase).max(0L) * ChatKeySpan + conversationMessageId.filter(_ > 0L).getOrElse(id))
+  def eventKey(chat: ChatTarget.Peer, id: Long, conversationMessageId: Option[Long]): Long = {
+    val shift = chat.community match {
+      case Community.Main   => 0L
+      case Community.Guilds => GuildsChatShift
+    }
+    -(((chat.peerId - ChatPeerBase).max(0L) + shift) * ChatKeySpan + conversationMessageId.filter(_ > 0L).getOrElse(id))
+  }
+
+  /** Сдвиг бесед гильдейского сообщества в ключе [[eventKey]]: столько бесед у
+    * одного сообщества не бывает, а ключ при этом далеко от предела Long. */
+  val GuildsChatShift: Long = 1000000L
 
   /** Сколько номеров сообщений отведено на одну беседу в ключе [[eventKey]]. */
   val ChatKeySpan: Long = 1000000000L

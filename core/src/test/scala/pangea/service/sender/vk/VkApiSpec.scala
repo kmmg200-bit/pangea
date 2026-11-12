@@ -8,6 +8,7 @@ import org.http4s.{HttpApp, Status, UrlForm}
 import pangea.dao.sendfailure.SendFailureDao
 import pangea.engine.SceneContent
 import pangea.model.user.UserId
+import pangea.model.vk.Community
 import pangea.service.chat.{ChatButtons, Links}
 import pangea.service.sender.ChatTarget
 import zio.interop.catz._
@@ -18,7 +19,7 @@ object VkApiSpec extends ZIOSpecDefault {
 
   private val htmlBody = "<html><head><title>414 Request-URI Too Large</title></head></html>"
 
-  def spec = suite("VkApi")(chatPeerSpec, chatKeysSpec, chatSendSpec, failSpec)
+  def spec = suite("VkApi")(chatPeerSpec, chatKeysSpec, chatSendSpec, tokenSpec, failSpec)
 
   private val dsl = Http4sDsl[Task]
   import dsl._
@@ -51,7 +52,7 @@ object VkApiSpec extends ZIOSpecDefault {
       import pangea.service.sender.ChatTarget
       assertTrue(VkApi.chatPeer(chats, ChatTarget.General).contains(2000000001L)) &&
       assertTrue(VkApi.chatPeer(chats, ChatTarget.Trade).contains(2000000002L)) &&
-      assertTrue(VkApi.chatPeer(chats, ChatTarget.Peer(2000000007L)).contains(2000000007L))
+      assertTrue(VkApi.chatPeer(chats, ChatTarget.Peer(2000000007L, Community.Main)).contains(2000000007L))
     },
     test("торговая не настроена — объявления идут в общую; не настроено ничего — молчим") {
       import pangea.service.sender.ChatTarget
@@ -62,10 +63,15 @@ object VkApiSpec extends ZIOSpecDefault {
 
   private def chatKeysSpec = suite("Кнопки бесед")(
     test("общая и торговая — с кнопками приложения и туториала; прочие беседы — без") {
-      assertTrue(VkApi.chatKeyboard(chats, 2000000001L).contains(ChatButtons.keyboard)) &&
-      assertTrue(VkApi.chatKeyboard(chats, 2000000002L).contains(ChatButtons.keyboard)) &&
-      assertTrue(VkApi.chatKeyboard(chats, 2000000007L).isEmpty) &&
-      assertTrue(VkApi.chatKeyboard(chats.copy(chatPeerId = None, tradeChatPeerId = None), 2000000001L).isEmpty)
+      def main(peer: Long) = ChatTarget.Peer(peer, Community.Main)
+      assertTrue(VkApi.chatKeyboard(chats, main(2000000001L)).contains(ChatButtons.keyboard)) &&
+      assertTrue(VkApi.chatKeyboard(chats, main(2000000002L)).contains(ChatButtons.keyboard)) &&
+      assertTrue(VkApi.chatKeyboard(chats, ChatTarget.General).contains(ChatButtons.keyboard)) &&
+      assertTrue(VkApi.chatKeyboard(chats, main(2000000007L)).isEmpty) &&
+      assertTrue(VkApi.chatKeyboard(chats.copy(chatPeerId = None, tradeChatPeerId = None), main(2000000001L)).isEmpty)
+    },
+    test("беседа гильдейского сообщества — без кнопок, даже под тем же номером, что общая") {
+      assertTrue(VkApi.chatKeyboard(chats, ChatTarget.Peer(2000000001L, Community.Guilds)).isEmpty)
     },
     test("клавиатура под полем ввода, один ряд: приложение и ссылка на туториал, обе без цвета") {
       val json = parse(ChatButtons.keyboard.getJson).getOrElse(Json.Null)
@@ -94,7 +100,7 @@ object VkApiSpec extends ZIOSpecDefault {
         api   = new VkApi(fakeVk(seen, refuseKeys = false), chats, NoFailures)
         _    <- api.sendToChat(ChatTarget.General, "итоги")
         _    <- api.sendToChat(ChatTarget.Trade, "лот")
-        _    <- api.sendToChat(ChatTarget.Peer(2000000007L), "ответ")
+        _    <- api.sendToChat(ChatTarget.Peer(2000000007L, Community.Main), "ответ")
         sent <- seen.get
       } yield assertTrue(sent.map(_.get("peer_id")) == List(Some("2000000001"), Some("2000000002"), Some("2000000007"))) &&
               assertTrue(sent.map(_.contains("keyboard")) == List(true, true, false)) &&
@@ -111,6 +117,38 @@ object VkApiSpec extends ZIOSpecDefault {
       } yield assertTrue(sent.size == 4 && sent.take(3).forall(_.contains("keyboard")) &&
                          sent.lastOption.exists(f => !f.contains("keyboard") && f.get("message").contains("лот"))) &&
               assertTrue(sent.map(_.get("random_id")).distinct.size == 1)
+    }
+  )
+
+  private def tokenSpec = suite("Чьим токеном писать")(
+    test("гильдейские беседы — гильдейским токеном, общая, торговая и беседы основного — основным") {
+      val both = chats.copy(guildsToken = Some("g"))
+      assertTrue(VkApi.tokenFor(both, ChatTarget.General).contains("t")) &&
+      assertTrue(VkApi.tokenFor(both, ChatTarget.Trade).contains("t")) &&
+      assertTrue(VkApi.tokenFor(both, ChatTarget.Peer(2000000001L, Community.Main)).contains("t")) &&
+      assertTrue(VkApi.tokenFor(both, ChatTarget.Peer(2000000001L, Community.Guilds)).contains("g"))
+    },
+    test("гильдейского токена нет или он пустой — в его беседы писать нечем") {
+      val guild = ChatTarget.Peer(2000000001L, Community.Guilds)
+      assertTrue(VkApi.tokenFor(chats, guild).isEmpty) &&
+      assertTrue(VkApi.tokenFor(chats.copy(guildsToken = Some("  ")), guild).isEmpty) &&
+      assertTrue(chats.copy(guildsToken = Some(" g ")).guilds.contains("g"))
+    },
+    test("в беседу гильдейского — его токеном и без кнопок; без токена — не пишем вовсе") {
+      for {
+        seen <- Ref.make(List.empty[Map[String, String]])
+        api   = new VkApi(fakeVk(seen, refuseKeys = false), chats.copy(guildsToken = Some("g")), NoFailures)
+        _    <- api.sendToChat(ChatTarget.Peer(2000000001L, Community.Guilds), "ответ гильдии")
+        _    <- api.sendToChat(ChatTarget.General, "итоги")
+        none <- Ref.make(List.empty[Map[String, String]])
+        bare  = new VkApi(fakeVk(none, refuseKeys = false), chats, NoFailures)
+        _    <- bare.sendToChat(ChatTarget.Peer(2000000001L, Community.Guilds), "ответ гильдии")
+        sent <- seen.get
+        lost <- none.get
+      } yield assertTrue(sent.map(_.get("access_token")) == List(Some("g"), Some("t"))) &&
+              assertTrue(sent.map(_.contains("keyboard")) == List(false, true)) &&
+              assertTrue(sent.headOption.flatMap(_.get("peer_id")).contains("2000000001")) &&
+              assertTrue(lost.isEmpty)
     }
   )
 

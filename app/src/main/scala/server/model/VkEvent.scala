@@ -4,6 +4,8 @@ import io.circe.Decoder
 import io.circe.generic.extras.Configuration
 import io.circe.generic.extras.semiauto.deriveConfiguredDecoder
 import io.circe.generic.semiauto.deriveDecoder
+import pangea.model.vk.Community
+import pangea.service.sender.ChatTarget
 import server.model.VkEvent.ObjectMessage
 
 case class VkEvent(`type`: String, `object`: ObjectMessage)
@@ -38,9 +40,12 @@ object VkEvent {
     def fromChat: Boolean =
       pangea.service.chat.ChatCommand.fromChat(peerId, fromId)
 
+    /** Беседа этого сообщения у сообщества `community`. */
+    def chat(community: Community): ChatTarget.Peer = ChatTarget.Peer(peerId, community)
+
     /** Ключ сообщения беседы для защиты от повторов (см. `ChatCommand.eventKey`). */
-    def chatEventKey: Long =
-      pangea.service.chat.ChatCommand.eventKey(peerId, id, conversationMessageId)
+    def chatEventKey(community: Community): Long =
+      pangea.service.chat.ChatCommand.eventKey(chat(community), id, conversationMessageId)
 
     /** Кому адресована команда: автор процитированного или пересланного. */
     def quotedAuthor: Option[Long] =

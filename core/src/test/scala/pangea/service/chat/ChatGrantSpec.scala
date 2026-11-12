@@ -6,7 +6,9 @@ import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.admin.AdminPanel
 import pangea.service.parcel.{Parcels, Transfers}
+import pangea.model.vk.Community
 import pangea.service.payout.Payouts
+import pangea.service.sender.ChatTarget
 import pangea.service.state.{PlayerLock, State, StateHandler, UserAction}
 import pangea.test._
 import zio.{Task, ZIO}
@@ -21,7 +23,7 @@ object ChatGrantSpec extends ZIOSpecDefault {
   private val playerId = UserId(2L)
   private val admin    = User(adminId, VkId("41"), TelegramId("tg1"))
   private val player   = User(playerId, VkId("42"), TelegramId("tg2"))
-  private val chat     = 2000000001L
+  private val chat     = ChatTarget.Peer(2000000001L, Community.Main)
 
   /** Панель, где «Админ 1» — только `adminId`. */
   private val panel: AdminPanel = new AdminPanel {

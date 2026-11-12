@@ -10,7 +10,7 @@ import org.http4s.{Method, Request, Status, UrlForm}
 import pangea.metrics.GameMetrics
 import pangea.dao.sendfailure.SendFailureDao
 import pangea.model.user.{User, VkId}
-import pangea.model.vk.Attachment
+import pangea.model.vk.{Attachment, Community}
 import pangea.model.vk.keyboard.Keyboard
 import pangea.model.vk.model.UserResponse
 import pangea.service.ErrorLog
@@ -26,10 +26,12 @@ import scala.util.Random
 class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) extends Api {
 
   private val uri = uri"https://api.vk.com/method/"
-  private val baseQueryParams: Map[String, List[String]] = Map(
-    "access_token" -> List(config.token),
+  private def auth(token: String): Map[String, List[String]] = Map(
+    "access_token" -> List(token),
     "v"            -> List(VkApi.Version)
   )
+
+  private val baseQueryParams: Map[String, List[String]] = auth(config.token)
 
   // Параметры уходят телом POST (form-urlencoded), а не в query string: длинные
   // экраны (лавка Ришелье — 3 предмета со сравнением с надетым + клавиатура) в
@@ -83,15 +85,19 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
   // туториала под полем ввода (см. VkApi.chatKeyboard). ВК их не принял — то же
   // сообщение без них: объявление важнее кнопок. random_id у обеих попыток
   // один, поэтому дважды сообщение не уйдёт.
+  //
+  // Пишем токеном того сообщества, чья это беседа (см. VkApi.tokenFor).
   override def sendToChat(to: ChatTarget, message: String): Task[Unit] =
-    VkApi.chatPeer(config, to) match {
-      case None => ZIO.unit
-      case Some(peerId) =>
+    (VkApi.chatPeer(config, to), VkApi.tokenFor(config, to)) match {
+      case (None, _) => ZIO.unit
+      case (Some(peerId), None) =>
+        ZIO.logWarning(s"Беседа $peerId гильдейского сообщества: VK_TOKEN_FOR_GROUP_CHATS не задан — писать нечем")
+      case (Some(peerId), Some(token)) =>
         val formParams = Map(
           "message"   -> List(message),
           "peer_id"   -> List(peerId.toString),
           "random_id" -> List(randomId.toString)
-        ) ++ baseQueryParams
+        ) ++ auth(token)
 
         def send(fields: Map[String, List[String]]): Task[Unit] = {
           val request = Request[Task](
@@ -104,7 +110,7 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
             .retry(VkApi.SendRetry)
         }
 
-        VkApi.chatKeyboard(config, peerId)
+        VkApi.chatKeyboard(config, to)
           .fold(send(formParams)) { keys =>
             send(formParams + ("keyboard" -> List(keys.getJson))).catchAll(err =>
               ZIO.logWarning(s"vk chat keyboard refused, sending without it: ${err.getMessage}") *> send(formParams))
@@ -191,13 +197,27 @@ object VkApi {
   def chatPeer(config: VkConfig, to: ChatTarget): Option[Long] = to match {
     case ChatTarget.General      => config.chatPeerId
     case ChatTarget.Trade        => config.tradeChatPeerId.orElse(config.chatPeerId)
-    case ChatTarget.Peer(peerId) => Some(peerId)
+    case ChatTarget.Peer(peerId, _) => Some(peerId)
   }
 
-  /** Кнопки под полем ввода — только в общей и торговой беседе (см.
-    * [[ChatButtons]]); в прочих беседах, куда позвали бота, — без кнопок. */
-  def chatKeyboard(config: VkConfig, peerId: Long): Option[Keyboard] =
-    Option.when(config.chatPeerId.contains(peerId) || config.tradeChatPeerId.contains(peerId))(ChatButtons.keyboard)
+  /** Чьим токеном писать: в беседы гильдейского сообщества — его, а нет его —
+    * нечем; всё прочее — основного. */
+  def tokenFor(config: VkConfig, to: ChatTarget): Option[String] = to match {
+    case ChatTarget.Peer(_, Community.Guilds) => config.guilds
+    case _                                    => Some(config.token)
+  }
+
+  /** Кнопки под полем ввода — только в общей и торговой беседе основного
+    * сообщества (см. [[ChatButtons]]); в прочих беседах — без кнопок. Беседы
+    * гильдейского — всегда без них: номер его беседы может совпасть с общей. */
+  def chatKeyboard(config: VkConfig, to: ChatTarget): Option[Keyboard] = {
+    def ours(peerId: Long) = config.chatPeerId.contains(peerId) || config.tradeChatPeerId.contains(peerId)
+    val shown = to match {
+      case ChatTarget.Peer(_, Community.Guilds) => false
+      case other                                => chatPeer(config, other).exists(ours)
+    }
+    Option.when(shown)(ChatButtons.keyboard)
+  }
 
   /** Метод отправки — метка в метриках вызовов ВК. */
   private val SendMethod = "messages.send"

@@ -13,9 +13,16 @@ import zio.{ZIO, ZLayer}
   * @param tradeChatPeerId `peer_id` торговой беседы: объявления аукциона о
   *                         лотах и о передачах. Не задан — пишем в общую.
   * @param longPoll        слушать ли ВК ещё и по Long Poll (`VK_LONG_POLL`),
-  *                         рядом с Callback API (см. [[pangea.service.sender.vk.VkLongPoll]]). */
+  *                         рядом с Callback API (см. [[pangea.service.sender.vk.VkLongPoll]]).
+  * @param guildsToken     токен гильдейского сообщества (`VK_TOKEN_FOR_GROUP_CHATS`):
+  *                         беседы гильдий и прочие общие беседы (см.
+  *                         [[pangea.model.vk.Community]]). Не задан — его нет. */
 case class VkConfig(token: String, chatPeerId: Option[Long] = None, tradeChatPeerId: Option[Long] = None,
-                    longPoll: Boolean = false)
+                    longPoll: Boolean = false, guildsToken: Option[String] = None) {
+
+  /** Токен гильдейского сообщества; пустая строка из `.env` — то же, что нет. */
+  def guilds: Option[String] = guildsToken.map(_.trim).filter(_.nonEmpty)
+}
 
 object VkConfig {
   private val loadConfig =

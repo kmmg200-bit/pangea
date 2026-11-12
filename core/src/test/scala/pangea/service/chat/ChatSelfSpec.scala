@@ -5,6 +5,7 @@ import pangea.model.hero.Hero
 import pangea.model.item.{Item, ItemType, Rarity}
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
+import pangea.model.vk.Community
 import pangea.service.admin.AdminPanel
 import pangea.service.parcel.{Parcels, Transfers}
 import pangea.service.payout.Payouts
@@ -24,9 +25,11 @@ object ChatSelfSpec extends ZIOSpecDefault {
   private val vkId     = VkId("42")
   private val testUser = User(userId, vkId, TelegramId("tg"))
 
-  /** Беседы со стороны сообщества: общая и торговая. */
-  private val general = 2000000001L
-  private val trade   = 2000000002L
+  /** Беседы со стороны сообщества: общая и торговая — основного, и беседа
+    * гильдейского под тем же номером, что общая. */
+  private val general = ChatTarget.Peer(2000000001L, Community.Main)
+  private val trade   = ChatTarget.Peer(2000000002L, Community.Main)
+  private val guild   = ChatTarget.Peer(2000000001L, Community.Guilds)
 
   private def blade: Item =
     Item(1L, "🔵 Меч Рыцаря", lvl = 7L, Rarity.Blue, ItemType.Weapon,
@@ -114,7 +117,7 @@ object ChatSelfSpec extends ZIOSpecDefault {
         _    <- state.selfToChat(vkId, ChatCommand.Self.Gear, ChatCommand.eventKey(trade, 0L, Some(3L)), trade)
         _    <- state.tutorialToChat(vkId, ChatCommand.eventKey(general, 0L, Some(4L)), general)
         sent <- api.chatSent
-      } yield assertTrue(sent.map(_._1) == List(ChatTarget.Peer(trade), ChatTarget.Peer(general))) &&
+      } yield assertTrue(sent.map(_._1) == List(trade, general)) &&
               assertTrue(sent.headOption.exists(_._2.contains(blade.displayTitle)))
     },
 
@@ -133,6 +136,28 @@ object ChatSelfSpec extends ZIOSpecDefault {
       } yield assertTrue(inGeneral != inTrade && inGeneral < 0L && inTrade < 0L && said.size == 2)
     },
 
+    test("беседа гильдейского сообщества: ответ — туда же и от его имени; тот же номер в общей — не повтор") {
+      // Номера бесед у сообществ совпадают: без сообщества в ключе команда в
+      // гильдейской беседе под тем же номером, что прошлая в общей, сошла бы за
+      // повтор и пропала молча.
+      val inGeneral = ChatCommand.eventKey(general, 0L, Some(6L))
+      val inGuild   = ChatCommand.eventKey(guild, 0L, Some(6L))
+      for {
+        t <- handler(heroWith(Some(blade)))
+        (state, api, _) = t
+        _    <- state.selfToChat(vkId, ChatCommand.Self.Gear, inGeneral, general)
+        _    <- state.selfToChat(vkId, ChatCommand.Self.Gear, inGuild, guild)
+        _    <- state.tutorialToChat(vkId, ChatCommand.eventKey(guild, 0L, Some(7L)), guild)
+        sent <- api.chatSent
+      } yield assertTrue(inGeneral != inGuild && inGuild < 0L) &&
+              assertTrue(sent.map(_._1) == List(general, guild, guild))
+    },
+
+    test("ключ команды основного сообщества — прежний: беседа и номер сообщения") {
+      assertTrue(ChatCommand.eventKey(general, 0L, Some(6L)) == -(1L * ChatCommand.ChatKeySpan + 6L)) &&
+      assertTrue(ChatCommand.eventKey(trade, 0L, Some(6L)) == -(2L * ChatCommand.ChatKeySpan + 6L))
+    },
+
     test("о себе рассказывают откуда угодно, не только из города") {
       // Город кончается за воротами, а беседа — нет: в бою, в лабиринте и на
       // дне канализации «Моё снаряжение» отвечает так же, как на площади.
@@ -142,9 +167,9 @@ object ChatSelfSpec extends ZIOSpecDefault {
         for {
           t <- handler(heroWith(Some(blade)).copy(state = where))
           (state, api, _) = t
-          _    <- state.selfToChat(vkId, ChatCommand.Self.Gear, eventId = 77L, chatPeerId = general)
+          _    <- state.selfToChat(vkId, ChatCommand.Self.Gear, eventId = 77L, chat = general)
           gear <- api.chatMessages
-          _    <- state.selfToChat(vkId, ChatCommand.Self.Profile, eventId = 78L, chatPeerId = general)
+          _    <- state.selfToChat(vkId, ChatCommand.Self.Profile, eventId = 78L, chat = general)
           both <- api.chatMessages
         } yield (where, gear, both)
       }.map { results =>
@@ -161,7 +186,7 @@ object ChatSelfSpec extends ZIOSpecDefault {
       for {
         t <- handler(h)
         (state, api, content) = t
-        _    <- state.selfToChat(vkId, ChatCommand.Self.Profile, eventId = 7L, chatPeerId = general)
+        _    <- state.selfToChat(vkId, ChatCommand.Self.Profile, eventId = 7L, chat = general)
         said <- api.chatMessages
         dm   <- api.sentMessages
       } yield assertTrue(said.size == 1 && dm.isEmpty) &&
@@ -177,7 +202,7 @@ object ChatSelfSpec extends ZIOSpecDefault {
       for {
         t <- handler(h)
         (state, api, _) = t
-        _    <- state.selfToChat(vkId, ChatCommand.Self.Gear, eventId = 8L, chatPeerId = general)
+        _    <- state.selfToChat(vkId, ChatCommand.Self.Gear, eventId = 8L, chat = general)
         said <- api.chatMessages
       } yield assertTrue(said.size == 1) &&
               assertTrue(said.head.startsWith(ChatProfile.gearHeader("Иван Иванов"))) &&
@@ -195,11 +220,11 @@ object ChatSelfSpec extends ZIOSpecDefault {
       for {
         t <- handler(heroWith(None))
         (state, api, _) = t
-        _      <- state.selfToChat(vkId, ChatCommand.Self.Gear, eventId = 9L, chatPeerId = general)
-        _      <- state.selfToChat(vkId, ChatCommand.Self.Gear, eventId = 9L, chatPeerId = general)
+        _      <- state.selfToChat(vkId, ChatCommand.Self.Gear, eventId = 9L, chat = general)
+        _      <- state.selfToChat(vkId, ChatCommand.Self.Gear, eventId = 9L, chat = general)
         twice  <- api.chatMessages
         // писал не игрок — беседа не место для сообщений об ошибках
-        _      <- state.selfToChat(VkId("777"), ChatCommand.Self.Profile, eventId = 10L, chatPeerId = general)
+        _      <- state.selfToChat(VkId("777"), ChatCommand.Self.Profile, eventId = 10L, chat = general)
         after  <- api.chatMessages
       } yield assertTrue(twice.size == 1 && after.size == 1)
     }

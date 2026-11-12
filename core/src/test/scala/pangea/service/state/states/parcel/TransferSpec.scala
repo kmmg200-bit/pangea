@@ -91,6 +91,19 @@ object TransferSpec extends ZIOSpecDefault {
              invRepo, parcelDao, bank, players, renderer)
 
   override def spec = suite("Передача вещей")(
+    test("сцена передачи, начатая до гильдейского сообщества, читается: беседа — основного") {
+      // Образец из базы: номер беседы есть, признака гильдейской — нет.
+      val old  = io.circe.parser.parse(
+        """{"toHeroId":2,"toUserId":2,"toName":"Друг","query":"меч","count":1,"page":0,"itemId":null,"chat":2000000001}""")
+      val read = old.flatMap(_.as[TransferState.TransferScene])
+      val guild = TransferState.TransferScene(chat = Some(2000000001L), guildChat = Some(true))
+      val back  = io.circe.syntax.EncoderOps(guild).asJson.as[TransferState.TransferScene]
+      assertTrue(
+        read.map(_.chatTarget).contains(Some(pangea.service.sender.ChatTarget.Peer(2000000001L, pangea.model.vk.Community.Main))),
+        back.map(_.chatTarget).contains(Some(pangea.service.sender.ChatTarget.Peer(2000000001L, pangea.model.vk.Community.Guilds))),
+        TransferState.TransferScene().chatTarget.isEmpty
+      )
+    },
 
     test("разбор фразы: что передают и сколько") {
       assertTrue(ChatCommand.transferQuery("Передать расколотый череп 2 штук").contains("расколотый череп 2 штук")) &&
@@ -180,7 +193,7 @@ object TransferSpec extends ZIOSpecDefault {
 
       test("строка о передаче — в беседу, где её затеяли; стопка в ней, в ответе и в письме — «стопку «…»»") {
         val bundle  = pangea.model.item.Bundling.pack((11L to 15L).toList.map(skull)).get.copy(id = 7L)
-        val general = 2000000001L
+        val general = pangea.service.sender.ChatTarget.Peer(2000000001L, pangea.model.vk.Community.Main)
         for {
           f    <- fixture(List(bundle))
           (transfers, hero, _, _, players) = f

@@ -6,7 +6,7 @@ import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 import org.http4s.dsl.Http4sDsl
 import pangea.dao.vk.VkInboxDao
 import pangea.metrics.GameMetrics
-import pangea.model.vk.{InboxEvent, InboxKind}
+import pangea.model.vk.{Community, InboxEvent, InboxKind}
 import pangea.service.activity.GroupEvent
 import pangea.service.admin.{AdminConfig, AdminPanel}
 import server.model.{ServerConfig, VkEvent}
@@ -72,7 +72,7 @@ final class VkIngest(config: ServerConfig, adminConfig: AdminConfig, inbox: VkIn
         val logged = AdminPanel.maskSecrets(msg.text, adminConfig.password)
         for {
           now   <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
-          first <- inbox.accept(InboxEvent.messageKey(msg.peerId, msg.id, msg.conversationMessageId.getOrElse(0L)),
+          first <- inbox.accept(InboxEvent.messageKey(Community.Main, msg.peerId, msg.id, msg.conversationMessageId.getOrElse(0L)),
                                 msg.peerId, kind, source, json, msg.date.map(_ * 1000L), now)
           _     <- GameMetrics.vkMessage(kind.entryName, source, first, msg.date)
           _     <- ZIO.when(first)(ZIO.logInfo(

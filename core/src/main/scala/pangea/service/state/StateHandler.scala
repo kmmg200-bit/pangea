@@ -8,6 +8,7 @@ import pangea.model.hero.Achievement
 import pangea.model.home.HomeData
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
+import pangea.model.vk.Community
 import pangea.repository.hero.HeroRepository
 import pangea.repository.user.UserRepository
 import io.circe.syntax.EncoderOps
@@ -116,10 +117,10 @@ class StateHandler(
     * вещь придёт ему посылкой, серебро — в ячейку или в руки в городе. Дублоны
     * не теряются нигде: их отдают откуда угодно, и в руки они идут сразу.
     *
-    * `chatPeerId` — беседа, где написали «Передать»: строка о передаче уходит
-    * туда же (см. `Transfers.log`). */
+    * `chat` — беседа, где написали «Передать»: строка о передаче уходит туда
+    * же (см. `Transfers.log`). */
   def transferFromChat(senderVk: VkId, targetVk: VkId, query: String, eventId: Long,
-                       chatPeerId: Option[Long] = None): Task[Unit] = {
+                       chat: Option[ChatTarget.Peer] = None): Task[Unit] = {
     val renderer = VkRenderer(api)
     userRepo.getUserByVkId(senderVk).flatMap {
       case None => ZIO.unit  // писал не игрок — молчим
@@ -128,7 +129,7 @@ class StateHandler(
           // Ключ события беседы приходит готовым (см. ChatCommand.eventKey):
           // он отрицательный, чтобы не путаться с номерами из лички.
           userRepo.checkAndRecordEvent(sender.userId, eventId).flatMap { fresh =>
-            if (fresh) startTransfer(sender, targetVk, query, renderer, chatPeerId) else ZIO.none
+            if (fresh) startTransfer(sender, targetVk, query, renderer, chat) else ZIO.none
           }
         }
           // Хвост передачи — то, что делается уже под локом получателя (дублоны
@@ -140,27 +141,27 @@ class StateHandler(
   }
 
   /** «Мой профиль» и «Моё снаряжение» из беседы: ответ уходит туда же, в беседу
-    * `chatPeerId`, откуда спросили, — о себе рассказывают при всех. Писал не игрок
+    * `chat`, откуда спросили, — о себе рассказывают при всех. Писал не игрок
     * или игрок без героя — молчим: беседа не место для сообщений об ошибках. */
-  def selfToChat(senderVk: VkId, command: ChatCommand.Self, eventId: Long, chatPeerId: Long): Task[Unit] =
+  def selfToChat(senderVk: VkId, command: ChatCommand.Self, eventId: Long, chat: ChatTarget.Peer): Task[Unit] =
     userRepo.getUserByVkId(senderVk).flatMap {
       case None => ZIO.unit
       case Some(sender) =>
         lock.withLock(sender.userId) {
           // Ключ события беседы — как и у «Передать», уже отрицательный.
           userRepo.checkAndRecordEvent(sender.userId, eventId).flatMap { fresh =>
-            ZIO.when(fresh)(tellAboutSelf(sender, command, chatPeerId)).unit
+            ZIO.when(fresh)(tellAboutSelf(sender, command, chat)).unit
           }
         }
     }
 
-  /** «Туториал» из беседы: ссылка на статью — туда же, в беседу `chatPeerId`.
+  /** «Туториал» из беседы: ссылка на статью — туда же, в беседу `chat`.
     * Отвечаем любому, кто спросил: игрок он или пока нет, статья ему не
     * помешает. От повтора того же сообщения защищаемся, когда пишет игрок, — как
     * у прочих команд беседы: счётчик событий есть только у игрока. */
-  def tutorialToChat(senderVk: VkId, eventId: Long, chatPeerId: Long): Task[Unit] = {
+  def tutorialToChat(senderVk: VkId, eventId: Long, chat: ChatTarget.Peer): Task[Unit] = {
     val text  = content.format("chat.tutorial", "tutorial" -> Links.Tutorial)
-    val reply = api.sendToChat(ChatTarget.Peer(chatPeerId), text)
+    val reply = api.sendToChat(chat, text)
     userRepo.getUserByVkId(senderVk).flatMap {
       case None => reply
       case Some(sender) =>
@@ -175,19 +176,18 @@ class StateHandler(
     * команду молча пропускаем. Ответ — в ту же беседу, игроку в личку — строка
     * о достижении. Локи берём по очереди: сперва написавшего (защита от
     * повтора), потом получателя. */
-  def grantFromChat(senderVk: VkId, targetVk: VkId, a: Achievement, eventId: Long, chatPeerId: Long): Task[Unit] =
+  def grantFromChat(senderVk: VkId, targetVk: VkId, a: Achievement, eventId: Long, chat: ChatTarget.Peer): Task[Unit] =
     userRepo.getUserByVkId(senderVk).flatMap {
       case None => ZIO.unit
       case Some(sender) =>
         for {
           fresh   <- lock.withLock(sender.userId)(userRepo.checkAndRecordEvent(sender.userId, eventId))
           allowed <- if (fresh) admin.canGrant(sender.userId) else ZIO.succeed(false)
-          _       <- ZIO.when(allowed)(grantTo(targetVk, a, chatPeerId))
+          _       <- ZIO.when(allowed)(grantTo(targetVk, a, chat))
         } yield ()
     }
 
-  private def grantTo(targetVk: VkId, a: Achievement, chatPeerId: Long): Task[Unit] = {
-    val chat = ChatTarget.Peer(chatPeerId)
+  private def grantTo(targetVk: VkId, a: Achievement, chat: ChatTarget.Peer): Task[Unit] = {
     userRepo.getUserByVkId(targetVk).flatMap {
       case None => api.sendToChat(chat, content.text("chat.grant.noHero"))
       case Some(target) =>
@@ -211,7 +211,7 @@ class StateHandler(
     }
   }
 
-  private def tellAboutSelf(sender: User, command: ChatCommand.Self, chatPeerId: Long): Task[Unit] =
+  private def tellAboutSelf(sender: User, command: ChatCommand.Self, chat: ChatTarget.Peer): Task[Unit] =
     heroRepo.getHero(sender.userId).flatMap {
       case None => ZIO.unit
       case Some(hero) =>
@@ -224,14 +224,14 @@ class StateHandler(
                       AzatData.load(heroDao, sender.userId, now).map(azat =>
                         ChatProfile.profile(name, hero, now, azat.blessingUntil, azat.instantRests, content))
                   }
-          _    <- api.sendToChat(ChatTarget.Peer(chatPeerId), text)
+          _    <- api.sendToChat(chat, text)
         } yield ()
     }
 
   /** Начало передачи — под локом отправителя. Возвращает хвост, если он есть:
     * то, что надо сделать уже под локом получателя, когда этот лок отпущен. */
   private def startTransfer(sender: User, targetVk: VkId, query: String, renderer: Renderer,
-                            chat: Option[Long]): Task[Option[Task[Unit]]] =
+                            chat: Option[ChatTarget.Peer]): Task[Option[Task[Unit]]] =
     for {
       heroOp   <- heroRepo.getHero(sender.userId)
       targetOp <- userRepo.getUserByVkId(targetVk)
@@ -283,7 +283,7 @@ class StateHandler(
     * выбора (см. [[Transfers.courierSend]]). Ушли — хвостом доставка получателю:
     * ей нужен его лок. */
   private def courierItems(sender: User, hero: pangea.model.hero.Hero, to: TransferTarget,
-                           query: String, chat: Option[Long]): Task[Option[Task[Unit]]] =
+                           query: String, chat: Option[ChatTarget.Peer]): Task[Option[Task[Unit]]] =
     for {
       now     <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
       outcome <- transfers.courierSend(sender, hero, to, ChatCommand.itemQuery(query), ChatCommand.count(query), now,
@@ -302,7 +302,7 @@ class StateHandler(
     * под локом получателя. Не вышло зачислить — возвращаем, снова под локом
     * отправителя. «Отправлено» говорим, только когда дублоны дошли. */
   private def startDoubloons(sender: User, hero: pangea.model.hero.Hero, to: TransferTarget,
-                             amount: Long, chat: Option[Long]): Task[Option[Task[Unit]]] =
+                             amount: Long, chat: Option[ChatTarget.Peer]): Task[Option[Task[Unit]]] =
     transfers.takeDoubloons(sender, hero, amount).flatMap {
       case Some(refusal) => api.sendMessage(sender, refusal, List.empty, None).as(None)
       case None =>
@@ -331,7 +331,7 @@ class StateHandler(
     * возвращаем доставку получателю: ей нужен его лок. */
   private def sendItems(sender: User, hero: pangea.model.hero.Hero, target: User, theirHero: pangea.model.hero.Hero,
                         to: TransferTarget, query: String, renderer: Renderer,
-                        chat: Option[Long]): Task[Option[Task[Unit]]] = {
+                        chat: Option[ChatTarget.Peer]): Task[Option[Task[Unit]]] = {
     val item  = ChatCommand.itemQuery(query)
     val count = ChatCommand.count(query)
     for {
@@ -348,7 +348,8 @@ class StateHandler(
             toName   = to.name,
             query    = item,
             count    = count,
-            chat     = chat)
+            chat     = chat.map(_.peerId),
+            guildChat = chat.map(_.community == Community.Guilds))
           (heroDao.writeSceneData(sender.userId, scene.asJson) *>
             // Куда вернуть после передачи — туда же, откуда позвали.
             heroDao.writeReturnState(sender.userId, Some(hero.state)) *>
