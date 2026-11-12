@@ -19,7 +19,7 @@ import pangea.service.parcel.Parcels
 import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
-import pangea.service.state.{AzatData, BarrelThievesQuest, BeltContents, BigDealQuest, HedgeSongQuest, HotGoodsQuest, LostSquadQuest, MarisaQuest,
+import pangea.service.state.{AzatData, BarrelThievesQuest, BeltContents, BigDealQuest, HedgeSongQuest, HotGoodsQuest, JorgenQuest, LostSquadQuest, MarisaQuest,
   MurlocQuest, QuestOutcomeLog, State, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest,
   StrayCasketQuest, UserAction}
 import zio.{Random, Task, ZIO}
@@ -69,6 +69,9 @@ case class DeathState(
       // Смерть в волнах у поющего эльфа: штрафы обычные, задание так и не
       // начато — эльфа надо встретить снова; проснуться в лабиринте.
       hedge         = battle.exists(_.story.contains(HedgeSongQuest.WaveStory))
+      // Смерть в логове огненных (долг Йоргена): штрафы обычные, список отряда
+      // при герое — к логову можно снова; проснуться в лабиринте.
+      jorgenLair    = battle.exists(_.story.contains(JorgenQuest.LairStory))
       // Смерть на складе у причала: штрафы обычные, украденное всё ещё у банды —
       // по следу можно идти снова; проснуться в порту.
       thieves       = battle.exists(_.story.contains(BarrelThievesQuest.FightStory))
@@ -167,6 +170,7 @@ case class DeathState(
                         "wakeLines" -> List("lostSquad.escort.death").asJson)
                       else if (stray) Json.obj("wakeLines" -> List("strayCasket.death").asJson)
                       else if (hedge) Json.obj("wakeLines" -> List("hedgeSong.death").asJson)
+                      else if (jorgenLair) Json.obj("wakeLines" -> List("jorgen.lair.death").asJson)
                       else if (thieves) Json.obj(
                         "wakeTo"    -> (StateType.HarborQuarter: StateType).asJson,
                         "wakeLines" -> List("barrelThieves.death").asJson)

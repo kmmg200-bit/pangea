@@ -127,7 +127,7 @@ object BossRoundCapSpec extends ZIOSpecDefault {
       assertTrue(fresh.hurtActive(0L, stats.hp).hp == hpCap)
     },
 
-    test("минибосс в строю держит тот же предел, и счёт его — на бою") {
+    test("минибосс в строю держит тот же предел, и счёт его — на его слоте") {
       val slot  = MonsterSlot(bossLvl, wolf.race.entryName, MobRarity.Legendary.entryName, stats,
                     stats.hp, stats.armor, marked = false, 0L, BattleEffects.empty, boss = Some(wolf.entryName))
       val plain = wolfBattle(hero(1L), boss = false)
@@ -136,7 +136,8 @@ object BossRoundCapSpec extends ZIOSpecDefault {
       val (b, hurt) = lined.hurtSlot(idx, 0L, stats.hp * 10L)
       assertTrue(idx >= 0 && hurt.hp == hpCap) &&
       assertTrue(b.group.others(idx).currentHp == stats.hp - hpCap) &&
-      assertTrue(b.bossTaken == hpCap) &&
+      // счёт едет вместе с минибоссом; у того, кто в полях, — свой, нетронутый
+      assertTrue(b.group.others(idx).bossTaken == hpCap && b.bossTaken == 0L) &&
       // тот, кто в полях, — рядовой: его не тронули
       assertTrue(b.monsterCurrentHp == plain.monsterCurrentHp && b.bossKind.isEmpty)
     },

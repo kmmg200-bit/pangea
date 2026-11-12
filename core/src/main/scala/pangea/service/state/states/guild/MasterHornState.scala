@@ -13,8 +13,9 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.bank.BankRepository
 import pangea.service.purse.Purse
 import pangea.model.quest.{DailyKind, DailyNpc, DailyRates}
-import pangea.service.state.{CityExit, DailyDialog, DailyQuestLog, NpcQuestDialog, NpcQuestLog, QuestSupport, State, StoryFaceQuest,
-  StoryMarkQuest, UserAction}
+import pangea.model.squad.{AllyKind, AllyRates}
+import pangea.service.state.{CityExit, DailyDialog, DailyQuestLog, JorgenQuest, MercQuests, NpcQuestDialog, NpcQuestLog, QuestSupport,
+  State, StoryFaceQuest, StoryMarkQuest, UserAction}
 import zio.{Task, ZIO}
 
 /**
@@ -43,6 +44,9 @@ case class MasterHornState(
   /** Наказ Горна: на каждый день своя проверка стали. */
   private val daily = DailyDialog(heroDao, content, DailyNpc.Horn, "Horn")
 
+  /** «Жетоны из пепла» — долг Йоргена: жетоны павших сдают Горну. */
+  private val jorgen = NpcQuestDialog(heroDao, content, NpcQuest.JorgenDebt, "Jorgen")
+
   private val branch = new Branch(
     routes = Map(
       quest.questAction   -> Target.Run { (u, _, r) => questTalk(u, r) },
@@ -64,6 +68,7 @@ case class MasterHornState(
       "HornDailyBack"        -> Target.Run { (u, _, r) => enter(u, r).as(StateType.MasterHorn) },
       "HornStory"            -> Target.Run { (u, _, r) => storyLedger(u, r) },
       "HornFace"             -> Target.Run { (u, _, r) => faceNumbers(u, r) },
+      "HornTokens"           -> Target.Run { (u, _, r) => handTokens(u, r) },
       CityExit.route
     ),
     fallback = Target.Run { (u, _, r) => enter(u, r).as(StateType.MasterHorn) }
@@ -86,13 +91,16 @@ case class MasterHornState(
           // копии списка отмеченных — Горн узнает в них свои номера.
           cloak  <- if (StoryMarkQuest.toHorn(quests)) hasStory(hero, QuestItemKind.StoryCloak) else ZIO.succeed(false)
           copies <- if (StoryFaceQuest.toHorn(quests)) hasStory(hero, QuestItemKind.StoryCopies) else ZIO.succeed(false)
+          // Долг Йоргена: жетоны павших при герое — Горн впишет их в учёт.
+          tokens <- if (JorgenQuest.toHorn(quests)) hasStory(hero, QuestItemKind.JorgenTokens) else ZIO.succeed(false)
           story   = Option.when(cloak)(content.choice("HornStory", "story.storyMark.horn.label"))
           face    = Option.when(copies)(content.choice("HornFace", "story.storyFace.horn.label"))
+          ashes   = Option.when(tokens)(content.choice("HornTokens", "jorgen.horn.label"))
           free    = isFree(quests)
           stats   = front.map(c => statOf(c.id).fold(c)(stat => c.copy(label = priceLabel(c.label, hero, stat, free))))
           _    <- renderer.show(user, CityExit.on(base.copy(
                     choices = stats ++ quest.button(quests).toList ++ daily.button(work).toList ++ story.toList ++
-                      face.toList ++ back), content))
+                      face.toList ++ ashes.toList ++ back), content))
         } yield ()
       }
 
@@ -120,6 +128,29 @@ case class MasterHornState(
       _      <- if (!StoryFaceQuest.toHorn(quests) || !copies) enter(user, renderer)
                 else NpcQuestLog.save(heroDao, user.userId, StoryFaceQuest.step(quests, 5)) *>
                   renderer.show(user, Screen(content.text("story.storyFace.horn.text"), Nil)) *> enter(user, renderer)
+    } yield StateType.MasterHorn
+
+  /** «Жетоны из пепла»: Горн вписывает павших в учёт — семьям их доля, — и
+    * задание закрыто: список и жетоны уходят из сумки, опыт — как за задание
+    * горожанина, а потолок Йоргена у героя растёт (при герое он — сразу, см.
+    * MercQuests). Не тот шаг или жетонов при герое нет — меню. */
+  private def handTokens(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      quests <- quest.load(user)
+      hero   <- getHero(user)
+      tokens <- hasStory(hero, QuestItemKind.JorgenTokens)
+      _      <- if (!JorgenQuest.toHorn(quests) || !tokens) enter(user, renderer)
+                else for {
+                  _    <- QuestSupport.removeItems(inventoryRepo, hero, Set(QuestItemKind.JorgenRoster, QuestItemKind.JorgenTokens))
+                  done <- jorgen.complete(user, hero, identity)
+                  (_, expLine) = done
+                  _    <- MercQuests.grow(heroDao, user.userId, hero, AllyKind.Human)
+                  grew  = content.format("jorgen.horn.grown", "name" -> AllyKind.Human.name,
+                            "lvl" -> (AllyKind.Human.maxLvl + AllyRates.QuestGrowth).toString)
+                  _    <- renderer.show(user, Screen(content.text("jorgen.horn.text"), Nil))
+                  _    <- renderer.show(user, Screen(List(grew, expLine, content.text("jorgen.questDone")).mkString("\n\n"), Nil))
+                  _    <- enter(user, renderer)
+                } yield ()
     } yield StateType.MasterHorn
 
   private def hasStory(hero: Hero, kind: QuestItemKind): Task[Boolean] =

@@ -167,26 +167,33 @@ case class SoloPveBattle(
 
   def isGroup: Boolean = group.isGroup
 
-  /** Активный моб (тот, что в паре с героем) как слот — для перекладывания. */
+  /** Активный моб (тот, что в паре с героем) как слот — для перекладывания.
+    * Круг минибосса и счёт его предела за раунд уходят вместе с ним. */
   def activeSlot: MonsterSlot = MonsterSlot(
     lvl = monsterLvl, race = monsterRace, rarity = monsterRarity, stats = monsterStats,
     currentHp = monsterCurrentHp, currentArmor = monsterCurrentArmor, marked = monsterMarked,
     currentEnergy = monsterCurrentEnergy, effects = effects.monsterPart, boss = bossKind,
     customName = customName, undead = monsterUndead, arenaUnit = monsterArenaUnit,
-    lastAllyHit = monsterLastAllyHit)
+    lastAllyHit = monsterLastAllyHit,
+    bossTurn = bossTurn, bossCharges = bossCharges, bossRevives = bossRevives,
+    bossFirstSkillSpent = bossFirstSkillSpent, bossTaken = bossTaken, bossArmorTaken = bossArmorTaken)
 
   /** Поставить слот в пару: его состояние и эффекты — в поля активного моба,
     * геройская половина эффектов (и разовые флаги героя вроде «Крепкости»)
     * остаётся как была. Минибосс ездит вместе со своим слотом: пока в полях
     * стоит призванная им крыса, бой про босса ничего не знает — и правила босса
-    * к ней не относятся. Счётчики его круга (`bossTurn`, `bossCharges`) живут на
-    * бою: босс в бою один, и ходит он, только стоя в полях. */
+    * к ней не относятся. Счётчики его круга (`bossTurn`, `bossCharges` и
+    * прочие) и счёт предела за раунд едут вместе с ним: у того, кто в полях,
+    * они на бою, у того, кто в строю, — на его слоте. Поэтому минибоссов в бою
+    * может быть и двое — у каждого свой круг. */
   def withActive(slot: MonsterSlot): SoloPveBattle = copy(
     monsterLvl = slot.lvl, monsterRace = slot.race, monsterRarity = slot.rarity, monsterStats = slot.stats,
     monsterCurrentHp = slot.currentHp, monsterCurrentArmor = slot.currentArmor, monsterMarked = slot.marked,
     monsterCurrentEnergy = slot.currentEnergy, effects = effects.withMonsterPart(slot.effects),
     bossKind = slot.boss, customName = slot.customName, monsterUndead = slot.undead,
-    monsterArenaUnit = slot.arenaUnit, monsterLastAllyHit = slot.lastAllyHit)
+    monsterArenaUnit = slot.arenaUnit, monsterLastAllyHit = slot.lastAllyHit,
+    bossTurn = slot.bossTurn, bossCharges = slot.bossCharges, bossRevives = slot.bossRevives,
+    bossFirstSkillSpent = slot.bossFirstSkillSpent, bossTaken = slot.bossTaken, bossArmorTaken = slot.bossArmorTaken)
 
   /** Кто на чужой стороне держит ауру и сколько у него энергии: минибосс со
     * своей аурой, где бы он ни стоял — в паре или в строю (см. [[Aura]]). Нет
@@ -767,8 +774,9 @@ case class SoloPveBattle(
 
   /** Сколько ещё HP и брони (именно в таком порядке) может потерять в этом
     * раунде минибосс с такими максимумами (см.
-    * [[pangea.model.monster.BossRoundCap]]). Босс в бою один, и счёт один —
-    * где бы он ни стоял: в полях или в строю. */
+    * [[pangea.model.monster.BossRoundCap]]). Счёт свой у каждого минибосса и
+    * ездит вместе с ним (см. [[withActive]]): тот, кто стоит в строю, получает
+    * удар во временной паре — со своим счётом. */
   def bossRoom(maxHp: Long, maxArmor: Long): (Long, Long) = {
     import pangea.model.monster.BossRoundCap
     ((BossRoundCap.of(maxHp, BossRoundCap.HpPct) - bossTaken).max(0L),
@@ -804,21 +812,36 @@ case class SoloPveBattle(
 
   /** Урон мобу строя под индексом `idx` — по тем же правилам, что и тому, кто в
     * полях (см. [[hurtActive]]): он встаёт во временную пару, получает удар и
-    * возвращается на место, а счёт предела остаётся на бою. Павшего из строя не
-    * убирает — это дело вызывающего. */
+    * возвращается на место — со своим счётом предела (он едет в слоте).
+    * Павшего из строя не убирает — это дело вызывающего. */
   def hurtSlot(idx: Int, armorDmg: Long, hpDmg: Long): (SoloPveBattle, SoloPveBattle.Hurt) = {
     val hurt = withActive(group.others(idx)).hurtActive(armorDmg, hpDmg)
-    (copy(group = group.copy(others = group.others.updated(idx, hurt.battle.activeSlot))).withBossTally(hurt.battle),
-     hurt)
+    (copy(group = group.copy(others = group.others.updated(idx, hurt.battle.activeSlot))), hurt)
   }
 
-  /** Счёт предела минибосса — с боя `of`. Удар по временной паре правит счёт на
-    * ней, а в строй возвращается только слот: счёт надо забрать отдельно. */
-  def withBossTally(of: SoloPveBattle): SoloPveBattle =
-    copy(bossTaken = of.bossTaken, bossArmorTaken = of.bossArmorTaken)
+  /** Новый раунд героя: предел минибосса считается заново — и у того, кто в
+    * полях, и у тех, кто в строю. */
+  def freshRound: SoloPveBattle =
+    copy(bossTaken = 0L, bossArmorTaken = 0L, group = group.copy(others = group.others.map(_.freshRound)))
 
-  /** Новый раунд героя: предел минибосса считается заново. */
-  def freshRound: SoloPveBattle = copy(bossTaken = 0L, bossArmorTaken = 0L)
+  /** Бой, сохранённый, пока круг минибосса жил только на бою: в полях не
+    * минибосс, а круг и счёт предела лежат на бою — значит, они того минибосса,
+    * что стоит в строю. Переносим их на его слот, где они живут теперь (см.
+    * [[withActive]]). Слот уже со своим кругом или минибосса в строю нет — как
+    * есть. */
+  def cycleToBossSlot: SoloPveBattle = {
+    val cycle = activeSlot
+    if (bossKind.isDefined || !cycle.hasBossCycle) this
+    else group.others.indexWhere(_.boss.isDefined) match {
+      case -1 => this
+      case i if group.others(i).hasBossCycle => this
+      case i =>
+        val boss = group.others(i).copy(bossTurn = bossTurn, bossCharges = bossCharges, bossRevives = bossRevives,
+          bossFirstSkillSpent = bossFirstSkillSpent, bossTaken = bossTaken, bossArmorTaken = bossArmorTaken)
+        copy(group = group.copy(others = group.others.updated(i, boss)),
+          bossTurn = 0, bossCharges = 0, bossRevives = 0, bossFirstSkillSpent = false, bossTaken = 0L, bossArmorTaken = 0L)
+    }
+  }
 
   /** Урон от процентов (доля максимума HP: раны, взрыв Огня с Воздухом, ауры)
     * по тому, кто в полях: минибосс получает вдвое меньше (см.
@@ -1063,7 +1086,9 @@ object SoloPveBattle {
                          noFlee, lootLevel, holyWater, heroBlockPct, monsterBlockPct,
                          heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall,
                          monsterLastAllyHit, heroStruck, roundsFought, secondWindUsed, preyName, preyGone,
-                         monsterDodgeBonus, comboUsed, bossArmorTaken, squadTaken)
+                         monsterDodgeBonus, comboUsed, bossArmorTaken, squadTaken).cycleToBossSlot
+      // ↑ Бой, сохранённый до того, как круг минибосса переехал на слот: круг
+      // того, кто стоит в строю, забираем с боя на его слот.
 
   /** Номер самого соперника среди «мобов» зеркала арены; его союзники — от
     * единицы (см. `ArenaSide.allies`). */

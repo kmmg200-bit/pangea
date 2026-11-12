@@ -25,8 +25,8 @@ import pangea.service.state.states.home.Racks
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.states.murloc.MurlocVillageState
 import pangea.service.state.states.race.RaceQuestState
-import pangea.service.state.{BarrelThievesQuest, BeltContents, BigDealQuest, HedgeSongQuest, HerbLore, HotGoodsQuest, ItemMenu, MarisaQuest,
-  MurlocQuest, NpcQuestLog, QuestGoods, SlotChoice, StackMove, State,
+import pangea.service.state.{BarrelThievesQuest, BeltContents, BigDealQuest, HedgeSongQuest, HerbLore, HotGoodsQuest, ItemMenu, JorgenQuest,
+  MarisaQuest, MurlocQuest, NpcQuestLog, QuestGoods, SlotChoice, StackMove, State,
   StoryBrandQuest, StoryFaceQuest, StoryLine, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest, StrayCasketQuest,
   UiScene, UserAction}
 import zio.{Random, Task, ZIO}
@@ -119,6 +119,7 @@ case class InventoryState(
       // «Вскрытая бочка»: по следу банды, что вскрыла бочку, — только из города.
       "BarrelTrail"       -> Target.Run { (u, _,  r) => followTrail(u, r) },
       "StoryCacheGo"      -> Target.Run { (u, _,  r) => goCache(u, r) },
+      "JorgenLairGo"      -> Target.Run { (u, _,  r) => goJorgenLair(u, r) },
       "StoryPortGo"       -> Target.Run { (u, _,  r) => goPort(u, r) },
       "StoryMeetGo"       -> Target.Run { (u, _,  r) => goMeeting(u, r) },
       "StorySojkaGo"      -> Target.Run { (u, _,  r) => goSojka(u, r) },
@@ -145,7 +146,7 @@ case class InventoryState(
         StateType.MarisaHunt, StateType.MurlocVillage, StateType.RaceQuest, StateType.NameChange,
         StateType.StrayCasket, StateType.BarrelThieves, StateType.StoryCache, StateType.StoryWarehouse,
         StateType.StoryMeeting, StateType.StoryBridge, StateType.StorySojka, StateType.StoryArchive, StateType.StoryBindery,
-        StateType.StoryGraveyard, StateType.BartiHouse, StateType.BartiCaravan) ++ BackpackOrigins
+        StateType.StoryGraveyard, StateType.BartiHouse, StateType.BartiCaravan, StateType.JorgenLair) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.
@@ -591,6 +592,9 @@ case class InventoryState(
         // Чёрный плащ, Сорока назван: «Искать тайник Сороки».
         case Some(QuestItemKind.StoryCloak) if StoryMarkQuest.toCache(quests) =>
           Some(content.choice("StoryCacheGo", "story.storyMark.card.searchLabel").copy(row = Some(0)))
+        // Список отряда Йоргена: «Идти к логову» огненных.
+        case Some(QuestItemKind.JorgenRoster) if JorgenQuest.toLair(quests) =>
+          Some(content.choice("JorgenLairGo", "jorgen.card.goLabel").copy(row = Some(0)))
         // Шифровка, пора в порт: «Идти в порт».
         case Some(QuestItemKind.StoryCipher) if StoryPowderQuest.portOpen(quests) =>
           Some(content.choice("StoryPortGo", "story.storyPowder.card.goLabel").copy(row = Some(0)))
@@ -793,6 +797,24 @@ case class InventoryState(
                 else if (!from.exists(StateType.cityStates.contains))
                   renderer.show(user, Screen(content.text(refusalKey), Nil)) *> backToCard(user, renderer)
                 else ZIO.succeed(scene)
+    } yield res
+
+  /** Идти к логову огненных с карточки списка отряда Йоргена: только в
+    * лабиринте («Персонаж» открыт из него) и не ближе поворота, где водятся
+    * логова элементалей (см. `JorgenQuest.LairDungeonLevel`). */
+  private def goJorgenLair(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      from   <- heroDao.readReturnState(user.userId)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      hero   <- getHero(user)
+      res    <- if (!JorgenQuest.toLair(quests)) backToCard(user, renderer)
+                else if (!from.contains(StateType.Dungeon))
+                  renderer.show(user, Screen(content.text("jorgen.card.onlyInLabyrinth"), Nil)) *>
+                    backToCard(user, renderer)
+                else if (!JorgenQuest.deepEnough(hero.dungeonLevel))
+                  renderer.show(user, Screen(content.format("jorgen.card.tooShallow",
+                    "level" -> JorgenQuest.LairDungeonLevel.toString), Nil)) *> backToCard(user, renderer)
+                else ZIO.succeed(StateType.JorgenLair)
     } yield res
 
   /** Искать тайник Сороки с карточки плаща: только в лабиринте («Персонаж»
@@ -1666,6 +1688,13 @@ object InventoryState {
           (if (now.isEmpty) "" else "\n\n" + now)
       case Some(QuestItemKind.HedgeBranch) =>
         s"${item.displayTitle}\n${difficulty(HedgeSongQuest.Level)}\n\n${QuestItemKind.HedgeBranch.description}"
+      // Долг Йоргена: список ведёт к логову, жетоны — к Горну.
+      case Some(QuestItemKind.JorgenRoster) =>
+        s"${item.displayTitle}\n${difficulty(JorgenQuest.Level)}\n\n${QuestItemKind.JorgenRoster.description}" +
+          (if (JorgenQuest.toLair(quests)) "\n\n" + content.format("jorgen.card.lairHint",
+            "level" -> JorgenQuest.LairDungeonLevel.toString) else "")
+      case Some(QuestItemKind.JorgenTokens) =>
+        s"${item.displayTitle}\n${difficulty(JorgenQuest.Level)}\n\n${QuestItemKind.JorgenTokens.description}"
       case Some(QuestItemKind.BarrelClue) =>
         val now =
           if (BarrelThievesQuest.onTrail(quests))

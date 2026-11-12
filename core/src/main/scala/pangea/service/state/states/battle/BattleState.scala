@@ -35,7 +35,7 @@ import pangea.model.arena.{ArenaAlly, ArenaRates, ArenaSide}
 import pangea.service.state.states.arena.ArenaBattle
 import pangea.service.state.states.battle.BattleState.{ArenaOwnActions, Victim}
 import pangea.service.schedule.Scheduler
-import pangea.service.state.{AzatData, BarrelThievesQuest, BeltContents, BigDealQuest, BoardProgress, HedgeSongQuest, HotGoodsQuest, LostSquadQuest,
+import pangea.service.state.{AzatData, BarrelThievesQuest, BeltContents, BigDealQuest, BoardProgress, HedgeSongQuest, HotGoodsQuest, JorgenQuest, LostSquadQuest,
   MarisaQuest, NpcQuestLog, State, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest, UserAction, KillLogData}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
@@ -4164,9 +4164,9 @@ case class BattleState(
     near.foldLeft((battle, Vector.empty[String])) { case ((b, log), pos) =>
       val idx         = b.group.idxOf(pos)
       val (tmp, line) = hit(b.withActive(b.group.others(idx)))
-      // Счёт предела минибосса живёт на бою: задетым мог оказаться он сам.
+      // Задетым мог оказаться минибосс: его счёт предела вернётся в строй вместе
+      // со слотом.
       val placed      = b.copy(group = b.group.copy(others = b.group.others.updated(idx, tmp.activeSlot)))
-                          .withBossTally(tmp)
       val lines       = if (line.isEmpty) log else log :+ line
       if (tmp.monsterCurrentHp > 0L) (placed, lines)
       else (placed.sideFallen(idx), lines :+ content.format("battle.group.sideSlain", "monster" -> tmp.monsterName))
@@ -4194,13 +4194,12 @@ case class BattleState(
             if (struck.monsterCurrentHp > 0L) resolveElementProcs(hero, struck)
             else ZIO.succeed((struck, Vector.empty[String]))
           procs.map { case (tmp, procLog) =>
-            // Счёт предела минибосса — тоже с временной пары: задетым мог
-            // оказаться сам босс, стоящий в строю.
+            // Задетым мог оказаться минибосс, стоящий в строю: его счёт предела
+            // и заряды (холод гасит сферу) возвращаются в строй вместе со слотом.
             val placed = b.copy(
               group       = b.group.copy(others = b.group.others.updated(idx, tmp.activeSlot)),
               effects     = tmp.effects.withMonsterPart(b.effects),
-              bossCharges = tmp.bossCharges,
-              comboUsed   = tmp.comboUsed).withBossTally(tmp)
+              comboUsed   = tmp.comboUsed)
             val lines = (if (line.isEmpty) log else log :+ line) ++ procLog
             if (tmp.monsterCurrentHp > 0L) (placed, lines)
             else (placed.sideFallen(idx), lines :+ content.format("battle.group.sideSlain", "monster" -> tmp.monsterName))
@@ -5247,7 +5246,7 @@ case class BattleState(
       b2 = blow2.battle
       // 3) энергия копится
       b3 = b2.copy(group = b2.group.updateAlly(a.position)(x =>
-             x.copy(energy = (x.energy + x.kind.energyRegen(x.lvl)).min(x.stats.energy))))
+             x.copy(energy = (x.energy + x.kind.energyRegen(x.lvl, x.grown)).min(x.stats.energy))))
       // Лог — одной строкой на цель, с суммарным уроном удара и умения; проки и
       // раны считаются, но экран не засоряют. Промах — только если не попало ничем;
       // попало, но минибосс держит предел за раунд, — так и говорим.
@@ -5282,7 +5281,7 @@ case class BattleState(
     val active = pos == battle.group.activePos
     val idx    = battle.group.idxOf(pos)
     val tmp    = if (active) battle else battle.withActive(battle.group.others(idx))
-    val elem   = a.kind.element
+    val elem   = a.element
     for {
       // Умения (`sure`) не промахиваются — как и у героя; бросок не тратится.
       hitRoll <- if (sure) ZIO.succeed(101) else Random.nextIntBetween(1, 101)
@@ -5337,9 +5336,8 @@ case class BattleState(
             if (active) AllyBlow(guarded, Some(tmp.monsterName), dealt, slew = false, killed = killed, held = held,
                           poisoned = poisoned)
             else {
-              // Счёт предела живёт на бою: босс в бою один, где бы он ни стоял.
+              // Счёт предела минибосса — на его слоте: возвращается в строй вместе с ним.
               val restored = battle.copy(group = battle.group.copy(others = battle.group.others.updated(idx, guarded.activeSlot)))
-                               .withBossTally(guarded)
               if (guarded.monsterCurrentHp <= 0L) AllyBlow(restored.sideFallen(idx), Some(tmp.monsterName), dealt, slew = true, killed = killed)
               else AllyBlow(restored, Some(tmp.monsterName), dealt, slew = false, held = held, poisoned = poisoned)
             }
@@ -5547,9 +5545,10 @@ case class BattleState(
     }
   }
 
-  /** Минибосс, стоящий в строю, а не в полях боя. Его круг и счётчики живут на
-    * бою, а приёмы меняют сам строй — зов крыс, воскрешение, шаг за спины
-    * своих. Поэтому на свой ход он встаёт в поля (как под удар героя, см.
+  /** Минибосс, стоящий в строю, а не в полях боя. Его круг едет с ним в слоте
+    * (см. `SoloPveBattle.withActive`), а приёмы меняют сам строй — зов крыс,
+    * воскрешение, шаг за спины своих. Поэтому на свой ход он встаёт в поля
+    * (как под удар героя, см.
     * [[strikeSide]]), ходит как тот, кто там стоит, и возвращается в строй.
     * Раньше его ход шёл во временном бою, и всё это пропадало: король звал крыс
     * впустую, а Некромант не колдовал вовсе. Истёк ранами — в павшие. */
@@ -6022,13 +6021,13 @@ case class BattleState(
       bossIdx    = fallen.indexWhere(_.boss.flatMap(MiniBoss.byName).isDefined)
       bossAt     = fallen.lift(bossIdx)
       fallenBoss = bossAt.flatMap(_.boss).flatMap(MiniBoss.byName)
-      // У минибосса своя награда за уровень босса, а не по этажу и редкости.
-      // Группа — опыт одной суммой за всех.
+      // Все минибоссы боя — с местом среди павших: в логове Йоргена огненных двое.
+      fallenBosses = fallen.flatMap(m => m.boss.flatMap(MiniBoss.byName).map(_ -> m))
+      // У минибосса своя награда за уровень босса, а не по этажу и редкости — у
+      // каждого, сколько бы их ни пало. Группа — опыт одной суммой за всех.
       baseExp = if (storyFight) 0L
-                else fallenBoss.zip(bossAt)
-                  .map { case (b, rec) => b.expReward(rec.lvl) }
-                  .getOrElse(fallen.map(m => (killLevel * Rarity.withName(m.rarity).factor).toLong.max(1L)).sum)
-                  .max(1L)
+                else if (fallenBosses.nonEmpty) fallenBosses.map { case (b, rec) => b.expReward(rec.lvl) }.sum.max(1L)
+                else fallen.map(m => (killLevel * Rarity.withName(m.rarity).factor).toLong.max(1L)).sum.max(1L)
       // Опыт остановлен зельем Фета — за бой ничего (expFrom).
       expGained = hero.expFrom(
                     if (storyFight) 0L else if (blessed) (baseExp * (100L + BattleState.BlessingBonusPct) / 100L).max(1L) else baseExp,
@@ -6050,11 +6049,20 @@ case class BattleState(
           fallen.zipWithIndex.foldLeft((List.empty[(String, List[LootGenerator.LootDrop])], r)) {
             case ((acc, rr), (m, i)) if i == bossIdx => (acc :+ (m.name -> d), rr)
             case ((acc, rr), (m, _)) =>
-              val (dd, r3) = LootGenerator.roll(
-                Rarity.withName(m.rarity), Race.withName(m.race), killLevel, rr,
-                gearChanceBonusPct = hero.gems.gearDropBonusPct,
-                rarityBumpPct = if (blessed) BattleState.BlessingBonusPct else 0L)
-              (acc :+ (m.name -> dd), r3)
+              m.boss.flatMap(MiniBoss.byName) match {
+                // Второй минибосс боя (в логове Йоргена огненных двое) — тоже со
+                // своим дропом, а не по таблице.
+                case Some(other) =>
+                  val (dd, r3) = LootGenerator.rollMiniBoss(other, m.lvl, hero.lvl, rr,
+                    floorLvl = hero.dungeonLevel.toLong)
+                  (acc :+ (m.name -> dd), r3)
+                case None =>
+                  val (dd, r3) = LootGenerator.roll(
+                    Rarity.withName(m.rarity), Race.withName(m.race), killLevel, rr,
+                    gearChanceBonusPct = hero.gems.gearDropBonusPct,
+                    rarityBumpPct = if (blessed) BattleState.BlessingBonusPct else 0L)
+                  (acc :+ (m.name -> dd), r3)
+              }
           }
         case None =>
           fallen.foldLeft((List.empty[(String, List[LootGenerator.LootDrop])], Rng(seed))) { case ((acc, rng), m) =>
@@ -6133,8 +6141,9 @@ case class BattleState(
       elderWaits <- if (kills >= NpcQuest.MurlocElderKill) MurlocQuest.markPending(heroDao, user.userId, now)
                     else ZIO.succeed(false)
       // После добычи с элементаля игрок идёт осматривать ЕГО логово. Гнилого Джо
-      // это не касается — осматривать после него нечего.
-      lootReturn = if (fallenBoss.exists(_.race == Race.Elemental))
+      // это не касается — осматривать после него нечего. Сюжетный бой с
+      // элементалями (логово Йоргена) возвращает в свою сцену.
+      lootReturn = if (fallenBoss.exists(_.race == Race.Elemental) && battle.story.isEmpty)
                      Some(StateType.ElementalSearch)
                    else prev.flatMap(_.returnState).orElse(Option.when(elderWaits)(StateType.MurlocElder))
       // Первый экран добычи — первый павший; остальные ждут своей очереди. Имя
@@ -6426,9 +6435,8 @@ case class BattleState(
         if (!slot.alive) (b, total, foes)
         else {
           val (hit, dealt) = strike(b.withActive(slot))
-          // Счёт предела минибосса — с временной пары: задетым мог быть он сам.
+          // Задетым мог быть минибосс: его счёт предела едет обратно в слоте.
           val back    = b.copy(group = b.group.copy(others = b.group.others.updated(idx, hit.activeSlot)))
-                          .withBossTally(hit)
           val settled = if (hit.monsterCurrentHp <= 0L) back.sideFallen(idx) else back
           (settled, total + dealt, foes + 1)
         }
@@ -6775,7 +6783,7 @@ object BattleState {
   val RaidStories: Set[String] =
     Set(MurlocQuest.RaidStory, LostSquadQuest.EscortStory, HedgeSongQuest.WaveStory, BarrelThievesQuest.FightStory,
       StoryMarkQuest.FightStory, StoryPowderQuest.FightStory, StoryListQuest.FightStory, StoryFaceQuest.FightStory,
-      StoryToolQuest.FightStory, HotGoodsQuest.FightStory, BigDealQuest.AmbushStory)
+      StoryToolQuest.FightStory, HotGoodsQuest.FightStory, BigDealQuest.AmbushStory, JorgenQuest.LairStory)
 
   /** Умение союзника, выбранное на ход. Удар несёт свою цель: без цели его
     * в выборе просто нет, и доставать её потом неоткуда. */

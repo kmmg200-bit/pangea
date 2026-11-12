@@ -49,7 +49,11 @@ final case class Ally(
   armor:      Long,
   energy:     Long,
   hiredUntil: Long               = 0L,
-  undead:     Option[UndeadForm] = None
+  undead:     Option[UndeadForm] = None,
+  /** На сколько уровней вырос его потолок: герой выполнил его личное задание
+    * (см. `MercQuests`, [[AllyRates.QuestGrowth]]). Ставится при найме — и тому,
+    * кто уже в отряде, когда задание закрыто. В старых записях поля нет — 0. */
+  grown:      Long               = 0L
 ) {
   def name: String = undead.map(_.name).getOrElse(kind.name)
 
@@ -57,10 +61,10 @@ final case class Ally(
   def isDarkWolf: Boolean = undead.exists(_.unique)
 
   /** Потолки статов: у наёмника — по уровню героя, у поднятого — свои. */
-  def statsAt(lvl: Long): FightStats = undead.map(_.stats).getOrElse(kind.stats(lvl))
+  def statsAt(lvl: Long): FightStats = undead.map(_.stats).getOrElse(kind.stats(lvl, grown))
 
   /** Уровень, по которому он дерётся. */
-  def lvlAt(heroLvl: Long): Long = undead.map(_.lvl).getOrElse(kind.effectiveLvl(heroLvl))
+  def lvlAt(heroLvl: Long): Long = undead.map(_.lvl).getOrElse(kind.effectiveLvl(heroLvl, grown))
 
   /** Найм истёк — отработал свой день. Добытый союзник не уходит так: у него
     * свой срок, см. [[crumbled]]. */
@@ -99,7 +103,8 @@ object Ally {
       energy   <- c.getOrElse[Long]("energy")(0L)
       until    <- c.getOrElse[Long]("hiredUntil")(0L)
       undead   <- c.getOrElse[Option[UndeadForm]]("undead")(None)
-    } yield Ally(kind, position, hp, armor, energy, until, undead)
+      grown    <- c.getOrElse[Long]("grown")(0L)
+    } yield Ally(kind, position, hp, armor, energy, until, undead, grown)
 }
 
 /** Отряд героя: места в строю (см. [[AllyRates.Positions]]) делят герой
@@ -164,8 +169,8 @@ final case class Squad(
   def overtimeOf(kind: AllyKind): Int = overtime.getOrElse(kind.entryName, 0)
 
   /** Поднят из-за стола за серебро, не отдохнув: в отряд — и счёт переработок растёт. */
-  def rushed(kind: AllyKind, lvl: Long, nowMs: Long): Squad =
-    welcomeBack(kind).hire(kind, lvl, nowMs)
+  def rushed(kind: AllyKind, lvl: Long, nowMs: Long, grown: Long = 0L): Squad =
+    welcomeBack(kind).hire(kind, lvl, nowMs, grown)
       .copy(overtime = overtime.updated(kind.entryName, overtimeOf(kind) + 1), overtimeTotal = overtimeTotal + 1)
 
   /** Отдохнул как положено — переработки забыты. */
@@ -179,14 +184,23 @@ final case class Squad(
     (1 to AllyRates.Positions).find(p => p != heroPos && allyAt(p).isEmpty)
 
   /** Нанять на [[AllyRates.HireMs]], полностью здоровым (см. [[hired]]). */
-  def hire(kind: AllyKind, lvl: Long, nowMs: Long): Squad = hired(kind, lvl, nowMs)._1
+  def hire(kind: AllyKind, lvl: Long, nowMs: Long, grown: Long = 0L): Squad = hired(kind, lvl, nowMs, grown)._1
 
   /** Нанять: на первую свободную позицию строя, а мест нет — в резерв. Такой
     * уже есть (в строю или в резерве) или мест нет нигде — отряд как был
-    * (`Placed.Nowhere`). */
-  def hired(kind: AllyKind, lvl: Long, nowMs: Long): (Squad, Placed) =
+    * (`Placed.Nowhere`). `grown` — насколько вырос его потолок у этого героя
+    * (см. [[Ally.grown]]). */
+  def hired(kind: AllyKind, lvl: Long, nowMs: Long, grown: Long = 0L): (Squad, Placed) =
     if (has(kind)) (this, Placed.Nowhere)
-    else place(Ally(kind, 0, 0L, 0L, 0L, hiredUntil = nowMs + AllyRates.HireMs).restored(lvl))
+    else place(Ally(kind, 0, 0L, 0L, 0L, hiredUntil = nowMs + AllyRates.HireMs, grown = grown).restored(lvl))
+
+  /** Личное задание наёмника выполнено, а он уже при герое — в строю или в
+    * резерве: потолок растёт и у него, с этой минуты. Сил у него столько же,
+    * сколько было: вырос предел, а не раны. */
+  def grow(kind: AllyKind, grown: Long): Squad = {
+    def up(a: Ally): Ally = if (a.kind == kind && a.undead.isEmpty) a.copy(grown = grown) else a
+    copy(allies = allies.map(up), reserve = reserve.map(up))
+  }
 
   /** Новенький — на первое свободное место строя, мест нет — в резерв. */
   private def place(a: Ally): (Squad, Placed) =

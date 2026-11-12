@@ -5,14 +5,16 @@ import pangea.engine.{Branch, Choice, Renderer, SceneContent, Screen, Target}
 import pangea.model.hero.Hero
 import pangea.model.item.{BrewKind, Item}
 import pangea.model.squad.{AllyKind, AllyRates, Squad}
-import pangea.model.quest.{NpcQuest, NpcQuests}
+import pangea.model.quest.{Difficulty, NpcQuest, NpcQuests}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.bank.BankRepository
 import pangea.repository.inventory.InventoryRepository
+import pangea.repository.item.ItemRepository
 import pangea.service.purse.Purse
 import pangea.model.hero.Achievement
-import pangea.service.state.{CityExit, HedgeSongQuest, LostSquadQuest, NpcQuestLog, QuestSupport, SquadDuty, State, UserAction}
+import pangea.service.state.{CityExit, HedgeSongQuest, JorgenQuest, LostSquadQuest, MercQuests, NpcQuestLog, QuestSupport, SquadDuty,
+  State, UserAction}
 import pangea.util.TimeLeft
 import zio.{Task, ZIO}
 
@@ -22,12 +24,18 @@ import java.util.concurrent.TimeUnit
   * Кто уже в отряде или ушёл по свитку (на сутки) — за столом не сидит. Вернувшийся
   * встречает репликой о свитке и снова нанимается. Йорген берёт дублонами,
   * Плюх — Живой водой, Брамбл — шнапсом из красавки, Фаэлин — Ядовитой
-  * смазкой и сверху дублонами (отваров — уровень на пять, но не меньше одного). */
+  * смазкой и сверху дублонами (отваров — уровень на пять, но не меньше одного).
+  *
+  * У кого есть личное задание (см. MercQuests), с тем можно поговорить до
+  * найма: «Поговорить» на карточке — он рассказывает о своём долге, герой
+  * соглашается помочь, и его предмет — в сумку. Без хранилища вещей (`itemRepo`)
+  * предмет не создать — тогда и разговора нет. */
 case class MercenariesState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
   content:       SceneContent,
-  bank:          Option[BankRepository] = None
+  bank:          Option[BankRepository] = None,
+  itemRepo:      Option[ItemRepository] = None
 ) extends State {
   import MercenariesState._
 
@@ -39,6 +47,9 @@ case class MercenariesState(
       "MercList"      -> Target.Run { (u, _, r) => showList(u, r).as(StateType.Mercenaries) },
       "MercCard"      -> Target.Run { (u, ua, r) => withKind(ua, u, r)(k => showCard(u, k, r)).as(StateType.Mercenaries) },
       "MercHire"      -> Target.Run { (u, ua, r) => withKind(ua, u, r)(k => hire(u, k, r)).as(StateType.Mercenaries) },
+      // Личное задание наёмника: разговор за столом и согласие помочь.
+      "MercTalk"      -> Target.Run { (u, ua, r) => withKind(ua, u, r)(k => showTalk(u, k, r)).as(StateType.Mercenaries) },
+      "MercTalkYes"   -> Target.Run { (u, ua, r) => withKind(ua, u, r)(k => takeQuest(u, k, r)).as(StateType.Mercenaries) },
       // Поднять из-за стола того, кто ещё отдыхает, — за серебро сверх обычной платы.
       "MercRush"      -> Target.Run { (u, ua, r) => withKind(ua, u, r)(k => showRush(u, k, r)).as(StateType.Mercenaries) },
       "MercRushHire"  -> Target.Run { (u, ua, r) => withKind(ua, u, r)(k => rush(u, k, r)).as(StateType.Mercenaries) },
@@ -90,11 +101,13 @@ case class MercenariesState(
 
   /** Карточка: история, реплика с ценой, «Нанять». Пока идёт «Пропавшая
     * дружина», у Брамбла своя: в первый раз он узнаёт фонарь старшины и
-    * рассказывает, что знает, дальше просто зовёт в штольню — и идёт даром. */
-  private def showCard(user: User, kind: AllyKind, renderer: Renderer): Task[Unit] =
+    * рассказывает, что знает, дальше просто зовёт в штольню — и идёт даром.
+    * `note` — что только что случилось (взято задание): тем же сообщением, над
+    * карточкой. */
+  private def showCard(user: User, kind: AllyKind, renderer: Renderer, note: String = ""): Task[Unit] =
     NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
       if (kind == AllyKind.Gnome && LostSquadQuest.bramblCalled(quests)) showSquadCard(user, quests, renderer)
-      else showPlainCard(user, kind, renderer)
+      else showPlainCard(user, kind, renderer, note)
     }
 
   private def showSquadCard(user: User, quests: NpcQuests, renderer: Renderer): Task[Unit] =
@@ -111,16 +124,22 @@ case class MercenariesState(
   /** Обычная карточка. Фаэлин помнит «Того, кто уговаривает деревья» (Элиар —
     * его старший брат): ветвь в сумке — узнаёт её вместо своей истории,
     * задание позади — о цене говорит иначе, а цена та же. Был ли он сам у
-    * изгороди — `HedgeSongQuest.faelinWasThere`. */
-  private def showPlainCard(user: User, kind: AllyKind, renderer: Renderer): Task[Unit] =
+    * изгороди — `HedgeSongQuest.faelinWasThere`. Пока идёт личное задание
+    * Йоргена, он говорит о нём, а не о себе; долг закрыт — о цене иначе, цена
+    * та же. С кем можно поговорить о его задании — «Поговорить». */
+  private def showPlainCard(user: User, kind: AllyKind, renderer: Renderer, note: String): Task[Unit] =
     getHero(user).zip(NpcQuestLog.load(heroDao, user.userId)).flatMap { case (hero, quests) =>
       val there = HedgeSongQuest.faelinWasThere(quests)
       val story = kind match {
         case AllyKind.Elf if HedgeSongQuest.toFet(quests) =>
           content.text(if (there) "hedgeSong.faelin.branchAgain" else "hedgeSong.faelin.branch")
+        case AllyKind.Human if JorgenQuest.toLair(quests) => content.text("jorgen.card.toLair")
+        case AllyKind.Human if JorgenQuest.toHorn(quests) => content.text("jorgen.card.toHorn")
         case k => content.text(s"mercenaries.${key(k)}.story")
       }
       val price = kind match {
+        case AllyKind.Human if MercQuests.done(quests, kind) =>
+          content.format("jorgen.card.price", "cost" -> AllyRates.HumanDoubloons.toString)
         case AllyKind.Human => content.format("mercenaries.human.price", "cost" -> AllyRates.HumanDoubloons.toString)
         case AllyKind.Elf if quests.isDone(NpcQuest.HedgeSong) =>
           content.format(if (there) "hedgeSong.faelin.priceThere" else "hedgeSong.faelin.price",
@@ -133,10 +152,45 @@ case class MercenariesState(
           content.format("lostSquad.brambl.priceGrudge", "n" -> LostSquadQuest.bramblBrews(quests, hero.lvl).toString)
         case k              => content.format(s"mercenaries.${key(k)}.price", "n" -> AllyKind.brewsFor(hero.lvl).toString)
       }
-      renderer.show(user, Screen(story + "\n\n" + price, List(
+      val talk = Option.when(itemRepo.isDefined && MercQuests.talkOpen(quests, kind))(
+        content.choice("MercTalk", "mercenaries.talkLabel").copy(data = Map("kind" -> kind.entryName), row = Some(0)))
+      renderer.show(user, Screen(story + "\n\n" + price, talk.toList ++ List(
         content.choice("MercHire", "mercenaries.hireLabel").copy(data = Map("kind" -> kind.entryName), row = Some(0)),
-        content.choice("MercList", "mercenaries.toList").copy(row = Some(1)))))
+        content.choice("MercList", "mercenaries.toList").copy(row = Some(1)))).noted(note))
     }
+
+  /** Разговор за столом: наёмник рассказывает о своём долге и просит помочь;
+    * сложность — сразу. Говорить не о чем (задание взято, выполнено, его нет
+    * или предмет не создать) — обычная карточка. */
+  private def showTalk(user: User, kind: AllyKind, renderer: Renderer): Task[Unit] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      (MercQuests.textBase(kind), MercQuests.level(kind)) match {
+        case (Some(base), Some(lvl)) if itemRepo.isDefined && MercQuests.talkOpen(quests, kind) =>
+          renderer.show(user, Screen(content.text(s"$base.talk.text") + "\n\n" +
+            content.format("marisa.difficulty", "difficulty" -> Difficulty.render(lvl)), List(
+            content.choice("MercTalkYes", s"$base.talk.acceptLabel").copy(data = Map("kind" -> kind.entryName), row = Some(0)),
+            content.choice("MercCard", s"$base.talk.declineLabel").copy(data = Map("kind" -> kind.entryName), row = Some(0)))))
+        case _ => showCard(user, kind, renderer)
+      }
+    }
+
+  /** Согласился помочь: задание взято, предмет наёмника — в сумку (дальше ведёт
+    * он), и снова его карточка — с ответом над ней. Уже взято — просто карточка. */
+  private def takeQuest(user: User, kind: AllyKind, renderer: Renderer): Task[Unit] =
+    for {
+      now    <- nowMs
+      hero   <- getHero(user)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      _      <- (itemRepo, MercQuests.textBase(kind), MercQuests.startItem(kind)) match {
+                  case (Some(items), Some(base), Some(item)) if MercQuests.talkOpen(quests, kind) =>
+                    MercQuests.take(kind, heroDao, inventoryRepo, items, user.userId, hero, now).flatMap { taken =>
+                      val note = if (!taken) "" else content.text(s"$base.talk.accepted") + "\n\n" +
+                        content.format("marisa.questItemAdded", "item" -> item.displayName)
+                      showCard(user, kind, renderer, note)
+                    }
+                  case _ => showCard(user, kind, renderer)
+                }
+    } yield ()
 
   /** Найм: место в отряде, плата, и наёмник встаёт на первую свободную позицию
     * строя, а мест там нет — в резерв. Брамбл, пока дружина ждёт, идёт даром —
@@ -156,7 +210,8 @@ case class MercenariesState(
           case Some(refusal) => renderer.show(user, Screen(refusal, Nil)) *> showCard(user, kind, renderer)
           case None =>
             // Нанят, отдохнув как положено, — переработки забыты.
-            val squad = hero.squad.welcomeBack(kind).rested(kind).hire(kind, hero.lvl, now)
+            // Выполнил его личное задание — потолок у него выше (см. MercQuests).
+            val squad = hero.squad.welcomeBack(kind).rested(kind).hire(kind, hero.lvl, now, MercQuests.grown(quests, kind))
             heroDao.updateSquad(user.userId, squad) *>
               renderer.show(user, Screen(content.format(if (free) "lostSquad.brambl.joined" else "mercenaries.hired",
                 "name" -> kind.name), Nil)) *>
@@ -210,7 +265,7 @@ case class MercenariesState(
           else pay(user, hero, kind, quests).flatMap {
           case Some(refusal) => renderer.show(user, Screen(refusal, Nil)) *> showRush(user, kind, renderer)
           case None =>
-            val squad = hero.squad.rushed(kind, hero.lvl, now)
+            val squad = hero.squad.rushed(kind, hero.lvl, now, MercQuests.grown(quests, kind))
             for {
               // Йорген и Фаэлин берут дублонами: героя читаем заново, чтобы не затереть их списание.
               fresh <- getHero(user)

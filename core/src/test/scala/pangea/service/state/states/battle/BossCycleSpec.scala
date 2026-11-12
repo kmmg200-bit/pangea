@@ -96,6 +96,17 @@ object BossCycleSpec extends ZIOSpecDefault {
 
   private def allyOf(b: SoloPveBattle) = b.group.allies.headOption
 
+  /** Круг минибосса и его энергия — где бы он ни стоял: в полях они на бою, в
+    * строю — на его слоте (см. MonsterSlot.bossTurn). Позвал крыс — в пару
+    * может встать крыса, а король уйти в строй со своим кругом. */
+  private def turnOf(b: SoloPveBattle, boss: MiniBoss): Option[Int] =
+    if (b.bossKind.contains(boss.entryName)) Some(b.bossTurn)
+    else b.group.others.find(_.boss.contains(boss.entryName)).map(_.bossTurn)
+
+  private def energyOf(b: SoloPveBattle, boss: MiniBoss): Option[Long] =
+    if (b.bossKind.contains(boss.entryName)) Some(b.monsterCurrentEnergy)
+    else b.group.others.find(_.boss.contains(boss.entryName)).map(_.currentEnergy)
+
   /** Герой на 1 в паре с крепким охранником, минибосс — в строю на втором. */
   private def withBossInLine(h: Hero, boss: MiniBoss): SoloPveBattle = {
     val lvl   = boss.bossLvl(h.lvl)
@@ -123,8 +134,8 @@ object BossCycleSpec extends ZIOSpecDefault {
       } yield assertTrue(!bossOne(MiniBoss.RatKing, h).group.paired) &&   // напротив короля — союзник
               assertTrue(log.contains("Крысиный писк разносится по окрестностям")) &&
               assertTrue(after.group.others.nonEmpty) &&
-              assertTrue(after.bossTurn == 1) &&
-              assertTrue(after.monsterCurrentEnergy < bossOne(MiniBoss.RatKing, h).monsterCurrentEnergy)
+              assertTrue(turnOf(after, MiniBoss.RatKing).contains(1)) &&
+              assertTrue(energyOf(after, MiniBoss.RatKing).exists(_ < bossOne(MiniBoss.RatKing, h).monsterCurrentEnergy))
     },
 
     test("призыв не рвёт строй: мест ровно столько, сколько слотов") {
@@ -292,7 +303,7 @@ object BossCycleSpec extends ZIOSpecDefault {
       } yield assertTrue(b.group.paired && b.group.others.size == 1 && b.boss.isEmpty) &&
               assertTrue(log.contains("Крысиный писк разносится по окрестностям")) &&
               assertTrue(after.group.others.size > 1) &&
-              assertTrue(after.bossTurn == 1) &&
+              assertTrue(turnOf(after, king).contains(1)) &&
               assertTrue(after.group.places.size == after.group.others.size) &&
               assertTrue(after.group.places.distinct.size == after.group.places.size)
     },
@@ -311,7 +322,7 @@ object BossCycleSpec extends ZIOSpecDefault {
         (after, _, log) = t
       } yield assertTrue(log.contains("павшая нежить встаёт снова")) &&
               assertTrue(after.group.others.size == 2 && after.group.slain.isEmpty) &&
-              assertTrue(after.bossTurn == 1)
+              assertTrue(turnOf(after, necro).contains(1))
     },
 
     test("Воскрешение: павший нежитью по рождению лежит, смертный мертвец встаёт — и ход не падает") {

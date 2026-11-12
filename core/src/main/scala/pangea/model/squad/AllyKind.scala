@@ -45,11 +45,13 @@ sealed abstract class AllyKind(
     *  укуса: ни фляги, ни починки брони, ни дробящего удара. */
   def usesSkills: Boolean = true
 
-  /** Уровень, по которому считаются статы: не выше потолка наёмника. */
-  def effectiveLvl(lvl: Long): Long = lvl.max(1L).min(maxLvl)
+  /** Уровень, по которому считаются статы: не выше потолка наёмника. `grown` —
+    * на сколько этот потолок поднялся у героя после личного задания наёмника
+    * (см. [[AllyRates.QuestGrowth]], `MercQuests`). */
+  def effectiveLvl(lvl: Long, grown: Long = 0L): Long = lvl.max(1L).min(maxLvl + grown.max(0L))
 
-  def stats(lvl: Long): FightStats = {
-    val l = effectiveLvl(lvl)
+  def stats(lvl: Long, grown: Long = 0L): FightStats = {
+    val l = effectiveLvl(lvl, grown)
     FightStats(
       atk      = atkPerLvl * l,
       hp       = hpPerLvl * l,
@@ -62,7 +64,7 @@ sealed abstract class AllyKind(
   }
 
   /** Сколько энергии восстанавливает за раунд — тоже по своему потолку. */
-  def energyRegen(lvl: Long): Long = AllyRates.EnergyRegenPerLvl * effectiveLvl(lvl)
+  def energyRegen(lvl: Long, grown: Long = 0L): Long = AllyRates.EnergyRegenPerLvl * effectiveLvl(lvl, grown)
 }
 
 /** Числа союзников — отдельно от компаньона (см. FlaskRates). */
@@ -77,6 +79,10 @@ object AllyRates {
 
   /** Найм Фаэлина: сверх смазки — столько дублонов, сколько бы герой ни был силён. */
   val ElfDoubloons: Long = 5L
+
+  /** На сколько уровней поднимается потолок наёмника у героя, выполнившего его
+    * личное задание (см. `MercQuests`): Йорген растёт до 13-го, а не до 5-го. */
+  val QuestGrowth: Long = 8L
 
   /** Как часто яд Фаэлина остаётся в ране — как у эльфов в лабиринте: через раз. */
   val ElfPoisonPct: Long = pangea.model.battle.Poison.WeaponChancePct

@@ -87,6 +87,7 @@ import pangea.model.state.StateType.{
   BartiMeet,
   BartiHouse,
   BartiCaravan,
+  JorgenLair,
   RaceQuest,
   NameChange,
   TreasureHunt,
@@ -156,6 +157,7 @@ import pangea.service.state.states.straycasket.StrayCasketState
 import pangea.service.state.states.hedgesong.HedgeSongState
 import pangea.service.state.states.barrelthieves.{BarrelReturnState, BarrelThievesState}
 import pangea.service.state.states.barti.{BartiCaravanState, BartiHouseState, BartiMeetState}
+import pangea.service.state.states.merc.JorgenLairState
 import pangea.service.state.states.story.{StoryArchiveState, StoryBinderyState, StoryBridgeState, StoryCacheState, StoryCloakState,
   StoryGraveyardState, StoryMeetingState, StorySojkaState, StoryWarehouseState}
 import pangea.service.state.states.race.RaceQuestState
@@ -328,7 +330,7 @@ object StatesMap {
           Thieves           -> ThievesState(heroDao, content),
           ThievesSpoils     -> ThievesSpoilsState(heroDao, content),
           Innkeeper         -> InnkeeperState(heroDao, inventoryRepo, content, bank),
-          Mercenaries       -> MercenariesState(heroDao, inventoryRepo, content, bank),
+          Mercenaries       -> MercenariesState(heroDao, inventoryRepo, content, bank, Some(itemRepo)),
           SilverVein        -> SilverVeinState(heroDao, scheduler, content),
           TreasureMobs      -> TreasureMobsState(heroDao, content),
           TreasureMobsFight -> TreasureMobsFightState(heroDao, content),
@@ -360,6 +362,7 @@ object StatesMap {
           BartiMeet         -> BartiMeetState(heroDao, inventoryRepo, itemRepo, content),
           BartiHouse        -> BartiHouseState(heroDao, inventoryRepo, content),
           BartiCaravan      -> BartiCaravanState(heroDao, inventoryRepo, content, outcomes, Some(itemRepo), Some(parcels)),
+          JorgenLair        -> JorgenLairState(heroDao, inventoryRepo, itemRepo, content),
           RaceQuest         -> RaceQuestState(heroDao, inventoryRepo, content),
           NameChange        -> NameChangeState(heroDao, inventoryRepo, content),
           Outskirts -> OutskirtsState(

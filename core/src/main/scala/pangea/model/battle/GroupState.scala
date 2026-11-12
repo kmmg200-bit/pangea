@@ -45,10 +45,20 @@ final case class BattleAlly(
     * бывает только на арене — соперник «Пригвоздил» его или накрыл
     * «Заградительным залпом» (см. `ArenaBattle.foeAfterTurn`); отходит на
     * стороне боя, ход за ходом, как у самого героя. */
-  rooted:     Int              = 0
+  rooted:     Int              = 0,
+  /** На сколько уровней вырос его потолок у героя (см. `Ally.grown`): по нему
+    * же он и восстанавливает энергию. */
+  grown:      Long             = 0L,
+  /** Чем он бьёт в этом бою, если не своей стихией: Йорген идёт в логово
+    * огненных элементалей с мечом холода (см. `JorgenQuest`). None — своей
+    * ([[AllyKind.element]]). Живёт только в бою: в отряд не возвращается. */
+  strike:     Option[Element]  = None
 ) {
   /** Нежить ли он: миазмы её лечат, а живых — травят. */
   def isUndead: Boolean = kind.race == Race.Undead
+
+  /** Стихия его ударов в этом бою. */
+  def element: Option[Element] = strike.orElse(kind.element)
   def name: String  = undead.map(_.name).getOrElse(kind.name)
 
   /** Как звать союзника на кнопке выбора цели — коротко, по имени, без фамилии
@@ -70,7 +80,7 @@ final case class BattleAlly(
 
   /** Обратно в отряд — с тем, что осталось, и на своё место: куда он сам ушёл
     * за врагом, пока герой лежал, там его не оставляем. */
-  def toAlly: Ally = Ally(kind, stood.getOrElse(position), hp, armor, energy, undead = undead)
+  def toAlly: Ally = Ally(kind, stood.getOrElse(position), hp, armor, energy, undead = undead, grown = grown)
 }
 
 object BattleAlly {
@@ -104,7 +114,8 @@ object BattleAlly {
     // В бою наёмник живёт по своему уровню, а не по геройскому: по нему и
     // статы, и цены умений, и восстановление энергии (см. AllyKind.maxLvl).
     // У поднятого с алтаря и уровень, и статы свои — от трофея.
-    BattleAlly(c.kind, c.position, c.hp, c.armor, c.energy, stats, a.lvlAt(lvl), a.undead, a.position)
+    BattleAlly(c.kind, c.position, c.hp, c.armor, c.energy, stats, a.lvlAt(lvl), a.undead, a.position,
+      grown = a.grown)
   }
 
   /** Статы нежити с прибавкой «Некроманта»: ровно на свой процент, по каждому
@@ -135,8 +146,10 @@ object BattleAlly {
       kills    <- c.getOrElse[Int]("kills")(0)
       hitBy    <- c.getOrElse[Option[String]]("lastHitBy")(None)
       rooted   <- c.getOrElse[Int]("rooted")(0)
+      grown    <- c.getOrElse[Long]("grown")(0L)
+      strike   <- c.getOrElse[Option[Element]]("strike")(None)
     } yield BattleAlly(kind, position, hp, armor, energy, stats, lvl, undead, home, poison, bleed, burn, stood,
-                       coldCut, kills, hitBy, rooted)
+                       coldCut, kills, hitBy, rooted, grown, strike)
 }
 
 /** Моб группы, стоящий НЕ в паре с героем: всё, что описывает его и его текущее
@@ -167,8 +180,28 @@ final case class MonsterSlot(
   arenaUnit:     Option[Int]    = None,
   /** Кто из отряда бил его последним (имя союзника). Истёк он ранами — пламенем,
     * ядом, кровью, — значит, этот его и добил: ему и в счёт (см. `BattleAlly.kills`). */
-  lastAllyHit:   Option[String] = None
+  lastAllyHit:   Option[String] = None,
+  /** Круг минибосса, пока он стоит в строю: какую способность применит
+    * следующей, сколько зарядов собрал, сколько раз поднимался, потратил ли
+    * первое бьющее умение и сколько HP и брони уже потерял в этом раунде (см.
+    * BossRoundCap). У того, кто в полях, всё это лежит на бою
+    * (`SoloPveBattle.bossTurn` и соседи) и ездит вместе со слотом
+    * (`activeSlot`/`withActive`) — поэтому минибоссов в бою может быть и двое,
+    * у каждого свой круг (логово Йоргена). У рядового моба — нули. */
+  bossTurn:            Int     = 0,
+  bossCharges:         Int     = 0,
+  bossRevives:         Int     = 0,
+  bossFirstSkillSpent: Boolean = false,
+  bossTaken:           Long    = 0L,
+  bossArmorTaken:      Long    = 0L
 ) {
+  /** Есть ли у него свой круг — хоть что-то, кроме нулей. */
+  def hasBossCycle: Boolean =
+    bossTurn != 0 || bossCharges != 0 || bossRevives != 0 || bossFirstSkillSpent || bossTaken != 0L || bossArmorTaken != 0L
+
+  /** Новый раунд героя: предел минибосса считается заново и у тех, кто в строю. */
+  def freshRound: MonsterSlot = copy(bossTaken = 0L, bossArmorTaken = 0L)
+
   def toMonster: Monster =
     Monster(0L, lvl, Race.withName(race), Rarity.withName(rarity), stats, marked, customName, undead)
 
@@ -220,8 +253,17 @@ object MonsterSlot {
       undead        <- c.getOrElse[Boolean]("undead")(false)
       arenaUnit     <- c.getOrElse[Option[Int]]("arenaUnit")(None)
       lastAllyHit   <- c.getOrElse[Option[String]]("lastAllyHit")(None)
+      // Круг минибосса на слоте — с тех пор, как минибоссов в бою может быть
+      // двое; в старых записях его нет — нули (см. SoloPveBattle.cycleToBossSlot).
+      bossTurn      <- c.getOrElse[Int]("bossTurn")(0)
+      bossCharges   <- c.getOrElse[Int]("bossCharges")(0)
+      bossRevives   <- c.getOrElse[Int]("bossRevives")(0)
+      firstSkill    <- c.getOrElse[Boolean]("bossFirstSkillSpent")(false)
+      bossTaken     <- c.getOrElse[Long]("bossTaken")(0L)
+      bossArmor     <- c.getOrElse[Long]("bossArmorTaken")(0L)
     } yield MonsterSlot(lvl, race, rarity, stats, currentHp, currentArmor, marked, currentEnergy, effects,
-                        boss, customName, undead, arenaUnit, lastAllyHit)
+                        boss, customName, undead, arenaUnit, lastAllyHit,
+                        bossTurn, bossCharges, bossRevives, firstSkill, bossTaken, bossArmor)
 }
 
 /** Убитый моб — ровно то, что нужно, чтобы после боя накатать за него добычу. */
