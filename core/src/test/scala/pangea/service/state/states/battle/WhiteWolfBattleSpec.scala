@@ -2,10 +2,11 @@ package pangea.service.state.states.battle
 
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.model.battle.{Bleed, Element, Poison, SoloPveBattle}
+import pangea.model.battle.{BattleAlly, Bleed, Element, Poison, SoloPveBattle}
 import pangea.model.hero.Hero
 import pangea.model.item.{BeltSlot, FlaskKind, Item, ItemDetails, ItemSet, ItemType, MaterialKind, Rarity}
 import pangea.model.monster.{MiniBoss, Monster, Race, Rarity => MobRarity}
+import pangea.model.squad.{Ally, AllyKind}
 import pangea.model.stats.FightStats
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
@@ -80,21 +81,47 @@ object WhiteWolfBattleSpec extends ZIOSpecDefault {
   private def seedTurn(extra: Int*) =
     TestRandom.feedInts(60 +: 90 +: 50 +: extra: _*) *> TestRandom.feedLongs(100L, 100L)
 
-  private def strike(h: Hero, battle: SoloPveBattle, seed: ZIO[Any, Nothing, Unit]) =
+  /** Ход героя кнопкой `key` («Атака», а когда бить некого — «Ждать»). */
+  private def strike(h: Hero, battle: SoloPveBattle, seed: ZIO[Any, Nothing, Unit], key: String = "Attack") =
     for {
       t <- makeState(h, battle)
       (state, dao, r) = t
       _       <- seed
-      out     <- state.action(testUser, tap("Attack"), r)
+      out     <- state.action(testUser, tap(key), r)
       updated <- dao.getHeroByUserId(userId).map(_.get)
       after   <- dao.readActiveBattle(userId).map(_.flatMap(_.as[SoloPveBattle].toOption))
       screens <- r.sentScreens
     } yield (updated, after, screens.map(_.text).mkString("\n"), out)
 
+  /** Экран боя, как его видит герой при входе. */
+  private def screenOf(h: Hero, battle: SoloPveBattle) =
+    for {
+      t <- makeState(h, battle)
+      (state, _, r) = t
+      _      <- state.enter(testUser, r)
+      screen <- r.sentScreens.map(_.last)
+    } yield screen.text
+
+  /** Волк не напротив героя: герой на месте `heroAt`, волк — на `wolfAt`. */
+  private def apart(battle: SoloPveBattle, heroAt: Int, wolfAt: Int = 1): SoloPveBattle =
+    battle.copy(group = battle.group.copy(heroPos = heroAt, activePos = wolfAt))
+
+  /** Наёмник с большим запасом HP: укусы волка его не валят. */
+  private def sturdyAlly(pos: Int): BattleAlly = {
+    val a = BattleAlly.of(Ally(AllyKind.Human, pos, 1L, 0L, 0L), 9L)
+    a.copy(hp = 100000L, armor = 0L, stats = a.stats.copy(hp = 100000L))
+  }
+
   private val MobHit = """наносит (\d+) урона""".r
 
   private def mobHitDamage(log: String): Long =
     MobHit.findAllMatchIn(log).map(_.group(1).toLong).toList.headOption.getOrElse(-1L)
+
+  /** Уклонение моба на экране боя — первое «💨» там его. */
+  private val MobDodge = """💨 (\d+)%""".r
+
+  private def mobDodge(screen: String): Int =
+    MobDodge.findFirstMatchIn(screen).map(_.group(1).toInt).getOrElse(-1)
 
   override def spec = suite("Белый волк")(
 
@@ -187,19 +214,129 @@ object WhiteWolfBattleSpec extends ZIOSpecDefault {
               assertTrue(again._2.get.effects.heroBleed.contains(Bleed(4)))
     },
 
-    test("животный инстинкт: 4 хода атака и уклонение выше на 5%") {
+    // ── Резкий прыжок ─────────────────────────────────────────────────────────
+    test("резкий прыжок в паре: четверть атаки по герою, без крови, уклонение +5% на 4 раунда") {
       val h = hero()
       for {
-        cast  <- strike(h, wolfBattle(h, turn = 2), seedTurn())
-        plain <- strike(h, wolfBattle(h, turn = 3), seedTurn())
-        base   = wolfBattle(h, turn = 3)
-        keen  <- strike(h, base.copy(effects = base.effects.copy(mobInstinctTurns = 2)), seedTurn())
-        plainDmg = mobHitDamage(plain._3)
-        keenDmg  = mobHitDamage(keen._3)
-      } yield assertTrue(cast._3.contains("Волк подстраивается под атаки своей добычи")) &&
-              assertTrue(cast._2.get.effects.mobInstinctTurns == wolf.InstinctTurns) &&
-              assertTrue(plainDmg > 0L && keenDmg > plainDmg && keenDmg <= plainDmg * 106L / 100L) &&
-              assertTrue(keen._2.get.effects.mobInstinctTurns == 1) // тик в начале хода моба
+        r <- strike(h, wolfBattle(h, turn = 2, firstSpent = true, energy = 100L), seedTurn(50))
+        (u, after, log, _) = r
+      } yield assertTrue(log.contains("Резкий прыжок! Волк настигает вас. Вы получили 125 урона! " + // 500 × 0,25
+                                      "Уклонение Волка +5% на 4 раунда.")) &&
+              assertTrue(u.fightStats.hp == 500000L - mobHitDamage(log) - 125L) &&
+              assertTrue(after.get.effects.mobInstinctTurns == wolf.LeapDodgeTurns) &&
+              assertTrue(after.get.effects.heroBleed.isEmpty) &&
+              assertTrue(after.get.group.paired && after.get.group.activePos == 1) && // и так напротив — стоит где стоял
+              assertTrue(after.get.bossTurn == 3) &&
+              assertTrue(after.get.monsterCurrentEnergy == 100L - wolf.LeapCostPerLvl * bossLvl + wolf.energyRegen(bossLvl))
+    },
+
+    test("после прыжка волк увёртливее на 5% четыре раунда, а бьёт как прежде") {
+      val h     = hero()
+      val base  = wolfBattle(h, turn = 3)
+      val leapt = base.copy(effects = base.effects.copy(mobInstinctTurns = 2))
+      // С меткостью героя 9999 уклонение упирается в нижний предел — для экрана берём меньше.
+      val dim   = h.copy(fightStats = h.fightStats.copy(accuracy = 100L))
+      val dimB  = wolfBattle(dim, turn = 3)
+      for {
+        plain <- strike(h, base, seedTurn())
+        keen  <- strike(h, leapt, seedTurn())
+        calm  <- screenOf(dim, dimB)
+        dodgy <- screenOf(dim, dimB.copy(effects = dimB.effects.copy(mobInstinctTurns = 2)))
+      } yield assertTrue(mobHitDamage(plain._3) > 0L && mobHitDamage(keen._3) == mobHitDamage(plain._3)) &&
+              assertTrue(keen._2.get.effects.mobInstinctTurns == 1) && // тик в начале хода моба
+              assertTrue(mobDodge(calm) > 0 && mobDodge(dodgy) > mobDodge(calm))
+    },
+
+    test("прыжок издалека: герой за три места — волк встаёт напротив него и кусает") {
+      val h = hero()
+      for {
+        // Бить герою некого — он выжидает; волк с места его не достаёт, а прыжком — да.
+        r <- strike(h, apart(wolfBattle(h, turn = 2, firstSpent = true, energy = 100L), heroAt = 4),
+               TestRandom.feedInts(50), "Wait") // крита нет
+        (u, after, log, _) = r
+      } yield assertTrue(log.contains("Резкий прыжок! Волк настигает вас. Вы получили 125 урона!")) &&
+              assertTrue(after.get.group.activePos == 4 && after.get.group.paired) &&
+              assertTrue(u.fightStats.hp == 500000L - 125L) &&
+              assertTrue(after.get.effects.mobInstinctTurns == wolf.LeapDodgeTurns && after.get.bossTurn == 3)
+    },
+
+    test("никого ближе трёх мест: прыжок на три места к герою без удара, и первый двойной укус не тратится") {
+      val h = hero()
+      for {
+        r <- strike(h, apart(wolfBattle(h, turn = 2, energy = 100L), heroAt = 6), ZIO.unit, "Wait")
+        (u, after, log, _) = r
+      } yield assertTrue(log.contains("Резкий прыжок: Волк в несколько скачков сокращает расстояние. " +
+                                      "Уклонение Волка +5% на 4 раунда.")) &&
+              assertTrue(!log.contains("Волк настигает") && u.fightStats.hp == 500000L) &&
+              // 1 → 4 прыжком, а в конце раунда — обычный шаг к герою, на 5: теперь он рядом
+              assertTrue(after.get.group.activePos == 1 + wolf.LeapReach + 1 && !after.get.group.paired) &&
+              assertTrue(after.get.effects.mobInstinctTurns == wolf.LeapDodgeTurns) &&
+              assertTrue(!after.get.bossFirstSkillSpent && after.get.bossTurn == 3)
+    },
+
+    test("прыжок на союзника: героя не достать — волк встаёт напротив ближайшего союзника и кусает его") {
+      val h    = hero()
+      val base = apart(wolfBattle(h, turn = 2, firstSpent = true, energy = 100L), heroAt = 6)
+      val ally = sturdyAlly(3)
+      for {
+        r <- strike(h, base.copy(group = base.group.copy(allies = List(ally))), TestRandom.feedInts(50), "Wait")
+        (u, after, log, _) = r
+        bitten = after.get.group.allyAt(3)
+        dealt  = """получает (\d+) урона""".r.findFirstMatchIn(log).map(_.group(1).toLong).getOrElse(-1L)
+      } yield assertTrue(log.contains(s"Резкий прыжок! Волк настигает союзника: ${ally.name} получает ")) &&
+              assertTrue(after.get.group.activePos == 3) &&
+              assertTrue(dealt > 0L && bitten.exists(_.hp == ally.hp - dealt)) &&
+              assertTrue(u.fightStats.hp == 500000L)
+    },
+
+    test("герой лежит — волк прыгает на союзника так же, как прыгнул бы на героя") {
+      val h     = hero()
+      val base  = wolfBattle(h, turn = 2, firstSpent = true, energy = 100L)
+      val ally  = sturdyAlly(2)
+      // Лежачего волк не трогает: до союзника на месте 2 с места 5 — ровно три.
+      val lying = base.copy(group = base.group.copy(heroDown = true, heroPos = 1, activePos = 5, allies = List(ally)))
+      for {
+        r <- strike(h.copy(fightStats = h.fightStats.copy(hp = 0L)), lying, TestRandom.feedInts(50), "SquadTick")
+        (_, after, log, _) = r
+      } yield assertTrue(log.contains(s"Резкий прыжок! Волк настигает союзника: ${ally.name} получает ")) &&
+              assertTrue(after.get.group.activePos == 2) &&
+              assertTrue(after.get.group.allyAt(2).exists(_.hp < ally.hp))
+    },
+
+    test("цель прыжка — как у удара: героя в трёх местах волк предпочтёт союзнику рядом") {
+      val h    = hero()
+      val base = apart(wolfBattle(h, turn = 2, firstSpent = true, energy = 100L), heroAt = 4)
+      for {
+        // Соседа на месте 2 волк бьёт обычным ударом, а прыгает — на героя.
+        r <- strike(h, base.copy(group = base.group.copy(allies = List(sturdyAlly(2)))), ZIO.unit, "Wait")
+        (_, after, log, _) = r
+      } yield assertTrue(log.contains("Резкий прыжок! Волк настигает вас.")) &&
+              assertTrue(after.get.group.activePos == 4 && after.get.group.paired)
+    },
+
+    test("пригвождённый волк не прыгает: кого не достаёт с места, того не кусает, и шаг пропадает") {
+      val h      = hero()
+      val base   = apart(wolfBattle(h, turn = 2, firstSpent = true, energy = 100L), heroAt = 3)
+      val pinned = base.copy(effects = base.effects.copy(monsterRootedTurns = 3))
+      for {
+        r <- strike(h, pinned, ZIO.unit, "Wait")
+        (u, after, log, _) = r
+      } yield assertTrue(!log.contains("Резкий прыжок") && u.fightStats.hp == 500000L) &&
+              assertTrue(after.get.group.activePos == 1) &&
+              assertTrue(after.get.effects.mobInstinctTurns == 0 && after.get.bossTurn == 3) &&
+              assertTrue(after.get.monsterCurrentEnergy == 100L + wolf.energyRegen(bossLvl)) // энергия не потрачена
+    },
+
+    test("прыжок добил союзника, что стоял не напротив, — тот уходит из строя, как от удара") {
+      val h    = hero()
+      val base = apart(wolfBattle(h, turn = 2, firstSpent = true, energy = 100L), heroAt = 6)
+      val frail = sturdyAlly(3).copy(hp = 1L)
+      for {
+        r <- strike(h, base.copy(group = base.group.copy(allies = List(frail))), TestRandom.feedInts(50), "Wait")
+        (_, after, log, _) = r
+      } yield assertTrue(log.contains(s"Волк настигает союзника: ${frail.name}")) &&
+              assertTrue(after.get.group.allyAt(3).isEmpty) &&
+              assertTrue(after.get.group.alliesGone.exists(_.position == 3))
     },
 
     test("смыкание пасти: четверть недостающего HP плюс пятая часть атаки, бесплатно") {

@@ -2111,16 +2111,11 @@ case class BattleState(
     battle.copy(bossTurn = (battle.bossTurn + 1) % kind.abilities)
 
   /** Атака моба с учётом временного ослабления: подожжённый камень бьёт слабее,
-    * поднявшийся из мёртвых Джо — тоже. Процент приходит вместе со сроком.
-    * Волк, подстроившийся под добычу, наоборот, бьёт сильнее. */
-  private def monsterAttack(battle: SoloPveBattle): Long = {
-    val weakened =
-      if (battle.effects.monsterWeakened)
-        (battle.monsterStats.atk * (100L - battle.effects.monsterWeakenedPct).max(0L) / 100L).max(1L)
-      else battle.monsterStats.atk
-    if (battle.effects.mobInstinct) weakened * (100L + MiniBoss.WhiteWolf.InstinctBoostPct) / 100L
-    else weakened
-  }
+    * поднявшийся из мёртвых Джо — тоже. Процент приходит вместе со сроком. */
+  private def monsterAttack(battle: SoloPveBattle): Long =
+    if (battle.effects.monsterWeakened)
+      (battle.monsterStats.atk * (100L - battle.effects.monsterWeakenedPct).max(0L) / 100L).max(1L)
+    else battle.monsterStats.atk
 
   /** Потолок брони моба с учётом того, сколько его срезали поджоги. Текущая броня
     * может остаться ВЫШЕ потолка — её поджог не трогает, но чинить выше уже нельзя. */
@@ -2190,12 +2185,14 @@ case class BattleState(
     }
   }
 
-  /** Круг Белого волка: пасть → когти → инстинкт → пропуск → смыкание пасти.
-    * Первое бьющее умение боя наносит двойной урон, дальше двойной — с шансом
-    * 5% (см. MiniBoss.WhiteWolf.CritChancePct). Бьёт он холодом, как и обычной
-    * атакой: урон ложится через `bossHit` с гранями стихии. Пасть и когти
-    * оставляют кровотечение, если удар дошёл до HP. Не хватило энергии —
-    * умение пропускается, а круг сдвигается, как у остальных боссов. */
+  /** Круг Белого волка: пасть → когти → резкий прыжок → пропуск → смыкание
+    * пасти. Первое бьющее умение боя наносит двойной урон, дальше двойной — с
+    * шансом 5% (см. MiniBoss.WhiteWolf.CritChancePct). Бьёт он холодом, как и
+    * обычной атакой: урон ложится через `bossHit` с гранями стихии. Пасть и
+    * когти оставляют кровотечение, если удар дошёл до HP. Прыжок цель ищет сам
+    * — дальше обычного удара (см. MiniBoss.WhiteWolf.LeapReach), и волк делает
+    * его, даже когда с места никого не достаёт (MiniBoss.leapTurn). Не хватило
+    * энергии — умение пропускается, а круг сдвигается, как у остальных боссов. */
   private def wolfTurnCast(
       hero: Hero,
       battle: SoloPveBattle,
@@ -2217,11 +2214,12 @@ case class BattleState(
       else Random.nextIntBetween(1, 101).map(roll =>
         if (roll <= wolf.CritChancePct) (wolf.CritMult, true, b) else (1L, false, b))
 
-    /** Удар умением: крит, урон холодом по броне и HP, кровотечение при уроне по HP. */
-    def bite(b: SoloPveBattle, raw: Long, bleedPct: Int, textKey: String): Task[(SoloPveBattle, Hero, String)] =
+    /** Удар умением по `prey`: крит, урон холодом по броне и HP, кровотечение
+      * при уроне по HP. `line` получает урон, который дошёл. */
+    def bite(b: SoloPveBattle, prey: Victim, raw: Long, bleedPct: Int, line: Long => String): Task[(SoloPveBattle, Hero, String)] =
       critMult(b).map { case (mult, critted, b1) =>
-        val hpBefore = victimHp(victim, hero, b1)
-        val (hurt, bitten, damage) = victim match {
+        val hpBefore = victimHp(prey, hero, b1)
+        val (hurt, bitten, damage) = prey match {
           case Victim.Hero =>
             // По герою волк бьёт холодом: грани стихии считает `bossHit`.
             val dealt                     = bossDamageTaken(hero, battle, (raw * mult).max(1L))
@@ -2229,37 +2227,107 @@ case class BattleState(
             (hero.copy(fightStats = hero.fightStats.copy(hp = newHp, armor = newArmor)), b1, landed)
           case ally => hurtVictim(ally, hero, b1, (raw * mult).max(1L), nowMs)
         }
-        val bleeds = bleedPct > 0 && victimHp(victim, hurt, bitten) < hpBefore
-        val b2     = if (!bleeds) bitten else bleedVictim(victim, bitten, bleedPct)
-        val line = List(
-          Some(content.format(textKey, "damage" -> damage.toString)),
+        val bleeds = bleedPct > 0 && victimHp(prey, hurt, bitten) < hpBefore
+        val b2     = if (!bleeds) bitten else bleedVictim(prey, bitten, bleedPct)
+        val text = List(
+          Some(line(damage)),
           Option.when(critted)(content.text("battle.wolf.crit")),
           Option.when(bleeds)(content.format("battle.wolf.bleeds", "pct" -> bleedPct.toString))
         ).flatten.mkString("\n")
-        (b2, hurt, line)
+        (b2, hurt, text)
       }
+
+    /** Кого волк достаёт прыжком — как обычным ударом, только дальше: союзника
+      * напротив; нет его — героя (лежачего не трогают); нет и его — ближайшего
+      * союзника, не дальше `reach` мест. Цель и её место. */
+    def leapTarget(b: SoloPveBattle, reach: Int): Option[(Victim, Int)] = {
+      val g   = b.group
+      val pos = g.activePos
+      g.allyAt(pos).filter(_.alive).map(a => (Victim.Ally(a.position): Victim) -> a.position)
+        .orElse(Option.when(!g.heroDown && math.abs(pos - g.heroPos) <= reach)((Victim.Hero: Victim) -> g.heroPos))
+        .orElse(b.allyWithin(pos, reach).map(a => (Victim.Ally(a.position): Victim) -> a.position))
+    }
+
+    /** Волк встаёт напротив цели на месте `at`; занято другим мобом — на
+      * ближайшее к ней свободное место по пути от него. */
+    def leapTo(b: SoloPveBattle, at: Int): SoloPveBattle = {
+      val g    = b.group
+      val from = g.activePos
+      if (at == from) b
+      else {
+        val back = if (at > from) -1 else 1
+        Iterator.iterate(at)(_ + back).takeWhile(_ != from)
+          .find(p => p >= 1 && p <= Formation.MonsterPlaces && !g.hasMonster(p))
+          .fold(b)(p => b.copy(group = g.copy(activePos = p)))
+      }
+    }
+
+    /** Никого в досягаемости прыжка — волк прыгает к ближайшему врагу (герою на
+      * ногах или союзнику) на `LeapReach` мест, без удара. */
+    def leapCloser(b: SoloPveBattle): SoloPveBattle = {
+      val g     = b.group
+      val from  = g.activePos
+      val goals = (if (g.heroDown) Nil else List(g.heroPos)) ++ g.allies.filter(_.alive).map(_.position)
+      goals.sortBy(p => (math.abs(p - from), p)).headOption.fold(b) { goal =>
+        @annotation.tailrec
+        def walk(at: Int, left: Int): Int =
+          if (left <= 0 || at == goal) at
+          else b.copy(group = g.copy(activePos = at)).stepToward(at, goal) match {
+            case None       => at
+            case Some(step) => walk(step, left - 1)
+          }
+        b.copy(group = g.copy(activePos = walk(from, wolf.LeapReach)))
+      }
+    }
+
+    /** Строка прыжка: по кому пришёлся и сколько, и что уклонение выросло. */
+    def leapLine(prey: Victim, b: SoloPveBattle, damage: Long): String = {
+      val dodge = List("pct" -> wolf.LeapDodgePct.toString, "turns" -> wolf.LeapDodgeTurns.toString)
+      prey match {
+        case Victim.Ally(pos) =>
+          content.format("battle.wolf.leapAlly",
+            (("name" -> b.group.allyAt(pos).fold("")(_.name)) :: ("damage" -> damage.toString) :: dodge): _*)
+        case Victim.Hero =>
+          content.format("battle.wolf.leap", (("damage" -> damage.toString) :: dodge): _*)
+      }
+    }
 
     battle.bossTurn match {
       // 1) Яростная пасть: половина атаки, кровь при уроне по HP.
       case 0 =>
         val cost = wolf.FangsCostPerLvl * lvl
         if (energy < cost) ZIO.succeed((next, hero, ""))
-        else bite(spend(cost, next), (atk * wolf.FangsDamageFactor).toLong.max(1L), wolf.FangsBleedPct, "battle.wolf.fangs")
+        else bite(spend(cost, next), victim, (atk * wolf.FangsDamageFactor).toLong.max(1L), wolf.FangsBleedPct,
+               d => content.format("battle.wolf.fangs", "damage" -> d.toString))
 
       // 2) Яростные когти: то же, но слабее.
       case 1 =>
         val cost = wolf.ClawsCostPerLvl * lvl
         if (energy < cost) ZIO.succeed((next, hero, ""))
-        else bite(spend(cost, next), (atk * wolf.ClawsDamageFactor).toLong.max(1L), wolf.ClawsBleedPct, "battle.wolf.claws")
+        else bite(spend(cost, next), victim, (atk * wolf.ClawsDamageFactor).toLong.max(1L), wolf.ClawsBleedPct,
+               d => content.format("battle.wolf.claws", "damage" -> d.toString))
 
-      // 3) Животный инстинкт: атака и уклонение выше на 4 хода.
+      // 3) Резкий прыжок: к цели не дальше трёх мест — встать напротив неё и
+      //    укусить на четверть атаки; никого так близко нет — прыжок на три
+      //    места к ближайшему врагу, без удара. После прыжка уклонение волка
+      //    выше на 4 раунда. Пригвождённый не прыгает: кусает с места того, кого
+      //    достаёт обычным ударом, а не достаёт никого — шаг пропадает.
       case 2 =>
-        val cost = wolf.InstinctCostPerLvl * lvl
+        val cost   = wolf.LeapCostPerLvl * lvl
+        val pinned = battle.effects.monsterRooted
         if (energy < cost) ZIO.succeed((next, hero, ""))
-        else ZIO.succeed((
-          spend(cost, next).copy(effects = next.effects.copy(mobInstinctTurns = wolf.InstinctTurns)),
-          hero,
-          content.text("battle.wolf.instinct")))
+        else {
+          val dodgy = spend(cost, next).copy(effects = next.effects.copy(mobInstinctTurns = wolf.LeapDodgeTurns))
+          leapTarget(battle, if (pinned) GroupState.Reach else wolf.LeapReach) match {
+            case Some((prey, at)) =>
+              val landed = if (pinned) dodgy else leapTo(dodgy, at)
+              bite(landed, prey, (atk * wolf.LeapDamageFactor).toLong.max(1L), 0, d => leapLine(prey, landed, d))
+            case None if pinned => ZIO.succeed((next, hero, ""))
+            case None =>
+              ZIO.succeed((leapCloser(dodgy), hero, content.format("battle.wolf.leapCloser",
+                "pct" -> wolf.LeapDodgePct.toString, "turns" -> wolf.LeapDodgeTurns.toString)))
+          }
+        }
 
       // 4) Пропуск хода.
       case 3 => ZIO.succeed((next, hero, ""))
@@ -2268,7 +2336,7 @@ case class BattleState(
       case _ =>
         val missing = victimMissingHp(victim, hero, battle, nowMs)
         val raw     = missing * wolf.JawsMissingHpPct / 100L + (atk * wolf.JawsDamageFactor).toLong
-        bite(next, raw.max(1L), 0, "battle.wolf.jaws")
+        bite(next, victim, raw.max(1L), 0, d => content.format("battle.wolf.jaws", "damage" -> d.toString))
     }
   }
 
@@ -5689,18 +5757,27 @@ case class BattleState(
             val inFormation = t1.boss.exists(_.fightsInGroup)
             // Бьёт он того же, кого бил с руки: союзника, а нет его — героя.
             val prey = facing.fold[Victim](Victim.Hero)(a => Victim.Ally(a.position))
-            if (!holdsOwn && (reachesHero || inFormation || facing.isDefined))
+            // Прыжок волка — шаг, который он делает и не доставая никого с места:
+            // цель он ищет сам, дальше обычного удара, а нет её — прыгает ближе.
+            val leaps = t1.boss.exists(_.leapTurn.contains(t1.bossTurn))
+            if (!holdsOwn && (reachesHero || inFormation || facing.isDefined || leaps))
               (if (t1.boss.isDefined) bossTurnCast(h1, t1, nowMs, prey) else mobSkillCast(h1, t1, nowMs, prey)).map {
                 case (t2, h2, line) => (h2, t2, battle, if (line.isEmpty) Vector.empty else Vector(line))
               }
             else selfAid(h1, t1, nowMs).map { case (t2, line) => (h1, t2, battle, if (line.isEmpty) Vector.empty else Vector(line)) }
         }
       (h2raw, t2cast, b2, log2raw) = casted
-      // Союзника добило умение — уходит тем же путём, что и от удара.
-      (t2, goneLine) = sweepFallenAlly(t2cast, facing)
+      // Союзника добило умение — уходит тем же путём, что и от удара. Бьёт оно
+      // не всегда того, кто стоит напротив: прыжок волка цель ищет сам, —
+      // поэтому смотрим всех, кто стоял на ногах до умения.
+      (t2, goneLines) = t1.group.allies.filter(_.alive).foldLeft((t2cast, Vector.empty[String])) {
+        case ((b, lines), a) =>
+          val (swept, line) = sweepFallenAlly(b, Some(a))
+          (swept, lines ++ line.toVector)
+      }
       castSideTrauma <- hitTrauma(h1, h2raw, nowMs)
       (h2, castSideLine) = castSideTrauma
-      log2 = log2raw ++ goneLine.toVector ++ castSideLine.toVector
+      log2 = log2raw ++ goneLines ++ castSideLine.toVector
       // 3) конец хода этого моба: энергия и тик ран
       regen      = mobEnergyGain(h2, t2)
       withEnergy = t2.copy(monsterCurrentEnergy = (t2.monsterCurrentEnergy + regen).min(t2.monsterStats.energy))
@@ -6771,10 +6848,10 @@ case class BattleState(
   // отвечает лишь за процентное снижение урона (см. monsterDefenceCut), иначе
   // одна цифра работала бы дважды — и в уклонении, и в защите.
   private def mobDodgeChance(heroAccuracy: Long, battle: SoloPveBattle): Double = {
-    // Тот же прок Воздуха добавляет мобу и уклонения; инстинкт волка — свои 5%.
+    // Тот же прок Воздуха добавляет мобу и уклонения; резкий прыжок волка — свои 5%.
     val airPct      = if (battle.effects.mobAirBoostTurns > 0) Element.Air.ProcBonusPct else 0L
-    val instinctPct = if (battle.effects.mobInstinct) MiniBoss.WhiteWolf.InstinctBoostPct else 0L
-    val evasion     = battle.monsterStats.evasion * (100L + airPct + instinctPct) / 100L
+    val leapPct     = if (battle.effects.mobLeapDodge) MiniBoss.WhiteWolf.LeapDodgePct else 0L
+    val evasion     = battle.monsterStats.evasion * (100L + airPct + leapPct) / 100L
     // На арене соперник мог перекатиться или выпить зелье уворота: его бафы
     // уклонения ложатся поверх, под тот же потолок, что и у героя.
     val dodge       = (BattleState.dodgeChance(0L, evasion, 0L, heroAccuracy) + battle.foeDodgeBonus).min(95.0)

@@ -205,8 +205,9 @@ case class BattleEffects(
   // Кровотечение НА ГЕРОЕ — его оставляют пасть и когти Белого волка. Как и на
   // мобе: не затухает, стакается, снимается любым лечением.
   heroBleed:            Option[Bleed]              = None,
-  // Сколько ходов волк ещё «подстроился под добычу»: атака и уклонение выше
-  // (см. MiniBoss.WhiteWolf.InstinctBoostPct).
+  // Сколько раундов ещё держится уклонение Белого волка после «Резкого прыжка»
+  // (см. MiniBoss.WhiteWolf.LeapDodgePct). Имя поля — от прежнего «Животного
+  // инстинкта»: оно лежит в сохранённых боях, а декодер у эффектов выведенный.
   mobInstinctTurns:     Int                        = 0,
   // Вампирская фляга: сколько ударов по HP ещё лечат героя (FlaskRates.VampiricPct).
   heroVampiricHits:     Int                        = 0,
@@ -320,8 +321,8 @@ case class BattleEffects(
   /** Ослаблен ли урон моба горением. */
   def monsterWeakened: Boolean = monsterWeakenedTurns > 0
 
-  /** Подстроился ли волк под добычу (атака и уклонение выше). */
-  def mobInstinct: Boolean = mobInstinctTurns > 0
+  /** Держится ли уклонение волка после «Резкого прыжка». */
+  def mobLeapDodge: Boolean = mobInstinctTurns > 0
 
   /** Смазано ли оружие героя ядом / кровью. */
   def heroPoisonCoat: Boolean = heroPoisonCoatTurns > 0

@@ -106,6 +106,11 @@ sealed abstract class MiniBoss(
   /** Его обычная атака, дошедшая до HP, травит героя. */
   def poisonsOnHit: Boolean = false
 
+  /** Шаг круга (счёт с нуля), который он делает, даже не доставая с места
+    * никого: прыжок Белого волка — к цели или хотя бы ближе к ней. На прочих
+    * шагах без цели в досягаемости ход его круга не идёт. None — такого шага нет. */
+  def leapTurn: Option[Int] = None
+
   /** Имя в бою и в логе: «Огненный Элементаль», «Гнилой Джо». Редкость в него не
    *  входит — минибосс не «легендарный моб», он именной. */
   def monsterName: String
@@ -427,10 +432,18 @@ object MiniBoss extends Enum[MiniBoss] {
     val ClawsBleedPct: Int        = 2
     val ClawsCostPerLvl: Long     = 7L
 
-    /** Животный инстинкт: +5% к атаке и уклонению на 4 раунда. */
-    val InstinctBoostPct: Long   = 5L
-    val InstinctTurns: Int       = 4
-    val InstinctCostPerLvl: Long = 7L
+    /** Резкий прыжок, третий шаг круга: волк прыгает к цели не дальше
+      * `LeapReach` мест — встаёт напротив неё и бьёт на долю атаки. Цель — как
+      * у обычного удара: союзник напротив, нет его — герой, нет и его —
+      * ближайший союзник. Никого так близко нет — прыгает на столько же мест к
+      * ближайшему врагу, без удара. После прыжка его уклонение выше на
+      * `LeapDodgePct`% на `LeapDodgeTurns` раунда. */
+    val LeapTurn: Int            = 2
+    val LeapDamageFactor: Double = 0.25
+    val LeapReach: Int           = 3
+    val LeapDodgePct: Long       = 5L
+    val LeapDodgeTurns: Int      = 4
+    val LeapCostPerLvl: Long     = 7L
 
     /** Смыкание пасти: четверть недостающего герою HP плюс доля атаки. Бесплатно. */
     val JawsMissingHpPct: Long    = 25L
@@ -467,8 +480,11 @@ object MiniBoss extends Enum[MiniBoss] {
     /** Шерсть горит, как и всё живое. */
     def immuneToBurn: Boolean = false
 
-    /** Пасть, когти, инстинкт, пропуск и смыкание пасти. */
+    /** Пасть, когти, резкий прыжок, пропуск и смыкание пасти. */
     def abilities: Int = 5
+
+    /** Прыгает он и тогда, когда с места никого не достаёт: чтобы подойти. */
+    override def leapTurn: Option[Int] = Some(LeapTurn)
 
     def plainDamageTakenMult: Double = 1.0
 

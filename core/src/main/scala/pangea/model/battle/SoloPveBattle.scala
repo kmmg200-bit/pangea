@@ -907,7 +907,7 @@ case class SoloPveBattle(
       heroStunnedTurns     = (effects.heroStunnedTurns - 1).max(0),
       heroGroundedTurns    = (effects.heroGroundedTurns - 1).max(0),
       monsterWeakenedTurns = (effects.monsterWeakenedTurns - 1).max(0),
-      // Инстинкт волка живёт своими четырьмя ходами.
+      // Уклонение волка после прыжка живёт своими четырьмя ходами.
       mobInstinctTurns     = (effects.mobInstinctTurns - 1).max(0),
       // Смазка на оружии героя и дым сходят за свои раунды.
       heroPoisonCoatTurns  = (effects.heroPoisonCoatTurns - 1).max(0),
