@@ -8,8 +8,12 @@ import zio.{Task, ZLayer}
 
 /** Очередь входящих событий ВК (`vk_inbox`) и место Long Poll (`vk_longpoll`).
   * Callback и Long Poll кладут события ([[accept]]), боты их разбирают
-  * ([[claim]] → [[done]] / [[bumpAttempts]] / [[failed]]). */
+  * ([[claim]] → [[done]] / [[bumpAttempts]] / [[failed]]). Сама очередь —
+  * место Long Poll основного сообщества; у гильдейского своё ([[guildsCursor]]). */
 trait VkInboxDao extends LongPollCursor {
+
+  /** Место Long Poll гильдейского сообщества — своя строка рядом с основным. */
+  def guildsCursor: LongPollCursor
 
   /** Положить событие в очередь. false — такое уже лежит: пришло другим путём
     * или ВК повторил Callback. */

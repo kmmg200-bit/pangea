@@ -7,6 +7,7 @@ import pangea.service.activity.GroupEvent
 import pangea.service.admin.{AdminConfig, AdminPanel}
 import pangea.service.chat.ChatCommand
 import pangea.service.inbox.InboxHandler
+import pangea.service.sender.vk.config.VkConfig
 import pangea.service.state.{StateHandler, UserAction}
 import server.model.VkEvent
 import zio.{Task, ZIO, ZLayer}
@@ -15,16 +16,23 @@ import zio.{Task, ZIO, ZLayer}
   * команда из общей беседы, событие группы — билет за активность. Принимает
   * события [[ServerLive]] (Callback и Long Poll), а сюда они приходят уже без
   * повторов и для каждого игрока по порядку (см. InboxWorker). */
-final class VkInboxHandler(stateHandler: StateHandler, adminConfig: AdminConfig) extends InboxHandler {
+final class VkInboxHandler(stateHandler: StateHandler, adminConfig: AdminConfig, vk: VkConfig) extends InboxHandler {
 
-  override def handle(event: InboxEvent): Task[Unit] = event.kind match {
-    case InboxKind.Message =>
-      message(event).flatMap(msg =>
-        stateHandler.makeActionVK(VkId(msg.peerId.toString), msg.id, UserAction(msg.text, msg.payload)))
-    // Беседа — не игрок: её peer_id за героя принимать нельзя, оттуда мы
-    // слушаем только команды вроде «Передать».
-    case InboxKind.Chat  => message(event).flatMap(chat)
-    case InboxKind.Group => ZIO.foreachDiscard(GroupEvent.parse(event.event))(stateHandler.groupEvent)
+  // Событие гильдейского сообщества лежит завёрнутым (см. InboxEvent.wrapGuilds).
+  override def handle(event: InboxEvent): Task[Unit] = {
+    val (community, raw) = InboxEvent.unwrap(event.event)
+    (event.kind, community) match {
+      case (InboxKind.Message, Community.Main) =>
+        message(raw).flatMap(msg =>
+          stateHandler.makeActionVK(VkId(msg.peerId.toString), msg.id, UserAction(msg.text, msg.payload)))
+      // Гильдейское сообщество — только для бесед: в личку — одна строка, где играть.
+      case (InboxKind.Message, Community.Guilds) =>
+        message(raw).flatMap(msg => ZIO.when(msg.peerId > 0L)(stateHandler.pointToGame(msg.peerId)).unit)
+      // Беседа — не игрок: её peer_id за героя принимать нельзя, оттуда мы
+      // слушаем только команды вроде «Передать».
+      case (InboxKind.Chat, _)  => message(raw).flatMap(chat(_, community))
+      case (InboxKind.Group, _) => ZIO.foreachDiscard(GroupEvent.parse(event.event))(stateHandler.groupEvent)
+    }
   }
 
   // Пароль админ-панели приходит обычным сообщением: в базе (и в бэкапах) от
@@ -32,19 +40,22 @@ final class VkInboxHandler(stateHandler: StateHandler, adminConfig: AdminConfig)
   override def redact(event: Json): Json =
     InboxEvent.mapText(event)(AdminPanel.maskSecrets(_, adminConfig.password))
 
-  private def message(event: InboxEvent): Task[VkEvent.Message] =
-    ZIO.fromEither(event.event.as[VkEvent]).map(_.`object`.message)
+  private def message(event: Json): Task[VkEvent.Message] =
+    ZIO.fromEither(event.as[VkEvent]).map(_.`object`.message)
 
   /** Что умеют беседы — общая и торговая, любая, где есть бот: «Передать» в
     * ответ (или пересылкой) на сообщение того, кому передают, команды о себе —
     * «Мой профиль» и «Моё снаряжение», ответ на которые уходит в ту же беседу, —
     * «Туториал»: ссылка на статью о том, как всё устроено в игре, — и «Дать»:
     * «Админ 1» выдаёт достижение тому, на чьё сообщение ответил. Всё прочее
-    * там нас не касается. */
-  private def chat(msg: VkEvent.Message): Task[Unit] = {
-    val where = msg.chat(Community.Main)
-    val key   = msg.chatEventKey(Community.Main)
+    * там нас не касается. Основное сообщество слушает только общую и торговую
+    * беседы, гильдейское — любую (см. VkConfig.listens); ответ — туда же и от
+    * имени того же сообщества. */
+  private def chat(msg: VkEvent.Message, community: Community): Task[Unit] = {
+    val where = msg.chat(community)
+    val key   = msg.chatEventKey(community)
     msg.fromId.filter(_ > 0L) match {
+      case _ if !vk.listens(community, msg.peerId) => ZIO.unit
       case None => ZIO.unit
       case Some(from) if ChatCommand.tutorialCommand(msg.text) =>
         stateHandler.tutorialToChat(VkId(from.toString), key, where)
@@ -70,6 +81,6 @@ final class VkInboxHandler(stateHandler: StateHandler, adminConfig: AdminConfig)
 }
 
 object VkInboxHandler {
-  val live: ZLayer[StateHandler with AdminConfig, Nothing, InboxHandler] =
-    ZLayer.fromFunction(new VkInboxHandler(_, _))
+  val live: ZLayer[StateHandler with AdminConfig with VkConfig, Nothing, InboxHandler] =
+    ZLayer.fromFunction(new VkInboxHandler(_, _, _))
 }

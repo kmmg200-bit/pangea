@@ -158,6 +158,18 @@ object ChatSelfSpec extends ZIOSpecDefault {
       assertTrue(ChatCommand.eventKey(trade, 0L, Some(6L)) == -(2L * ChatCommand.ChatKeySpan + 6L))
     },
 
+    test("личка гильдейского сообщества: одна строка от его имени — играть в основном, со ссылкой") {
+      for {
+        t <- handler(heroWith(None))
+        (state, api, content) = t
+        _    <- state.pointToGame(42L)
+        sent <- api.chatSent
+      } yield assertTrue(
+        sent == List(ChatTarget.Peer(42L, Community.Guilds) -> content.format("chat.guildsDirect", "game" -> Links.Game)),
+        sent.forall(_._2.contains(Links.Game))
+      )
+    },
+
     test("о себе рассказывают откуда угодно, не только из города") {
       // Город кончается за воротами, а беседа — нет: в бою, в лабиринте и на
       // дне канализации «Моё снаряжение» отвечает так же, как на площади.

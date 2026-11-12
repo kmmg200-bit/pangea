@@ -25,24 +25,28 @@ import scala.concurrent.duration.FiniteDuration
   * очередь, и пропущенное за обрыв приходит следом. Место хранится и вне
   * процесса ([[LongPollCursor]]): после перезапуска чтение продолжается с него,
   * и пришедшее за паузу забирается сразу. Двигаемся дальше, только когда
-  * `onUpdates` сохранил пачку: не вышло — та же пачка придёт ещё раз. */
-final class VkLongPoll(client: Client[Task], config: VkConfig, cursor: LongPollCursor, pauses: VkLongPoll.Pauses) {
+  * `onUpdates` сохранил пачку: не вышло — та же пачка придёт ещё раз.
+  *
+  * Слушает одно сообщество — то, чей `token`; `name` — как назвать его в логе.
+  * У гильдейского сообщества свой Long Poll ([[VkLongPoll.Guilds]]). */
+final class VkLongPoll(client: Client[Task], token: String, name: String, cursor: LongPollCursor,
+                       pauses: VkLongPoll.Pauses) {
   import VkLongPoll._
 
   /** Слушать до прерывания. `onUpdates` получает пачку сообщений и сохраняет
     * её — ходов не ждёт: следующий запрос к ВК идёт сразу за ним. */
   def run(onUpdates: List[Json] => Task[Unit]): UIO[Nothing] =
     cursor.load
-      .catchAllCause(cause => ZIO.logWarningCause("Long Poll: не прочитать, где остановились, — начну с текущего", cause).as(None))
+      .catchAllCause(cause => ZIO.logWarningCause(s"$name: не прочитать, где остановились, — начну с текущего", cause).as(None))
       .flatMap(Ref.make(_)).flatMap { lastTs =>
       connect(lastTs).foldCauseZIO(
         cause =>
-          ZIO.logWarning(s"Long Poll: ВК не дал подключиться (${reason(cause)}) — повтор через ${pauses.refused.getSeconds} с") *>
+          ZIO.logWarning(s"$name: ВК не дал подключиться (${reason(cause)}) — повтор через ${pauses.refused.getSeconds} с") *>
             ZIO.sleep(pauses.refused),
         { case (groupId, session) =>
-          ZIO.logInfo("Long Poll: слушаю ВК") *>
+          ZIO.logInfo(s"$name: слушаю ВК") *>
             listen(groupId, session, lastTs, onUpdates).catchAllCause(cause =>
-              ZIO.logWarning(s"Long Poll: связь с ВК прервалась (${reason(cause)}) — переподключаюсь") *>
+              ZIO.logWarning(s"$name: связь с ВК прервалась (${reason(cause)}) — переподключаюсь") *>
                 ZIO.sleep(pauses.dropped))
         }
       ).forever
@@ -70,7 +74,7 @@ final class VkLongPoll(client: Client[Task], config: VkConfig, cursor: LongPollC
       // Часть очереди ВК уже выбросил: читаем с того места, что он назвал.
       // Выпавшее мимо нас не прошло — его принёс Callback.
       case Reply.Missed(ts) =>
-        ZIO.logWarning("Long Poll: ВК потерял часть очереди — читаю дальше") *> remember(session.ts, ts) *>
+        ZIO.logWarning(s"$name: ВК потерял часть очереди — читаю дальше") *> remember(session.ts, ts) *>
           listen(groupId, session.copy(ts = ts), lastTs, onUpdates)
       case Reply.KeyExpired =>
         open(groupId, Some(session.ts)).flatMap(listen(groupId, _, lastTs, onUpdates))
@@ -100,7 +104,7 @@ final class VkLongPoll(client: Client[Task], config: VkConfig, cursor: LongPollC
   /** Метод API ВК от имени сообщества — его ответ (`response`). */
   private def method(name: String, params: (String, String)*): Task[Json] = {
     val uri = (uri"https://api.vk.com/method" / name)
-      .withQueryParams(params.toMap ++ Map("access_token" -> config.token, "v" -> VkApi.Version))
+      .withQueryParams(params.toMap ++ Map("access_token" -> token, "v" -> VkApi.Version))
     client.run(Request[Task](Method.GET, uri)).use(res =>
       res.bodyText.compile.string.flatMap(VkApi.responseOf(res.status, _)))
   }
@@ -124,10 +128,29 @@ object VkLongPoll {
   val live: ZLayer[VkConfig with VkInboxDao, Throwable, VkLongPoll] = ZLayer.scoped(for {
     config <- ZIO.service[VkConfig]
     cursor <- ZIO.service[VkInboxDao]
-    // Тайм-аут запроса — с запасом к ожиданию ВК: иначе пустой ответ через 25
-    // секунд считался бы обрывом.
-    client <- pangea.client.Client.scoped(FiniteDuration(WaitSeconds + 15L, TimeUnit.SECONDS))
-  } yield new VkLongPoll(client, config, cursor, Pauses(dropped = 5.seconds, refused = 1.minute)))
+    client <- scopedClient
+  } yield new VkLongPoll(client, config.token, "Long Poll", cursor, DefaultPauses))
+
+  /** Long Poll гильдейского сообщества: свой токен и своё место в очереди ВК.
+    * Токена нет — нет и его. */
+  final case class Guilds(poll: Option[VkLongPoll])
+
+  val guilds: ZLayer[VkConfig with VkInboxDao, Throwable, Guilds] = ZLayer.scoped(
+    ZIO.serviceWithZIO[VkConfig](_.guilds match {
+      case None => ZIO.succeed(Guilds(None))
+      case Some(token) =>
+        for {
+          inbox  <- ZIO.service[VkInboxDao]
+          client <- scopedClient
+        } yield Guilds(Some(new VkLongPoll(client, token, "Long Poll гильдейского сообщества", inbox.guildsCursor,
+          DefaultPauses)))
+    }))
+
+  // Тайм-аут запроса — с запасом к ожиданию ВК: иначе пустой ответ через 25
+  // секунд считался бы обрывом.
+  private def scopedClient = pangea.client.Client.scoped(FiniteDuration(WaitSeconds + 15L, TimeUnit.SECONDS))
+
+  private val DefaultPauses = Pauses(dropped = 5.seconds, refused = 1.minute)
 
   /** Адрес очереди, ключ к ней и номер, с которого читать. */
   final case class Session(server: Uri, key: String, ts: String)

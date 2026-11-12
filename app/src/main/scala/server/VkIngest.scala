@@ -47,7 +47,7 @@ final class VkIngest(config: ServerConfig, adminConfig: AdminConfig, inbox: VkIn
         // событие и после череды таймаутов притормаживает отправку всем
         // игрокам разом. Не легло (база недоступна) — 500, и ВК повторит
         // событие сам: потерять его нельзя. Ход сыграет бот.
-        _    <- accept(json, VkIngest.Callback)
+        _    <- accept(json, VkIngest.Callback, Community.Main)
         resp <- Ok("ok")
       } yield resp
   }
@@ -56,29 +56,39 @@ final class VkIngest(config: ServerConfig, adminConfig: AdminConfig, inbox: VkIn
     * очередь по одному, в порядке ВК: по нему и пойдут ходы каждого игрока.
     * Не легли — ошибка, и Long Poll запросит ту же пачку ещё раз. */
   def longPoll(updates: List[Json]): Task[Unit] =
-    ZIO.foreachDiscard(updates)(accept(_, VkIngest.LongPoll))
+    ZIO.foreachDiscard(updates)(accept(_, VkIngest.LongPoll, Community.Main))
 
-  /** Событие ВК, пришедшее путём `source`, — в очередь: сообщение игрока или из
-    * беседы, либо событие группы. Одно сообщение приходит двумя путями —
-    * Callback и Long Poll: в очередь ложится пришедшее первым, второе только
-    * отмечается в метриках. */
-  private def accept(json: Json, source: String): Task[Unit] =
+  /** То же для гильдейского сообщества: Long Poll — его единственный путь. */
+  def longPollGuilds(updates: List[Json]): Task[Unit] =
+    ZIO.foreachDiscard(updates)(accept(_, VkIngest.LongPoll, Community.Guilds))
+
+  /** Событие ВК сообщества `community`, пришедшее путём `source`, — в очередь:
+    * сообщение игрока или из беседы, либо событие группы. Одно сообщение
+    * приходит двумя путями — Callback и Long Poll: в очередь ложится пришедшее
+    * первым, второе только отмечается в метриках. Событие гильдейского
+    * сообщества ложится завёрнутым (см. [[InboxEvent.wrapGuilds]]). */
+  private def accept(json: Json, source: String, community: Community): Task[Unit] =
     json.as[VkEvent].toOption match {
       case Some(value) =>
         val msg  = value.`object`.message
         val kind = if (msg.fromChat) InboxKind.Chat else InboxKind.Message
+        val kept = community match {
+          case Community.Main   => json
+          case Community.Guilds => InboxEvent.wrapGuilds(json)
+        }
         // Пароль админ-панели приходит обычным сообщением, а лог отдаётся
         // наружу — в логе от него остаётся только метка.
         val logged = AdminPanel.maskSecrets(msg.text, adminConfig.password)
         for {
           now   <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
-          first <- inbox.accept(InboxEvent.messageKey(Community.Main, msg.peerId, msg.id, msg.conversationMessageId.getOrElse(0L)),
-                                msg.peerId, kind, source, json, msg.date.map(_ * 1000L), now)
+          first <- inbox.accept(InboxEvent.messageKey(community, msg.peerId, msg.id, msg.conversationMessageId.getOrElse(0L)),
+                                msg.peerId, kind, source, kept, msg.date.map(_ * 1000L), now)
           _     <- GameMetrics.vkMessage(kind.entryName, source, first, msg.date)
           _     <- ZIO.when(first)(ZIO.logInfo(
-                     s"peer=${msg.peerId} from=${msg.fromId.getOrElse(0L)} id=${msg.id} cmid=${msg.conversationMessageId.getOrElse(0L)} via=$source text=$logged payload=${msg.payload.getOrElse("")}"))
+                     s"${if (community == Community.Guilds) "guilds " else ""}peer=${msg.peerId} from=${msg.fromId.getOrElse(0L)} id=${msg.id} cmid=${msg.conversationMessageId.getOrElse(0L)} via=$source text=$logged payload=${msg.payload.getOrElse("")}"))
         } yield ()
-      case None => acceptGroup(json, source)
+      case None if community == Community.Main => acceptGroup(json, source)
+      case None                                => ZIO.unit
     }
 
   /** События группы для билетов за активность. Их легко подделать — а за них

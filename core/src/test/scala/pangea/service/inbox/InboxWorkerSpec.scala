@@ -4,6 +4,7 @@ import io.circe.Json
 import pangea.dao.vk.VkInboxDao
 import pangea.model.vk.{InboxEvent, InboxKind}
 import pangea.service.Background
+import pangea.service.sender.vk.LongPollCursor
 import zio.test._
 import zio.{Ref, Task, ZIO, durationInt}
 
@@ -38,6 +39,7 @@ object InboxWorkerSpec extends ZIOSpecDefault {
     def forget(before: Long): Task[Int]         = ZIO.succeed(0)
     def load: Task[Option[String]]              = ZIO.none
     def save(ts: String, now: Long): Task[Unit] = ZIO.unit
+    def guildsCursor: LongPollCursor            = this
   }
 
   /** Ход: событие с текстом «boom» ломается, прочие — проходят; пароль «секрет»

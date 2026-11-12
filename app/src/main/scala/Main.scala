@@ -76,12 +76,13 @@ object Main extends ZIOAppDefault {
   /** Бот (и общий процесс): игра целиком. */
   private type Env =
     SchedulerPoller with Donations with ActivityContest with Transfers with Background with PrometheusPublisher
-      with VkConfig with VkLongPoll with VkInboxDao with InboxWorker with VkIngest with ServerConfig with AdminConfig
-      with MiniApp with Leader
+      with VkConfig with VkLongPoll with VkLongPoll.Guilds with VkInboxDao with InboxWorker with VkIngest
+      with ServerConfig with AdminConfig with MiniApp with Leader
 
   /** Сборщик: только приём событий ВК в очередь — без игры. */
   private type CollectorEnv =
-    VkIngest with VkConfig with VkLongPoll with ServerConfig with Background with PrometheusPublisher
+    VkIngest with VkConfig with VkLongPoll with VkLongPoll.Guilds with ServerConfig with Background
+      with PrometheusPublisher
 
   /** Метрики: реестр ZIO раз в 5 секунд переписывается в текст для Prometheus
     * (его отдаёт MetricsServer); плюс метрики JVM — память, GC, потоки, CPU.
@@ -103,6 +104,7 @@ object Main extends ZIOAppDefault {
       Transactor.live,
       Api.vk,
       VkLongPoll.live,
+      VkLongPoll.guilds,
       VkInboxDao.live,
       VkInboxHandler.live,
       InboxWorker.live,
@@ -172,6 +174,7 @@ object Main extends ZIOAppDefault {
       Transactor.live,
       VkInboxDao.live,
       VkLongPoll.live,
+      VkLongPoll.guilds,
       AdminConfig.live,
       ServerConfig.live,
       VkIngest.live
@@ -215,6 +218,14 @@ object Main extends ZIOAppDefault {
         ZIO.serviceWithZIO[VkLongPoll](longPoll =>
           ZIO.serviceWithZIO[VkIngest](ingest => background.forkUntilShutdown(longPoll.run(ingest.longPoll)))))
     }
+
+  /** Long Poll гильдейского сообщества — его единственный путь: Callback у него
+    * не настроен, поэтому слушаем, как только задан токен, без VK_LONG_POLL. */
+  private def guildsLoop(background: Background) =
+    ZIO.serviceWithZIO[VkLongPoll.Guilds](_.poll match {
+      case None       => ZIO.unit
+      case Some(poll) => ZIO.serviceWithZIO[VkIngest](ingest => background.forkUntilShutdown(poll.run(ingest.longPollGuilds)))
+    })
 
   /** Очередь входящих событий ВК (см. InboxWorker): разбор — до остановки;
     * при остановке новых событий не берём, начатые ходы дожидается фон. */
@@ -268,16 +279,17 @@ object Main extends ZIOAppDefault {
         mailLoop(background) *>
         inboxLoop(background) *>
         inboxCleanupLoop(background) *>
-        ZIO.when(vk)(longPollLoop(background)) *>
+        ZIO.when(vk)(longPollLoop(background) *> guildsLoop(background)) *>
         botRoutes.flatMap(routes =>
           ZIO.serviceWithZIO[VkIngest](ingest => serve(if (vk) ingest.routes <+> routes else routes))))
         .ensuring(background.shutdown)
     }
 
-  /** Сборщик: колбэк ВК и Long Poll — в очередь, больше ничего. */
+  /** Сборщик: колбэк ВК и Long Poll обоих сообществ — в очередь, больше ничего. */
   private val collectorProgram =
     ZIO.serviceWithZIO[Background] { background =>
-      (longPollLoop(background) *> ZIO.serviceWithZIO[VkIngest](ingest => serve(HealthRoutes.routes <+> ingest.routes)))
+      (longPollLoop(background) *> guildsLoop(background) *>
+        ZIO.serviceWithZIO[VkIngest](ingest => serve(HealthRoutes.routes <+> ingest.routes)))
         .ensuring(background.shutdown)
     }
 

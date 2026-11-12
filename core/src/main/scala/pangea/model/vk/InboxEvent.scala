@@ -61,9 +61,32 @@ object InboxEvent {
       case None     => s"e:sha256:${sha256(event.noSpaces)}"
     }
 
-  /** Событие с текстом сообщения, пропущенным через `f`. У событий без
-    * сообщения (события группы) — как было. */
+  /** Поле, в которое завёрнуто событие гильдейского сообщества. */
+  val GuildsField = "guilds"
+
+  /** Событие гильдейского сообщества ложится в очередь завёрнутым:
+    * `{"guilds": событие ВК}`. Номера бесед у сообществ совпадают, и прежняя
+    * версия бота, вернись она откатом, приняла бы такое событие за своё —
+    * ответила бы в общую беседу основного или сыграла ход из лички. Завёрнутое
+    * она не разберёт: событие упадёт в Failed, ничего не сделав. */
+  def wrapGuilds(event: Json): Json = Json.obj(GuildsField -> event)
+
+  /** Чьё событие и само событие ВК — без обёртки. */
+  def unwrap(event: Json): (Community, Json) =
+    event.hcursor.downField(GuildsField).focus match {
+      case Some(inner) => (Community.Guilds, inner)
+      case None        => (Community.Main, event)
+    }
+
+  /** Событие с текстом сообщения, пропущенным через `f`; обёртка остаётся на
+    * месте. У событий без сообщения (события группы) — как было. */
   def mapText(event: Json)(f: String => String): Json =
+    unwrap(event) match {
+      case (Community.Guilds, inner) => wrapGuilds(textMapped(inner)(f))
+      case (Community.Main, plain)   => textMapped(plain)(f)
+    }
+
+  private def textMapped(event: Json)(f: String => String): Json =
     event.hcursor.downField("object").downField("message").downField("text")
       .withFocus(_.mapString(f)).top.getOrElse(event)
 

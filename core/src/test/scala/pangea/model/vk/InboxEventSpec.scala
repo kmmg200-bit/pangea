@@ -38,6 +38,34 @@ object InboxEventSpec extends ZIOSpecDefault {
       )
     },
 
+    test("событие гильдейского сообщества — в обёртке: разворачивается в то же событие, основное — как есть") {
+      val msg     = json("""{"type":"message_new","object":{"message":{"text":"Мой профиль","peer_id":2000000001}},"group_id":7}""")
+      val wrapped = InboxEvent.wrapGuilds(msg)
+      assertTrue(
+        InboxEvent.unwrap(wrapped) == (Community.Guilds -> msg),
+        InboxEvent.unwrap(msg) == (Community.Main -> msg)
+      )
+    },
+
+    test("прежний разбор обёртку не принимает: сообщения в ней сверху не видно") {
+      // Старая версия бота читает object.message с верхнего уровня — у обёртки
+      // его нет, событие ей не разобрать, и в чужую беседу она не ответит.
+      val wrapped = InboxEvent.wrapGuilds(json("""{"type":"message_new","object":{"message":{"text":"Передать","peer_id":2000000001}}}"""))
+      assertTrue(
+        wrapped.hcursor.downField("object").failed,
+        wrapped.hcursor.downField("type").failed
+      )
+    },
+
+    test("маска в обёрнутом событии — внутри обёртки, обёртка на месте") {
+      val wrapped = InboxEvent.wrapGuilds(json("""{"type":"message_new","object":{"message":{"text":"pass","peer_id":7}}}"""))
+      val masked  = InboxEvent.mapText(wrapped)(t => if (t == "pass") "***" else t)
+      assertTrue(
+        InboxEvent.unwrap(masked)._1 == Community.Guilds,
+        InboxEvent.unwrap(masked)._2.hcursor.downField("object").downField("message").get[String]("text") == Right("***")
+      )
+    },
+
     test("маска — только текст сообщения; событие без сообщения — как было") {
       val msg   = json("""{"type":"message_new","object":{"message":{"text":"pass","peer_id":7}}}""")
       val group = json("""{"type":"like_add","object":{"liker_id":1}}""")

@@ -1,5 +1,6 @@
 package pangea.service.sender.vk.config
 
+import pangea.model.vk.Community
 import pureconfig.ConfigSource
 import pureconfig.generic.auto._
 import zio.{ZIO, ZLayer}
@@ -22,6 +23,14 @@ case class VkConfig(token: String, chatPeerId: Option[Long] = None, tradeChatPee
 
   /** Токен гильдейского сообщества; пустая строка из `.env` — то же, что нет. */
   def guilds: Option[String] = guildsToken.map(_.trim).filter(_.nonEmpty)
+
+  /** Слушает ли бот беседу `peerId` сообщества `community`: основное — только
+    * общую и торговую, прочие беседы для него не существуют; гильдейское —
+    * любую, куда его позвали. */
+  def listens(community: Community, peerId: Long): Boolean = community match {
+    case Community.Main   => chatPeerId.contains(peerId) || tradeChatPeerId.contains(peerId)
+    case Community.Guilds => true
+  }
 }
 
 object VkConfig {

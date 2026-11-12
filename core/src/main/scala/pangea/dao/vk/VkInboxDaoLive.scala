@@ -5,6 +5,7 @@ import doobie.postgres.circe.jsonb.implicits._
 import doobie.util.transactor.Transactor
 import io.circe.Json
 import pangea.model.vk.{InboxEvent, InboxKind, InboxStatus}
+import pangea.service.sender.vk.LongPollCursor
 import zio.Task
 import zio.interop.catz._
 
@@ -66,11 +67,27 @@ class VkInboxDaoLive(xa: Transactor[Task]) extends VkInboxDao {
   override def forget(before: Long): Task[Int] =
     sql"delete from vk_inbox where status <> $Pending and done_at < $before".update.run.transact(xa)
 
-  override def load: Task[Option[String]] =
-    sql"select ts from vk_longpoll where id = 1".query[String].option.transact(xa)
+  override def load: Task[Option[String]] = loadAt(VkInboxDaoLive.MainCursor)
 
-  override def save(ts: String, now: Long): Task[Unit] =
-    sql"""insert into vk_longpoll(id, ts, updated_at) values(1, $ts, $now)
+  override def save(ts: String, now: Long): Task[Unit] = saveAt(VkInboxDaoLive.MainCursor, ts, now)
+
+  override val guildsCursor: LongPollCursor = new LongPollCursor {
+    def load: Task[Option[String]]             = loadAt(VkInboxDaoLive.GuildsCursor)
+    def save(ts: String, now: Long): Task[Unit] = saveAt(VkInboxDaoLive.GuildsCursor, ts, now)
+  }
+
+  private def loadAt(id: Int): Task[Option[String]] =
+    sql"select ts from vk_longpoll where id = $id".query[String].option.transact(xa)
+
+  private def saveAt(id: Int, ts: String, now: Long): Task[Unit] =
+    sql"""insert into vk_longpoll(id, ts, updated_at) values($id, $ts, $now)
           on conflict (id) do update set ts = excluded.ts, updated_at = excluded.updated_at"""
       .update.run.transact(xa).unit
+}
+
+object VkInboxDaoLive {
+
+  /** Строки `vk_longpoll`: основное сообщество и гильдейское. */
+  val MainCursor: Int   = 1
+  val GuildsCursor: Int = 2
 }

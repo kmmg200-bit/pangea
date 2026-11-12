@@ -15,6 +15,9 @@ object Links {
   /** Приглашение в торговую беседу: туда аукцион пишет о лотах и передачах. */
   val TradeChat: String = "https://vk.me/join/3KSleJCxaRJ1hEQEZNW452t/S007y2OayuY="
 
+  /** Личные сообщения основного сообщества — там идёт игра. */
+  val Game: String = "https://vk.me/stigmapangeaproject"
+
   /** Страница игрока в ВК — по ней в топе Mini App открывают того, кто в нём стоит. */
   def profile(vkId: String): String = s"https://vk.ru/id$vkId"
 }
