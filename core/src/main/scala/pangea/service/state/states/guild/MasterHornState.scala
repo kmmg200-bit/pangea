@@ -3,7 +3,7 @@ package pangea.service.state.states.guild
 import io.circe.Json
 import io.circe.syntax.EncoderOps
 import pangea.dao.hero.HeroDao
-import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
+import pangea.engine.{Branch, Choice, Renderer, SceneContent, Screen, Target}
 import pangea.model.hero.{Hero, MasterHornBoosts}
 import pangea.model.item.{QuestItemKind, Rarity}
 import pangea.model.quest.{NpcQuest, NpcQuests}
@@ -25,6 +25,9 @@ import zio.{Task, ZIO}
  * confirm-экран с ценой; формула цены — `a(n) = 35·1.2^(n−1) − 30`, округление
  * вверх, где `n` — порядковый номер следующего улучшения этой характеристики
  * для героя (см. `hero.masterHornBoosts`).
+ *
+ * Меню — по три кнопки в ряд: характеристики, за ними задания и наказ;
+ * «Назад» и «В город» — нижним рядом (см. `menuRows`).
  */
 case class MasterHornState(
   heroDao:       HeroDao,
@@ -98,9 +101,9 @@ case class MasterHornState(
           ashes   = Option.when(tokens)(content.choice("HornTokens", "jorgen.horn.label"))
           free    = isFree(quests)
           stats   = front.map(c => statOf(c.id).fold(c)(stat => c.copy(label = priceLabel(c.label, hero, stat, free))))
-          _    <- renderer.show(user, CityExit.on(base.copy(
-                    choices = stats ++ quest.button(quests).toList ++ daily.button(work).toList ++ story.toList ++
-                      face.toList ++ ashes.toList ++ back), content))
+          deeds   = stats ++ quest.button(quests).toList ++ daily.button(work).toList ++ story.toList ++
+                      face.toList ++ ashes.toList
+          _    <- renderer.show(user, CityExit.on(base.copy(choices = menuRows(deeds, back)), content))
         } yield ()
       }
 
@@ -360,6 +363,19 @@ object MasterHornState {
     * названы по характеристикам, поэтому ищем по имени. */
   private def statOf(action: String): Option[Stat] =
     Stat.values.find(stat => s"Improve${stat.entryName}" == action)
+
+  /** Кнопок в ряду меню: по три подпись с ценой ещё читается, а по пять — так
+    * VkRenderer ужимает столбик длиннее десяти рядов — уже нет. */
+  val ButtonsPerRow: Int = 3
+
+  /** Раскладка меню: характеристики, а за ними задания и наказ — по
+    * [[ButtonsPerRow]] в ряд (сейчас их от семи до двенадцати — три-четыре
+    * ряда); «Назад» — нижним рядом, «В город» встанет к нему (CityExit.on). */
+  private[guild] def menuRows(deeds: List[Choice], back: List[Choice]): List[Choice] = {
+    val grid = deeds.zipWithIndex.map { case (c, i) => c.copy(row = Some(i / ButtonsPerRow)) }
+    val last = (deeds.size + ButtonsPerRow - 1) / ButtonsPerRow
+    grid ++ back.map(_.copy(row = Some(last)))
+  }
 
   /** Улучшение даром — пока задание Горна на втором шаге. */
   private def isFree(quests: NpcQuests): Boolean = quests.onStep(NpcQuest.Horn, 2)

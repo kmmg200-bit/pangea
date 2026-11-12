@@ -35,6 +35,10 @@ object MasterHornStateSpec extends ZIOSpecDefault {
   private def label(choices: List[Choice], id: String): Option[String] =
     choices.find(_.id == id).map(_.label)
 
+  /** Ряды клавиатуры сверху вниз — как их сложит VkRenderer: кнопки ряда по порядку. */
+  private def rowsOf(choices: List[Choice]): List[List[String]] =
+    choices.groupBy(_.row).toList.sortBy(_._1).map(_._2.map(_.id))
+
   override def spec = suite("MasterHornState")(
 
     test("хватает и репутации, и серебра → списывает поровну обе валюты, характеристика растёт") {
@@ -140,6 +144,27 @@ object MasterHornStateSpec extends ZIOSpecDefault {
         stats = menu.filter(_.id.startsWith("Improve"))
       } yield assertTrue(stats.size == 7 && stats.forall(c => c.label.endsWith(" — даром") && !c.label.contains("🎖"))) &&
               assertTrue(label(menu, "ImproveAttack").contains("Атака — даром"))
+    },
+
+    test("меню: по три кнопки в ряд — характеристики, за ними задание и наказ; нижним рядом «Назад» и «В город»") {
+      for {
+        t <- makeState(reputation = 100L, silver = 100L)
+        (state, _, renderer) = t
+        _    <- state.enter(testUser, renderer)
+        menu <- lastMenu(renderer)
+        rows  = rowsOf(menu)
+      } yield assertTrue(menu.forall(_.row.isDefined)) &&
+              assertTrue(rows == List(
+                List("ImproveArmor", "ImproveEvasion", "ImproveAttack"),
+                List("ImproveDefence", "ImproveAccuracy", "ImproveEnergy"),
+                List("ImproveInventory", "HornQuest", "HornDaily"),
+                List("LeaveMasterHorn", "GoToCity")))
+    },
+
+    test("раскладка: двенадцать кнопок — четыре ряда по три, «Назад» — пятым") {
+      val deeds = (1 to 12).toList.map(i => Choice(s"Deed$i", s"Кнопка $i"))
+      val rows  = rowsOf(MasterHornState.menuRows(deeds, List(Choice("LeaveMasterHorn", "↩ Назад"))))
+      assertTrue(rows.size == 5 && rows.take(4).forall(_.size == 3) && rows.lastOption.contains(List("LeaveMasterHorn")))
     },
 
     test("LeaveMasterHorn → переход в TrainingHall") {
