@@ -766,13 +766,14 @@ case class HomeState(
     } yield res
 
   /** Книга рецептов — в библиотеке: что получалось в кубе на верстаке, по
-    * страницам, без отваров (см. [[HomeData.recipeBook]]). Без библиотеки
+    * страницам, по алфавиту, без отваров (см. [[HomeData.recipeBook]]). Без библиотеки
     * (домик) — обратно в дом: пишется книга и так. */
   private def recipes(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     loadHome(user).flatMap { home =>
       if (!home.house.exists(_.tier >= House.Townhouse.tier) || home.recipeBook.isEmpty) library(user, renderer)
       else {
-        val (lines, total, cur) = ItemMenu.page(home.recipeBook, payload(ua, "p").flatMap(_.toIntOption).getOrElse(0), RecipesPerPage)
+        val (lines, total, cur) = ItemMenu.page(home.recipeBook.sortBy(_.line)(ItemMenu.Alphabet),
+                                    payload(ua, "p").flatMap(_.toIntOption).getOrElse(0), RecipesPerPage)
         val nav = List(
           Option.when(cur > 0)(Choice("HomeRecipes", content.text("common.prev"), data = Map("p" -> (cur - 1).toString), row = Some(0))),
           Option.when(cur < total - 1)(Choice("HomeRecipes", content.text("common.next"), data = Map("p" -> (cur + 1).toString), row = Some(0)))

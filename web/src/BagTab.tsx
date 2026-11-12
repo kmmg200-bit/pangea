@@ -9,9 +9,16 @@ const sorts = [
   { id: 'lvl', label: 'По уровню' },
 ]
 
+/** Качество камня; у прочих вещей — ноль. */
+const grade = (i: ItemView) => i.grade ?? 0
+
+/** Камни все серые и первого уровня: и по редкости, и по уровню их ставит
+  * качество — безупречные первыми. */
 export function sortItems(items: ItemView[], sort: string): ItemView[] {
-  if (sort === 'rarity') return [...items].sort((a, b) => b.rarityRank - a.rarityRank || b.lvl - a.lvl)
-  if (sort === 'lvl') return [...items].sort((a, b) => b.lvl - a.lvl || b.rarityRank - a.rarityRank)
+  if (sort === 'rarity')
+    return [...items].sort((a, b) => b.rarityRank - a.rarityRank || grade(b) - grade(a) || b.lvl - a.lvl)
+  if (sort === 'lvl')
+    return [...items].sort((a, b) => b.lvl - a.lvl || grade(b) - grade(a) || b.rarityRank - a.rarityRank)
   return items
 }
 

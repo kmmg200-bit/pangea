@@ -25,6 +25,8 @@ export interface ItemView {
   set: string | null
   /** Подвид для значка: `ranged` — лук или арбалет, `herb` — трава, `dust` — пыль. */
   variant: string | null
+  /** Качество камня: 1 — надколотый … 5 — безупречный; у прочих вещей — нет. */
+  grade?: number | null
   /** Сюжетное — предмет или экипировка: голубая рамка вместо цвета редкости. */
   story: boolean
 }

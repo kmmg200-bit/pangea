@@ -106,7 +106,8 @@ case class HerbWorkbenchState(
         Choice("WbKnown", content.text("home.workbench.known"), row = Some(ItemMenu.NavRow + 1)),
         Choice("LeaveWb", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(ItemMenu.NavRow + 1))
       )
-      renderer.show(user, Screen(text, stacks(home.herbs, p, "WbHerb", "WbMenu") ++ tail)).as(StateType.HerbWorkbench)
+      renderer.show(user, Screen(text, stacks(ItemMenu.byName(home.herbs), p, "WbHerb", "WbMenu") ++ tail))
+        .as(StateType.HerbWorkbench)
     }
 
   private def herb(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
@@ -213,7 +214,8 @@ case class HerbWorkbenchState(
 
   private def pot(user: User, renderer: Renderer): Task[StateType] =
     withWorkbench(user) { home =>
-      val lines = ItemStack.grouped(home.cauldron).map { case (it, n) => s"• ${it.name}${ItemStack.countSuffix(n)}" }
+      val lines = ItemStack.grouped(ItemMenu.byName(home.cauldron)).map { case (it, n) =>
+                    s"• ${it.name}${ItemStack.countSuffix(n)}" }
       val text  =
         if (home.cauldron.isEmpty) content.text("home.workbench.potEmpty")
         else content.format("home.workbench.potList", "n" -> home.cauldron.size.toString,
@@ -293,7 +295,8 @@ case class HerbWorkbenchState(
         Choice("WbPutBrews", content.text("home.workbench.putBrews"), color = ChoiceColor.Positive, row = Some(ItemMenu.NavRow + 1)),
         Choice("WbMenu", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(ItemMenu.NavRow + 1))
       )
-      renderer.show(user, Screen(text, stacks(home.brews, p, "WbBrew", "WbBrews") ++ tail)).as(StateType.HerbWorkbench)
+      renderer.show(user, Screen(text, stacks(ItemMenu.byName(home.brews), p, "WbBrew", "WbBrews") ++ tail))
+        .as(StateType.HerbWorkbench)
     }
 
   private def brew(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
@@ -546,7 +549,8 @@ case class HerbWorkbenchState(
     loadHome(user).flatMap(home =>
       if (home.house.exists(_.tier >= House.Townhouse.tier)) f(home) else ZIO.succeed(StateType.Home))
 
-  /** Стопки одинакового по страницам, листание и номер страницы в кнопках. */
+  /** Стопки одинакового по страницам, листание и номер страницы в кнопках.
+    * Полки и котелок показывают по алфавиту ([[ItemMenu.byName]]). */
   private def stacks(items: List[Item], p: Int, pick: String, self: String): List[Choice] = {
     val (pageItems, totalPages, cur) = ItemMenu.page(ItemStack.grouped(items), p)
     val buttons = pageItems.zipWithIndex.map { case ((it, n), i) =>
@@ -654,7 +658,7 @@ object HerbWorkbenchState {
   def learned(lore: LoreData): List[BrewKind] =
     lore.brewed.flatMap(BrewKind.withNameOption).distinct
       .filter(k => k.recipe.nonEmpty && k.recipe.forall(_.isHerb))
-      .sortBy(_.label)
+      .sortBy(_.label)(ItemMenu.Alphabet)
 
   /** Сколько бутылок выходит с одной варки — как в котелке: из простых трав
     * две, с редкой травой одна, перегонка (основа + травы) — тоже одна. */

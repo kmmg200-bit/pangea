@@ -68,6 +68,18 @@ object MiniAppBrewSpec extends ZIOSpecDefault {
 
   override def spec = suite("MiniApp: отвары и пояс")(
     suite("что приходит приложению")(
+      test("полки дома — трав и отваров — и котелок по алфавиту, как у верстака в боте") {
+        val home = HomeData(tier = 2, metJunona = true,
+          brews = List(brew(BrewKind.BoneSetter, 4L), brew(BrewKind.LivingWater, 5L), brew(BrewKind.BoneSetter, 6L)))
+        val v = MiniAppView.inventory(base, Inventory(1L, base.id, 20L, Inventory.Items(Nil)),
+          MiniAppView.Stores(HeroArtifacts.empty(base.id), Barrel.empty(base.id), BankVault.empty(base.id), home),
+          content, _.name, 0L)
+        val shelf = v.storages.find(_.id == "brews").toList.flatMap(_.sections).flatMap(_.items)
+        assertTrue(
+          shelf.map(_.id) == List(5L, 6L),
+          shelf.map(_.count) == List(1, 2)
+        )
+      },
       test("отвар, который пьют сразу, переспрашивает, тратить ли склянку") {
         val only = asks(base, BrewKind.ClearEye)
         assertTrue(

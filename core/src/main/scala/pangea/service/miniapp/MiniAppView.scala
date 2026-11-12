@@ -18,7 +18,7 @@ import pangea.model.top.{TopBoard, TopKind}
 import pangea.service.chat.Links
 import pangea.service.cube.AzatCube
 import pangea.service.equipment.{BeltWork, BrewWork}
-import pangea.service.state.{HerbLore, QuestCard, QuestJournal, QuestsDone}
+import pangea.service.state.{HerbLore, ItemMenu, QuestCard, QuestJournal, QuestsDone}
 import pangea.service.storage.ItemStore.Place
 import pangea.service.state.states.{EquipmentState, InventoryState}
 import pangea.service.state.states.hero.SkillsState
@@ -55,7 +55,10 @@ object MiniAppView {
     variant:    Option[String],
     // Сюжетное — предмет или экипировка (см. Item.isStoryGear): у него голубая
     // рамка вместо цвета редкости, а в названии ★.
-    story:      Boolean
+    story:      Boolean,
+    // Качество камня, 1 — надколотый … 5 — безупречный: камни все серые и
+    // первого уровня, сортировать их по редкости и уровню — по нему.
+    grade:      Option[Int]
   )
 
   /** Прибавка вещи или разница при замене: `key` — `attack`, `defence`,
@@ -716,12 +719,13 @@ object MiniAppView {
       if (!st.vault.open) closed("vault", "city", t("vault", "locked"))
       else open("vault", "city", Some(st.vault.occupied), Some(st.vault.maxItems),
         silver = Some(PoolView(st.vault.silver, st.vault.maxSilver)), sections = items(st.vault.items.data)),
+      // Полки верстака и котелок — по алфавиту, как у верстака в боте.
       atHome("herbs", bench)(open("herbs", "home", Some(home.herbs.size.toLong), Some(home.herbShelves.toLong),
-        sections = items(home.herbs))),
+        sections = items(ItemMenu.byName(home.herbs)))),
       atHome("brews", bench)(open("brews", "home", Some(home.brews.size.toLong), Some(home.brewShelves.toLong),
-        sections = items(home.brews))),
+        sections = items(ItemMenu.byName(home.brews)))),
       atHome("cauldron", bench)(open("cauldron", "home", Some(home.cauldron.size.toLong),
-        Some(HomeRates.CauldronSlots.toLong), sections = items(home.cauldron))),
+        Some(HomeRates.CauldronSlots.toLong), sections = items(ItemMenu.byName(home.cauldron)))),
       atHome("gems", isle)(open("gems", "home", Some(home.gems.size.toLong), Some(home.gemShelves.toLong),
         sections = items(home.gems))),
       atHome("runes", available = true)(open("runes", "home", None, None,
@@ -920,7 +924,8 @@ object MiniAppView {
       gems       = item.sockets.count(_.isDefined),
       set        = item.set.map(_.label),
       variant    = variant(shape),
-      story      = item.isStoryGear || item.isQuestItem
+      story      = item.isStoryGear || item.isQuestItem,
+      grade      = shape.gem.map(_.grade)
     )
   }
 

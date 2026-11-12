@@ -4,6 +4,9 @@ import pangea.engine.Choice
 import pangea.model.hero.Hero
 import pangea.model.item.{Item, ItemType}
 
+import java.text.Collator
+import java.util.Locale
+
 /**
  * Утилиты для экранов «список предметов кнопками» (бочка, инвентарь, снаряжение,
  * продажа у Ришелье). Один предмет = одна кнопка, по одной на ряд. Лейблы
@@ -23,6 +26,15 @@ object ItemMenu {
 
   /** Индекс ряда с навигационными кнопками: сразу после последнего предмета. */
   val NavRow: Int = DefaultPageSize
+
+  /** Русский алфавит для списков по имени: «ё» — рядом с «е», как в словаре. */
+  val Alphabet: Ordering[String] = {
+    val ru = Collator.getInstance(Locale.forLanguageTag("ru"))
+    Ordering.fromLessThan[String]((a, b) => ru.compare(a, b) < 0)
+  }
+
+  /** Вещи по имени, по алфавиту; одноимённые — как лежали. */
+  def byName(items: List[Item]): List[Item] = items.sortBy(_.name)(Alphabet)
 
   def truncate(s: String): String =
     if (s.length <= MaxButtonLen) s else s.take(MaxButtonLen - 1) + "…"

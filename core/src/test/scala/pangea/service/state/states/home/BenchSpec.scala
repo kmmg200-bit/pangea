@@ -163,6 +163,19 @@ object BenchSpec extends ZIOSpecDefault {
               assertTrue(book.text.contains("• " + rubyNote.line) && !book.text.contains("Костоправный"))
     },
 
+    test("книга рецептов в библиотеке — по алфавиту, в каком бы порядке ни записалась") {
+      val townhouse = HomeData(tier = 2, metJunona = true, charges = 100, furniture = List("artisan"))
+      val sapphire  = RecipeNote(List.fill(3)(GemGenerator.item(GemKind.Sapphire, 1).name),
+                        GemGenerator.item(GemKind.Sapphire, 2).name, 1)
+      for {
+        t <- make(townhouse.copy(recipes = List(sapphire, rubyNote)), active)
+        (home, _, _, _, r) = t
+        _    <- home.action(testUser, tap("HomeRecipes", "p" -> "0"), r)
+        book <- r.sentScreens.map(_.last)
+      } yield assertTrue(book.text.indexOf(rubyNote.line) >= 0 && book.text.indexOf(sapphire.line) >= 0) &&
+              assertTrue(book.text.indexOf(rubyNote.line) < book.text.indexOf(sapphire.line))
+    },
+
     test("старые записи об отварах в библиотеке не видны и не считаются; осталась одна такая — книги нет") {
       val townhouse = HomeData(tier = 2, metJunona = true, charges = 100, furniture = List("artisan"))
       for {

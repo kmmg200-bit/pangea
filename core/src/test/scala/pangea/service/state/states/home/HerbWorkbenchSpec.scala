@@ -76,6 +76,29 @@ object HerbWorkbenchSpec extends ZIOSpecDefault {
                 List(BrewKind.LivingWater.label, BrewKind.BoneSetter.label))
     },
 
+    test("полки трав и отваров и котелок — по алфавиту, как бы ни лежали") {
+      val home = townhouse.copy(
+        herbs    = List(herb(1L, MaterialKind.Sage), herb(2L, MaterialKind.Chamomile), herb(3L, MaterialKind.Calendula)),
+        brews    = List(bottle(4L, BrewKind.BoneSetter), bottle(5L, BrewKind.LivingWater), bottle(6L, BrewKind.BoneSetter)),
+        cauldron = List(herb(7L, MaterialKind.Chamomile), herb(8L, MaterialKind.Nettle)))
+      def names(items: List[Item]) = items.map(_.name).distinct.sorted(pangea.service.state.ItemMenu.Alphabet)
+      for {
+        t <- make(home)
+        (state, _, _, _, r) = t
+        _      <- state.action(testUser, tap("WbMenu"), r)
+        herbs  <- last(r)
+        _      <- state.action(testUser, tap("WbBrews"), r)
+        brews  <- last(r)
+        _      <- state.action(testUser, tap("WbPot"), r)
+        pot    <- last(r)
+      } yield assertTrue(herbs.choices.filter(_.id == "WbHerb").map(_.label) == names(home.herbs)) &&
+              assertTrue(names(home.herbs) == List("Календула", "Ромашка", "Шалфей")) &&
+              assertTrue(brews.choices.filter(_.id == "WbBrew").map(_.label) ==
+                List(BrewKind.LivingWater.label, BrewKind.BoneSetter.label + " (2 шт)")) &&
+              assertTrue(pot.text.indexOf("• " + MaterialGenerator.item(MaterialKind.Nettle).name) <
+                pot.text.indexOf("• " + MaterialGenerator.item(MaterialKind.Chamomile).name))
+    },
+
     test("выбрал отвар — ждёт числа; число — варит с полок: травы и энергия уходят, отвары встают на полку") {
       val home = townhouse.copy(herbs = boneSet(1L) ++ boneSet(4L) :+ herb(7L, MaterialKind.Sage))
       for {

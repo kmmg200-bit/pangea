@@ -225,6 +225,19 @@ object MiniAppGemsSpec extends ZIOSpecDefault {
       )
     },
 
+    test("у камня приходит его качество — по нему приложение и сортирует камни; у прочих вещей — нет") {
+      val flawless = GemGenerator.item(GemKind.Ruby, Gem.MaxGrade).copy(id = 81L)
+      val chipped  = GemGenerator.item(GemKind.Ruby, Gem.MinGrade).copy(id = 82L)
+      for {
+        c   <- ZIO.attempt(SceneContent.load())
+        hero = TestFixtures.hero(userId)
+        v    = MiniAppView.inventory(hero, Inventory(1L, hero.id, 20L, Items(List(chipped, flawless, helm()))),
+                 MiniAppView.Stores(HeroArtifacts.empty(hero.id), Barrel.empty(hero.id), BankVault.empty(hero.id), HomeData.empty),
+                 c, _.name, 0L)
+        grade = (id: Long) => v.items.find(_.id == id).flatMap(_.grade)
+      } yield assertTrue(grade(81L).contains(Gem.MaxGrade), grade(82L).contains(Gem.MinGrade), grade(20L).isEmpty)
+    },
+
     // ── «Применить на оружие» у пыли ────────────────────────────────────────
     test("пыль на оружие: горсть уходит, слой ложится, слова — как в боте") {
       val grit = MaterialGenerator.item(MaterialKind.TopazDust).copy(id = 88L)
