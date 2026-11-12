@@ -13,18 +13,19 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   implicit val encoder: Encoder[StateType] = (s: StateType) => s.entryName.asJson
   implicit val decoder: Decoder[StateType] = (c: HCursor) => c.as[String].map(StateType.withName)
 
-  // Battle 37% · MonsterCave 1% · FlowerMeadow 2% · FoundItem 19% · Spring 18% · Girl 2% ·
-  // SilverVein 9% · Caravan 1% · TreasureMobs 5% · TreasureDig 5% · ElementalLair 1%
+  // Battle 36% · Village 1% · MonsterCave 1% · FlowerMeadow 2% · FoundItem 19% · Spring 18% ·
+  // Girl 2% · SilverVein 9% · Caravan 1% · TreasureMobs 5% · TreasureDig 5% · ElementalLair 1%
   // (вес = число повторов в пуле, сумма = 100). Процент под логово элементаля забран у
   // боя, под девушку — у ручья, под поляну цветов — по одному у боя и у находки, под
-  // пещеру с монстрами — снова у боя, под караван — у серебряной жилы. Пещера и поляна
-  // стоят сразу за боем, караван — сразу за жилой, чтобы билеты событий дальше по
-  // списку не сдвигались. Проценты — для полного пула: часть событий открывается
-  // только в глубине (см. EventMinLevel), и выше пул меньше ста билетов.
-  val BattleTickets: Int = 37
+  // пещеру с монстрами — снова у боя, под караван — у серебряной жилы, под деревню —
+  // опять у боя. Деревня, пещера и поляна стоят сразу за боем, караван — сразу за
+  // жилой, чтобы билеты событий дальше по списку не сдвигались. Проценты — для
+  // полного пула: часть событий открывается только в глубине (см. EventMinLevel), и
+  // выше пул меньше ста билетов.
+  val BattleTickets: Int = 36
 
   val events: List[StateType] =
-    List.fill(BattleTickets)(Battle) ++ List.fill(1)(MonsterCave) ++
+    List.fill(BattleTickets)(Battle) ++ List.fill(1)(Village) ++ List.fill(1)(MonsterCave) ++
       List.fill(2)(FlowerMeadow) ++ List.fill(19)(FoundItem) ++
       List.fill(18)(Spring) ++ List.fill(2)(Girl) ++
       List.fill(9)(SilverVein) ++ List.fill(1)(Caravan) ++
@@ -51,7 +52,8 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
     TreasureMobs  -> 5,
     ElementalLair -> 7,  // минибосс
     MonsterCave   -> 10,
-    Caravan       -> 10
+    Caravan       -> 10,
+    Village       -> 20  // решил пользователь; задания старосты — по своим порогам (VillageQuest.minLevel)
   )
 
   /** Открыто ли событие на этом уровне лабиринта. */
@@ -200,6 +202,11 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   case object BramblHall extends StateType // Зал предков под серебряной жилой: двое каменных стражей, замок на гробницу
   case object PlukhHunt  extends StateType // ловчие Сноходцев на зов перевёрнутой печати: бой за багор Плюха
   case object FaelinRoots extends StateType // старые корни изгороди: вернуть срубленный лук Фаэлина, бой у корней
+
+  // «Деревня» (событие лабиринта): деревня одной из смертных рас — разграбить
+  // или помочь старосте (см. Villages).
+  case object Village        extends StateType // деревня в лабиринте: приход, налёт или староста; плата за сделанное
+  case object VillageBandits extends StateType // логово разбойников у деревни: бой с бандой и её главарём
 
   // Смена расы: купон из лавки Фета — история расы до пробуждения в новом теле.
   case object RaceQuest extends StateType

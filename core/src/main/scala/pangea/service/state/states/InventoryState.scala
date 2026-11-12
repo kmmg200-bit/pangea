@@ -25,7 +25,7 @@ import pangea.service.state.{BarrelThievesQuest, BeltContents, BigDealQuest, Bra
   JorgenQuest,
   FaelinQuest, MarisaQuest, MurlocQuest, NpcQuestLog, PlukhQuest, QuestCard, QuestGoods, SlotChoice, StackMove, State,
   StoryBrandQuest, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest, StrayCasketQuest,
-  UiScene, UserAction}
+  UiScene, UserAction, Villages}
 import zio.{Random, Task, ZIO}
 
 case class InventoryState(
@@ -126,7 +126,7 @@ case class InventoryState(
         StateType.StrayCasket, StateType.BarrelThieves, StateType.StoryCache, StateType.StoryWarehouse,
         StateType.StoryMeeting, StateType.StoryBridge, StateType.StorySojka, StateType.StoryArchive, StateType.StoryBindery,
         StateType.StoryGraveyard, StateType.BartiHouse, StateType.BartiCaravan, StateType.JorgenLair,
-        StateType.PlukhHunt, StateType.FaelinRoots) ++ BackpackOrigins
+        StateType.PlukhHunt, StateType.FaelinRoots, StateType.Village, StateType.VillageBandits) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.
@@ -1436,6 +1436,12 @@ object InventoryState {
         val now = BigDealQuest.cardLine(content, quests)
         s"${item.displayTitle}\n${difficulty(BigDealQuest.Level)}\n\n${QuestItemKind.BartiAddress.description}" +
           (if (now.isEmpty) "" else "\n\n" + now)
+      // Контракт деревни: сложность — по уровню задания; чья деревня, о чём
+      // просили и куда идти — по ходу контракта.
+      case Some(QuestItemKind.VillageContract) =>
+        val now = Villages.cardLine(content, quests)
+        s"${item.displayTitle}" + quests.village.fold("")(c => "\n" + difficulty(c.level.max(1))) +
+          s"\n\n${QuestItemKind.VillageContract.description}" + (if (now.isEmpty) "" else "\n\n" + now)
       case Some(kind @ (QuestItemKind.KelvinMap | QuestItemKind.RaceCoupon | QuestItemKind.NameCoupon)) =>
         s"${item.displayTitle}\n\n${kind.description}"
       case Some(kind) if QuestItemKind.rackOf(kind).isDefined || HerbLore.isTreatise(kind) =>

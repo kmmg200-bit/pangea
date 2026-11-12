@@ -119,15 +119,15 @@ object DungeonStateSpec extends ZIOSpecDefault {
     },
 
     test("каждое событие пула выпадает: по своему билету — своё состояние") {
-      // У голого героя на десятом уровне открыто всё, и пул — ровно
+      // У голого героя на двадцатом уровне открыто всё, и пул — ровно
       // StateType.events, а индекс в нём подаём сами. Берём по первому билету
-      // каждого события: их одиннадцать.
+      // каждого события: их двенадцать.
       val firstIdx = StateType.events.zipWithIndex.groupBy(_._1).map {
         case (event, tickets) => event -> tickets.map(_._2).min
       }
       def outcome(idx: Int, extra: Int*) =
         for {
-          quad <- makeState(dungeonLevel = 10)
+          quad <- makeState(dungeonLevel = 20)
           (state, _, renderer, _) = quad
           _    <- TestRandom.feedInts(idx +: extra: _*)
           res  <- state.action(testUser, tap("FindEvent"), renderer)
@@ -136,26 +136,28 @@ object DungeonStateSpec extends ZIOSpecDefault {
         event == StateType.Battle || event == StateType.Spring
       }
       for {
-        // Девять событий уводят героя прямо в себя.
+        // Десять событий уводят героя прямо в себя.
         plain  <- ZIO.foreach(ordinary) { case (event, i) => outcome(i).map(event -> _) }
         // Бой и ручей разыгрываются на месте: бой заводит сам бой, а ручей
         // лечит и бросает на засаду (99 — засады нет, герой остался в лабиринте).
         battle <- outcome(firstIdx(StateType.Battle))
         spring <- outcome(firstIdx(StateType.Spring), 99)
-      } yield assertTrue(plain.size == 9 && plain.forall { case (event, got) => got == event }) &&
+      } yield assertTrue(plain.size == 10 && plain.forall { case (event, got) => got == event }) &&
               assertTrue(battle == StateType.Battle) &&
               assertTrue(spring == StateType.Dungeon)
     },
 
-    test("в пуле ровно одиннадцать событий на сто билетов — новое молча не добавить") {
+    test("в пуле ровно двенадцать событий на сто билетов — новое молча не добавить") {
       assertTrue(StateType.events.distinct.toSet == Set[StateType](
-        StateType.Battle, StateType.MonsterCave, StateType.FlowerMeadow, StateType.FoundItem,
+        StateType.Battle, StateType.Village, StateType.MonsterCave, StateType.FlowerMeadow, StateType.FoundItem,
         StateType.Spring, StateType.Girl, StateType.SilverVein, StateType.Caravan,
         StateType.TreasureMobs, StateType.TreasureDig, StateType.ElementalLair)) &&
-      assertTrue(StateType.events.size == 100 && StateType.events.distinct.size == 11)
+      assertTrue(StateType.events.size == 100 && StateType.events.distinct.size == 12) &&
+      // под деревню забран билет у боя: деревне один, бою — тридцать шесть
+      assertTrue(StateType.events.count(_ == StateType.Village) == 1 && StateType.events.count(_ == StateType.Battle) == 36)
     },
 
-    test("события открываются по мере спуска: жила и схрон со 2-го, девушка и мобы с сокровищем с 5-го, элементаль с 7-го, пещера и караван с 10-го") {
+    test("события открываются по мере спуска: жила и схрон со 2-го, девушка и мобы с сокровищем с 5-го, элементаль с 7-го, пещера и караван с 10-го, деревня с 20-го") {
       def at(lvl: Int): Set[StateType] = StateType.eventsAt(lvl, 1.0).toSet
       val first = at(1)
       val second = Set[StateType](StateType.SilverVein, StateType.TreasureDig)
@@ -169,8 +171,9 @@ object DungeonStateSpec extends ZIOSpecDefault {
       assertTrue(l4.intersect(group).isEmpty && group.subsetOf(l5)) &&
       assertTrue(!l6.contains(StateType.ElementalLair) && l7.contains(StateType.ElementalLair)) &&
       assertTrue(l9.intersect(deep).isEmpty && deep.subsetOf(l10)) &&
-      // с десятого и до самого низа пул полный
-      assertTrue(StateType.eventsAt(10, 1.0) == StateType.events && StateType.eventsAt(150, 1.0) == StateType.events) &&
+      assertTrue(!at(19).contains(StateType.Village) && at(20).contains(StateType.Village)) &&
+      // с двадцатого и до самого конца пул полный
+      assertTrue(StateType.eventsAt(20, 1.0) == StateType.events && StateType.eventsAt(150, 1.0) == StateType.events) &&
       // «Охотник» множит бой и наверху
       assertTrue(StateType.eventsAt(1, 1.2).count(_ == StateType.Battle) == StateType.eventsWithBattleFactor(1.2).count(_ == StateType.Battle))
     },
@@ -189,7 +192,7 @@ object DungeonStateSpec extends ZIOSpecDefault {
         shallow <- outcome(4)
         deep    <- outcome(10)
       } yield assertTrue(shallow == StateType.TreasureDig) &&
-              assertTrue(deep == StateType.TreasureMobs && deep == StateType.events(idx))
+              assertTrue(deep == StateType.TreasureMobs && deep == StateType.eventsAt(10, 1.0)(idx))
     },
 
     test("приговор: навстречу выходит именное существо названного рода на четверти сил") {

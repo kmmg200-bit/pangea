@@ -18,7 +18,7 @@ import pangea.model.user.User
 import pangea.service.schedule.Scheduler
 import pangea.model.quest.{NpcQuest, NpcQuests}
 import pangea.service.state.{AppButton, CharacterMenu, HotGoodsQuest, InstantRest, KillLogData, MurlocQuest, NpcQuestLog, RareQuests,
-  SquadDuty, State, StoryLine, UserAction}
+  SquadDuty, State, StoryLine, UserAction, Villages}
 import pangea.service.state.states.events.RaceRevengeState.RevengeScene
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
@@ -185,8 +185,10 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
       gang     = killLog.gangDue
       avengers = killLog.owed(KillLogData.RevengeEvery).headOption
       // «Охотник»/«Скрытность» сдвигают долю боевых событий в пуле, а глубина
-      // открывает новые события (StateType.EventMinLevel).
+      // открывает новые события (StateType.EventMinLevel). Взял контракт
+      // деревни — деревни не встречаются, пока он при герое (см. Villages).
       pool    = StateType.eventsAt(hero.dungeonLevel, hero.passives.battleEncounterFactor)
+                  .filterNot(e => e == StateType.Village && Villages.taken(quests))
       idx    <- Random.nextIntBounded(pool.size)
       event   = pool(idx)
       // Первая зацепка основной линии — встреча назначена (см. StoryLine):
@@ -219,6 +221,10 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
                         event match {
                           case StateType.Battle => startBattle(user, hero)
                           case StateType.Spring => healAtSpring(user, hero, now, renderer)
+                          // Деревня — с чистого листа: что бы ни осталось в
+                          // scene_data от прошлой, это не она.
+                          case StateType.Village =>
+                            heroDao.writeSceneData(user.userId, io.circe.Json.Null).as(StateType.Village)
                           case other            => ZIO.succeed(other)
                         }
                     }

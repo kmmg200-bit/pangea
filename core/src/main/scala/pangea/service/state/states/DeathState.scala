@@ -21,7 +21,7 @@ import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.{AzatData, BarrelThievesQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HotGoodsQuest, JorgenQuest, LostSquadQuest, MarisaQuest,
   FaelinQuest, MurlocQuest, PlukhQuest, QuestOutcomeLog, State, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest,
-  StrayCasketQuest, UserAction}
+  StrayCasketQuest, UserAction, Villages}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
 
@@ -81,6 +81,11 @@ case class DeathState(
       // Смерть у старых корней (лук Фаэлина): штрафы обычные, срубленный лук при
       // герое — к корням можно вернуться; проснуться в лабиринте.
       faelinRoots   = battle.exists(_.story.contains(FaelinQuest.RootsStory))
+      // Смерть в налёте на деревню: штрафы обычные, деревни больше нет —
+      // проснуться в лабиринте. Смерть в логове разбойников: контракт при герое,
+      // логово ждёт — тоже в лабиринте.
+      villageRaid   = battle.exists(_.story.contains(Villages.RaidStory))
+      villageLair   = battle.exists(_.story.contains(Villages.BanditsStory))
       // Смерть на складе у причала: штрафы обычные, украденное всё ещё у банды —
       // по следу можно идти снова; проснуться в порту.
       thieves       = battle.exists(_.story.contains(BarrelThievesQuest.FightStory))
@@ -183,6 +188,8 @@ case class DeathState(
                       else if (bramblHall) Json.obj("wakeLines" -> List("bramblLock.hall.death").asJson)
                       else if (plukhHunt) Json.obj("wakeLines" -> List("plukhGaff.hunt.death").asJson)
                       else if (faelinRoots) Json.obj("wakeLines" -> List("faelinBow.roots.death").asJson)
+                      else if (villageRaid) Json.obj("wakeLines" -> List("village.raid.death").asJson)
+                      else if (villageLair) Json.obj("wakeLines" -> List("village.bandits.death").asJson)
                       else if (thieves) Json.obj(
                         "wakeTo"    -> (StateType.HarborQuarter: StateType).asJson,
                         "wakeLines" -> List("barrelThieves.death").asJson)

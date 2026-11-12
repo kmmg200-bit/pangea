@@ -50,6 +50,16 @@ final class QuestCard(heroDao: HeroDao, inventoryRepo: InventoryRepository, item
       else if (!inLabyrinth) refused(key)
       else deep.fold[Go](Go.Enter(scene, QuestCard.NoPrep))(Go.Refused(_, toList = false))
 
+    // Контракт деревни: из лабиринта, не ближе уровня деревень, и сцена — с
+    // чистого листа.
+    def inMazeFresh(onStep: Boolean, target: StateType): Go =
+      inMaze(onStep, "village.card.onlyInLabyrinth", target,
+        Option.unless(Villages.deepEnough(hero.dungeonLevel))(
+          content.format("village.card.tooShallow", "level" -> Villages.MinDungeonLevel.toString))) match {
+        case Go.Enter(to, _) => Go.Enter(to, scene(Json.Null))
+        case other           => other
+      }
+
     def hunt(withMarisa: Boolean): Go =
       Go.Enter(StateType.MarisaHunt, scene(MarisaHuntState.Progress(MarisaHuntState.Step.Road, withMarisa).asJson))
 
@@ -83,6 +93,13 @@ final class QuestCard(heroDao: HeroDao, inventoryRepo: InventoryRepository, item
           Option.unless(JorgenQuest.deepEnough(hero.dungeonLevel))(
             content.format("jorgen.card.tooShallow", "level" -> JorgenQuest.LairDungeonLevel.toString)))
       case "FaelinRootsGo" => inMaze(FaelinQuest.toRoots(quests), "faelinBow.card.onlyInLabyrinth", StateType.FaelinRoots)
+      // Контракт деревни: к беде деревни, потом — назад за платой; всё — из
+      // лабиринта и не ближе уровня, где встречаются деревни. Сцена — с
+      // чистого листа: что осталось в scene_data от прошлой деревни, не её.
+      case "VillageGo" =>
+        inMazeFresh(Villages.toBandits(quests), StateType.VillageBandits)
+      case "VillageReturn" =>
+        inMazeFresh(Villages.toPay(quests), StateType.Village)
       case "PlukhHuntGo"   => inMaze(PlukhQuest.toHunt(quests), "plukhGaff.card.onlyInLabyrinth", StateType.PlukhHunt)
       // Главы сюжета: начинают из города, и глава берётся здесь, если ещё не взята.
       case "StoryPortGo" =>
@@ -156,7 +173,7 @@ object QuestCard {
     "OpenLetter", "UseKelvinMap", "MapWithMarisa", "MapAlone", "UseMurlocMap", "RaceChange", "NameChange",
     "StrayGo", "BarrelTrail", "StoryCacheGo", "JorgenLairGo", "FaelinRootsGo", "PlukhHuntGo",
     "StoryPortGo", "StoryArchiveGo", "StoryGraveyardGo", "StoryBinderyGo", "StoryMeetGo", "StorySojkaGo",
-    "StoryBridgeGo", "BartiHouseGo", "BartiCaravanGo")
+    "StoryBridgeGo", "BartiHouseGo", "BartiCaravanGo", "VillageGo", "VillageReturn")
 
   /** Ответы на вопрос кнопки `id`: карта Кельвина спрашивает, брать ли Марису. */
   def answers(id: String): Set[String] =
@@ -228,6 +245,11 @@ object QuestCard {
       // Караван пришёл: ночью к нему, к Сухому колодцу.
       case Some(QuestItemKind.BartiAddress) if BigDealQuest.toCaravan(quests) =>
         Some(plain("BartiCaravanGo", "barti.card.caravanLabel"))
+      // Контракт деревни: к логову — пока оно стоит; сделано — назад за платой.
+      case Some(QuestItemKind.VillageContract) if Villages.toBandits(quests) =>
+        Some(plain("VillageGo", "village.card.banditsLabel"))
+      case Some(QuestItemKind.VillageContract) if Villages.toPay(quests) =>
+        Some(positive("VillageReturn", "village.card.returnLabel"))
       case _ => None
     }
   }

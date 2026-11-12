@@ -117,7 +117,8 @@ object MonsterCaveSpec extends ZIOSpecDefault {
     test("в пуле событий 1%, забранный у боя; билеты дальше по списку не сдвинулись") {
       val ev = StateType.events
       assertTrue(ev.count(_ == StateType.MonsterCave) == 1) &&
-      assertTrue(ev.count(_ == StateType.Battle) == 37 && ev.size == 100) &&
+      // ещё один билет у боя потом забрала деревня — она стоит сразу за ним
+      assertTrue(ev.count(_ == StateType.Battle) == 36 && ev(36) == StateType.Village && ev.size == 100) &&
       assertTrue(ev(37) == StateType.MonsterCave && ev(38) == StateType.FlowerMeadow) &&
       assertTrue(ev(67) == StateType.Spring && ev(99) == StateType.ElementalLair)
     },

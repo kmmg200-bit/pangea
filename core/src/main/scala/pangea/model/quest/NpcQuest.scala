@@ -4,6 +4,7 @@ import enumeratum._
 import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder, HCursor, Json}
 import pangea.model.item.Gem
+import pangea.model.village.VillageContract
 
 /** Сюжетные задания горожан — по одному на каждого, кто встречает новичка в
   * Кинэте. Каждое учит одной механике и рассказывает свой кусок истории города.
@@ -251,11 +252,14 @@ object NpcQuestProgress {
   * `heroes.npc_quests`. `recipes` — рецепты куба, которые герою уже объяснили
   * (пока только запись; показ в меню куба — следующим шагом). `strayGems` —
   * камни, которые съел бродячий ларец ([[NpcQuest.StrayCasket]]): вид и
-  * качество каждого, по порядку; в конце задания Фет кладёт их в ларец героя. */
+  * качество каждого, по порядку; в конце задания Фет кладёт их в ларец героя.
+  * `village` — контракт деревни из лабиринта, который взял герой (см.
+  * [[VillageContract]]): один за раз, выполнен или брошен — пусто. */
 final case class NpcQuests(
   quests:    Map[String, NpcQuestProgress] = Map.empty,
   recipes:   List[String]                  = Nil,
-  strayGems: List[Gem]                     = Nil
+  strayGems: List[Gem]                     = Nil,
+  village:   Option[VillageContract]       = None
 ) {
   def of(q: NpcQuest): NpcQuestProgress = quests.getOrElse(q.key, NpcQuestProgress.empty)
 
@@ -288,7 +292,8 @@ object NpcQuests {
   implicit val encoder: Encoder[NpcQuests] = (q: NpcQuests) => Json.obj(
     "quests"    -> q.quests.asJson,
     "recipes"   -> q.recipes.asJson,
-    "strayGems" -> q.strayGems.asJson
+    "strayGems" -> q.strayGems.asJson,
+    "village"   -> q.village.asJson
   )
 
   /** Декодер рукописный, с запасными значениями: новое поле не должно ронять
@@ -298,5 +303,9 @@ object NpcQuests {
       quests    <- c.getOrElse[Map[String, NpcQuestProgress]]("quests")(Map.empty)
       recipes   <- c.getOrElse[List[String]]("recipes")(Nil)
       strayGems <- c.getOrElse[List[Gem]]("strayGems")(Nil)
-    } yield NpcQuests(quests, recipes, strayGems)
+      // Контракт деревни разбирается отдельно и не роняет остального: не
+      // разобрался — его нет, а задания горожан целы. Упади здесь весь разбор,
+      // журнал прочитался бы пустым и при следующей записи затёр бы всё.
+      village    = c.downField("village").as[Option[VillageContract]].toOption.flatten
+    } yield NpcQuests(quests, recipes, strayGems, village)
 }

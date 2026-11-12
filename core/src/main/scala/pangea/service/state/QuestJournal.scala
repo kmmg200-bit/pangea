@@ -59,7 +59,9 @@ object QuestJournal {
     val story = Option.when(lore.firstSteps && !lore.firstStepsDone)(
       Story(content.text("firstSteps.title"), FirstStepsQuest.objectives(content, hero, quests, home)))
       .orElse(StoryLine.active(quests).map(q => Story(StoryLine.title(content, q), StoryLine.step(content, q, quests))))
-    val npcs = NpcQuest.values.toList.filter(q => quests.isTaken(q) && !StoryLine.isChapter(q)).map(npc(content, _, quests))
+    // Контракт деревни — после заданий горожан: что делать сейчас, по его ходу.
+    val npcs = NpcQuest.values.toList.filter(q => quests.isTaken(q) && !StoryLine.isChapter(q)).map(npc(content, _, quests)) ++
+      quests.village.map(c => Npc(content.text("journal.village.title"), Villages.journalStep(content, c))).toList
     val today = DailyRates.dayOf(nowMs)
     val dailies = DailyNpc.values.toList.flatMap { npc =>
       daily.today(npc, today).filter(t => t.taken && !t.done).map { t =>
