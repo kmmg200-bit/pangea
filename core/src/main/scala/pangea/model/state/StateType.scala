@@ -207,6 +207,12 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   // Смена имени: купон из лавки Фета — новое имя текстом.
   case object NameChange extends StateType
 
+  /** «Персонаж» и его экраны: открывают их откуда угодно, а откуда — помнит
+    * `return_state` (см. `CharacterMenu`). Пока они открыты, герой на самом
+    * деле там, откуда их открыл. */
+  val characterMenu: Set[StateType] =
+    Set(HeroStats, Backpack, Inventory, Socketing, Equipment, Skills, Knowledge, Squad, FriendCode)
+
   /** Городские сцены — где герой «в городе»: отсюда передают вещи и серебро,
     * сюда выручку аукциона приносят в руки, только отсюда открывают сюжетную
     * карту (её смотрят по `returnState` меню персонажа). Город — любой его

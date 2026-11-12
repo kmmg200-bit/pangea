@@ -46,7 +46,15 @@ class StateHandler(
   activity: Option[ActivityContest] = None,
   referrals: Option[Referrals] = None,
   promo: Option[PromoCodes] = None
-) {
+) extends SceneDoor {
+
+  /** Чат игрока с ботом — для двери из приложения ([[SceneDoor]]). */
+  override val chat: Renderer = VkRenderer(api)
+
+  /** Из приложения — в сцену бота: тот же переход, что после хода в чате
+    * (экран сцены, запись героя, сквозные сцены). Лок держит приложение. */
+  override def enter(user: User, from: StateType, to: StateType): Task[Unit] =
+    transitionTo(user, from, to, chat)
 
   /** Имена игроков в беседе: имя героя, а нет его — из ВК. */
   private val players = VkPlayers(api, heroDao)

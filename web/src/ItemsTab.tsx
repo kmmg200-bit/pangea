@@ -3,7 +3,8 @@ import { api } from './api'
 import { BagTab, matches, sortItems } from './BagTab'
 import { Silver } from './icons'
 import { groupLabels, kindOf, presentGroups, type Group as Kind } from './kinds'
-import type { BrewAskView, InventoryActionView, InventoryView, ItemView, StorageView } from './types'
+import { closeApp } from './platform'
+import type { BrewAskView, InventoryActionView, InventoryView, ItemView, QuestActionView, StorageView } from './types'
 import { BeltSwap, Chips, Empty, ItemRow, ItemText, num, Segment, Sheet, Toolbar, useToast } from './ui'
 
 type Group = StorageView['group']
@@ -160,8 +161,15 @@ function BrewQuestion(props: { ask: BrewAskView; busy: boolean; onUse: (arg: str
   )
 }
 
-/** Что сделать с вещью из сумки — те же кнопки, что на её карточке в боте. */
-function BagActs(props: { data: InventoryView; item: ItemView; acts: Acts; onDone: () => void }) {
+/** Что сделать с вещью из сумки — те же кнопки, что на её карточке в боте.
+  * Кнопка задания уходит в `onQuest`: что вышло, покажет своё окно. */
+function BagActs(props: {
+  data: InventoryView
+  item: ItemView
+  acts: Acts
+  onDone: () => void
+  onQuest: (act: string) => void
+}) {
   const { data, item, acts } = props
   // Открытый вопрос: название действия, `belt` — что снять с полного пояса,
   // `crush` — колоть ли камень.
@@ -174,9 +182,16 @@ function BagActs(props: { data: InventoryView; item: ItemView; acts: Acts; onDon
   }
   const brew = act.brew.find((a) => a.action === ask)
   const belt = data.equipment.find((s) => s.belt)?.belt
+  // Бот старше приложения — поля нет: нет и кнопки.
+  const quest = act.quest ?? null
   return (
     <div className="move">
       <div className="equip-acts">
+        {quest && (
+          <button className="equip-off" disabled={acts.busy} onClick={() => props.onQuest(quest.act)}>
+            {quest.label}
+          </button>
+        )}
         {act.read && (
           <button className="equip-off" disabled={acts.busy} onClick={() => finish(() => api.bagRead(item.id))}>
             Читать
@@ -398,6 +413,8 @@ function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; a
   * которое её возьмёт (из карточки вещи), — в городе; вне города — между тем,
   * что при себе. Комплект со стойки — на героя, отвар, пыль, трактат и пояс —
   * из карточки вещи в сумке, камень в гнездо — из сумки и Ларца, где угодно.
+  * Кнопка задания — с карточки сюжетного предмета, как в боте: само задание
+  * идёт в чате, а здесь сказано, что продолжение там.
   * Выбросить — из карточки вещи, откуда её можно и
   * переложить. В бою — ни то ни другое. Бот проверит это сам, под тем же замком, что и ходы в чате. Что
   * сказал бот — всплывает над нижней панелью. */
@@ -408,6 +425,23 @@ export function ItemsTab(props: { data: InventoryView; onChange: (v: InventoryVi
   const [open, setOpen] = useState<{ item: ItemView; from: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useToast()
+  // Что вышло с кнопкой задания: вопрос бота, его слова, ушло ли задание в чат.
+  const [quest, setQuest] = useState<{ item: ItemView; view: QuestActionView } | null>(null)
+
+  /** Кнопка задания (или ответ на её вопрос): карточка закрывается, что вышло —
+    * своим окном: письмо бывает длинным, а «В чат» — кнопка. */
+  const runQuest = (item: ItemView, act: string) => {
+    setBusy(true)
+    api
+      .bagQuest(item.id, act)
+      .then((r) => {
+        props.onChange(r.inventory)
+        setOpen(null)
+        setQuest(r.ask || r.note ? { item, view: r } : null)
+      })
+      .catch(() => setToast('Ответ не дошёл. Обновите (⟳) и проверьте вещи.'))
+      .finally(() => setBusy(false))
+  }
 
   const acts: Acts = {
     busy,
@@ -458,9 +492,44 @@ export function ItemsTab(props: { data: InventoryView; onChange: (v: InventoryVi
             </p>
           )}
           <GemInsert data={props.data} from={open.from} item={open.item} acts={acts} onDone={() => setOpen(null)} />
-          {open.from === BAG && <BagActs data={props.data} item={open.item} acts={acts} onDone={() => setOpen(null)} />}
+          {open.from === BAG && (
+            <BagActs
+              data={props.data}
+              item={open.item}
+              acts={acts}
+              onDone={() => setOpen(null)}
+              onQuest={(act) => runQuest(open.item, act)}
+            />
+          )}
           <MovePanel data={props.data} from={open.from} item={open.item} acts={acts} onDone={() => setOpen(null)} />
           <DropPanel data={props.data} from={open.from} item={open.item} acts={acts} onDone={() => setOpen(null)} />
+        </Sheet>
+      )}
+      {quest && (
+        <Sheet onClose={() => setQuest(null)}>
+          {quest.view.ask ? (
+            <div className="buy-confirm">
+              <p className="buy-ask">{quest.view.ask.question}</p>
+              <div className="move-list">
+                {quest.view.ask.options.map((o) => (
+                  <button key={o.act} className="move-to" disabled={busy} onClick={() => runQuest(quest.item, o.act)}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <>
+              {quest.view.note && <div className="item-text">{quest.view.note}</div>}
+              {quest.view.chat && (
+                <div className="buy-row">
+                  <button className="buy-yes" onClick={closeApp}>
+                    В чат
+                  </button>
+                </div>
+              )}
+            </>
+          )}
         </Sheet>
       )}
       {toast}

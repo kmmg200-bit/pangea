@@ -12,12 +12,13 @@ import pangea.model.home.{HomeData, HomeRates, House}
 import pangea.model.inventory.Inventory
 import pangea.model.item.{BeltSlot, BrewEffect, Bundling, Chisel, GemBreaking, Item, ItemDetails, ItemStack, ItemType, MaterialKind, Rarity}
 import pangea.model.monster.Race
+import pangea.model.quest.NpcQuests
 import pangea.model.squad.AllyRates
 import pangea.model.top.{TopBoard, TopKind}
 import pangea.service.chat.Links
 import pangea.service.cube.AzatCube
 import pangea.service.equipment.{BeltWork, BrewWork}
-import pangea.service.state.{HerbLore, QuestJournal, QuestsDone}
+import pangea.service.state.{HerbLore, QuestCard, QuestJournal, QuestsDone}
 import pangea.service.storage.ItemStore.Place
 import pangea.service.state.states.{EquipmentState, InventoryState}
 import pangea.service.state.states.hero.SkillsState
@@ -147,9 +148,23 @@ object MiniAppView {
     * поясе нет места, и вот вопрос, что снять, `unpack` — это стопка, её можно
     * распаковать, `crush` — это камень, его можно расколоть, и вот вопрос
     * перед этим (те же слова, что в боте), `dust` — это пыль, ею посыпают
-    * надетое оружие, `read` — это трактат, его можно читать. */
+    * надетое оружие, `read` — это трактат, его можно читать, `quest` — кнопка
+    * задания на карточке сюжетного предмета. */
   final case class BagActView(item: Long, brew: List[BrewAskView], belt: Boolean, beltFull: Option[String],
-                              unpack: Boolean, crush: Option[String], dust: Boolean, read: Boolean)
+                              unpack: Boolean, crush: Option[String], dust: Boolean, read: Boolean,
+                              quest: Option[QuestActView])
+
+  /** Кнопка задания — та же, что в боте: `act` — её имя у бота, `label` —
+    * подпись (без значка, как у прочих кнопок приложения). */
+  final case class QuestActView(act: String, label: String)
+
+  /** Что спросить, прежде чем идти: вопрос и ответы — те же, что в боте. */
+  final case class QuestAskView(question: String, options: List[QuestActView])
+
+  /** Ответ на кнопку задания: вещи после неё, что сказать (`note`), ушло ли
+    * задание дальше в чат с ботом (`chat`), что спросить прежде (`ask`). */
+  final case class QuestActionView(inventory: InventoryView, note: Option[String], chat: Boolean,
+                                   ask: Option[QuestAskView])
 
   /** Вещи героя. `gearLocked` — почему снаряжение и комплект со стойки сейчас
     * не сменить: герой в бою; `storesAway` — почему дотянуться удастся не до
@@ -375,10 +390,13 @@ object MiniAppView {
   implicit val gemStockEncoder:  Encoder[GemStockView]  = deriveEncoder
   implicit val brewOptionEncoder: Encoder[BrewOptionView] = deriveEncoder
   implicit val brewAskEncoder:   Encoder[BrewAskView]   = deriveEncoder
+  implicit val questActEncoder:  Encoder[QuestActView]  = deriveEncoder
+  implicit val questAskEncoder:  Encoder[QuestAskView]  = deriveEncoder
   implicit val bagActEncoder:    Encoder[BagActView]    = deriveEncoder
   implicit val heroEncoder:      Encoder[HeroView]      = deriveEncoder
   implicit val inventoryEncoder: Encoder[InventoryView] = deriveEncoder
   implicit val inventoryActionEncoder: Encoder[InventoryActionView] = deriveEncoder
+  implicit val questActionEncoder: Encoder[QuestActionView] = deriveEncoder
   implicit val lotEncoder:       Encoder[LotView]       = deriveEncoder
   implicit val auctionEncoder:   Encoder[AuctionView]   = deriveEncoder
   implicit val auctionActionEncoder: Encoder[AuctionActionView] = deriveEncoder
@@ -413,9 +431,10 @@ object MiniAppView {
   /** Что лежит у героя по хранилищам — кроме сумки: она приходит своим полем. */
   final case class Stores(artifacts: HeroArtifacts, barrel: Barrel, vault: BankVault, home: HomeData)
 
-  /** Сумка — стопками, как в боте, — всё надетое и остальные хранилища. */
+  /** Сумка — стопками, как в боте, — всё надетое и остальные хранилища.
+    * `quests` — журнал заданий: по нему — кнопки заданий на карточках. */
   def inventory(h: Hero, inv: Inventory, stores: Stores, content: SceneContent, describe: Item => String,
-                now: Long): InventoryView = {
+                now: Long, quests: NpcQuests = NpcQuests.empty): InventoryView = {
     val before = h.card(now)
     val views  = storages(stores, content, describe)
     InventoryView(
@@ -443,14 +462,14 @@ object MiniAppView {
       storesAway = MiniApp.storesAway(content, h),
       moves      = moves(h, inv, stores, views),
       gemStock   = gemStock(inv, stores, describe),
-      bagActs    = bagActs(h, inv, content, now),
+      bagActs    = bagActs(h, inv, content, now, quests),
       drops      = drops(h, inv, stores, views)
     )
   }
 
   /** Что сделать с вещами сумки — те же кнопки, что на карточке в боте; в бою
     * из сумки ничего не достать. */
-  private def bagActs(h: Hero, inv: Inventory, content: SceneContent, now: Long): List[BagActView] =
+  private def bagActs(h: Hero, inv: Inventory, content: SceneContent, now: Long, quests: NpcQuests): List[BagActView] =
     if (MiniApp.inBattle(h)) Nil
     else InventoryState.listed(inv.items.data).flatMap { case (item, _) =>
       val asks  = brewAsks(h, item, content, now)
@@ -460,10 +479,15 @@ object MiniAppView {
       // Пыль сыплют на надетое оружие, трактат читают — с карточки, как в боте.
       val dust  = item.material.exists(_.gem.isDefined)
       val read  = item.questItem.exists(HerbLore.isTreatise)
-      Option.when(asks.nonEmpty || slot.isDefined || item.isBundle || crush.isDefined || dust || read)(
+      // Кнопка задания — та же, что на карточке в боте (см. QuestCard).
+      val quest = QuestCard.choice(content, item, quests).map(c => QuestActView(c.id, bare(c.label)))
+      Option.when(asks.nonEmpty || slot.isDefined || item.isBundle || crush.isDefined || dust || read || quest.isDefined)(
         BagActView(item.id, asks, slot.isDefined, slot.flatMap(beltFull(h, _, content)), unpack = item.isBundle,
-          crush = crush, dust = dust, read = read))
+          crush = crush, dust = dust, read = read, quest = quest))
     }
+
+  /** Подпись кнопки бота без значка впереди: в приложении у кнопок значков нет. */
+  def bare(label: String): String = label.replaceFirst("^[^\\p{L}\\p{N}«]+", "")
 
   private def beltFull(h: Hero, slot: BeltSlot, content: SceneContent): Option[String] = {
     val worn = h.equipment.belt

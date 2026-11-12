@@ -89,7 +89,7 @@ export interface BrewAskView {
 /** Чем можно воспользоваться из сумки. `beltFull` — на поясе нет места, и вот вопрос, что снять;
  *  `unpack` — это стопка, её можно распаковать; `crush` — это камень, его можно расколоть, и вот
  *  вопрос перед этим; `dust` — это пыль, ею посыпают надетое оружие; `read` — это трактат, его
- *  можно читать. */
+ *  можно читать; `quest` — кнопка задания на карточке сюжетного предмета. */
 export interface BagActView {
   item: number
   brew: BrewAskView[]
@@ -99,6 +99,19 @@ export interface BagActView {
   crush: string | null
   dust: boolean
   read: boolean
+  quest: QuestActView | null
+}
+
+/** Кнопка задания — та же, что на карточке в боте: `act` — её имя у бота. */
+export interface QuestActView {
+  act: string
+  label: string
+}
+
+/** Что спросить, прежде чем идти: вопрос и ответы — те же, что в боте. */
+export interface QuestAskView {
+  question: string
+  options: QuestActView[]
 }
 
 export interface HeroView {
@@ -169,6 +182,15 @@ export interface MoveView {
 export interface InventoryActionView {
   inventory: InventoryView
   note: string | null
+}
+
+/** Ответ на кнопку задания: вещи после неё, что сказать, ушло ли задание дальше
+  * в чат с ботом (`chat`) и что спросить прежде (`ask`). */
+export interface QuestActionView {
+  inventory: InventoryView
+  note: string | null
+  chat: boolean
+  ask: QuestAskView | null
 }
 
 /** Хранилище вещей. Закрытое — `locked` с тем, как его открыть; открытое —

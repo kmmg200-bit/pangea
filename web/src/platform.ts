@@ -43,6 +43,12 @@ export function onReturn(fn: () => void): () => void {
   }
 }
 
+/** Закрыть приложение: игрок вернётся туда, откуда его открыл, — в чат с ботом.
+  * Вне ВК молчит. */
+export function closeApp(): void {
+  bridge.send('VKWebAppClose', { status: 'success' }).catch(() => undefined)
+}
+
 /** Лёгкий отклик вибрацией — когда вещь «взялась» пальцем. Вне ВК молчит. */
 export function tap(): void {
   bridge.send('VKWebAppTapticImpactOccurred', { style: 'light' }).catch(() => undefined)

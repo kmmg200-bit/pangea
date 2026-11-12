@@ -7,6 +7,7 @@ import type {
   CraftView,
   InventoryActionView,
   InventoryView,
+  QuestActionView,
   QuestsView,
   SquadActionView,
   SquadView,
@@ -83,6 +84,8 @@ export const api = {
   bagCrushGem: (item: number) => post<InventoryActionView>(`bag/crush-gem?item=${item}`),
   bagDust: (item: number) => post<InventoryActionView>(`bag/dust?item=${item}`),
   bagRead: (item: number) => post<InventoryActionView>(`bag/read?item=${item}`),
+  bagQuest: (item: number, act: string) =>
+    post<QuestActionView>(`bag/quest?item=${item}&act=${encodeURIComponent(act)}`),
   rackWear: (n: number) => post<InventoryActionView>(`racks/wear?n=${n}`),
   storeMove: (from: string, to: string, item: number, all: boolean) =>
     post<InventoryActionView>(`storages/move?from=${from}&to=${to}&item=${item}&all=${all}`),

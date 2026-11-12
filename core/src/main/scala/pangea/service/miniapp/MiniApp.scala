@@ -15,6 +15,7 @@ import pangea.model.home.HomeData
 import pangea.model.hero.Hero
 import pangea.model.item.{Chisel, Item, ItemType, MaterialKind}
 import pangea.model.monster.Race
+import pangea.model.quest.NpcQuests
 import pangea.model.state.StateType
 import pangea.model.top.{TopBoard, TopKind}
 import pangea.model.user.User
@@ -30,12 +31,13 @@ import pangea.service.auction.AuctionPurchase
 import pangea.service.cube.AzatCube
 import pangea.service.equipment.{BeltWork, BrewWork, BundleWork, GemWork, Outfit}
 import pangea.service.miniapp.MiniAppView.{AuctionActionView, AuctionView, CharacterView, CraftActionView, CraftView,
-  InventoryActionView, InventoryView, QuestsView, SquadActionView, SquadView, TopView}
+  InventoryActionView, InventoryView, QuestActionView, QuestsView, SquadActionView, SquadView, TopView}
 import pangea.service.payout.Payouts
 import pangea.service.squad.SquadOrders
 import pangea.service.storage.ItemStore
 import pangea.service.storage.ItemStore.Place
-import pangea.service.state.{AzatData, BarrelRobbery, HerbLore, NpcQuestLog, PlayerLock, QuestJournal, QuestsDone, SquadDuty, StackMove}
+import pangea.service.state.{AzatData, BarrelRobbery, HerbLore, NpcQuestLog, PlayerLock, QuestCard, QuestJournal, QuestsDone,
+  SceneDoor, SquadDuty, StackMove}
 import pangea.service.state.states.{EquipmentState, InventoryState}
 import pangea.service.state.states.home.Racks
 import zio.{Ref, Task, ZIO, ZLayer}
@@ -97,6 +99,11 @@ trait MiniApp {
   /** Прочитать трактат `itemId` из сумки — как кнопкой «Читать» на его
     * карточке в боте; не в бою. */
   def read(hero: Hero, itemId: Long): Task[InventoryActionView]
+
+  /** Кнопка задания на карточке сюжетного предмета `itemId` из сумки — та же,
+    * что в боте: `act` — её имя у бота или ответ на её вопрос; не в бою.
+    * Задание пошло дальше в чате с ботом — так и сказано (`chat`). */
+  def quest(hero: Hero, itemId: Long, act: String): Task[QuestActionView]
 
   /** Надеть комплект со стойки №`n` — обменяться с ней надетым, как кнопкой
     * стойки дома. Только в городе. */
@@ -256,7 +263,7 @@ object MiniApp {
   val live: ZLayer[MiniAppConfig with UserRepository with HeroRepository with InventoryRepository with AuctionRepository
                      with HeroDao with ArtifactDao with BarrelDao with BankVaultDao with TopDao with QuestOutcomeDao
                      with ItemRepository with BankRepository with ArtifactRepository with BarrelRepository
-                     with Payouts with Players with PlayerLock
+                     with Payouts with Players with PlayerLock with SceneDoor
                      with SceneContent, Nothing, MiniApp] =
     ZLayer {
       for {
@@ -278,6 +285,7 @@ object MiniApp {
         payouts     <- ZIO.service[Payouts]
         players     <- ZIO.service[Players]
         lock        <- ZIO.service[PlayerLock]
+        door        <- ZIO.service[SceneDoor]
         content     <- ZIO.service[SceneContent]
         topCache    <- Ref.make(Map.empty[TopKind, CachedTop])
       } yield new MiniAppLive(config, users, heroes, inventories, lots, heroDao, artifacts, barrels, vaults, content,
@@ -287,7 +295,8 @@ object MiniApp {
         new BrewWork(heroDao, inventories, content), new BeltWork(heroDao, inventories, items, content),
         new SquadOrders(heroDao, content),
         new ItemStore.All(heroDao, inventories, artifactRepo, barrelRepo, bank, content),
-        new BarrelRobbery(heroDao, barrelRepo, items, content), lock)
+        new BarrelRobbery(heroDao, barrelRepo, items, content), lock,
+        new AppQuests(heroDao, inventories, new QuestCard(heroDao, inventories, items, content), content, door))
     }
 }
 
@@ -314,7 +323,8 @@ final class MiniAppLive(
   orders:      SquadOrders,
   places:      ItemStore.All,
   robbery:     BarrelRobbery,
-  lock:        PlayerLock
+  lock:        PlayerLock,
+  appQuests:   AppQuests
 ) extends MiniApp {
   import MiniApp.{BrewAct, CubeAct, Denied, GearAct, Outcome, SquadAct}
 
@@ -400,9 +410,10 @@ final class MiniAppLive(
       barrel   <- barrels.find(hero.id).map(_.getOrElse(Barrel.empty(hero.id)))
       vault    <- vaults.find(hero.id).map(_.getOrElse(BankVault.empty(hero.id)))
       home     <- heroDao.readHomeData(hero.userId).map(_.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty))
-      describe <- describer(hero)
+      quests   <- NpcQuestLog.load(heroDao, hero.userId)
       ms       <- now
-    } yield MiniAppView.inventory(hero, inv, MiniAppView.Stores(arts, barrel, vault, home), content, describe, ms)
+    } yield MiniAppView.inventory(hero, inv, MiniAppView.Stores(arts, barrel, vault, home), content,
+      describeWith(hero, quests), ms, quests)
 
   /** С витриной — чем платить и куда класть: серебро на руках вместе с
     * ячейкой (её читаем без записи) и свободные места в сумке. */
@@ -465,6 +476,22 @@ final class MiniAppLive(
     * ([[HerbLore.readTreatise]]). Книги уже нет — так и сказать. */
   override def read(hero: Hero, itemId: Long): Task[InventoryActionView] =
     bagAct(hero, itemId, content.text("stack.gone"))(HerbLore.readTreatise(heroDao, inventories, content, _, _, _, _))
+
+  /** Под локом игрока, героя перечитываем уже под ним. В бою — ничего не
+    * трогаем: те же слова, что у сумки в бою. Ответ — вещи после кнопки и что
+    * вышло ([[AppQuests]]). */
+  override def quest(hero: Hero, itemId: Long, act: String): Task[QuestActionView] =
+    lock.withLock(hero.userId) {
+      for {
+        fresh <- heroes.getHero(hero.userId).someOrFail(new Throwable(s"Нет героя у игрока ${hero.userId.value}"))
+        user  <- users.getUserById(fresh.userId).someOrFail(new Throwable(s"Нет игрока ${fresh.userId.value}"))
+        out   <- if (MiniApp.inBattle(fresh)) ZIO.succeed(AppQuests.Outcome.said(content.text("battle.belt.notInBattle")))
+                 else appQuests.run(user, fresh, itemId, act)
+      } yield fresh -> out
+    }.flatMap { case (fresh, out) =>
+      heroes.getHero(fresh.userId).map(_.getOrElse(fresh)).flatMap(inventory)
+        .map(QuestActionView(_, out.note, out.chat, out.ask))
+    }
 
   /** Вещь `itemId` из сумки — в дело `act`, общее с её карточкой в боте; не в
     * бою. Вещи уже нет или дело не про неё (`act` ответил `false`) — сказать
@@ -782,9 +809,10 @@ final class MiniAppLive(
     * предмета (вскрыто ли письмо Марисы, сыт ли бродячий ларец), знает журнал
     * заданий. */
   private def describer(hero: Hero): Task[Item => String] =
-    NpcQuestLog.load(heroDao, hero.userId).map { quests =>
-      (item: Item) => InventoryState.cardText(content, item, hero, quests)
-    }
+    NpcQuestLog.load(heroDao, hero.userId).map(describeWith(hero, _))
+
+  private def describeWith(hero: Hero, quests: NpcQuests): Item => String =
+    (item: Item) => InventoryState.cardText(content, item, hero, quests)
 
   private val now = ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
 }

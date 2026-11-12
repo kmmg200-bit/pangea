@@ -1,7 +1,6 @@
 package pangea.service.state.states
 
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
-import io.circe.syntax.EncoderOps
 import pangea.model.item.{BrewEffect, BrewKind}
 import io.circe.{Decoder, Encoder, jawn}
 import pangea.dao.hero.HeroDao
@@ -22,13 +21,10 @@ import pangea.repository.item.ItemRepository
 import pangea.service.equipment.{BeltWork, BrewWork, BundleWork, GemWork, Outfit}
 import pangea.service.state.states.InventoryState._
 import pangea.service.state.states.home.Racks
-import pangea.service.state.states.marisa.MarisaHuntState
-import pangea.service.state.states.murloc.MurlocVillageState
-import pangea.service.state.states.race.RaceQuestState
 import pangea.service.state.{BarrelThievesQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HerbLore, HotGoodsQuest, ItemMenu,
   JorgenQuest,
-  FaelinQuest, MarisaQuest, MurlocQuest, NpcQuestLog, PlukhQuest, QuestGoods, SlotChoice, StackMove, State,
-  StoryBrandQuest, StoryFaceQuest, StoryLine, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest, StrayCasketQuest,
+  FaelinQuest, MarisaQuest, MurlocQuest, NpcQuestLog, PlukhQuest, QuestCard, QuestGoods, SlotChoice, StackMove, State,
+  StoryBrandQuest, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest, StrayCasketQuest,
   UiScene, UserAction}
 import zio.{Random, Task, ZIO}
 
@@ -51,6 +47,9 @@ case class InventoryState(
 
   /** Отвары и пояс — общее с Mini App. */
   private val brewWork = new BrewWork(heroDao, inventoryRepo, content)
+
+  /** Кнопки заданий на карточках сюжетных предметов — общее с Mini App. */
+  private val questCard = new QuestCard(heroDao, inventoryRepo, itemRepository, content)
   private val beltWork = new BeltWork(heroDao, inventoryRepo, itemRepository, content)
 
   private val branch = new Branch(
@@ -106,41 +105,18 @@ case class InventoryState(
       "CoatWeapon"        -> Target.Run { (u, _,  r) => coatWeapon(u, r) },
       "CureTraumaPick"    -> Target.Run { (u, ua, r) => cureTrauma(u, ua, r) },
       "SentencePick"      -> Target.Run { (u, ua, r) => sentenceRace(u, ua, r) },
-      // «Письмо Марисе»: вскрыть письмо, отправиться по карте Кельвина.
-      "OpenLetter"        -> Target.Run { (u, _,  r) => openLetter(u, r) },
-      "UseKelvinMap"      -> Target.Run { (u, _,  r) => useKelvinMap(u, r) },
-      "MapWithMarisa"     -> Target.Run { (u, _,  r) => startHunt(u, r, withMarisa = true) },
-      "MapAlone"          -> Target.Run { (u, _,  r) => startHunt(u, r, withMarisa = false) },
-      // «Деревня Мурлоков»: по карте старейшины — к развилке (налёт или помощь).
-      "UseMurlocMap"      -> Target.Run { (u, _,  r) => useMurlocMap(u, r) },
-      // «Бродячий ларец»: скормить камень выбранного качества; сытого — отпустить,
-      // чтобы вёл к хозяину.
+      // «Бродячий ларец»: скормить камень выбранного качества (сытый ведёт к
+      // хозяину — кнопкой задания, см. ниже).
       "StrayFeed"         -> Target.Run { (u, ua, r) => feedStray(u, ua, r) },
-      "StrayGo"           -> Target.Run { (u, _,  r) => goStray(u, r) },
-      // «Вскрытая бочка»: по следу банды, что вскрыла бочку, — только из города.
-      "BarrelTrail"       -> Target.Run { (u, _,  r) => followTrail(u, r) },
-      "StoryCacheGo"      -> Target.Run { (u, _,  r) => goCache(u, r) },
-      "JorgenLairGo"      -> Target.Run { (u, _,  r) => goJorgenLair(u, r) },
-      "PlukhHuntGo"       -> Target.Run { (u, _,  r) => goPlukhHunt(u, r) },
-      "FaelinRootsGo"     -> Target.Run { (u, _,  r) => goFaelinRoots(u, r) },
-      "StoryPortGo"       -> Target.Run { (u, _,  r) => goPort(u, r) },
-      "StoryMeetGo"       -> Target.Run { (u, _,  r) => goMeeting(u, r) },
-      "StorySojkaGo"      -> Target.Run { (u, _,  r) => goSojka(u, r) },
-      "StoryBridgeGo"     -> Target.Run { (u, _,  r) => goBridge(u, r) },
-      "StoryArchiveGo"    -> Target.Run { (u, _,  r) => goArchive(u, r) },
-      "StoryBinderyGo"    -> Target.Run { (u, _,  r) => goBindery(u, r) },
-      "StoryGraveyardGo"  -> Target.Run { (u, _,  r) => goGraveyard(u, r) },
-      "BartiHouseGo"      -> Target.Run { (u, _,  r) => goBartiHouse(u, r) },
-      "BartiCaravanGo"    -> Target.Run { (u, _,  r) => goBartiCaravan(u, r) },
       // Трактаты Густаво: читать, пока не осилишь.
       "ReadTreatise"      -> Target.Run { (u, _,  r) => readTreatise(u, r) },
       "IdentifyFlower"    -> Target.Run { (u, _,  r) => identifyFlower(u, r) },
-      "IdentifyAll"       -> Target.Run { (u, _,  r) => identifyAllFlowers(u, r) },
-      // Купон на смену расы: квест начинается сразу — только из города.
-      "RaceChange"        -> Target.Run { (u, _,  r) => startRaceChange(u, r) },
-      // Купон на смену имени: новое имя пишут текстом — тоже только из города.
-      "NameChange"        -> Target.Run { (u, _,  r) => startNameChange(u, r) }
-    ),
+      "IdentifyAll"       -> Target.Run { (u, _,  r) => identifyAllFlowers(u, r) }
+    ) ++
+      // Кнопки заданий с карточек сюжетных предметов — письмо и карты Марисы,
+      // карта мурлоков, купоны, ларец, бочка, наёмники, главы сюжета, Барти —
+      // общие с Mini App (см. QuestCard).
+      QuestCard.Ids.map(id => id -> (Target.Run { (u, _, r) => questGo(u, r, id) }: Target)).toMap,
     fallback = Target.Run { (u, ua, r) => handleFallback(u, ua, r) }
   )
 
@@ -559,7 +535,6 @@ case class InventoryState(
       quests <- if (item.questItem.contains(QuestItemKind.BartiPlan))
                   getHero(user).flatMap(h => HotGoodsQuest.refresh(heroDao, inventoryRepo, user.userId, h))
                 else NpcQuestLog.load(heroDao, user.userId)
-      opened  = quests.of(NpcQuest.Marisa).bonus
       // Бродячий ларец, пока голоден, — кнопка на каждое качество камней при
       // герое, по ряду на кнопку; выход — рядом ниже.
       feed   <- if (item.questItem.contains(QuestItemKind.StrayCasket) && StrayCasketQuest.hungry(quests))
@@ -567,74 +542,16 @@ case class InventoryState(
                 else ZIO.succeed(Nil)
       exit    = content.choice("InventoryList", "inventory.exit")
                   .copy(row = Some(if (feed.isEmpty) 1 else feed.size), color = ChoiceColor.Negative)
-      // Что с предметом сделать — своя кнопка у каждого вида; текст карточки —
-      // общий с Mini App (см. InventoryState.questText).
+      // Что с предметом сделать — своя кнопка у каждого вида. Кнопки заданий —
+      // общие с Mini App (см. QuestCard), текст карточки — тоже (см.
+      // InventoryState.questText).
       use     = item.questItem match {
-        case Some(QuestItemKind.MarisaLetter) =>
-          Some(content.choice("OpenLetter", if (opened) "marisa.readLetterLabel" else "marisa.openLetterLabel")
-            .copy(color = ChoiceColor.Positive, row = Some(0)))
-        case Some(QuestItemKind.KelvinMap) =>
-          Some(content.choice("UseKelvinMap", "marisa.mapUseLabel").copy(color = ChoiceColor.Positive, row = Some(0)))
-        case Some(QuestItemKind.MurlocVillageMap) =>
-          Some(content.choice("UseMurlocMap", "murlocVillage.map.useLabel").copy(color = ChoiceColor.Positive, row = Some(0)))
-        // Купон на смену расы: «Сменить расу» — квест начнётся сразу.
-        case Some(QuestItemKind.RaceCoupon) =>
-          Some(content.choice("RaceChange", "raceQuest.useLabel").copy(row = Some(0)))
-        case Some(QuestItemKind.NameCoupon) =>
-          Some(content.choice("NameChange", "nameChange.useLabel").copy(row = Some(0)))
         // Ключ магической стойки: повернул — надетое и стойка дома меняются местами.
         case Some(key) if QuestItemKind.rackOf(key).isDefined =>
           Some(Choice("RackKeyUse", content.text("home.rack.useKey"), color = ChoiceColor.Positive, row = Some(0)))
         case Some(book) if HerbLore.isTreatise(book) =>
           Some(content.choice("ReadTreatise", "knowledge.readLabel").copy(color = ChoiceColor.Positive, row = Some(0)))
-        // Сытый бродячий ларец: «Идти за ларцом» — он поведёт к хозяину.
-        case Some(QuestItemKind.StrayCasket) if StrayCasketQuest.leads(quests) =>
-          Some(content.choice("StrayGo", "strayCasket.goLabel").copy(row = Some(0)))
-        // Улика из бочки, место известно: «Идти по следу».
-        case Some(QuestItemKind.BarrelClue) if BarrelThievesQuest.onTrail(quests) =>
-          Some(content.choice("BarrelTrail", "barrelThieves.trailLabel").copy(row = Some(0)))
-        // Чёрный плащ, Сорока назван: «Искать тайник Сороки».
-        case Some(QuestItemKind.StoryCloak) if StoryMarkQuest.toCache(quests) =>
-          Some(content.choice("StoryCacheGo", "story.storyMark.card.searchLabel").copy(row = Some(0)))
-        // Список отряда Йоргена: «Идти к логову» огненных.
-        case Some(QuestItemKind.JorgenRoster) if JorgenQuest.toLair(quests) =>
-          Some(content.choice("JorgenLairGo", "jorgen.card.goLabel").copy(row = Some(0)))
-        // Срубленный лук Фаэлина: «Вернуть лук изгороди».
-        case Some(QuestItemKind.CutBow) if FaelinQuest.toRoots(quests) =>
-          Some(content.choice("FaelinRootsGo", "faelinBow.card.goLabel").copy(row = Some(0)))
-        // Печать Сноходцев, зов перевёрнут: «Позвать ловчих».
-        case Some(QuestItemKind.SnowwalkerSeal) if PlukhQuest.toHunt(quests) =>
-          Some(content.choice("PlukhHuntGo", "plukhGaff.card.huntLabel").copy(row = Some(0)))
-        // Шифровка, пора в порт: «Идти в порт».
-        case Some(QuestItemKind.StoryCipher) if StoryPowderQuest.portOpen(quests) =>
-          Some(content.choice("StoryPortGo", "story.storyPowder.card.goLabel").copy(row = Some(0)))
-        // Набросок узора, Юнона назвала Сойку: «Идти на встречу».
-        case Some(QuestItemKind.StorySketch) if StoryBrandQuest.toMeeting(quests) =>
-          Some(content.choice("StoryMeetGo", "story.storyBrand.card.goLabel").copy(row = Some(0)))
-        // Страница списка: рассказать Сойке о канцелярии, потом — к мосту, потом — снова к ней.
-        case Some(QuestItemKind.StoryPage) if StoryListQuest.toSojka(quests) =>
-          Some(content.choice("StorySojkaGo", "story.storyList.card.tellLabel").copy(row = Some(0)))
-        case Some(QuestItemKind.StoryPage) if StoryListQuest.toBridge(quests) =>
-          Some(content.choice("StoryBridgeGo", "story.storyList.card.bridgeLabel").copy(row = Some(0)))
-        case Some(QuestItemKind.StoryPage) if StoryListQuest.toConfront(quests) =>
-          Some(content.choice("StorySojkaGo", "story.storyList.card.confrontLabel").copy(row = Some(0)))
-        // Ключ от архива: открыть архив (глава берётся здесь), потом — в переплётную днём и ночью.
-        case Some(QuestItemKind.StoryArchiveKey) if StoryFaceQuest.archiveOpen(quests) =>
-          Some(content.choice("StoryArchiveGo", "story.storyFace.card.archiveLabel").copy(row = Some(0)))
-        case Some(QuestItemKind.StoryArchiveKey) if StoryFaceQuest.toFace(quests) =>
-          Some(content.choice("StoryBinderyGo", "story.storyFace.card.faceLabel").copy(row = Some(0)))
-        case Some(QuestItemKind.StoryArchiveKey) if StoryFaceQuest.toRaid(quests) =>
-          Some(content.choice("StoryBinderyGo", "story.storyFace.card.raidLabel").copy(row = Some(0)))
-        // Записка «Э.»: на кладбище — Рубеж I берётся здесь.
-        case Some(QuestItemKind.StoryNote) if StoryToolQuest.open(quests) =>
-          Some(content.choice("StoryGraveyardGo", "story.storyTool.card.goLabel").copy(row = Some(0)))
-        // Адрес Барти: к нему домой, на Торговую площадь, — «Большое дело».
-        case Some(QuestItemKind.BartiAddress) if BigDealQuest.houseOpen(quests) =>
-          Some(content.choice("BartiHouseGo", "barti.card.houseLabel").copy(row = Some(0)))
-        // Караван пришёл: ночью к нему, к Сухому колодцу.
-        case Some(QuestItemKind.BartiAddress) if BigDealQuest.toCaravan(quests) =>
-          Some(content.choice("BartiCaravanGo", "barti.card.caravanLabel").copy(row = Some(0)))
-        case _ => None
+        case _ => QuestCard.choice(content, item, quests)
       }
       hero   <- getHero(user)
       text    = InventoryState.questText(content, item, quests, hero.lvl) +
@@ -686,188 +603,25 @@ case class InventoryState(
       } yield res
     }
 
-  /** Отпустить сытый ларец: он ведёт к хозяину — только в лабиринте («Персонаж»
-    * открыт из него), на любом уровне. В городе и в прочих сценах — отказ, как
-    * у сюжетных карт, только наоборот. */
-  private def goStray(user: User, renderer: Renderer): Task[StateType] =
+  /** Кнопка задания с карточки сюжетного предмета — общим с Mini App
+    * [[QuestCard]]: где герой, говорит `return_state` («Персонаж» открыт
+    * оттуда). Шаг не тот — снова карточка; отказ — сказать и на карточку (у
+    * карт и купонов — к списку); вопрос — показать; дело здесь — сделать и к
+    * списку; сцена — подготовить и уйти в неё. */
+  private def questGo(user: User, renderer: Renderer, id: String): Task[StateType] =
     for {
-      from   <- heroDao.readReturnState(user.userId)
-      quests <- NpcQuestLog.load(heroDao, user.userId)
-      res    <- if (!StrayCasketQuest.leads(quests)) backToCard(user, renderer)
-                else if (!from.contains(StateType.Dungeon))
-                  renderer.show(user, Screen(content.text("strayCasket.card.onlyInLabyrinth"), Nil)) *>
-                    backToCard(user, renderer)
-                else ZIO.succeed(StateType.StrayCasket)
-    } yield res
-
-  /** По следу банды, что вскрыла бочку: только из города (как сюжетные карты)
-    * и только когда Ришелье назвал место. */
-  /** К Барти домой с карточки адреса: только из города. */
-  private def goBartiHouse(user: User, renderer: Renderer): Task[StateType] =
-    for {
-      from   <- heroDao.readReturnState(user.userId)
-      quests <- NpcQuestLog.load(heroDao, user.userId)
-      res    <- if (!BigDealQuest.houseOpen(quests)) backToCard(user, renderer)
-                else if (!from.exists(StateType.cityStates.contains))
-                  renderer.show(user, Screen(content.text("barti.card.onlyInCity"), Nil)) *> backToCard(user, renderer)
-                else ZIO.succeed(StateType.BartiHouse)
-    } yield res
-
-  /** К каравану с карточки адреса: только из города. */
-  private def goBartiCaravan(user: User, renderer: Renderer): Task[StateType] =
-    for {
-      from   <- heroDao.readReturnState(user.userId)
-      quests <- NpcQuestLog.load(heroDao, user.userId)
-      res    <- if (!BigDealQuest.toCaravan(quests)) backToCard(user, renderer)
-                else if (!from.exists(StateType.cityStates.contains))
-                  renderer.show(user, Screen(content.text("barti.card.caravanOnlyInCity"), Nil)) *> backToCard(user, renderer)
-                else ZIO.succeed(StateType.BartiCaravan)
-    } yield res
-
-  private def followTrail(user: User, renderer: Renderer): Task[StateType] =
-    for {
-      from   <- heroDao.readReturnState(user.userId)
-      quests <- NpcQuestLog.load(heroDao, user.userId)
-      res    <- if (!BarrelThievesQuest.onTrail(quests)) backToCard(user, renderer)
-                else if (!from.exists(StateType.cityStates.contains))
-                  renderer.show(user, Screen(content.text("barrelThieves.onlyInCity"), Nil)) *> backToCard(user, renderer)
-                else ZIO.succeed(StateType.BarrelThieves)
-    } yield res
-
-  /** В порт с карточки шифровки: только из города (как сюжетные карты). Глава
-    * берётся здесь, если ещё не взята. */
-  private def goPort(user: User, renderer: Renderer): Task[StateType] =
-    beginFromCity(user, renderer, NpcQuest.StoryPowder, StoryPowderQuest.portOpen, "story.storyPowder.card.onlyInCity",
-      StateType.StoryWarehouse)
-
-  /** В архив канцелярии с карточки ключа: только из города. Глава «Лицо из
-    * прошлого» берётся здесь, если ещё не взята. */
-  private def goArchive(user: User, renderer: Renderer): Task[StateType] =
-    beginFromCity(user, renderer, NpcQuest.StoryFace, StoryFaceQuest.archiveOpen, "story.storyFace.card.onlyInCity",
-      StateType.StoryArchive)
-
-  /** В переплётную с карточки ключа — днём или ночью: только из города. */
-  private def goBindery(user: User, renderer: Renderer): Task[StateType] =
-    fromCityStory(user, renderer, StoryFaceQuest.toBindery, "story.storyFace.card.onlyInCity", StateType.StoryBindery)
-
-  /** На кладбище с карточки записки «Э.»: только из города. Рубеж I берётся
-    * здесь, если ещё не взят. */
-  private def goGraveyard(user: User, renderer: Renderer): Task[StateType] =
-    beginFromCity(user, renderer, NpcQuest.StoryTool, StoryToolQuest.open, "story.storyTool.card.onlyInCity",
-      StateType.StoryGraveyard)
-
-  /** Кнопка сюжетной карточки, что начинает главу и ведёт в её сцену: начать
-    * нельзя и не на том шаге — снова карточка; не из города — отказ и
-    * карточка; глава ещё не взята — берётся здесь («Новое задание»). */
-  private def beginFromCity(user: User, renderer: Renderer, chapter: NpcQuest, open: NpcQuests => Boolean,
-                            refusalKey: String, scene: StateType): Task[StateType] =
-    for {
-      from   <- heroDao.readReturnState(user.userId)
-      quests <- NpcQuestLog.load(heroDao, user.userId)
-      res    <- if (!open(quests)) backToCard(user, renderer)
-                else if (!from.exists(StateType.cityStates.contains))
-                  renderer.show(user, Screen(content.text(refusalKey), Nil)) *> backToCard(user, renderer)
-                else ZIO.when(!quests.isTaken(chapter))(
-                       ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS)).flatMap { now =>
-                         val taken = quests.take(chapter, now)
-                         NpcQuestLog.save(heroDao, user.userId, taken) *>
-                           renderer.show(user, Screen(StoryLine.takenLine(content, chapter, taken), Nil))
-                       }).as(scene)
-    } yield res
-
-  /** На встречу с Сойкой с карточки наброска: только из города. */
-  private def goMeeting(user: User, renderer: Renderer): Task[StateType] =
-    for {
-      from   <- heroDao.readReturnState(user.userId)
-      quests <- NpcQuestLog.load(heroDao, user.userId)
-      res    <- if (!StoryBrandQuest.toMeeting(quests)) backToCard(user, renderer)
-                else if (!from.exists(StateType.cityStates.contains))
-                  renderer.show(user, Screen(content.text("story.storyBrand.card.onlyInCity"), Nil)) *> backToCard(user, renderer)
-                else ZIO.succeed(StateType.StoryMeeting)
-    } yield res
-
-  /** К Сойке с карточки страницы — рассказать о канцелярии или спросить за
-    * засаду: только из города. */
-  private def goSojka(user: User, renderer: Renderer): Task[StateType] =
-    fromCityStory(user, renderer, q => StoryListQuest.toSojka(q) || StoryListQuest.toConfront(q),
-      "story.storyList.card.onlyInCity", StateType.StorySojka)
-
-  /** К Мельничному мосту с карточки страницы: только из города. */
-  private def goBridge(user: User, renderer: Renderer): Task[StateType] =
-    fromCityStory(user, renderer, StoryListQuest.toBridge, "story.storyList.card.onlyInCity", StateType.StoryBridge)
-
-  /** Кнопка сюжетной карточки, что ведёт из города в сцену главы: шаг не тот —
-    * снова карточка; не из города — отказ и карточка. */
-  private def fromCityStory(user: User, renderer: Renderer, onStep: NpcQuests => Boolean, refusalKey: String,
-                            scene: StateType): Task[StateType] =
-    for {
-      from   <- heroDao.readReturnState(user.userId)
-      quests <- NpcQuestLog.load(heroDao, user.userId)
-      res    <- if (!onStep(quests)) backToCard(user, renderer)
-                else if (!from.exists(StateType.cityStates.contains))
-                  renderer.show(user, Screen(content.text(refusalKey), Nil)) *> backToCard(user, renderer)
-                else ZIO.succeed(scene)
-    } yield res
-
-  /** Вернуть срубленный лук изгороди с его карточки: только в лабиринте
-    * («Персонаж» открыт из него) — старые корни там, у живой стены. */
-  private def goFaelinRoots(user: User, renderer: Renderer): Task[StateType] =
-    for {
-      from   <- heroDao.readReturnState(user.userId)
-      quests <- NpcQuestLog.load(heroDao, user.userId)
-      res    <- if (!FaelinQuest.toRoots(quests)) backToCard(user, renderer)
-                else if (!from.contains(StateType.Dungeon))
-                  renderer.show(user, Screen(content.text("faelinBow.card.onlyInLabyrinth"), Nil)) *>
-                    backToCard(user, renderer)
-                else ZIO.succeed(StateType.FaelinRoots)
-    } yield res
-
-  /** Позвать ловчих Сноходцев с карточки печати: только в лабиринте
-    * («Персонаж» открыт из него) — на зов они выходят туда, где их ждут. */
-  private def goPlukhHunt(user: User, renderer: Renderer): Task[StateType] =
-    for {
-      from   <- heroDao.readReturnState(user.userId)
-      quests <- NpcQuestLog.load(heroDao, user.userId)
-      res    <- if (!PlukhQuest.toHunt(quests)) backToCard(user, renderer)
-                else if (!from.contains(StateType.Dungeon))
-                  renderer.show(user, Screen(content.text("plukhGaff.card.onlyInLabyrinth"), Nil)) *>
-                    backToCard(user, renderer)
-                else ZIO.succeed(StateType.PlukhHunt)
-    } yield res
-
-  /** Идти к логову огненных с карточки списка отряда Йоргена: только в
-    * лабиринте («Персонаж» открыт из него) и не ближе поворота, где водятся
-    * логова элементалей (см. `JorgenQuest.LairDungeonLevel`). */
-  private def goJorgenLair(user: User, renderer: Renderer): Task[StateType] =
-    for {
-      from   <- heroDao.readReturnState(user.userId)
-      quests <- NpcQuestLog.load(heroDao, user.userId)
       hero   <- getHero(user)
-      res    <- if (!JorgenQuest.toLair(quests)) backToCard(user, renderer)
-                else if (!from.contains(StateType.Dungeon))
-                  renderer.show(user, Screen(content.text("jorgen.card.onlyInLabyrinth"), Nil)) *>
-                    backToCard(user, renderer)
-                else if (!JorgenQuest.deepEnough(hero.dungeonLevel))
-                  renderer.show(user, Screen(content.format("jorgen.card.tooShallow",
-                    "level" -> JorgenQuest.LairDungeonLevel.toString), Nil)) *> backToCard(user, renderer)
-                else ZIO.succeed(StateType.JorgenLair)
-    } yield res
-
-  /** Искать тайник Сороки с карточки плаща: только в лабиринте («Персонаж»
-    * открыт из него) и не ближе пятого поворота. */
-  private def goCache(user: User, renderer: Renderer): Task[StateType] =
-    for {
       from   <- heroDao.readReturnState(user.userId)
       quests <- NpcQuestLog.load(heroDao, user.userId)
-      hero   <- getHero(user)
-      res    <- if (!StoryMarkQuest.toCache(quests)) backToCard(user, renderer)
-                else if (!from.contains(StateType.Dungeon))
-                  renderer.show(user, Screen(content.text("story.storyMark.card.onlyInLabyrinth"), Nil)) *>
-                    backToCard(user, renderer)
-                else if (!StoryMarkQuest.deepEnough(hero.dungeonLevel))
-                  renderer.show(user, Screen(content.format("story.storyMark.card.tooShallow",
-                    "level" -> StoryMarkQuest.CacheLevel.toString), Nil)) *> backToCard(user, renderer)
-                else ZIO.succeed(StateType.StoryCache)
+      res    <- questCard.go(id, hero, quests, from) match {
+                  case QuestCard.Go.Stale => backToCard(user, renderer)
+                  case QuestCard.Go.Refused(text, toList) =>
+                    renderer.show(user, Screen(text, Nil)) *>
+                      (if (toList) showList(user, renderer) else backToCard(user, renderer))
+                  case QuestCard.Go.Ask(screen)        => renderer.show(user, screen).as(StateType.Inventory)
+                  case QuestCard.Go.Here(run)          => run(user, renderer) *> showList(user, renderer)
+                  case QuestCard.Go.Enter(scene, prep) => prep(user, renderer).as(scene)
+                }
     } yield res
 
   /** Повернуть ключ стойки: магия меняет надетое местами с тем, что висит на
@@ -893,17 +647,6 @@ case class InventoryState(
       }
     }
 
-  /** Вскрыть письмо: текст Кельвина и карта с обратной стороны. */
-  private def openLetter(user: User, renderer: Renderer): Task[StateType] =
-    for {
-      hero  <- getHero(user)
-      given <- MarisaQuest.revealMap(heroDao, inventoryRepo, itemRepository, user.userId, hero)
-      _     <- renderer.show(user, Screen(content.text("marisa.letterText"), Nil))
-      _     <- ZIO.when(given)(renderer.show(user, Screen(
-                 content.format("marisa.questItemAdded", "item" -> QuestItemKind.KelvinMap.displayName), Nil)))
-      res   <- showList(user, renderer)
-    } yield res
-
   /** Трактат: бросок интеллект ÷ 2 процентов (+2 % за каждую прошлую неудачу);
     * осилил — знание и книга уходит, нет — час на переварить, потом снова.
     * Общее с Mini App — [[HerbLore.readTreatise]]; потом — к списку. */
@@ -915,58 +658,6 @@ case class InventoryState(
       _     <- ZIO.foreachDiscard(scene.selectedId.flatMap(id => inv.items.data.find(_.id == id)))(book =>
                  HerbLore.readTreatise(heroDao, inventoryRepo, content, user, hero, book, renderer))
       res   <- showList(user, renderer)
-    } yield res
-
-  /** Карта Кельвина: только из города; если Мариса ждёт — спросить, брать ли её. */
-  private def useKelvinMap(user: User, renderer: Renderer): Task[StateType] =
-    for {
-      from   <- heroDao.readReturnState(user.userId)
-      quests <- NpcQuestLog.load(heroDao, user.userId)
-      res <- if (!from.exists(StateType.cityStates.contains))
-               renderer.show(user, Screen(content.text("marisa.mapOnlyInCity"), Nil)) *> showList(user, renderer)
-             else if (quests.onStep(NpcQuest.Marisa, 3))
-               renderer.show(user, content.screen("marisa.mapTakeMarisa")).as(StateType.Inventory)
-             else startHunt(user, renderer, withMarisa = false)
-    } yield res
-
-  /** Купон на смену расы: из города — к выбору расы, дальше квест ведёт
-    * RaceQuestState; не из города — отказ, как у сюжетных карт. */
-  private def startRaceChange(user: User, renderer: Renderer): Task[StateType] =
-    for {
-      from <- heroDao.readReturnState(user.userId)
-      res  <- if (!from.exists(StateType.cityStates.contains))
-                renderer.show(user, Screen(content.text("raceQuest.onlyInCity"), Nil)) *> showList(user, renderer)
-              else
-                heroDao.writeSceneData(user.userId, RaceQuestState.Progress.start.asJson).as(StateType.RaceQuest)
-    } yield res
-
-  /** Купон на смену имени: из города — к выбору имени (см. NameChangeState);
-    * не из города — отказ, как у купона расы. */
-  private def startNameChange(user: User, renderer: Renderer): Task[StateType] =
-    heroDao.readReturnState(user.userId).flatMap { from =>
-      if (from.exists(StateType.cityStates.contains)) ZIO.succeed(StateType.NameChange)
-      else renderer.show(user, Screen(content.text("nameChange.onlyInCity"), Nil)) *> showList(user, renderer)
-    }
-
-  /** Карта деревни мурлоков: только из города; дальше развилку показывает сама деревня. */
-  private def useMurlocMap(user: User, renderer: Renderer): Task[StateType] =
-    for {
-      from <- heroDao.readReturnState(user.userId)
-      res  <- if (!from.exists(StateType.cityStates.contains))
-                renderer.show(user, Screen(content.text("marisa.mapOnlyInCity"), Nil)) *> showList(user, renderer)
-              else
-                heroDao.writeSceneData(user.userId,
-                  MurlocVillageState.Progress(MurlocVillageState.Step.Route).asJson).as(StateType.MurlocVillage)
-    } yield res
-
-  private def startHunt(user: User, renderer: Renderer, withMarisa: Boolean): Task[StateType] =
-    for {
-      from <- heroDao.readReturnState(user.userId)
-      res  <- if (!from.exists(StateType.cityStates.contains))
-                renderer.show(user, Screen(content.text("marisa.mapOnlyInCity"), Nil)) *> showList(user, renderer)
-              else
-                heroDao.writeSceneData(user.userId,
-                  MarisaHuntState.Progress(MarisaHuntState.Step.Road, withMarisa).asJson).as(StateType.MarisaHunt)
     } yield res
 
   // ── Действия с выбранным предметом ─────────────────────────────────────────

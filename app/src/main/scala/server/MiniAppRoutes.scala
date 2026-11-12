@@ -83,6 +83,10 @@ final class MiniAppRoutes(app: MiniApp) {
     case req @ POST -> Root / "api" / "app" / "bag" / "read" :? ItemParam(id) =>
       asPlayer(req)(hero => app.read(hero, id).flatMap(view => Ok(view.asJson)))
 
+    // Кнопка задания с карточки сюжетного предмета: `act` — её имя у бота. Меняет игру — только POST.
+    case req @ POST -> Root / "api" / "app" / "bag" / "quest" :? ItemParam(id) +& ActParam(act) =>
+      asPlayer(req)(hero => app.quest(hero, id, act).flatMap(view => Ok(view.asJson)))
+
     case req @ POST -> Root / "api" / "app" / "belt" / "put" :? ItemParam(id) +& BeltCellParam(slot) =>
       asPlayer(req)(hero => app.gear(hero, GearAct.BeltPut(id, slot)).flatMap(view => Ok(view.asJson)))
 
@@ -177,6 +181,7 @@ final class MiniAppRoutes(app: MiniApp) {
 
   private object KindParam extends OptionalQueryParamDecoderMatcher[String]("kind")
   private object ItemParam extends QueryParamDecoderMatcher[Long]("item")
+  private object ActParam  extends QueryParamDecoderMatcher[String]("act")
   private object LotParam  extends QueryParamDecoderMatcher[Long]("lot")
   private object SlotParam extends QueryParamDecoderMatcher[Int]("slot")
   private object SocketParam extends QueryParamDecoderMatcher[Int]("socket")
