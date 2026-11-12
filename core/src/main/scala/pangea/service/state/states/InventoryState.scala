@@ -25,7 +25,8 @@ import pangea.service.state.states.home.Racks
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.states.murloc.MurlocVillageState
 import pangea.service.state.states.race.RaceQuestState
-import pangea.service.state.{BarrelThievesQuest, BeltContents, BigDealQuest, HedgeSongQuest, HerbLore, HotGoodsQuest, ItemMenu, JorgenQuest,
+import pangea.service.state.{BarrelThievesQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HerbLore, HotGoodsQuest, ItemMenu,
+  JorgenQuest,
   MarisaQuest, MurlocQuest, NpcQuestLog, QuestGoods, SlotChoice, StackMove, State,
   StoryBrandQuest, StoryFaceQuest, StoryLine, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest, StrayCasketQuest,
   UiScene, UserAction}
@@ -1695,6 +1696,12 @@ object InventoryState {
             "level" -> JorgenQuest.LairDungeonLevel.toString) else "")
       case Some(QuestItemKind.JorgenTokens) =>
         s"${item.displayTitle}\n${difficulty(JorgenQuest.Level)}\n\n${QuestItemKind.JorgenTokens.description}"
+      // Замок для предков: слепок — к отцу Брамбла на Стройку, замок — в Зал
+      // предков через серебряную жилу.
+      case Some(QuestItemKind.BramblCast) =>
+        s"${item.displayTitle}\n${difficulty(BramblQuest.Level)}\n\n${QuestItemKind.BramblCast.description}"
+      case Some(QuestItemKind.FamilyLock) =>
+        s"${item.displayTitle}\n${difficulty(BramblQuest.Level)}\n\n${QuestItemKind.FamilyLock.description}"
       case Some(QuestItemKind.BarrelClue) =>
         val now =
           if (BarrelThievesQuest.onTrail(quests))

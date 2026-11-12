@@ -13,8 +13,8 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.purse.Purse
 import pangea.model.hero.Achievement
-import pangea.service.state.{CityExit, HedgeSongQuest, JorgenQuest, LostSquadQuest, MercQuests, NpcQuestLog, QuestSupport, SquadDuty,
-  State, UserAction}
+import pangea.service.state.{BramblQuest, CityExit, HedgeSongQuest, JorgenQuest, LostSquadQuest, MercQuests, NpcQuestLog,
+  QuestSupport, SquadDuty, State, UserAction}
 import pangea.util.TimeLeft
 import zio.{Task, ZIO}
 
@@ -125,8 +125,9 @@ case class MercenariesState(
     * его старший брат): ветвь в сумке — узнаёт её вместо своей истории,
     * задание позади — о цене говорит иначе, а цена та же. Был ли он сам у
     * изгороди — `HedgeSongQuest.faelinWasThere`. Пока идёт личное задание
-    * Йоргена, он говорит о нём, а не о себе; долг закрыт — о цене иначе, цена
-    * та же. С кем можно поговорить о его задании — «Поговорить». */
+    * Йоргена (и Брамбла), он говорит о нём, а не о себе; долг Йоргена закрыт —
+    * о цене иначе, цена та же. С кем можно поговорить о его задании —
+    * «Поговорить». */
   private def showPlainCard(user: User, kind: AllyKind, renderer: Renderer, note: String): Task[Unit] =
     getHero(user).zip(NpcQuestLog.load(heroDao, user.userId)).flatMap { case (hero, quests) =>
       val there = HedgeSongQuest.faelinWasThere(quests)
@@ -135,6 +136,9 @@ case class MercenariesState(
           content.text(if (there) "hedgeSong.faelin.branchAgain" else "hedgeSong.faelin.branch")
         case AllyKind.Human if JorgenQuest.toLair(quests) => content.text("jorgen.card.toLair")
         case AllyKind.Human if JorgenQuest.toHorn(quests) => content.text("jorgen.card.toHorn")
+        // «Замок для предков» идёт — Брамбл о нём.
+        case AllyKind.Gnome if BramblQuest.toFather(quests) => content.text("bramblLock.card.toFather")
+        case AllyKind.Gnome if BramblQuest.toHall(quests)   => content.text("bramblLock.card.toHall")
         case k => content.text(s"mercenaries.${key(k)}.story")
       }
       val price = kind match {

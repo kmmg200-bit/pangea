@@ -13,7 +13,7 @@ import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.LootState.LootData
-import pangea.service.state.{AppButton, GatherExp, LostSquadQuest, NpcQuestLog, State, UserAction}
+import pangea.service.state.{AppButton, BramblQuest, GatherExp, LostSquadQuest, NpcQuestLog, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -40,7 +40,8 @@ case class SilverVeinState(heroDao: HeroDao, scheduler: Scheduler, content: Scen
     fallback = Target.Run { (user, _, renderer) => showVein(user, renderer).as(StateType.SilverVein) }
   )
 
-  override def targetStates: Set[StateType] = Set(StateType.Dungeon, StateType.Loot, StateType.SquadMine)
+  override def targetStates: Set[StateType] =
+    Set(StateType.Dungeon, StateType.Loot, StateType.SquadMine, StateType.BramblHall)
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     for {
@@ -104,12 +105,14 @@ case class SilverVeinState(heroDao: HeroDao, scheduler: Scheduler, content: Scen
   //
   // Фонарь старшины на руках (или дружина всё ещё ждёт — за завалом или с
   // дарами у выхода) — кирка проваливается в штольню «Пропавшей дружины»: после
-  // серебра — туда, а не в лабиринт.
+  // серебра — туда, а не в лабиринт. Замок Медноусов на руках («Замок для
+  // предков») — в ту же старую штольню, к Залу предков; дружина — первой.
   private def harvest(user: User, renderer: Renderer): Task[StateType] =
     for {
       hero     <- getHero(user)
       quests   <- NpcQuestLog.load(heroDao, user.userId)
-      mine      = LostSquadQuest.mineOpens(quests)
+      mine      = Option.when(LostSquadQuest.mineOpens(quests))(StateType.SquadMine)
+                    .orElse(Option.when(BramblQuest.hallOpens(quests))(StateType.BramblHall))
       base      = (hero.dungeonLevel.toLong + 5L) * 4L
       delta    <- Random.nextIntBetween(MinSpreadPct, MaxSpreadPct + 1)
       sign     <- Random.nextBoolean.map(if (_) 1 else -1)
@@ -146,17 +149,17 @@ case class SilverVeinState(heroDao: HeroDao, scheduler: Scheduler, content: Scen
       .map(idx => MaterialGenerator.item(SilverVeinState.DroppableDusts(idx)))
 
   // Серебро + находки через экран добычи (Loot начислит серебро и предложит забрать вещи).
-  private def dropFinds(user: User, reward: Long, finds: List[Item], mine: Boolean): Task[StateType] =
-    heroDao.writeSceneData(user.userId, LootData(items = finds, silvers = List(reward),
-      returnState = Option.when(mine)(StateType.SquadMine)).asJson)
+  // `mine` — куда проваливается кирка после серебра, если есть куда.
+  private def dropFinds(user: User, reward: Long, finds: List[Item], mine: Option[StateType]): Task[StateType] =
+    heroDao.writeSceneData(user.userId, LootData(items = finds, silvers = List(reward), returnState = mine).asJson)
       .as(StateType.Loot)
 
   private def grantSilverDirectly(user: User, curSilver: Long, reward: Long, renderer: Renderer,
-                                  mine: Boolean, exp: String): Task[StateType] =
+                                  mine: Option[StateType], exp: String): Task[StateType] =
     heroDao.updateSilver(user.userId, curSilver + reward) *>
       heroDao.writeSceneData(user.userId, Json.Null) *>
       renderer.show(user, Screen(Screen.joined(exp, content.format("silverVein.done", "silver" -> reward.toString)), Nil))
-        .as(if (mine) StateType.SquadMine else StateType.Dungeon)
+        .as(mine.getOrElse(StateType.Dungeon))
 
   private def startedAt(user: User): Task[Option[Long]] =
     heroDao.readSceneData(user.userId).map(_.flatMap(_.hcursor.get[Long](StartedAtKey).toOption))

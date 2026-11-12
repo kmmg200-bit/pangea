@@ -1,12 +1,12 @@
 package pangea.service.state
 
 import pangea.dao.hero.HeroDao
-import pangea.model.battle.{BattleAlly, Element, SoloPveBattle}
+import pangea.model.battle.{Element, SoloPveBattle}
 import pangea.model.hero.Hero
 import pangea.model.item.QuestItemKind
-import pangea.model.monster.{MiniBoss, Monster, Race, Rarity}
+import pangea.model.monster.MiniBoss
 import pangea.model.quest.{NpcQuest, NpcQuests}
-import pangea.model.squad.{Ally, AllyKind}
+import pangea.model.squad.AllyKind
 import pangea.model.state.StateType
 import pangea.model.user.UserId
 import pangea.repository.inventory.InventoryRepository
@@ -72,44 +72,14 @@ object JorgenQuest {
 
   // ── Бой в логове ────────────────────────────────────────────────────────────
 
-  /** Огненные элементали логова: минибоссы по уровню задания, на полных силах. */
-  def elementals: List[Monster] = {
-    val fire = MiniBoss.FireElemental
-    val lvl  = fire.bossLvl(Level.toLong)
-    List.fill(Elementals)(Monster(0L, lvl, Race.Elemental, Rarity.Legendary, fire.stats(lvl)))
-  }
-
-  /** Бой в логове: оба огненных — минибоссы, у каждого свой круг (см.
-    * `MonsterSlot.bossTurn`), с полной энергией; отряд героя и Йорген с мечом
-    * холода. Бой сюжетный — без «Сбежать» и подкреплений, — награда по уровню
-    * задания. */
+  /** Бой в логове: оба огненных — минибоссы по уровню задания, у каждого свой
+    * круг (см. `MonsterSlot.bossTurn`), с полной энергией; отряд героя и Йорген
+    * с мечом холода — огонь огнём не бьют. Он в строю — берёт этот меч сам,
+    * нет — идёт гостем (см. `MercQuests.withMerc`). Бой сюжетный — без «Сбежать»
+    * и подкреплений, — награда по уровню задания. */
   def lairBattle(hero: Hero): SoloPveBattle = {
-    val fire  = MiniBoss.FireElemental.entryName
-    val foes  = elementals
-    val base  = SoloPveBattle.fromGroup(foes, hero, foes.map(_.fightStats.energy))
-    // Минибоссы оба: кто бы ни встал с героем в пару, правила у него свои.
-    val bosses = base.copy(bossKind = Some(fire),
-      group = base.group.copy(others = base.group.others.map(_.copy(boss = Some(fire)))))
-    withJorgen(bosses.copy(story = Some(LairStory), lootLevel = Some(Level.toLong)), hero)
+    val fight = MercQuests.bossFight(MiniBoss.FireElemental, Elementals, Level, hero)
+    MercQuests.withMerc(fight.copy(story = Some(LairStory), lootLevel = Some(Level.toLong)), hero,
+      AllyKind.Human, strike = Some(Element.Cold))
   }
-
-  /** Йорген в бою логова — с мечом холода: огонь огнём не бьют. Он в строю —
-    * берёт этот меч сам; нет его в строю (не нанят или стоит в резерве) — идёт
-    * на этот бой гостем, на ближайшее к герою свободное место, и в отряд после
-    * боя не встаёт (см. `BattleState.squadAfterBattle`). Мест в строю нет —
-    * бой без него. */
-  def withJorgen(battle: SoloPveBattle, hero: Hero, grown: Long = 0L): SoloPveBattle = {
-    val allies = battle.group.allies
-    if (allies.exists(_.kind == AllyKind.Human))
-      battle.copy(group = battle.group.copy(allies =
-        allies.map(a => if (a.kind == AllyKind.Human) a.copy(strike = Some(Element.Cold)) else a)))
-    else battle.group.nearestFreeAllyPlace.fold(battle)(pos =>
-      battle.copy(group = battle.group.copy(allies = allies :+ guest(hero, grown).copy(position = pos))))
-  }
-
-  /** Йорген-гость: на полных силах, по своему уровню у этого героя, с мечом
-    * холода. Места в отряде у него нет (`home` — 0). */
-  def guest(hero: Hero, grown: Long = 0L): BattleAlly =
-    BattleAlly.of(Ally(AllyKind.Human, 0, 0L, 0L, 0L, grown = grown).restored(hero.lvl), hero.lvl)
-      .copy(strike = Some(Element.Cold))
 }

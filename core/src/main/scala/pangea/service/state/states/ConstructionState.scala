@@ -9,12 +9,14 @@ import pangea.generator.item.MaterialGenerator
 import pangea.model.hero.{Achievement, Hero}
 import pangea.model.quest.{NpcQuest, QuestOutcome}
 import pangea.repository.inventory.InventoryRepository
+import pangea.repository.item.ItemRepository
 import pangea.service.state.states.LootState.LootData
 import pangea.model.schedule.TaskKind
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.service.schedule.Scheduler
-import pangea.service.state.{AppButton, CityExit, LostSquadQuest, NpcQuestLog, QuestOutcomeLog, QuestSupport, State, UserAction}
+import pangea.service.state.{AppButton, BramblQuest, CityExit, LostSquadQuest, NpcQuestLog, QuestOutcomeLog, QuestSupport, State,
+  StoryBrandQuest, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -30,6 +32,10 @@ import java.util.concurrent.TimeUnit
   *
   * Работами заправляет прораб Гуннар Отвес — своя кнопка в меню: кто он и что
   * говорит по ходу «Пропавшей дружины»; ящик дружины несут ему.
+  *
+  * За складами — мастерская Оттара Медноуса, отца Брамбла: пока слепок с
+  * гробницы предка у героя («Замок для предков», см. BramblQuest), в меню
+  * кнопка к нему — он куёт замок из материалов героя.
   */
 case class ConstructionState(
   heroDao: HeroDao,
@@ -38,7 +44,10 @@ case class ConstructionState(
   // Сумка — чтобы забрать ящик «Пропавшей дружины», когда его отдают Гуннару.
   inventoryRepo: Option[InventoryRepository] = None,
   // Ящик отдан — исход «Пропавшей дружины» (см. QuestOutcome).
-  outcomes: Option[QuestOutcomeDao] = None
+  outcomes: Option[QuestOutcomeDao] = None,
+  // Хранилище вещей — выковать замок Медноусов («Замок для предков»): без
+  // него замок не создать, и кнопки к мастерской нет.
+  itemRepo: Option[ItemRepository] = None
 ) extends State {
   import ConstructionState._
 
@@ -68,6 +77,8 @@ case class ConstructionState(
       "BackFromForeman" -> Target.Run { (user, _, renderer) =>
         enter(user, renderer).as(StateType.Construction)
       },
+      "BramblForge"     -> Target.Run((user, _, renderer) => offShift(user, renderer)(showForge(user, renderer))),
+      "BramblForgeGive" -> Target.Run((user, _, renderer) => offShift(user, renderer)(forgeLock(user, renderer))),
       "LeaveConstruction" -> Target.Goto(StateType.MarketSquare),
       CityExit.route
     ),
@@ -92,32 +103,79 @@ case class ConstructionState(
   ): Task[StateType] = branch.act(user, ua, renderer)
 
   private def showMenu(user: User, renderer: Renderer): Task[Unit] =
-    renderer.show(
-      user,
-      Screen(
-        content.text("construction.menu.text"),
-        List(
-          content.choice(
-            "CarryStone",
-            "construction.carryStoneLabel",
-            "duration" -> formatHours(Job.CarryStone.hours)
-          ),
-          content.choice(
-            "BreakWall",
-            "construction.breakWallLabel",
-            "duration" -> formatHours(Job.BreakWall.hours)
-          ),
-          content.choice(
-            "BuildWall",
-            "construction.buildWallLabel",
-            "duration" -> formatHours(Job.BuildWall.hours)
-          ),
-          content.choice("Foreman", "construction.foremanLabel"),
-          content.choice("LeaveConstruction", "construction.back"),
-          CityExit.button(content)
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      // Слепок с гробницы у героя — к отцу Брамбла, в мастерскую за складами.
+      val forge = Option.when(forgeOpen(quests))(content.choice("BramblForge", "bramblLock.forge.label"))
+      renderer.show(
+        user,
+        Screen(
+          content.text("construction.menu.text"),
+          List(
+            content.choice(
+              "CarryStone",
+              "construction.carryStoneLabel",
+              "duration" -> formatHours(Job.CarryStone.hours)
+            ),
+            content.choice(
+              "BreakWall",
+              "construction.breakWallLabel",
+              "duration" -> formatHours(Job.BreakWall.hours)
+            ),
+            content.choice(
+              "BuildWall",
+              "construction.buildWallLabel",
+              "duration" -> formatHours(Job.BuildWall.hours)
+            ),
+            content.choice("Foreman", "construction.foremanLabel")
+          ) ++ forge.toList ++ List(
+            content.choice("LeaveConstruction", "construction.back"),
+            CityExit.button(content)
+          )
         )
       )
-    )
+    }
+
+  /** Мастерская Медноусов открыта: слепок на руках, и замок есть из чего создать. */
+  private def forgeOpen(quests: pangea.model.quest.NpcQuests): Boolean =
+    itemRepo.isDefined && inventoryRepo.isDefined && BramblQuest.toFather(quests)
+
+  /** Оттар Медноус узнаёт руку сына на слепке и называет цену замка; материалы
+    * при герое — «Отдать материалы». Не тот шаг — меню. */
+  private def showForge(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      hero   <- getHero(user)
+      res    <- (inventoryRepo, forgeOpen(quests)) match {
+                  case (Some(inv), true) =>
+                    // Цену Оттар называет сам; материалов при герое не хватает —
+                    // кнопки «Отдать» нет, как у собеседников главы 3.
+                    StoryBrandQuest.canPay(inv, hero, BramblQuest.LockPrice).flatMap { can =>
+                      renderer.show(user, StoryBrandQuest.askScreen(content, content.text("bramblLock.forge.text"),
+                        "BramblForgeGive", "bramblLock.forge.giveLabel", can,
+                        content.choice("BackFromForeman", "construction.back")))
+                    }.as(StateType.Construction)
+                  case _ => enter(user, renderer).as(StateType.Construction)
+                }
+    } yield res
+
+  /** Отдать материалы: Оттар куёт замок — он в сумку, слепок остаётся у него.
+    * Не хватает чего-то — ничего не списано, экран мастерской снова. */
+  private def forgeLock(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      hero   <- getHero(user)
+      res    <- (inventoryRepo, itemRepo) match {
+                  case (Some(inv), Some(items)) if forgeOpen(quests) =>
+                    BramblQuest.forge(heroDao, inv, items, user.userId, hero).flatMap {
+                      case false => showForge(user, renderer)
+                      case true =>
+                        renderer.show(user, Screen(content.text("bramblLock.forge.done") + "\n\n" +
+                          content.format("marisa.questItemAdded", "item" -> pangea.model.item.QuestItemKind.FamilyLock.displayName),
+                          Nil)) *> enter(user, renderer).as(StateType.Construction)
+                    }
+                  case _ => enter(user, renderer).as(StateType.Construction)
+                }
+    } yield res
 
   /** Прораб Гуннар Отвес: кто он и что говорит — по ходу «Пропавшей дружины»
     * (см. [[LostSquadQuest.foremanLine]]). Ящик дружины на руках — он его примет. */
