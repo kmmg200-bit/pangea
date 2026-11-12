@@ -3,10 +3,11 @@ package pangea.service.state.states.tavern
 import pangea.engine.SceneContent
 import pangea.model.hero.Hero
 import pangea.model.item.{BrewKind, Item}
+import pangea.model.quest.{NpcQuest, NpcQuests}
 import pangea.model.squad.{AllyKind, Squad}
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
-import pangea.service.state.UserAction
+import pangea.service.state.{NpcQuestLog, UserAction}
 import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestRenderer}
 import zio.ZIO
 import zio.test._
@@ -120,6 +121,40 @@ object MercenariesStateSpec extends ZIOSpecDefault {
               // хватает всего — нанят: две смазки ушли, шнапс остался, дублонов на пять меньше
               assertTrue(cHero.squad.has(AllyKind.Elf) && cHero.doubloons == 4L && cinv.snapshot.map(_.id) == List(3L)) &&
               assertTrue(cScr.exists(_.text.contains("Фаэлин Тихострел встаёт из-за стола")))
+    },
+
+    test("Фаэлин и ветвь брата: в сумке — узнаёт её (был у изгороди — коротко); задание позади — о цене иначе, а цена та же") {
+      val salves  = List(brew(BrewKind.VenomSalve, 1L), brew(BrewKind.VenomSalve, 2L))
+      val onHands = NpcQuests.empty.take(NpcQuest.HedgeSong, 0L)
+      def there(q: NpcQuests) = q.update(NpcQuest.HedgeSong)(_.copy(counter = 1L))
+      def cardWith(q: NpcQuests) =
+        for {
+          t <- makeState(baseHero)
+          (state, dao, _, r) = t
+          _    <- NpcQuestLog.save(dao, userId, q)
+          _    <- state.action(testUser, pick("MercCard", AllyKind.Elf), r)
+          card <- r.sentScreens.map(_.last.text)
+        } yield card
+      for {
+        fresh       <- cardWith(NpcQuests.empty)
+        branch      <- cardWith(onHands)
+        branchAgain <- cardWith(there(onHands))
+        done        <- cardWith(onHands.finish(NpcQuest.HedgeSong))
+        doneThere   <- cardWith(there(onHands).finish(NpcQuest.HedgeSong))
+        h <- makeState(baseHero.copy(doubloons = 9L), salves)
+        (hs, hdao, hinv, hr) = h
+        _     <- NpcQuestLog.save(hdao, userId, onHands.finish(NpcQuest.HedgeSong))
+        _     <- hs.action(testUser, pick("MercHire", AllyKind.Elf), hr)
+        hired <- hdao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(fresh.contains("«Фаэлин Тихострел.") && !fresh.contains("Элиар")) &&
+              assertTrue(branch.contains("Элиар, мой старший брат") && !branch.contains("«Фаэлин Тихострел.")) &&
+              assertTrue(branch.contains("Мне нужна «Ядовитая смазка», флаконов: 2,")) &&
+              assertTrue(branchAgain.contains("Ветвь всё ещё у тебя?") && !branchAgain.contains("Покажи")) &&
+              // задание позади: история своя, о цене — иначе, а цена прежняя
+              assertTrue(done.contains("«Фаэлин Тихострел.") && done.contains("Фет рассказал, кто принёс ему ветвь")) &&
+              assertTrue(done.contains("флаконов: 2, и 5 дублонов") && !done.contains("Мне нужна")) &&
+              assertTrue(doneThere.contains("У изгороди мы стояли за спиной Элиара вдвоём")) &&
+              assertTrue(hired.squad.has(AllyKind.Elf) && hired.doubloons == 4L && hinv.snapshot.isEmpty)
     },
 
     test("Брамбл берёт шнапсом; на первом уровне — одну бутылку") {

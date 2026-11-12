@@ -10,7 +10,7 @@ import pangea.model.inventory.Inventory.Items
 import pangea.model.item.QuestItemKind
 import pangea.model.monster.{Monster, Race, Rarity}
 import pangea.model.quest.{DailyQuests, Difficulty, NpcQuest, NpcQuests}
-import pangea.model.squad.AllyKind
+import pangea.model.squad.{AllyKind, AllyRates}
 import pangea.model.state.StateType
 import pangea.model.stats.FightStats
 import pangea.model.user.{TelegramId, User, UserId, VkId}
@@ -26,7 +26,8 @@ import zio.{Task, ZIO}
 /** «Тот, кто уговаривает деревья»: эльф поёт изгороди, герой стоит на страже —
   * три волны орков, каждая своим боем, с отрядом и Элиаром в строю; победа —
   * ветвь, Фету — за шкаф. «Не сейчас», уход между волнами и смерть задание не
-  * начинают. */
+  * начинают. Фаэлин при герое — младший брат Элиара: у него свои слова, а на
+  * уход посреди песни он остаётся с братом. */
 object HedgeSongSpec extends ZIOSpecDefault {
 
   private val userId   = UserId(1L)
@@ -184,6 +185,62 @@ object HedgeSongSpec extends ZIOSpecDefault {
               // из «Персонажа» — к той же волне, а не к новой встрече
               assertTrue(same.text == mid.text) &&
               assertTrue(out == StateType.Dungeon && HedgeSongQuest.fresh(q) && sd.forall(_.isNull))
+    },
+
+    test("Фаэлин при герое — младший брат Элиара: свои слова на встрече, между волнами и в конце; был у изгороди — так и записано") {
+      val withFaelin = hero().copy(squad = hero().squad.hire(AllyKind.Elf, 1L, 0L))
+      def screen(h: Hero, cleared: Int) =
+        for {
+          d <- dao(h)
+          _ <- ZIO.when(cleared > 0)(d.writeSceneData(userId, HedgeSongState.Progress(cleared).asJson))
+          r <- TestRenderer.make
+          c <- content
+          _ <- scene(d, TestInventoryRepository.accepting, c).enter(testUser, r)
+          t <- texts(r)
+          q <- questOf(d)
+        } yield (t, q)
+      for {
+        meet   <- screen(withFaelin, 0)
+        plain  <- screen(hero(), 0)
+        kin    <- screen(withFaelin.copy(race = Race.Elf), 0)
+        first  <- screen(withFaelin, 1)
+        second <- screen(withFaelin, 2)
+        won    <- screen(withFaelin, 3)
+        alone  <- screen(hero(), 3)
+      } yield assertTrue(meet._1.contains("Я Элиар") && meet._1.contains("Мой старший брат. Так поёт только он.")) &&
+              assertTrue(meet._1.indexOf("Мой старший брат") < meet._1.indexOf("Сложность:")) &&
+              assertTrue(!plain._1.contains("Фаэлин")) &&
+              // слова Фаэлина одни на любую кровь героя: эльфу Элиар говорит своё, а Фаэлин — то же
+              assertTrue(kin._1.contains("родич") && kin._1.contains("Мой старший брат")) &&
+              assertTrue(first._1.contains("идёт вторая волна") && first._1.contains("Сбивался всегда я.")) &&
+              assertTrue(second._1.contains("Бокк Последний у Костра") && second._1.contains("Песней его не погасишь.")) &&
+              assertTrue(won._1.contains("Изгородь вздыхает всей стеной") && won._1.contains("Петь ты так и не выучился.")) &&
+              assertTrue(HedgeSongQuest.toFet(won._2) && HedgeSongQuest.faelinWasThere(won._2)) &&
+              assertTrue(!alone._1.contains("Фаэлин") && HedgeSongQuest.toFet(alone._2) && !HedgeSongQuest.faelinWasThere(alone._2))
+    },
+
+    test("«Уйти» между волнами — Фаэлин остаётся с братом: из отряда вон, за стол через сутки, без реплики о свитке; «Не сейчас» — уходит с героем") {
+      val withFaelin = hero().copy(squad = hero().squad.hire(AllyKind.Elf, 1L, 0L))
+      for {
+        c     <- content
+        d1    <- dao(withFaelin)
+        _     <- d1.writeSceneData(userId, HedgeSongState.Progress(1).asJson)
+        r1    <- TestRenderer.make
+        out1  <- scene(d1, TestInventoryRepository.withItems(Nil), c).action(testUser, tap("HedgeLeave"), r1)
+        left  <- texts(r1)
+        h1    <- d1.getHeroByUserId(userId).map(_.get)
+        q1    <- questOf(d1)
+        d2    <- dao(withFaelin)
+        r2    <- TestRenderer.make
+        out2  <- scene(d2, TestInventoryRepository.withItems(Nil), c).action(testUser, tap("HedgeNotNow"), r2)
+        later <- texts(r2)
+        h2    <- d2.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(out1 == StateType.Dungeon && HedgeSongQuest.fresh(q1)) &&
+              assertTrue(left.contains("Я его одного не оставлю") && !left.contains("обрывается на полуслове")) &&
+              assertTrue(!h1.squad.has(AllyKind.Elf) && h1.squad.offDuty.get(AllyKind.Elf.entryName).contains(AllyRates.AwayMs)) &&
+              assertTrue(!h1.squad.away.contains(AllyKind.Elf.entryName)) &&
+              assertTrue(out2 == StateType.Dungeon && later.contains("Как знаешь") && later.contains("Он допоёт и без нас.")) &&
+              assertTrue(h2.squad.has(AllyKind.Elf))
     },
 
     test("настоящий бой третьей волны: добыча как за обычный бой, назад к эльфу — ветвь в сумке, задание взято; Элиар в отряд не встаёт") {

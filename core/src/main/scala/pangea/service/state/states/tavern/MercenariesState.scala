@@ -5,14 +5,14 @@ import pangea.engine.{Branch, Choice, Renderer, SceneContent, Screen, Target}
 import pangea.model.hero.Hero
 import pangea.model.item.{BrewKind, Item}
 import pangea.model.squad.{AllyKind, AllyRates, Squad}
-import pangea.model.quest.NpcQuests
+import pangea.model.quest.{NpcQuest, NpcQuests}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.bank.BankRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.service.purse.Purse
 import pangea.model.hero.Achievement
-import pangea.service.state.{CityExit, LostSquadQuest, NpcQuestLog, QuestSupport, SquadDuty, State, UserAction}
+import pangea.service.state.{CityExit, HedgeSongQuest, LostSquadQuest, NpcQuestLog, QuestSupport, SquadDuty, State, UserAction}
 import pangea.util.TimeLeft
 import zio.{Task, ZIO}
 
@@ -108,11 +108,23 @@ case class MercenariesState(
                 content.choice("MercList", "mercenaries.toList").copy(row = Some(1)))))
     } yield ()
 
+  /** Обычная карточка. Фаэлин помнит «Того, кто уговаривает деревья» (Элиар —
+    * его старший брат): ветвь в сумке — узнаёт её вместо своей истории,
+    * задание позади — о цене говорит иначе, а цена та же. Был ли он сам у
+    * изгороди — `HedgeSongQuest.faelinWasThere`. */
   private def showPlainCard(user: User, kind: AllyKind, renderer: Renderer): Task[Unit] =
     getHero(user).zip(NpcQuestLog.load(heroDao, user.userId)).flatMap { case (hero, quests) =>
-      val story = content.text(s"mercenaries.${key(kind)}.story")
+      val there = HedgeSongQuest.faelinWasThere(quests)
+      val story = kind match {
+        case AllyKind.Elf if HedgeSongQuest.toFet(quests) =>
+          content.text(if (there) "hedgeSong.faelin.branchAgain" else "hedgeSong.faelin.branch")
+        case k => content.text(s"mercenaries.${key(k)}.story")
+      }
       val price = kind match {
         case AllyKind.Human => content.format("mercenaries.human.price", "cost" -> AllyRates.HumanDoubloons.toString)
+        case AllyKind.Elf if quests.isDone(NpcQuest.HedgeSong) =>
+          content.format(if (there) "hedgeSong.faelin.priceThere" else "hedgeSong.faelin.price",
+            "n" -> AllyKind.brewsFor(hero.lvl).toString, "cost" -> AllyRates.ElfDoubloons.toString)
         case AllyKind.Elf   => content.format("mercenaries.elf.price",
           "n" -> AllyKind.brewsFor(hero.lvl).toString, "cost" -> AllyRates.ElfDoubloons.toString)
         // Брамбл помнит «Пропавшую дружину»: вывел — бутылка всегда, бросил — вдвое.

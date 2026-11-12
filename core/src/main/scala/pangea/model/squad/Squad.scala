@@ -335,6 +335,13 @@ final case class Squad(
   def sentAway(kind: AllyKind, nowMs: Long): Squad =
     dismiss(kind).copy(away = away.updated(kind.entryName, nowMs + AllyRates.AwayMs))
 
+  /** Наёмник ушёл от героя сам, без свитка (Фаэлин остался у изгороди с
+    * братом): из отряда — вон, за стол таверны сядет через сутки
+    * ([[AllyRates.AwayMs]]). Свитка не было — он в `offDuty`, а не в `away`, и
+    * реплики о свитке ему не положено (как резерву в [[reserveLeaves]]). */
+  def stayedBehind(kind: AllyKind, nowMs: Long): Squad =
+    dismiss(kind).copy(offDuty = offDuty.updated(kind.entryName, nowMs + AllyRates.AwayMs))
+
   /** На сколько мест строй съезжает к первому в бою: пустые места перед первым
     * бойцом — героем или союзником — уходят, промежутки между бойцами остаются.
     * Наёмник на 6-м и герой на 10-м встают в бою на 1-е и 5-е, герой один — на

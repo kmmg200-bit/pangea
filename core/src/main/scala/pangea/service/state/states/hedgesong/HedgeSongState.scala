@@ -10,6 +10,7 @@ import pangea.model.hero.Hero
 import pangea.model.item.QuestItemKind
 import pangea.model.quest.Difficulty
 import pangea.model.skill.MonsterEnergy
+import pangea.model.squad.AllyKind
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
@@ -34,7 +35,11 @@ import java.util.concurrent.TimeUnit
   * «Персонаж» и «Уйти». Третья отбита — изгородь отдаёт ветвь, задание взято.
   *
   * «Не сейчас», «Уйти» между волнами, смерть или ничья задание не начинают:
-  * эльфа надо встретить снова. */
+  * эльфа надо встретить снова.
+  *
+  * Фаэлин Тихострел при герое — младший брат Элиара: на встрече, между
+  * волнами и в конце у него свои слова (`hedgeSong.faelin.*`), а на «Уйти» он
+  * остаётся у изгороди с братом и сутки не в отряде. */
 case class HedgeSongState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
@@ -67,7 +72,7 @@ case class HedgeSongState(
       fresh     = HedgeSongQuest.fresh(quests)
       _        <- progress.map(_.cleared) match {
                     case Some(n) if fresh && n >= HedgeSongQuest.Waves => victory(user, hero, now, renderer)
-                    case Some(n) if fresh && n > 0                     => renderer.show(user, betweenScreen(n))
+                    case Some(n) if fresh && n > 0                     => renderer.show(user, betweenScreen(n, hero))
                     case _ if fresh                                    => renderer.show(user, meetScreen(hero))
                     case _ => renderer.show(user, Screen(content.text("hedgeSong.gone"), List(outChoice)))
                   }
@@ -78,21 +83,28 @@ case class HedgeSongState(
 
   // ── Экраны ──────────────────────────────────────────────────────────────────
 
-  /** Эльф поёт, на песню идут орки; сложность — сразу. */
+  /** Эльф поёт, на песню идут орки; сложность — сразу. Фаэлин при герое —
+    * узнаёт брата по песне. */
   private def meetScreen(hero: Hero): Screen =
-    Screen(content.text("hedgeSong." + HedgeSongQuest.key(hero, "meet")) + "\n\n" + difficultyLine, List(
+    Screen(withFaelin(hero, content.text("hedgeSong." + HedgeSongQuest.key(hero, "meet")), "meet") +
+      "\n\n" + difficultyLine, List(
       content.choice("HedgeFight", "hedgeSong.guardLabel").copy(row = Some(0)),
       content.choice("HedgeNotNow", "hedgeSong.notNowLabel").copy(row = Some(0))))
 
   /** Волна `cleared` отбита, следующая уже идёт. */
-  private def betweenScreen(cleared: Int): Screen =
-    Screen(content.text(s"hedgeSong.between$cleared"), List(
+  private def betweenScreen(cleared: Int, hero: Hero): Screen =
+    Screen(withFaelin(hero, content.text(s"hedgeSong.between$cleared"), s"between$cleared"), List(
       content.choice("HedgeFight", "hedgeSong.nextLabel").copy(row = Some(0)),
       content.choice("OpenCharacter", "hedgeSong.characterLabel").copy(row = Some(1)),
       content.choice("HedgeLeave", "hedgeSong.leaveLabel").copy(row = Some(1))))
 
   private def difficultyLine: String =
     content.format("marisa.difficulty", "difficulty" -> Difficulty.render(HedgeSongQuest.Level))
+
+  /** Текст сцены, а Фаэлин при герое — и его слова отдельным абзацем
+    * (`hedgeSong.faelin.<line>`). Слова одни на любую кровь героя. */
+  private def withFaelin(hero: Hero, text: String, line: String): String =
+    if (HedgeSongQuest.faelin(hero)) text + "\n\n" + content.text(s"hedgeSong.faelin.$line") else text
 
   private def outChoice = content.choice("HedgeOut", "hedgeSong.toDungeonLabel")
 
@@ -124,12 +136,14 @@ case class HedgeSongState(
                   } yield StateType.Battle
     } yield res
 
-  /** Третья волна отбита: песня кончилась, изгородь отдала ветвь. */
+  /** Третья волна отбита: песня кончилась, изгородь отдала ветвь. Фаэлин при
+    * герое — братья прощаются. */
   private def victory(user: User, hero: Hero, nowMs: Long, renderer: Renderer): Task[Unit] =
     for {
       _     <- heroDao.writeSceneData(user.userId, Json.Null)
       given <- HedgeSongQuest.branchGiven(heroDao, inventoryRepo, itemRepo, user.userId, hero, nowMs)
-      _     <- renderer.show(user, Screen(content.text("hedgeSong." + HedgeSongQuest.key(hero, "thanks")), Nil))
+      _     <- renderer.show(user, Screen(withFaelin(hero,
+                 content.text("hedgeSong." + HedgeSongQuest.key(hero, "thanks")), "thanks"), Nil))
       _     <- ZIO.when(given)(renderer.show(user, Screen(
                  content.format("marisa.questItemAdded", "item" -> QuestItemKind.HedgeBranch.displayName), Nil)))
       _     <- renderer.show(user, Screen(content.text("hedgeSong.branchHint"), List(outChoice)))
@@ -137,21 +151,35 @@ case class HedgeSongState(
 
   // ── Отказ и уход ────────────────────────────────────────────────────────────
 
-  /** «Не сейчас»: задание не начато, эльф может встретиться снова. */
+  /** «Не сейчас»: задание не начато, эльф может встретиться снова. Фаэлин при
+    * герое уходит с ним — орки ещё не пришли, — только оглядывается. */
   private def notNow(user: User, renderer: Renderer): Task[StateType] =
-    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
-      if (!HedgeSongQuest.fresh(quests)) enter(user, renderer).as(StateType.HedgeSong)
-      else heroDao.writeSceneData(user.userId, Json.Null) *>
-        renderer.show(user, Screen(content.text("hedgeSong.notNow"), Nil)).as(StateType.Dungeon)
-    }
+    for {
+      hero   <- getHero(user)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      res    <- if (!HedgeSongQuest.fresh(quests)) enter(user, renderer).as(StateType.HedgeSong)
+                else heroDao.writeSceneData(user.userId, Json.Null) *>
+                  renderer.show(user, Screen(withFaelin(hero, content.text("hedgeSong.notNow"), "notNow"), Nil))
+                    .as(StateType.Dungeon)
+    } yield res
 
-  /** «Уйти» между волнами: песня обрывается, задание не начато. */
+  /** «Уйти» между волнами: песня обрывается, задание не начато. Фаэлин при
+    * герое не уходит: остаётся у изгороди за спиной брата — из отряда вон, за
+    * стол таверны сядет через сутки (без свитка, см. `Squad.stayedBehind`), — и
+    * песня не обрывается. */
   private def leave(user: User, renderer: Renderer): Task[StateType] =
-    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
-      if (!HedgeSongQuest.fresh(quests)) enter(user, renderer).as(StateType.HedgeSong)
-      else heroDao.writeSceneData(user.userId, Json.Null) *>
-        renderer.show(user, Screen(content.text("hedgeSong.left"), Nil)).as(StateType.Dungeon)
-    }
+    for {
+      now    <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+      hero   <- getHero(user)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      stays   = HedgeSongQuest.faelin(hero)
+      res    <- if (!HedgeSongQuest.fresh(quests)) enter(user, renderer).as(StateType.HedgeSong)
+                else for {
+                  _ <- heroDao.writeSceneData(user.userId, Json.Null)
+                  _ <- ZIO.when(stays)(heroDao.updateSquad(user.userId, hero.squad.stayedBehind(AllyKind.Elf, now)))
+                  _ <- renderer.show(user, Screen(content.text(if (stays) "hedgeSong.faelin.stays" else "hedgeSong.left"), Nil))
+                } yield StateType.Dungeon
+    } yield res
 
   private def readProgress(user: User): Task[Option[Progress]] =
     heroDao.readSceneData(user.userId).map(_.flatMap(_.as[Progress].toOption))

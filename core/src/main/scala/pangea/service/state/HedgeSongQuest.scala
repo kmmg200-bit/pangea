@@ -50,6 +50,11 @@ object HedgeSongQuest {
   /** Герой той же крови — Элиар говорит с ним иначе. */
   def isKin(hero: Hero): Boolean = hero.race == Race.Elf
 
+  /** Фаэлин Тихострел — младший брат Элиара. Он при герое (в строю или в
+    * резерве) — у него в задании свои слова (`hedgeSong.faelin.*`), а уйти
+    * посреди песни он с героем не уйдёт: останется с братом. */
+  def faelin(hero: Hero): Boolean = hero.squad.has(AllyKind.Elf)
+
   /** Ключ текста с поправкой на кровь героя: эльфу — `<key>Kin`. */
   def key(hero: Hero, base: String): String = if (isKin(hero)) base + "Kin" else base
 
@@ -61,14 +66,21 @@ object HedgeSongQuest {
   /** Ветвь на руках — нести Фету. */
   def toFet(q: NpcQuests): Boolean = q.onStep(NpcQuest.HedgeSong, 1)
 
+  /** Изгородь отдала ветвь, когда Фаэлин стоял рядом (`counter` = 1): в
+    * таверне он говорит об этом как тот, кто там был. В старых записях
+    * `counter` — 0: Фаэлина тогда в таверне ещё не было. */
+  def faelinWasThere(q: NpcQuests): Boolean = q.of(NpcQuest.HedgeSong).counter > 0L
+
   /** Третья волна отбита: изгородь отдала ветвь — она в сумку, задание взято
-    * сразу на шаге «нести Фету». Уже было — ничего. */
+    * сразу на шаге «нести Фету»; был ли при этом Фаэлин — в `counter`. Уже
+    * было — ничего. */
   def branchGiven(heroDao: HeroDao, inventory: InventoryRepository, items: ItemRepository,
                   userId: UserId, hero: Hero, nowMs: Long): Task[Boolean] =
     NpcQuestLog.load(heroDao, userId).flatMap { q =>
       if (!fresh(q)) ZIO.succeed(false)
       else QuestSupport.giveItem(inventory, items, hero, QuestItemKind.HedgeBranch) *>
-        NpcQuestLog.save(heroDao, userId, q.take(NpcQuest.HedgeSong, nowMs)).as(true)
+        NpcQuestLog.save(heroDao, userId, q.take(NpcQuest.HedgeSong, nowMs)
+          .update(NpcQuest.HedgeSong)(_.copy(counter = if (faelin(hero)) 1L else 0L))).as(true)
     }
 
   // ── Волны ───────────────────────────────────────────────────────────────────
