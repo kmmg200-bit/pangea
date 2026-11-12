@@ -35,6 +35,8 @@ import java.util.concurrent.TimeUnit
  *
  * После группового боя добыча идёт по одному павшему за экран (`queue`): каждый
  * исход показывает следующего, пока очередь не опустеет, и только тогда — уход.
+ * Павшие без вещей — одной сводкой в самом начале: кого обыскали и сколько
+ * нашли на всех (см. [[showSearched]]); по одному идут только те, у кого вещи.
  *
  * Над «Оставить» — «🎒 Рюкзак»: заглянуть в сумку, освободить место и вернуться
  * к той же добыче (см. [[openBackpack]]).
@@ -98,20 +100,24 @@ case class LootState(
     for {
       hero <- getHero(user)
       loot <- readLoot(user)
+      _    <- LootState.searched(loot).fold(show(user, renderer, hero, loot))(showSearched(user, renderer, hero, _))
+    } yield ()
 
-      // серебро и дублоны забираются всегда и сразу, без выбора — но один раз:
-      // из рюкзака игрок возвращается сюда же, а деньги уже в кошельке
-      silverTotal = if (loot.credited) 0L else silvers(hero, loot).sum
-      doubloons   = if (loot.credited) 0L else loot.doubloons
-      _        <- ZIO.when(silverTotal > 0L || doubloons > 0L)(
-                    heroDao.writeSceneData(user.userId, loot.copy(credited = true).asJson))
-      _        <- ZIO.when(silverTotal > 0L)(heroDao.updateSilver(user.userId, hero.silver + silverTotal))
-      _        <- ZIO.when(doubloons > 0L)(heroDao.updateDoubloons(user.userId, hero.doubloons + doubloons))
-      currency  = currencyLines(hero, loot)
-
+  /** Экран одной добычи: деньги — в кошелёк, вещей нет — сообщение, есть —
+    * превью с кнопками. */
+  private def show(user: User, renderer: Renderer, hero: Hero, loot: LootData): Task[Unit] = {
+    // серебро и дублоны забираются всегда и сразу, без выбора — но один раз:
+    // из рюкзака игрок возвращается сюда же, а деньги уже в кошельке
+    val silverTotal = if (loot.credited) 0L else silvers(hero, loot.silvers).sum
+    val doubloons   = if (loot.credited) 0L else loot.doubloons
+    for {
+      _ <- ZIO.when(silverTotal > 0L || doubloons > 0L)(
+             heroDao.writeSceneData(user.userId, loot.copy(credited = true).asJson))
+      _ <- ZIO.when(silverTotal > 0L)(heroDao.updateSilver(user.userId, hero.silver + silverTotal))
+      _ <- ZIO.when(doubloons > 0L)(heroDao.updateDoubloons(user.userId, hero.doubloons + doubloons))
       _ <- if (loot.items.isEmpty) {
              // выбирать нечего — только серебро/дублоны (или совсем пусто)
-             val text = noItemsText(loot, currency)
+             val text = noItemsText(loot, currencyLines(hero, loot))
              journal.append(GameEvent(user.userId, "loot_claimed",
                Json.obj("silver" -> silverTotal.asJson, "items" -> loot.items.map(_.name).asJson))) *>
                // В группе, пока павшие ещё есть, решать нечего — сообщение и сразу следующий.
@@ -121,14 +127,48 @@ case class LootState(
              // серебро/дублоны уже в кошельке; по предметам спрашиваем
              renderer.show(user, previewScreen(hero, loot))
     } yield ()
+  }
 
-  /** Экран добычи без вещей: только серебро и дублоны — или совсем пусто. */
-  private def noItemsText(loot: LootData, currency: List[String]): String =
-    if (currency.nonEmpty) header(loot) + "\n\n" + currency.mkString("\n")
-    else loot.monsterName match {
-      case Some(name) => content.format("loot.groupEmpty", "monster" -> name)
-      case None       => content.text("loot.empty")
+  /** После группового боя павшие без вещей — одной сводкой в начале: кого
+    * обыскали и сколько нашли на всех (см. [[LootState.searched]]). Их деньги —
+    * сразу в кошелёк. Дальше — первый павший с вещами своим экраном, как и
+    * раньше; таких нет — сводка ждёт «Продолжить». */
+  private def showSearched(user: User, renderer: Renderer, hero: Hero, s: LootState.Searched): Task[Unit] = {
+    val silver    = s.credit.map(m => silvers(hero, m.silvers).sum).sum
+    val doubloons = s.credit.map(_.doubloons).sum
+    val text      = noItemsText(s.summary, currencyLines(hero, s.summary))
+    for {
+      // Сведённых в scene_data больше нет ещё до начисления: повторный вход
+      // их деньги второй раз не даст.
+      _ <- heroDao.writeSceneData(user.userId, s.next.getOrElse(s.summary).asJson)
+      _ <- ZIO.when(silver > 0L)(heroDao.updateSilver(user.userId, hero.silver + silver))
+      _ <- ZIO.when(doubloons > 0L)(heroDao.updateDoubloons(user.userId, hero.doubloons + doubloons))
+      _ <- ZIO.foreachDiscard(s.credit)(m => journal.append(GameEvent(user.userId, "loot_claimed",
+             Json.obj("silver" -> silvers(hero, m.silvers).sum.asJson, "items" -> List.empty[String].asJson))))
+      _ <- s.next match {
+             // деньги сводки уже в кошельке — следующему экрану нужен свежий герой
+             case Some(next) =>
+               renderer.show(user, Screen(text, Nil)) *> getHero(user).flatMap(show(user, renderer, _, next))
+             case None => renderer.show(user, Screen(text, content.screen("loot.enter").choices))
+           }
+    } yield ()
+  }
+
+  /** Экран добычи без вещей: только серебро и дублоны — или совсем пусто. У
+    * сводки — кого обыскали: один — как павший в группе, больше — списком
+    * (см. [[LootState.bodies]]). */
+  private def noItemsText(loot: LootData, currency: List[String]): String = {
+    val (found, nothing) = loot.searched match {
+      case Nil =>
+        (header(loot), loot.monsterName.fold(content.text("loot.empty"))(n => content.format("loot.groupEmpty", "monster" -> n)))
+      case one :: Nil =>
+        (content.format("loot.groupHeader", "monster" -> one), content.format("loot.groupEmpty", "monster" -> one))
+      case many =>
+        val names = LootState.bodies(many)
+        (content.format("loot.searchedHeader", "monsters" -> names), content.format("loot.searchedEmpty", "monsters" -> names))
     }
+    if (currency.nonEmpty) found + "\n\n" + currency.mkString("\n") else nothing
+  }
 
   /** Тот же экран добычи ещё раз — на посторонний ввод: текст, чужая или старая
     * кнопка. Вещи ждут решения, пока игрок не нажмёт «Забрать», «Оставить» или
@@ -142,12 +182,16 @@ case class LootState(
     } yield StateType.Loot
 
   /** Серебро с добычи: «Спаситель Марисы» получает на десятую больше. */
-  private def silvers(hero: Hero, loot: LootData): List[Long] =
-    loot.silvers.map(_ * Achievement.silverPct(hero) / 100L)
+  private def silvers(hero: Hero, drops: List[Long]): List[Long] =
+    drops.map(_ * Achievement.silverPct(hero) / 100L)
 
-  private def currencyLines(hero: Hero, loot: LootData): List[String] =
-    silvers(hero, loot).map(s => content.format("loot.silver", "amount" -> s.toString)) ++
+  private def currencyLines(hero: Hero, loot: LootData): List[String] = {
+    val found = silvers(hero, loot.silvers)
+    // У сводки обысканных серебро одним числом на всех, у павшего — по выпадениям.
+    val shown = if (loot.searched.nonEmpty) List(found.sum).filter(_ > 0L) else found
+    shown.map(s => content.format("loot.silver", "amount" -> s.toString)) ++
       (if (loot.doubloons > 0L) List(content.format("loot.doubloons", "amount" -> loot.doubloons.toString)) else Nil)
+  }
 
   // В группе над добычей стоит имя павшего — чтобы было видно, чья она.
   private def header(loot: LootData): String = loot.header.getOrElse(loot.monsterName match {
@@ -372,7 +416,9 @@ object LootState {
   //                   роутинг, положенный сценой перед боем. По ней бой узнаёт
   //                   свою же не доехавшую до экрана победу (см. BattleState.recover);
   //   - credited    — серебро и дублоны этого павшего уже в кошельке: из рюкзака
-  //                   игрок возвращается на тот же экран, и второй раз их не дают.
+  //                   игрок возвращается на тот же экран, и второй раз их не дают;
+  //   - searched    — это сводка обысканных после группового боя: кто (по имени
+  //                   на павшего); их серебро и дублоны — в silvers и doubloons.
   final case class LootData(
     items:       List[Item],
     silvers:     List[Long],
@@ -384,7 +430,8 @@ object LootState {
     won:         Boolean           = false,
     // Свой заголовок экрана — у находки не с тела (хлам в домике).
     header:      Option[String]    = None,
-    credited:    Boolean           = false
+    credited:    Boolean           = false,
+    searched:    List[String]      = Nil
   )
   object LootData {
     implicit val encoder: Encoder[LootData] = deriveEncoder[LootData]
@@ -402,8 +449,47 @@ object LootState {
         won         <- c.getOrElse[Boolean]("won")(false)
         header      <- c.getOrElse[Option[String]]("header")(None)
         credited    <- c.getOrElse[Boolean]("credited")(false)
-      } yield LootData(items, silvers, doubloons, returnState, eventData, monsterName, queue, won, header, credited)
+        searched    <- c.getOrElse[List[String]]("searched")(Nil)
+      } yield LootData(items, silvers, doubloons, returnState, eventData, monsterName, queue, won, header, credited,
+          searched)
   }
+
+  /** Сводка групповой добычи (см. LootState.showSearched): `summary` — сама
+    * сводка, кого обыскали и всё их серебро с дублонами (уже в кошельке —
+    * `credited`); `credit` — чьи деньги начислить сейчас; `next` — первый
+    * павший с вещами, с него экран идёт дальше, за ним — остальные с вещами. */
+  final case class Searched(summary: LootData, credit: List[MonsterLoot], next: Option[LootData])
+
+  /** Павших без вещей — в сводку. None — сводить нечего: добыча не с группы
+    * (имени павшего нет — и у самой сводки его нет) или вещи у всех. */
+  def searched(loot: LootData): Option[Searched] =
+    loot.monsterName.flatMap { name =>
+      val own            = MonsterLoot(name, loot.items, loot.silvers, loot.doubloons)
+      val (empty, found) = (own :: loot.queue).partition(_.items.isEmpty)
+      Option.when(empty.nonEmpty) {
+        val summary = loot.copy(items = Nil, silvers = empty.flatMap(_.silvers),
+          doubloons = empty.map(_.doubloons).sum, monsterName = None, queue = Nil,
+          searched = empty.map(_.monsterName), credited = true)
+        val next = found match {
+          // Первым с вещами идёт сам этот павший, если вещи у него, — и его
+          // деньги могли уже лечь в кошелёк.
+          case first :: rest => Some(loot.copy(items = first.items, silvers = first.silvers,
+            doubloons = first.doubloons, monsterName = Some(first.monsterName), queue = rest,
+            credited = loot.credited && loot.items.nonEmpty))
+          case Nil => None
+        }
+        // Без вещей этот павший — первый в сводке; его деньги могли лечь раньше.
+        Searched(summary, if (loot.credited && loot.items.isEmpty) empty.drop(1) else empty, next)
+      }
+    }
+
+  /** Кого обыскали: одинаковые — одной записью со счётом («Орк раб ×5»), в
+    * порядке гибели. */
+  def bodies(names: List[String]): String =
+    names.distinct.map { n =>
+      val k = names.count(_ == n)
+      if (k > 1) s"$n ×$k" else n
+    }.mkString(", ")
 
   /** Добыча с одного павшего в группе: ждёт своей очереди на экран. */
   final case class MonsterLoot(monsterName: String, items: List[Item], silvers: List[Long], doubloons: Long)

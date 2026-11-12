@@ -137,6 +137,7 @@ object LootBackpackSpec extends ZIOSpecDefault {
         t <- make(loot, bag, TestArtifactRepository.empty, menuFrom = Some(StateType.Dungeon))
         (press, heroDao, heroRepo, api) = t
         firstLabels <- lastLabels(api)
+        opened      <- api.sentMessages.map(_.map(_._1).mkString("\n"))
         // сумка полна — идём освобождать место
         _       <- press(tap("Backpack"))
         inBag   <- stateOf(heroRepo)
@@ -162,24 +163,25 @@ object LootBackpackSpec extends ZIOSpecDefault {
         money3  <- money(heroDao)
         queue2  <- lootOf(heroDao)
         _       <- press(tap("Take"))
-        screen3 <- lastText(api)
         money4  <- money(heroDao)
-        _       <- press(tap("Continue"))
         after   <- stateOf(heroRepo)
         scene   <- heroDao.readSceneData(userId)
       } yield assertTrue(firstLabels == List("Забрать", "🎒 Рюкзак", "Оставить")) &&
+              // третий без вещей — сводкой в самом начале, его серебро сразу в кошельке
+              assertTrue(opened.contains("Вы осматриваете тело: Орк-третий") && opened.contains("🪙 Вы нашли 7 серебра")) &&
               assertTrue(inBag.contains(StateType.Inventory) && back.contains(StateType.Loot)) &&
-              assertTrue(waiting.exists(l => l.monsterName.contains("Орк-первый") && l.items.size == 1 && l.queue.size == 2)) &&
+              assertTrue(waiting.exists(l => l.monsterName.contains("Орк-первый") && l.items.size == 1 && l.queue.size == 1)) &&
               // вернулись на тот же экран: тот же павший, те же кнопки, серебро не задвоилось
               assertTrue(onLoot1.contains(StateType.Loot) && screen1.contains("Орк-первый") && screen1.contains("Шлем орка")) &&
-              assertTrue(labels1 == firstLabels && money1.contains(110L -> 0L)) &&
+              assertTrue(labels1 == firstLabels && money1.contains(117L -> 0L)) &&
               assertTrue(took1 == List("Хлам 102", "Хлам 103", "Шлем орка")) &&
-              assertTrue(screen2.contains("Орк-второй") && money2.contains(115L -> 1L)) &&
-              assertTrue(onLoot2.contains(StateType.Loot) && again2 == screen2 && money3.contains(115L -> 1L)) &&
-              assertTrue(queue2.exists(l => l.monsterName.contains("Орк-второй") && l.queue.map(_.monsterName) == List("Орк-третий"))) &&
+              assertTrue(screen2.contains("Орк-второй") && money2.contains(122L -> 1L)) &&
+              assertTrue(onLoot2.contains(StateType.Loot) && again2 == screen2 && money3.contains(122L -> 1L)) &&
+              assertTrue(queue2.exists(l => l.monsterName.contains("Орк-второй") && l.queue.isEmpty)) &&
               assertTrue(bag.snapshot.map(_.name) == List("Хлам 103", "Шлем орка", "Сапоги орка")) &&
-              assertTrue(screen3.contains("Орк-третий") && money4.contains(122L -> 1L)) &&
-              // добыча разобрана — дальше по её маршруту, с данными события
+              assertTrue(money4.contains(122L -> 1L)) &&
+              // добыча разобрана — с последним павшим с вещами сразу дальше по её
+              // маршруту, с данными события
               assertTrue(after.contains(StateType.GlobalMap) && scene.contains(Json.obj("chain" -> 2.asJson)))
     },
 

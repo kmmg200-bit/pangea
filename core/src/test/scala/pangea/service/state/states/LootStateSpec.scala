@@ -213,7 +213,7 @@ object LootStateSpec extends ZIOSpecDefault {
               assertTrue(next == StateType.Dungeon)
     },
 
-    test("группа: над добычей имя павшего, «Забрать» ведёт к следующему; павший без вещей проскакивает сам; последний — наружу") {
+    test("группа: павшие без вещей — одной сводкой в начале, с вещами — своим экраном с именем; после него — наружу") {
       val loot = LootData(
         items = List(gear("Шлем орка")), silvers = List(10L),
         monsterName = Some("Орк-первый"),
@@ -221,25 +221,76 @@ object LootStateSpec extends ZIOSpecDefault {
       for {
         t <- makeState(loot)
         (state, renderer, heroDao, invRepo) = t
-        _        <- state.enter(testUser, renderer)
-        first    <- renderer.sentScreens.map(_.last)
+        _         <- state.enter(testUser, renderer)
+        shown     <- renderer.sentScreens
+        stored    <- heroDao.readSceneData(userId).map(_.flatMap(_.as[LootData].toOption).get)
         afterTake <- state.action(testUser, tap("Take"), renderer)
-        screens  <- renderer.sentScreens
-        second    = screens(screens.size - 2)
-        third    <- renderer.sentScreens.map(_.last)
-        stored   <- heroDao.readSceneData(userId).map(_.flatMap(_.as[LootData].toOption).get)
-        afterLast <- state.action(testUser, tap("Continue"), renderer)
-        hero     <- heroDao.getHeroByUserId(userId)
-      } yield assertTrue(first.text.contains("Орк-первый")) &&
-              assertTrue(afterTake == StateType.Loot) &&           // в очереди ещё двое — остаёмся
-              assertTrue(invRepo.snapshot.size == 1) &&
-              // у второго только серебро: сообщение без кнопок и сразу третий
-              assertTrue(second.text.contains("Орк-второй") && second.choices.isEmpty) &&
-              assertTrue(third.text.contains("Орк-третий") && third.text.contains("Ничего ценного")) &&
-              assertTrue(third.choices.map(_.label) == List("Продолжить")) && // последний — наружу
-              assertTrue(stored.monsterName.contains("Орк-третий") && stored.queue.isEmpty) &&
-              assertTrue(hero.exists(_.silver == 100L + 10L + 5L)) &&  // серебро со всех
-              assertTrue(afterLast == StateType.Dungeon)
+        hero      <- heroDao.getHeroByUserId(userId)
+      } yield assertTrue(shown.size == 2) &&
+              // сводка: оба без вещей, серебро одним числом, без кнопок
+              assertTrue(shown.head.text.startsWith("Вы обыскали тела: Орк-второй, Орк-третий.") &&
+                         shown.head.text.contains("🪙 Вы нашли 5 серебра") && shown.head.choices.isEmpty) &&
+              // за ней — тот, у кого вещи: со своим именем, серебром и кнопками
+              assertTrue(shown(1).text.contains("Орк-первый") && shown(1).text.contains("🪙 Вы нашли 10 серебра") &&
+                         shown(1).choices.map(_.id).toSet == Set("Take", "Backpack", "Leave")) &&
+              assertTrue(stored.monsterName.contains("Орк-первый") && stored.queue.isEmpty && stored.searched.isEmpty) &&
+              // вещи с ним были последними — дальше наружу, без «Продолжить»
+              assertTrue(afterTake == StateType.Dungeon && invRepo.snapshot.size == 1) &&
+              assertTrue(hero.exists(_.silver == 100L + 10L + 5L))  // серебро со всех, по разу
+    },
+
+    test("группа без вещей: одна сводка — одинаковые со счётом, деньги одним числом; посторонний ввод — она же, деньги по разу") {
+      val loot = LootData(
+        items = Nil, silvers = List(4L, 6L),
+        monsterName = Some("Орк раб"),
+        queue = List(MonsterLoot("Орк раб", Nil, Nil, 0L), MonsterLoot("Шаман", Nil, List(5L), 2L),
+                     MonsterLoot("Орк раб", Nil, List(3L), 0L)))
+      for {
+        t <- makeState(loot)
+        (state, renderer, heroDao, _) = t
+        _      <- state.enter(testUser, renderer)
+        shown  <- renderer.sentScreens
+        typed  <- state.action(testUser, UserAction("что угодно", None), renderer)
+        again  <- renderer.sentScreens.map(_.last)
+        hero   <- heroDao.getHeroByUserId(userId)
+        next   <- state.action(testUser, tap("Continue"), renderer)
+      } yield assertTrue(shown.size == 1) &&
+              assertTrue(shown.head.text.startsWith("Вы обыскали тела: Орк раб ×3, Шаман. Вы находите следующее:")) &&
+              assertTrue(shown.head.text.contains("🪙 Вы нашли 18 серебра") &&
+                         shown.head.text.contains("🟡 Вы нашли 2 дублона(ов)")) &&
+              assertTrue(shown.head.choices.map(_.id) == List("Continue")) &&
+              assertTrue(typed == StateType.Loot && again.text == shown.head.text) &&
+              assertTrue(hero.exists(h => h.silver == 100L + 18L && h.doubloons == 2L)) &&
+              assertTrue(next == StateType.Dungeon)
+    },
+
+    test("группа без денег и вещей: «Вы обыскали тела: … Ничего ценного.»; один без вещей — как раньше, «тело»") {
+      val empty = LootData(items = Nil, silvers = Nil, monsterName = Some("Крыса"),
+        queue = List(MonsterLoot("Крыса", Nil, Nil, 0L)))
+      val one   = LootData(items = List(gear("Шлем")), silvers = Nil, monsterName = Some("Орк"),
+        queue = List(MonsterLoot("Гоблин", Nil, List(7L), 0L)))
+      for {
+        a <- makeState(empty)
+        (sa, ra, _, _) = a
+        _     <- sa.enter(testUser, ra)
+        rats  <- ra.sentScreens
+        b <- makeState(one)
+        (sb, rb, _, _) = b
+        _     <- sb.enter(testUser, rb)
+        lone  <- rb.sentScreens
+      } yield assertTrue(rats.map(_.text) == List("Вы обыскали тела: Крыса ×2. Ничего ценного.")) &&
+              assertTrue(lone.head.text.startsWith("Вы осматриваете тело: Гоблин. Вы находите следующее:") &&
+                         lone.head.text.contains("🪙 Вы нашли 7 серебра")) &&
+              assertTrue(lone(1).text.contains("Шлем"))
+    },
+
+    test("старая запись добычи — без поля сводки — читается как обычная добыча") {
+      val old = io.circe.parser.parse(
+        """{"items":[],"silvers":[5],"doubloons":0,"returnState":null,"eventData":null,"monsterName":"Орк",""" +
+        """"queue":[{"monsterName":"Гоблин","items":[],"silvers":[3],"doubloons":0}],"won":true,"header":null,"credited":false}""")
+      val read = old.flatMap(_.as[LootData])
+      assertTrue(read.exists(l => l.searched.isEmpty && l.monsterName.contains("Орк") && l.silvers == List(5L) &&
+        l.queue.map(_.monsterName) == List("Гоблин") && l.won))
     },
 
     test("группа: «Оставить» тоже ведёт к следующему павшему") {
