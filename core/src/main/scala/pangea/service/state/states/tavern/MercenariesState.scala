@@ -18,11 +18,11 @@ import zio.{Task, ZIO}
 
 import java.util.concurrent.TimeUnit
 
-/** «Наёмники» в таверне: трое за дальним столом — история, цена и «Нанять».
+/** «Наёмники» в таверне: четверо за дальним столом — история, цена и «Нанять».
   * Кто уже в отряде или ушёл по свитку (на сутки) — за столом не сидит. Вернувшийся
-  * встречает репликой о свитке и снова нанимается. Йорген берёт серебром
-  * (500 × уровень), Плюх — Живой водой, Брамбл — шнапсом из красавки (уровень
-  * на пять, но не меньше одного). */
+  * встречает репликой о свитке и снова нанимается. Йорген берёт дублонами,
+  * Плюх — Живой водой, Брамбл — шнапсом из красавки, Фаэлин — Ядовитой
+  * смазкой и сверху дублонами (отваров — уровень на пять, но не меньше одного). */
 case class MercenariesState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
@@ -113,6 +113,8 @@ case class MercenariesState(
       val story = content.text(s"mercenaries.${key(kind)}.story")
       val price = kind match {
         case AllyKind.Human => content.format("mercenaries.human.price", "cost" -> AllyRates.HumanDoubloons.toString)
+        case AllyKind.Elf   => content.format("mercenaries.elf.price",
+          "n" -> AllyKind.brewsFor(hero.lvl).toString, "cost" -> AllyRates.ElfDoubloons.toString)
         // Брамбл помнит «Пропавшую дружину»: вывел — бутылка всегда, бросил — вдвое.
         case AllyKind.Gnome if LostSquadQuest.bramblFriend(quests) => content.text("lostSquad.brambl.priceFriend")
         case AllyKind.Gnome if LostSquadQuest.squadAbandoned(quests) =>
@@ -168,7 +170,7 @@ case class MercenariesState(
         else {
           val silver = rushSilver(hero.squad, kind)
           val line   = content.format(s"mercenaries.${key(kind)}.rush",
-            "silver" -> silver.toString, "cost" -> AllyRates.HumanDoubloons.toString,
+            "silver" -> silver.toString, "cost" -> doubloonsFor(kind).toString,
             "n" -> brewCount(kind, hero, quests).toString)
           renderer.show(user, Screen(content.text("mercenaries.rushIntro") + "\n\n" + line, List(
             Choice("MercRushHire", Choice.fit(content.format("mercenaries.rushLabel", "silver" -> silver.toString)),
@@ -198,7 +200,7 @@ case class MercenariesState(
           case None =>
             val squad = hero.squad.rushed(kind, hero.lvl, now)
             for {
-              // Йорген берёт дублонами: героя читаем заново, чтобы не затереть их списание.
+              // Йорген и Фаэлин берут дублонами: героя читаем заново, чтобы не затереть их списание.
               fresh <- getHero(user)
               _     <- purse.charge(user.userId, fresh, silver)
               _     <- heroDao.updateSquad(user.userId, squad)
@@ -228,6 +230,23 @@ case class MercenariesState(
           ZIO.succeed(Some(content.format("mercenaries.notEnoughDoubloons",
             "cost" -> cost.toString, "have" -> hero.doubloons.toString)))
         else heroDao.updateDoubloons(user.userId, hero.doubloons - cost).as(None)
+      case AllyKind.Elf =>
+        // Фаэлин берёт и смазкой (по уровню), и дублонами (всегда столько же):
+        // чего-то не хватает — не берём ничего.
+        val cost = AllyRates.ElfDoubloons
+        val n    = brewCount(AllyKind.Elf, hero, quests).toInt
+        inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
+          val salves = brews(inv.items.data, BrewKind.VenomSalve)
+          if (salves.size < n)
+            ZIO.succeed(Some(content.format("mercenaries.notEnoughBrews",
+              "n" -> n.toString, "brew" -> BrewKind.VenomSalve.label, "have" -> salves.size.toString)))
+          else if (hero.doubloons < cost)
+            ZIO.succeed(Some(content.format("mercenaries.notEnoughDoubloons",
+              "cost" -> cost.toString, "have" -> hero.doubloons.toString)))
+          else
+            inventoryRepo.removeItems(salves.take(n).map(_.id).toSet, hero.id).mapError(e => new Throwable(e.toString)) *>
+              heroDao.updateDoubloons(user.userId, hero.doubloons - cost).as(None)
+        }
       case k =>
         val brew = brewFor(k)
         val n    = brewCount(k, hero, quests).toInt
@@ -274,6 +293,7 @@ object MercenariesState {
     case AllyKind.Human  => "human"
     case AllyKind.Murloc => "murloc"
     case AllyKind.Gnome  => "gnome"
+    case AllyKind.Elf    => "elf"
     case AllyKind.Undead => "undead"
     case AllyKind.Rat    => "rat"
     case AllyKind.SquadGnome => "squadGnome"
@@ -296,9 +316,17 @@ object MercenariesState {
       .flatMap(k => squad.backAt(k, nowMs).map(k -> _))
 
 
-  /** Чем берут Плюх и Брамбл. */
+  /** Сколько дублонов берут за найм: Йорген — только их, Фаэлин — сверх смазки. */
+  def doubloonsFor(kind: AllyKind): Long = kind match {
+    case AllyKind.Human => AllyRates.HumanDoubloons
+    case AllyKind.Elf   => AllyRates.ElfDoubloons
+    case _              => 0L
+  }
+
+  /** Чем берут Плюх, Брамбл и Фаэлин. */
   def brewFor(kind: AllyKind): BrewKind = kind match {
     case AllyKind.Gnome => BrewKind.Schnapps
+    case AllyKind.Elf   => BrewKind.VenomSalve
     case _              => BrewKind.LivingWater
   }
 

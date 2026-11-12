@@ -129,7 +129,7 @@ case class SquadState(heroDao: HeroDao, content: SceneContent) extends State {
   private def cardArgs(a: Ally, hero: Hero): Seq[(String, String)] = {
     val s = a.statsAt(hero.lvl)
     Seq("name" -> a.name, "race" -> a.kind.race.toString,
-      "element" -> a.kind.element.map(_.emoji).getOrElse(content.text("squad.noElement")),
+      "element" -> SquadState.strikeLabel(content, a.kind),
       "hp" -> a.hp.toString, "maxHp" -> s.hp.toString, "armor" -> a.armor.toString, "maxArmor" -> s.armor.toString,
       "energy" -> a.energy.toString, "maxEnergy" -> s.energy.toString,
       "atk" -> s.atk.toString, "accuracy" -> s.accuracy.toString, "defence" -> s.defence.toString, "evasion" -> s.evasion.toString)
@@ -329,6 +329,12 @@ case class SquadState(heroDao: HeroDao, content: SceneContent) extends State {
 }
 
 object SquadState {
+
+  /** Чем бьёт союзник — в его карточке на месте стихии: значок стихии, у
+    * Фаэлина — яд, у крысы — зубы. */
+  def strikeLabel(content: SceneContent, kind: pangea.model.squad.AllyKind): String =
+    kind.element.map(_.emoji).getOrElse(
+      content.text(if (kind.poisonPct > 0L) "squad.poisonStrike" else "squad.noElement"))
   /** Сколько кнопок союзников и перестановок помещается в ряд клавиатуры. */
   val PerRow: Int      = 2
   val MovesPerRow: Int = 3

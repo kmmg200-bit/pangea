@@ -5249,10 +5249,13 @@ case class BattleState(
       blows   = List(struck, blow2).flatMap(b => b.target.map(name => (name, b.damage, b.slew)))
       byName  = blows.groupMapReduce(_._1)(_._2)(_ + _)
       heldOn  = List(struck, blow2).filter(_.held).flatMap(_.target).toSet
+      // Яд от удара — пометкой в той же строке, как у мобов (см. poisonMark).
+      venomOn = List(struck, blow2).filter(_.poisoned).flatMap(_.target).toSet
       order   = blows.map(_._1).distinct
       hitLog  = order.map { m =>
         val dmg = byName(m)
-        if (dmg > 0L) content.format("battle.ally.hit", "name" -> a.name, "monster" -> m, "damage" -> dmg.toString)
+        if (dmg > 0L) content.format("battle.ally.hit", "name" -> a.name, "monster" -> m, "damage" -> dmg.toString,
+                        "poison" -> poisonMark(venomOn(m)))
         else if (heldOn(m)) content.format("battle.ally.held", "name" -> a.name, "monster" -> m)
         else content.format("battle.ally.miss", "name" -> a.name, "monster" -> m)
       }.toVector
@@ -5283,7 +5286,8 @@ case class BattleState(
         if (hitRoll <= dodge) ZIO.succeed(AllyBlow(battle, Some(tmp.monsterName), 0L, slew = false))
         else for {
           spread <- Random.nextLongBetween(80L, 121L)
-          base    = (raw * spread / 100L).max(1L)
+          // Лучник вблизи бьёт слабее, как лук героя (см. allyCloseMod).
+          base    = (raw * spread / 100L * BattleState.allyCloseMod(a, pos)).toLong.max(1L)
           // Крыса бьёт зубами, без стихии: грани урона у неё обычные, а боссовое
           // сопротивление — как у голой стали (см. AllyKind.element).
           resist  = tmp.boss.map(b => elem.fold(b.plainDamageTakenMult)(b.damageTakenMult)).getOrElse(1.0)
@@ -5308,20 +5312,31 @@ case class BattleState(
           // Прок стихии считается молча — строки его в лог союзника не идут.
           procRoll <- if (newHp > 0L) Random.nextIntBetween(1, 101) else ZIO.succeed(100)
           procced  = if (newHp > 0L && procRoll <= Element.ProcChancePct) applyProcs(hit, elem.toSet, Element.Air.ProcTurns)._1 else hit
-          guarded  = procced.withEffects(procced.effects)
+          // Яд на наконечниках (Фаэлин): удар, дошедший до HP, травит через раз.
+          // Бросок — только у того, кто травит, и только если есть кого.
+          venomRoll <- if (a.kind.poisonPct > 0L && hurt.hp > 0L && newHp > 0L) Random.nextIntBetween(1, 101)
+                       else ZIO.succeed(101)
+          venoms    = venomRoll <= a.kind.poisonPct
+          venomed   = if (!venoms) procced
+                      else procced.copy(effects = procced.effects.copy(monsterPoison =
+                        Some(procced.effects.monsterPoison.map(_.stacked).getOrElse(Poison.onHit))))
+          // Иммунитеты цели — в withEffects: нежить яд не берёт, и пометки тогда нет.
+          guarded  = venomed.withEffects(venomed.effects)
+          poisoned = venoms && guarded.effects.monsterPoison.isDefined
           // Этим ударом добил — был жив до него, а после него нет.
           killed   = tmp.monsterCurrentHp > 0L && guarded.monsterCurrentHp <= 0L
           // Удар дошёл, но предел минибосса съел его целиком: это не промах.
           held     = hurt.absorbed
           // обратно: активный — как есть, слот — в строй; добитый слот — в павшие
           result =
-            if (active) AllyBlow(guarded, Some(tmp.monsterName), dealt, slew = false, killed = killed, held = held)
+            if (active) AllyBlow(guarded, Some(tmp.monsterName), dealt, slew = false, killed = killed, held = held,
+                          poisoned = poisoned)
             else {
               // Счёт предела живёт на бою: босс в бою один, где бы он ни стоял.
               val restored = battle.copy(group = battle.group.copy(others = battle.group.others.updated(idx, guarded.activeSlot)))
                                .withBossTally(guarded)
               if (guarded.monsterCurrentHp <= 0L) AllyBlow(restored.sideFallen(idx), Some(tmp.monsterName), dealt, slew = true, killed = killed)
-              else AllyBlow(restored, Some(tmp.monsterName), dealt, slew = false, held = held)
+              else AllyBlow(restored, Some(tmp.monsterName), dealt, slew = false, held = held, poisoned = poisoned)
             }
         } yield result
     } yield out
@@ -6947,7 +6962,15 @@ object BattleState {
     * предел за раунд уже исчерпан (см. `BossRoundCap`), и в лог он идёт не
     * промахом. */
   final case class AllyBlow(battle: SoloPveBattle, target: Option[String], damage: Long, slew: Boolean,
-                            killed: Boolean = false, held: Boolean = false)
+                            killed: Boolean = false, held: Boolean = false, poisoned: Boolean = false)
+
+  /** Лучник-союзник вблизи — по тому, кто напротив, и по соседям — бьёт на
+    * пятую часть слабее, как лук героя ([[GripRates.RangedClosePenaltyPct]]).
+    * `pos` — место цели. */
+  def allyCloseMod(a: BattleAlly, pos: Int): Double =
+    if (a.kind.ranged && math.abs(pos - a.position) <= GroupState.Reach)
+      (100.0 - GripRates.RangedClosePenaltyPct) / 100.0
+    else 1.0
 
   /** Кто зовёт сородичей в конце первого раунда. */
   def summons(rarity: Rarity): Boolean = rarity == Rarity.Legendary || rarity == Rarity.Mythical

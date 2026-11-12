@@ -3,7 +3,8 @@ package pangea.model.squad
 import enumeratum._
 import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder, HCursor}
-import pangea.model.battle.Element
+import pangea.model.battle.{Element, GroupState}
+import pangea.model.item.GripRates
 import pangea.model.monster.Race
 import pangea.model.stats.FightStats
 
@@ -28,6 +29,17 @@ sealed abstract class AllyKind(
   val defencePerLvl:  Long,
   val evasionPerLvl:  Long
 ) extends EnumEntry {
+
+  /** Сколько мест в обе стороны достаёт его удар: соседей, как у всех
+    * ([[GroupState.Reach]]), — а лучник дальше. */
+  def reach: Int = GroupState.Reach
+
+  /** Стреляет: вблизи — по тому, кто напротив, и по соседям — бьёт слабее,
+    * как лук героя ([[GripRates.RangedClosePenaltyPct]]). */
+  def ranged: Boolean = false
+
+  /** Шанс (в %), что его удар, дошедший до HP, оставит в ране яд. */
+  def poisonPct: Long = 0L
 
   /** Пользуется ли умениями ([[AllySkill]]). Крыса не умеет ничего, кроме
     *  укуса: ни фляги, ни починки брони, ни дробящего удара. */
@@ -59,8 +71,15 @@ object AllyRates {
 
   /** Найм Йоргена: столько дублонов, сколько бы герой ни был силён. */
   val HumanDoubloons: Long = 10L
-  /** Найм Плюха и Брамбла: отваров — уровень героя на это, но не меньше одного. */
+  /** Найм Плюха, Брамбла и Фаэлина: отваров — уровень героя на это, но не
+    * меньше одного. */
   val BrewPerLevels: Long = 5L
+
+  /** Найм Фаэлина: сверх смазки — столько дублонов, сколько бы герой ни был силён. */
+  val ElfDoubloons: Long = 5L
+
+  /** Как часто яд Фаэлина остаётся в ране — как у эльфов в лабиринте: через раз. */
+  val ElfPoisonPct: Long = pangea.model.battle.Poison.WeaponChancePct
 
   /** Сколько союзник отсутствует после свитка (сутки). */
   val AwayMs: Long = 24L * 60L * 60L * 1000L
@@ -107,6 +126,17 @@ object AllyKind extends Enum[AllyKind] {
   case object Gnome extends AllyKind("Брамбл Медноус", Race.Gnome, Some(Element.Cold), maxLvl = 7L,
     hpPerLvl = 80L, armorPerLvl = 175L, atkPerLvl = 20L, energyPerLvl = 100L,
     accuracyPerLvl = 100L, defencePerLvl = 50L, evasionPerLvl = 60L)
+
+  /** Фаэлин Тихострел: эльф-лучник. Стихии нет — вместо неё яд на
+    * наконечниках, через раз. Тоньше Плюха, зато бьёт издалека, как лук героя,
+    * и растёт так же — до десятого. */
+  case object Elf extends AllyKind("Фаэлин Тихострел", Race.Elf, None, maxLvl = 10L,
+    hpPerLvl = 70L, armorPerLvl = 60L, atkPerLvl = 35L, energyPerLvl = 100L,
+    accuracyPerLvl = 170L, defencePerLvl = 20L, evasionPerLvl = 170L) {
+    override def reach: Int      = GripRates.RangedReach
+    override def ranged: Boolean = true
+    override def poisonPct: Long = AllyRates.ElfPoisonPct
+  }
 
   /** Дружинник «Пропавшей дружины»: гном-предводитель, который идёт с героем
     * только на бой у завала (см. LostSquadQuest.escortAllies). Имя, уровень и
@@ -163,9 +193,9 @@ object AllyKind extends Enum[AllyKind] {
   val values: IndexedSeq[AllyKind] = findValues
 
   /** Кого можно нанять за столом таверны. Нежить и крысы туда не садятся. */
-  val hireable: List[AllyKind] = List(Human, Murloc, Gnome)
+  val hireable: List[AllyKind] = List(Human, Murloc, Gnome, Elf)
 
-  /** Сколько отваров берут Плюх и Брамбл на этом уровне героя. */
+  /** Сколько отваров берут Плюх, Брамбл и Фаэлин на этом уровне героя. */
   def brewsFor(lvl: Long): Long = (lvl / AllyRates.BrewPerLevels).max(1L)
 
   implicit val encoder: Encoder[AllyKind] = (k: AllyKind) => k.entryName.asJson

@@ -583,11 +583,15 @@ case class SoloPveBattle(
     else copy(group = group.copy(places = group.places.updated(group.idxOf(from), to)))
 
   /** Кого бьёт союзник: моба напротив, затем того, что в паре с героем, затем
-    * соседа — в досягаемости [[GroupState.Reach]]. Бить некого — None. */
-  def allyTarget(a: BattleAlly): Option[Int] =
-    List(a.position, group.heroPos, a.position - 1, a.position + 1).distinct
-      .filter(p => math.abs(p - a.position) <= GroupState.Reach)
+    * соседей — ближних раньше дальних, — в его досягаемости: у всех это
+    * соседи ([[GroupState.Reach]]), у лучника дальше ([[AllyKind.reach]]).
+    * Бить некого — None. */
+  def allyTarget(a: BattleAlly): Option[Int] = {
+    val reach = a.kind.reach
+    (List(a.position, group.heroPos) ++ (1 to reach).flatMap(d => List(a.position - d, a.position + d))).distinct
+      .filter(p => math.abs(p - a.position) <= reach)
       .find(p => monsterAt(p).exists(_.alive))
+  }
 
   /** Отряд идёт на врага сам — и пока герой лежит, и при живом герое: кому бить
     * некого (см. [[allyTarget]]), шагает к ближайшему живому мобу по своему ряду

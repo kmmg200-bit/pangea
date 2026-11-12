@@ -845,7 +845,7 @@ object MiniAppView {
         position   = a.position,
         name       = a.name,
         race       = a.kind.race.toString,
-        element    = a.kind.element.map(_.emoji).getOrElse(content.text("squad.noElement")),
+        element    = pangea.service.state.states.hero.SquadState.strikeLabel(content, a.kind),
         lvl        = a.lvlAt(h.lvl),
         hp         = PoolView(a.hp, s.hp),
         armor      = PoolView(a.armor, s.armor),

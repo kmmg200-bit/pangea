@@ -35,7 +35,7 @@ object MercenariesStateSpec extends ZIOSpecDefault {
 
   override def spec = suite("MercenariesState")(
 
-    test("enter → трое за столом и «Назад»; карточка — история и реплика с ценой") {
+    test("enter → четверо за столом и «Назад»; карточка — история и реплика с ценой") {
       for {
         t <- makeState(baseHero)
         (state, _, _, renderer) = t
@@ -44,7 +44,7 @@ object MercenariesStateSpec extends ZIOSpecDefault {
         screens <- renderer.sentScreens
         list     = screens.head
         card     = screens.last
-      } yield assertTrue(list.choices.filter(_.id == "MercCard").flatMap(_.data.get("kind")) == List("Human", "Murloc", "Gnome")) &&
+      } yield assertTrue(list.choices.filter(_.id == "MercCard").flatMap(_.data.get("kind")) == List("Human", "Murloc", "Gnome", "Elf")) &&
               assertTrue(list.choices.exists(_.id == "BackFromMercs")) &&
               assertTrue(card.text.contains("«Плюх. Плюх — береговик")) &&
               assertTrue(card.text.contains("флаконов: 2.")) &&
@@ -70,7 +70,7 @@ object MercenariesStateSpec extends ZIOSpecDefault {
               assertTrue(rHero.squad.allyAt(2).exists(_.kind == AllyKind.Human)) &&
               assertTrue(rScr.exists(_.text.contains("Йорген Кремень встаёт из-за стола"))) &&
               // за столом его больше нет
-              assertTrue(rScr.last.choices.filter(_.id == "MercCard").flatMap(_.data.get("kind")) == List("Murloc", "Gnome"))
+              assertTrue(rScr.last.choices.filter(_.id == "MercCard").flatMap(_.data.get("kind")) == List("Murloc", "Gnome", "Elf"))
     },
 
     test("Плюх берёт Живой водой (уровень 10 → 2 флакона): одного мало, два — уходят из сумки") {
@@ -88,6 +88,38 @@ object MercenariesStateSpec extends ZIOSpecDefault {
               assertTrue(oHero.squad.isEmpty) &&
               assertTrue(tHero.squad.has(AllyKind.Murloc)) &&
               assertTrue(tinv.snapshot.map(_.id) == List(3L))
+    },
+
+    test("Фаэлин: «Ядовитая смазка» по уровню (10 → 2) и всегда 5 дублонов; не хватает чего-то — не берёт ничего") {
+      val salves = List(brew(BrewKind.VenomSalve, 1L), brew(BrewKind.VenomSalve, 2L))
+      for {
+        a <- makeState(baseHero.copy(doubloons = 4L), salves)
+        (as, adao, ainv, ar) = a
+        _     <- as.action(testUser, pick("MercCard", AllyKind.Elf), ar)
+        card  <- ar.sentScreens.map(_.last.text)
+        _     <- as.action(testUser, pick("MercHire", AllyKind.Elf), ar)
+        aHero <- adao.getHeroByUserId(userId).map(_.get)
+        aScr  <- ar.sentScreens.map(_.map(_.text).mkString("\n"))
+        b <- makeState(baseHero.copy(doubloons = 9L), salves.take(1))
+        (bs, bdao, binv, br) = b
+        _     <- bs.action(testUser, pick("MercHire", AllyKind.Elf), br)
+        bHero <- bdao.getHeroByUserId(userId).map(_.get)
+        bScr  <- br.sentScreens.map(_.map(_.text).mkString("\n"))
+        c <- makeState(baseHero.copy(doubloons = 9L), salves :+ brew(BrewKind.Schnapps, 3L))
+        (cs, cdao, cinv, cr) = c
+        _     <- cs.action(testUser, pick("MercHire", AllyKind.Elf), cr)
+        cHero <- cdao.getHeroByUserId(userId).map(_.get)
+        cScr  <- cr.sentScreens
+      } yield assertTrue(card.contains("«Фаэлин Тихострел.") && card.contains("флаконов: 2,") && card.contains("и 5 дублонов")) &&
+              // смазки хватает, дублонов нет — ничего не списано
+              assertTrue(aScr.contains("Не хватает дублонов: нужно 5, у вас 4")) &&
+              assertTrue(aHero.squad.isEmpty && aHero.doubloons == 4L && ainv.snapshot.size == 2) &&
+              // дублоны есть, смазки мало — тоже ничего
+              assertTrue(bScr.contains("нужно 2 — «Ядовитая смазка», у вас 1")) &&
+              assertTrue(bHero.squad.isEmpty && bHero.doubloons == 9L && binv.snapshot.size == 1) &&
+              // хватает всего — нанят: две смазки ушли, шнапс остался, дублонов на пять меньше
+              assertTrue(cHero.squad.has(AllyKind.Elf) && cHero.doubloons == 4L && cinv.snapshot.map(_.id) == List(3L)) &&
+              assertTrue(cScr.exists(_.text.contains("Фаэлин Тихострел встаёт из-за стола")))
     },
 
     test("Брамбл берёт шнапсом; на первом уровне — одну бутылку") {
@@ -117,8 +149,8 @@ object MercenariesStateSpec extends ZIOSpecDefault {
         all   <- renderer.sentScreens
       } yield assertTrue(scr.exists(_.text.contains("Йорген Кремень отработал свой день"))) &&
               assertTrue(!hero.squad.has(AllyKind.Human) && hero.squad.offDuty.contains("Human")) &&
-              assertTrue(scr.last.choices.filter(_.id == "MercCard").flatMap(_.data.get("kind")) == List("Murloc", "Gnome")) &&
-              assertTrue(all.last.choices.filter(_.id == "MercCard").flatMap(_.data.get("kind")) == List("Human", "Murloc", "Gnome")) &&
+              assertTrue(scr.last.choices.filter(_.id == "MercCard").flatMap(_.data.get("kind")) == List("Murloc", "Gnome", "Elf")) &&
+              assertTrue(all.last.choices.filter(_.id == "MercCard").flatMap(_.data.get("kind")) == List("Human", "Murloc", "Gnome", "Elf")) &&
               assertTrue(!all.exists(_.text.contains("снова в таверне")))
     },
 
@@ -137,10 +169,10 @@ object MercenariesStateSpec extends ZIOSpecDefault {
         bHero  <- bdao.getHeroByUserId(userId).map(_.get)
         _      <- bs.enter(testUser, br)
         again  <- br.sentScreens
-      } yield assertTrue(gList.choices.filter(_.id == "MercCard").flatMap(_.data.get("kind")) == List("Murloc", "Gnome")) &&
+      } yield assertTrue(gList.choices.filter(_.id == "MercCard").flatMap(_.data.get("kind")) == List("Murloc", "Gnome", "Elf")) &&
               assertTrue(bScr.head.text.contains("Йорген Кремень снова в таверне.")) &&
               assertTrue(bScr.head.text.contains("свиток вынес")) &&
-              assertTrue(bScr.last.choices.filter(_.id == "MercCard").flatMap(_.data.get("kind")) == List("Human", "Murloc", "Gnome")) &&
+              assertTrue(bScr.last.choices.filter(_.id == "MercCard").flatMap(_.data.get("kind")) == List("Human", "Murloc", "Gnome", "Elf")) &&
               assertTrue(bHero.squad.away.isEmpty) &&
               assertTrue(again.count(_.text.contains("снова в таверне")) == 1)
     },
@@ -148,8 +180,8 @@ object MercenariesStateSpec extends ZIOSpecDefault {
     test("у стола сказано, кто в отлучке и когда вернётся: по свитку и после найма; кто в отряде — не в отлучке") {
       val hour  = 60L * 60L * 1000L
       // Йорген ушёл по свитку (сутки), Плюх отработал найм и отдыхает (12 часов),
-      // Брамбл в отряде.
-      val squad = Squad.empty.sentAway(AllyKind.Human, 0L).hire(AllyKind.Gnome, 10L, 0L)
+      // Брамбл и Фаэлин в отряде.
+      val squad = Squad.empty.sentAway(AllyKind.Human, 0L).hire(AllyKind.Gnome, 10L, 0L).hire(AllyKind.Elf, 10L, 0L)
                     .copy(offDuty = Map("Murloc" -> 12L * hour))
       for {
         t <- makeState(baseHero.copy(squad = squad))
@@ -161,7 +193,7 @@ object MercenariesStateSpec extends ZIOSpecDefault {
       } yield assertTrue(list.text.contains("За дальним столом сегодня пусто.")) &&
               assertTrue(list.text.contains("🕓 Йорген Кремень вернётся через 17ч 20мин.")) &&
               assertTrue(list.text.contains("🕓 Плюх вернётся через 5ч 20мин.")) &&
-              assertTrue(!list.text.contains("Брамбл")) &&
+              assertTrue(!list.text.contains("Брамбл") && !list.text.contains("Фаэлин")) &&
               assertTrue(list.choices.count(_.id == "MercCard") == 0)
     },
 

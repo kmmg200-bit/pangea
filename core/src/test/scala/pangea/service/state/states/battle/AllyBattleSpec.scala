@@ -633,6 +633,26 @@ object AllyBattleSpec extends ZIOSpecDefault {
               assertTrue(clean.group.allyAt(2).exists(a => a.poison.isEmpty && a.hp < a.stats.hp))
     },
 
+    test("Фаэлин травит через раз: бросок 50 — яд и «и травит 🟢» в строке удара, 99 — ни того ни другого; нежить яд не берёт") {
+      val h = hero(allies = List(ally(AllyKind.Elf, pos = 2)))
+      def shoot(roll: Int, race: Race) =
+        for {
+          t <- makeState(h, SoloPveBattle.fromGroup(List(monster(100000L), monster(100000L)).map(_.copy(race = race)), h, Nil))
+          (state, dao, r) = t
+          _     <- TestRandom.feedInts(List.fill(80)(roll): _*) *> TestRandom.feedLongs(List.fill(30)(100L): _*)
+          _     <- state.action(testUser, aimed("Attack", 1), r)
+          after <- battleOf(dao)
+          said  <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+        } yield (after.group.others.headOption.flatMap(_.effects.monsterPoison).isDefined, said)
+      for {
+        venom <- shoot(50, Race.Orc)
+        clean <- shoot(99, Race.Orc)
+        dead  <- shoot(50, Race.Undead)
+      } yield assertTrue(venom._1 && venom._2.contains("⚔ Фаэлин Тихострел бьёт") && venom._2.contains("урона и травит 🟢")) &&
+              assertTrue(!clean._1 && clean._2.contains("⚔ Фаэлин Тихострел бьёт") && !clean._2.contains("и травит 🟢")) &&
+              assertTrue(!dead._1 && dead._2.contains("⚔ Фаэлин Тихострел бьёт") && !dead._2.contains("и травит 🟢"))
+    },
+
     test("герой лежит, а последний союзник уходит по свитку — смерть, отложенная до этого момента") {
       val h = hero(hp = 1L, allies = List(ally(pos = 2, hp = Some(1L), armor = Some(0L))))
       for {
