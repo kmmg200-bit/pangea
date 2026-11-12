@@ -99,7 +99,8 @@ object BartiSpec extends ZIOSpecDefault {
         out    <- BartiMeetState(p, TestInventoryRepository.withItems(Nil), TestItemRepository.make, c).action(testUser, tap("BartiPass"), r)
         q      <- questOf(p)
       } yield assertTrue(meet.text.contains("Это мой шалфей") && meet.text.contains(Difficulty.render(HotGoodsQuest.Level)) &&
-                meet.choices.map(_.id) == List("BartiFight", "BartiPass")) &&
+                meet.choices.map(_.id) == List("BartiFight", "BartiPass") &&
+                meet.choices.map(_.label) == List("Спасти Барти", "Пройти мимо")) &&
               assertTrue(res == StateType.Battle && battle.exists(b => b.story.contains(HotGoodsQuest.FightStory) && b.cantFlee &&
                 b.monsterLvl == HotGoodsQuest.Level.toLong && b.group.others.size == 1)) &&
               assertTrue(loot.exists(_.returnState.contains(StateType.BartiMeet)) && BattleState.RaidStories.contains(HotGoodsQuest.FightStory)) &&
