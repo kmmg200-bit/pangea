@@ -198,6 +198,7 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   // Личные задания наёмников (см. MercQuests).
   case object JorgenLair extends StateType // логово огненных, где пал отряд Йоргена: двое элементалей, жетоны в пепле
   case object BramblHall extends StateType // Зал предков под серебряной жилой: двое каменных стражей, замок на гробницу
+  case object PlukhHunt  extends StateType // ловчие Сноходцев на зов перевёрнутой печати: бой за багор Плюха
 
   // Смена расы: купон из лавки Фета — история расы до пробуждения в новом теле.
   case object RaceQuest extends StateType

@@ -63,7 +63,7 @@ object JorgenQuestSpec extends ZIOSpecDefault {
 
   override def spec = suite("Жетоны из пепла")(
 
-    test("у стола: «Поговорить» у Йоргена — их было двое, сложность сразу; у других и без хранилища вещей — нет") {
+    test("у стола: «Поговорить» у Йоргена — их было двое, сложность сразу; у кого квеста нет и без хранилища вещей — нет") {
       for {
         c     <- content
         d     <- dao(hero())
@@ -73,14 +73,15 @@ object JorgenQuestSpec extends ZIOSpecDefault {
         card  <- r.sentScreens.map(_.last)
         _     <- st.action(testUser, pick("MercTalk", AllyKind.Human), r)
         talk  <- r.sentScreens.map(_.last)
-        _     <- st.action(testUser, pick("MercCard", AllyKind.Murloc), r)
-        plukh <- r.sentScreens.map(_.last)
+        // У Фаэлина своего квеста пока нет — и кнопки нет.
+        _     <- st.action(testUser, pick("MercCard", AllyKind.Elf), r)
+        elf   <- r.sentScreens.map(_.last)
         _     <- tavern(d, TestInventoryRepository.withItems(Nil), c, items = false).action(testUser, pick("MercCard", AllyKind.Human), r)
         bare  <- r.sentScreens.map(_.last)
       } yield assertTrue(card.choices.map(_.id) == List("MercTalk", "MercHire", "MercList")) &&
               assertTrue(talk.text.contains("Их было двое") && talk.text.contains("Сложность: " + Difficulty.render(9))) &&
               assertTrue(talk.choices.map(_.id) == List("MercTalkYes", "MercCard")) &&
-              assertTrue(!plukh.choices.exists(_.id == "MercTalk") && !bare.choices.exists(_.id == "MercTalk"))
+              assertTrue(!elf.choices.exists(_.id == "MercTalk") && !bare.choices.exists(_.id == "MercTalk"))
     },
 
     test("«Помочь»: список отряда в сумке, задание взято; Йорген говорит о логове, ответ — над карточкой, разговора больше нет") {

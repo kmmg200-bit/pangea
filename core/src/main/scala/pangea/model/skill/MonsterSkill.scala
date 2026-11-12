@@ -55,15 +55,21 @@ object MonsterSkill extends Enum[MonsterSkill] {
   val values: IndexedSeq[MonsterSkill] = findValues
 
   /** Удар умением по тому, кто не герой: союзнику достаётся та же доля атаки
-   *  моба, а тонкости геройских наборов и баффов к нему не применяются. */
-  final case class OtherHit(factor: Double, ignoresArmor: Boolean = false, poisonPct: Int = 0)
+   *  моба, а тонкости геройских наборов и баффов к нему не применяются.
+   *  `fixed` — урон не от атаки моба, а ровно столько (кинжал молнии);
+   *  `energyBurn` — сколько энергии сгорает у того, в кого попало. */
+  final case class OtherHit(factor: Double, ignoresArmor: Boolean = false, poisonPct: Int = 0,
+                            fixed: Option[Long] = None, energyBurn: Long = 0L)
 
-  /** Результат применения навыка моба: обновлённый бой, новые hp/armor героя и текст. */
+  /** Результат применения навыка моба: обновлённый бой, новые hp/armor героя и
+   *  текст. `heroEnergy` — сколько энергии у героя осталось, если умение её
+   *  жжёт (кинжал молнии); None — не трогает. */
   final case class Cast(
-    battle:    SoloPveBattle,
-    heroHp:    Long,
-    heroArmor: Long,
-    line:      String
+    battle:     SoloPveBattle,
+    heroHp:     Long,
+    heroArmor:  Long,
+    line:       String,
+    heroEnergy: Option[Long] = None
   )
 
   case object QuickStrike extends MonsterSkill(
@@ -195,6 +201,42 @@ object MonsterSkill extends Enum[MonsterSkill] {
           battle.effects.heroPoison.map(p => Poison(p.pct + PoisonPct)).getOrElse(Poison(PoisonPct))))
       Cast(battle.copy(effects = poisoned), newHp, newArmor,
         (if (warded) WardedTemplate else template).replace("{name}", battle.monsterName).replace("{}", damage.toString))
+    }
+  }
+
+  /** «Кинжал молнии» ловчих Сноходцев («Чужой багор», см. PlukhQuest):
+   *  метательный кинжал с искрой. Бьёт ровно на [[Damage]] — броня принимает
+   *  первой, как от удара, поднятый щит режет, — и сжигает [[EnergyBurn]]
+   *  энергии тому, в кого попал: герою или союзнику, что стоит перед ловчим.
+   *  Стоит дёшево — [[Cost]] энергии на любом уровне, — поэтому ловчие мечут
+   *  его часто, а на дорогие приёмы копят. Есть только у каджитов, и только в
+   *  бою с ловчими ([[Story]]). */
+  case object LightningDagger extends MonsterSkill(
+    label    = "Кинжал молнии",
+    template = "👹 {name}: «Кинжал молнии» — {} урона, −{burn} энергии ⚡."
+  ) {
+    val Damage: Long     = 100L
+    val EnergyBurn: Long = 100L
+    val Cost: Long       = 20L
+
+    /** Бой, где ловчие мечут кинжалы (см. `PlukhQuest.HuntStory`). */
+    val Story: String = "plukhHunt"
+
+    override val races: Set[Race] = Set(Race.Khajiit)
+
+    override def cost(lvl: Long): Long = Cost
+
+    override def againstOther: Option[OtherHit] = Some(OtherHit(0.0, fixed = Some(Damage), energyBurn = EnergyBurn))
+
+    def applicable(battle: SoloPveBattle): Boolean = battle.story.contains(Story)
+
+    def cast(battle: SoloPveBattle, hero: Hero, nowMs: Long): Cast = {
+      val damage            = blocked(battle, Damage)
+      val (newHp, newArmor) = applyPhysicalDamage(battle, hero, damage, nowMs)
+      val energy            = (hero.fightStats.energy - EnergyBurn).max(0L)
+      val line = template.replace("{name}", battle.monsterName).replace("{}", damage.toString)
+        .replace("{burn}", (hero.fightStats.energy - energy).toString)
+      Cast(battle, newHp, newArmor, line, heroEnergy = Some(energy))
     }
   }
 

@@ -4,14 +4,15 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.artifact.ArtifactKind
 import pangea.model.hero.{Equipment, Hero}
-import pangea.model.item.{BeltSlot, BrewKind, Item, ItemDetails, MaterialKind}
+import pangea.model.item.{BeltSlot, BrewKind, Item, ItemDetails, MaterialKind, QuestItemKind}
 import pangea.model.quest.{DailyNpc, DailyRates, NpcQuest}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
-import pangea.service.state.{CityExit, DailyDialog, HerbLore, NpcQuestDialog, NpcQuestLog, State, UserAction}
+import pangea.service.state.{CityExit, DailyDialog, HerbLore, NpcQuestDialog, NpcQuestLog, PlukhQuest, QuestSupport, State,
+  UserAction}
 import zio.{Task, ZIO}
 
 /**
@@ -56,6 +57,9 @@ case class GustavoState(
       daily.giveAction -> Target.Run { (u, _, r) => giveDaily(u, r) },
       daily.handAction -> Target.Run { (u, _, r) => handDaily(u, r) },
       "GustavoDailyBack" -> Target.Run { (u, _, r) => renderMenu(u, r).as(StateType.Gustavo) },
+      // «Чужой багор»: печать Сноходцев с древка багра Плюха — Густаво
+      // переворачивает её зов.
+      "GusSeal"  -> Target.Run { (u, _, r) => showSeal(u, r) },
       "HerbsTalk" -> Target.Goto(StateType.GustavoHerbs),
       // Фляги теперь живут в поясе — и пополняют сразу его.
       "Belt"      -> Target.Goto(StateType.GustavoBelt),
@@ -85,8 +89,27 @@ case class GustavoState(
       quests <- quest.load(user)
       hero   <- getHero(user)
       work   <- daily.today(hero, now)
-      _      <- renderer.show(user, menuScreen(data, now, quest.button(quests), daily.button(work)))
+      seal   <- if (PlukhQuest.toGustavo(quests)) hasSeal(hero) else ZIO.succeed(false)
+      _      <- renderer.show(user, menuScreen(data, now, quest.button(quests), daily.button(work),
+                  Option.when(seal)(content.choice("GusSeal", "plukhGaff.gustavo.label"))))
     } yield ()
+
+  private def hasSeal(hero: Hero): Task[Boolean] =
+    inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
+      .map(inv => QuestSupport.hasItem(inv.items.data, QuestItemKind.SnowwalkerSeal))
+
+  /** «Чужой багор»: Густаво узнаёт знак Сноходцев и переворачивает зов печати
+    * — пусть зовёт не багор домой, а ловчих к герою. Печать остаётся у героя,
+    * дальше — позвать ловчих с её карточки. Не тот шаг или печати нет — меню. */
+  private def showSeal(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      quests <- quest.load(user)
+      hero   <- getHero(user)
+      seal   <- hasSeal(hero)
+      _      <- if (!PlukhQuest.toGustavo(quests) || !seal) renderMenu(user, renderer)
+                else NpcQuestLog.save(heroDao, user.userId, PlukhQuest.turned(quests)) *>
+                  renderer.show(user, Screen(content.text("plukhGaff.gustavo.text"), Nil)) *> renderMenu(user, renderer)
+    } yield StateType.Gustavo
 
   // ── Заказ Густаво ─────────────────────────────────────────────────────────
 
@@ -287,7 +310,7 @@ case class GustavoState(
     } yield ()
 
   private def menuScreen(data: GustavoData, now: Long, questBtn: Option[Choice],
-                         dailyBtn: Option[Choice]): Screen = {
+                         dailyBtn: Option[Choice], sealBtn: Option[Choice]): Screen = {
     val healBtn = data.healCooldownUntil.filter(_ > now).map(_ - now) match {
       case Some(left) =>
         content.choice("Heal", "gustavo.cooldownLabel", "mins" -> minsOf(left)).copy(color = ChoiceColor.Negative)
@@ -299,7 +322,7 @@ case class GustavoState(
     val herbsTalk   = content.choice("HerbsTalk", "gustavo.herbs.talkLabel")
     val beltBtn     = content.choice("Belt", "gustavo.beltLabel")
     val choices = List(healBtn, boostBtn, herbsBtn, herbsTalk, beltBtn) ++ questBtn.toList ++
-      dailyBtn.toList ++
+      dailyBtn.toList ++ sealBtn.toList ++
       List(content.choice("Back", "gustavo.back"), CityExit.button(content))
     Screen(content.text("gustavo.menu.text"), choices)
   }

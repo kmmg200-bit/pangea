@@ -36,7 +36,7 @@ import pangea.service.state.states.arena.ArenaBattle
 import pangea.service.state.states.battle.BattleState.{ArenaOwnActions, Victim}
 import pangea.service.schedule.Scheduler
 import pangea.service.state.{AzatData, BarrelThievesQuest, BeltContents, BigDealQuest, BoardProgress, BramblQuest, HedgeSongQuest, HotGoodsQuest,
-  JorgenQuest, LostSquadQuest,
+  JorgenQuest, LostSquadQuest, PlukhQuest,
   MarisaQuest, NpcQuestLog, State, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest, UserAction, KillLogData}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
@@ -3113,13 +3113,16 @@ case class BattleState(
             case Some((pos, hit)) => strikeAllyWithSkill(hero, paid, pos, hit, ms, nowMs)
             case None =>
               if (blocked) (cast.battle, hero, content.text("battle.hunterBlockSkill"))
-              else (cast.battle, hero.copy(fightStats = hero.fightStats.copy(hp = cast.heroHp, armor = cast.heroArmor)), cast.line)
+              else (cast.battle, hero.copy(fightStats = hero.fightStats.copy(hp = cast.heroHp, armor = cast.heroArmor,
+                     // Кинжал молнии жжёт энергию героя; прочие умения её не трогают.
+                     energy = cast.heroEnergy.getOrElse(hero.fightStats.energy))), cast.line)
           }
         else ZIO.succeed((battle, hero, ""))
     } yield out
 
-  /** Умение моба по союзнику: та же доля его атаки, его же броня и защита (у
-    * дробящего — мимо брони), и яд, если умение его оставляет. */
+  /** Умение моба по союзнику: та же доля его атаки (или ровно `fixed` урона —
+    * у кинжала молнии), его же броня и защита (у дробящего — мимо брони), яд,
+    * если умение его оставляет, и сгоревшая энергия, если умение её жжёт. */
   private def strikeAllyWithSkill(
       hero: Hero, battle: SoloPveBattle, pos: Int, hit: MonsterSkill.OtherHit, skill: MonsterSkill,
       nowMs: Long
@@ -3127,7 +3130,7 @@ case class BattleState(
     battle.group.allyAt(pos).filter(_.alive) match {
       case None => (battle, hero, "")
       case Some(a) =>
-        val raw = (battle.monsterStats.atk * hit.factor).toLong.max(1L)
+        val raw = hit.fixed.getOrElse((battle.monsterStats.atk * hit.factor).toLong).max(1L)
         val (struck, dealt) =
           if (hit.ignoresArmor)
             (battle.copy(group = battle.group.updateAlly(pos)(x =>
@@ -3137,9 +3140,16 @@ case class BattleState(
             (b, d)
           }
         val poisoned = if (hit.poisonPct > 0) poisonVictim(Victim.Ally(pos), struck, hit.poisonPct) else struck
-        val key      = if (hit.poisonPct > 0) "battle.ally.mobSkillPoison" else "battle.ally.mobSkill"
-        (poisoned, hero, content.format(key, "monster" -> battle.monsterName, "name" -> a.name,
-          "skill" -> skill.label, "damage" -> dealt.toString))
+        // Кинжал молнии: у того, в кого попал, сгорает энергия — сколько было, не больше.
+        val left     = poisoned.group.allyAt(pos).map(_.energy).getOrElse(0L)
+        val burnt    = hit.energyBurn.min(left).max(0L)
+        val drained  = if (burnt <= 0L) poisoned
+                       else poisoned.copy(group = poisoned.group.updateAlly(pos)(x => x.copy(energy = x.energy - burnt)))
+        val key      = if (hit.poisonPct > 0) "battle.ally.mobSkillPoison"
+                       else if (hit.energyBurn > 0L) "battle.ally.mobSkillBurn"
+                       else "battle.ally.mobSkill"
+        (drained, hero, content.format(key, "monster" -> battle.monsterName, "name" -> a.name,
+          "skill" -> skill.label, "damage" -> dealt.toString, "burn" -> burnt.toString))
     }
 
   private def monsterPhase(
@@ -6785,7 +6795,7 @@ object BattleState {
     Set(MurlocQuest.RaidStory, LostSquadQuest.EscortStory, HedgeSongQuest.WaveStory, BarrelThievesQuest.FightStory,
       StoryMarkQuest.FightStory, StoryPowderQuest.FightStory, StoryListQuest.FightStory, StoryFaceQuest.FightStory,
       StoryToolQuest.FightStory, HotGoodsQuest.FightStory, BigDealQuest.AmbushStory, JorgenQuest.LairStory,
-      BramblQuest.HallStory)
+      BramblQuest.HallStory, PlukhQuest.HuntStory)
 
   /** Умение союзника, выбранное на ход. Удар несёт свою цель: без цели его
     * в выборе просто нет, и доставать её потом неоткуда. */

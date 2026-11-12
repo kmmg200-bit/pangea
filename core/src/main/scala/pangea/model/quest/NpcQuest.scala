@@ -177,6 +177,13 @@ object NpcQuest extends Enum[NpcQuest] {
     * двое) и повесить его на гробницу. */
   case object BramblLock extends NpcQuest("bramblLock")
 
+  /** Плюх, «Чужой багор» (задание 14-го уровня, см. PlukhQuest): багор он
+    * «одолжил» у Сноходцев — те ловили им мурлоков, — и теперь печать на
+    * древке зовёт его домой. Шаги: 1 — печать на руках, показать Густаво; 2 —
+    * Густаво перевернул зов, позвать ловчих Сноходцев с карточки печати (из
+    * лабиринта) и отбиться — кончатся ловчие, кончится и зов. */
+  case object PlukhGaff extends NpcQuest("plukhGaff")
+
   def byKey(key: String): Option[NpcQuest] = values.find(_.key == key)
 
   /** Сколько репутации Горн просит набрать трофеями. */
