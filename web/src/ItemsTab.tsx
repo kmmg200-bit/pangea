@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
 import { api } from './api'
-import { BagTab } from './BagTab'
+import { BagTab, matches, sortItems } from './BagTab'
 import { Silver } from './icons'
+import { groupLabels, presentGroups, type Group as Kind } from './kinds'
 import type { BrewAskView, InventoryActionView, InventoryView, ItemView, StorageView } from './types'
-import { BeltSwap, Chips, Empty, ItemRow, ItemText, num, Segment, Sheet, useToast } from './ui'
+import { BeltSwap, Chips, Empty, ItemRow, ItemText, num, Segment, Sheet, Toolbar, useToast } from './ui'
 
 type Group = StorageView['group']
 
@@ -210,10 +211,31 @@ function BagActs(props: { data: InventoryView; item: ItemView; acts: Acts; onDon
   )
 }
 
+/** Сортировка в хранилище — та же, что в сумке, только первая — «как лежит». */
+const storeSorts = [
+  { id: 'bag', label: 'Как в хранилище' },
+  { id: 'rarity', label: 'По редкости' },
+  { id: 'lvl', label: 'По уровню' },
+]
+
+/** Хранилище: поиск, сортировка и группы — как в сумке (см. BagTab), по всем
+  * его разделам сразу. У оружейных стоек поиска нет: там по нескольку вещей на
+  * стойку и «Надеть» — весь комплект, фильтр только запутал бы. */
 function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; acts: Acts; gearLocked: string | null }) {
   const s = props.storage
   const { acts } = props
   const racks = s.sections.some((sec) => sec.rack !== null)
+  const [kind, setKind] = useState<Kind | 'all'>('all')
+  const [query, setQuery] = useState('')
+  const [sort, setSort] = useState('bag')
+  const all = useMemo(() => s.sections.flatMap((sec) => sec.items), [s.sections])
+  const kinds = useMemo(() => presentGroups(all), [all])
+  // Выбранной группы в хранилище больше нет (последнюю такую вещь переложили) —
+  // показываем всё: иначе фильтр остался бы, а снять его было бы нечем.
+  const active: Kind | 'all' = kind !== 'all' && kinds.includes(kind) ? kind : 'all'
+  const searchable = !s.locked && !racks && all.length > 0
+  const filtering = searchable && (query.trim() !== '' || active !== 'all')
+  const pick = (items: ItemView[]) => (searchable ? sortItems(items.filter((i) => matches(i, active, query)), sort) : items)
   if (s.locked)
     return (
       <div className="storage-locked">
@@ -246,6 +268,18 @@ function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; a
       {s.note && <section className="card card-warn storage-note">{s.note}</section>}
       {racks && props.gearLocked && <section className="card card-warn storage-note">{props.gearLocked}</section>}
       {empty && <Empty>Пусто.</Empty>}
+      {searchable && (
+        <>
+          <Toolbar query={query} onQuery={setQuery} sort={sort} sorts={storeSorts} onSort={setSort} />
+          {kinds.length > 1 && (
+            <Chips
+              options={[{ id: 'all' as const, label: 'Всё' }, ...kinds.map((g) => ({ id: g, label: groupLabels[g] }))]}
+              value={active}
+              onChange={setKind}
+            />
+          )}
+        </>
+      )}
       {s.counts.length > 0 && (
         <div className="list">
           {s.counts.map((c) => (
@@ -258,8 +292,11 @@ function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; a
           ))}
         </div>
       )}
-      {s.sections.map((sec, i) =>
-        sec.items.length === 0 && !sec.title ? null : (
+      {s.sections.map((sec, i) => {
+        const items = pick(sec.items)
+        // Пустой раздел без заголовка не показываем; при поиске — и с заголовком.
+        if (items.length === 0 && (!sec.title || filtering)) return null
+        return (
           <div key={i} className="group">
             {sec.rack !== null ? (
               <div className="group-label rack-head">
@@ -274,14 +311,15 @@ function Storage(props: { storage: StorageView; onOpen: (i: ItemView) => void; a
               sec.title && <div className="group-label">{sec.title}</div>
             )}
             <div className="list">
-              {sec.items.map((item) => (
+              {items.map((item) => (
                 <ItemRow key={item.id} item={item} onOpen={() => props.onOpen(item)} />
               ))}
-              {sec.items.length === 0 && <p className="muted-note">Пусто.</p>}
+              {items.length === 0 && <p className="muted-note">Пусто.</p>}
             </div>
           </div>
-        ),
-      )}
+        )
+      })}
+      {filtering && s.sections.every((sec) => pick(sec.items).length === 0) && <Empty>Ничего не нашлось.</Empty>}
     </>
   )
 }
@@ -333,6 +371,8 @@ export function ItemsTab(props: { data: InventoryView; onChange: (v: InventoryVi
         <BagTab data={props.data} onOpen={(item) => setOpen({ item, from: BAG })} />
       ) : storage ? (
         <Storage
+          // У каждого хранилища свой поиск: перешёл в другое — всё сначала, как из сумки.
+          key={storage.id}
           storage={storage}
           onOpen={(item) => setOpen({ item, from: storage.id })}
           acts={acts}
