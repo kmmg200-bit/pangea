@@ -426,7 +426,7 @@ object MiniAppView {
                       index      = idx,
                       name       = slot.name,
                       // Описание надетой — что она даёт, без названия и без сравнения с собой.
-                      item       = Option.when(worn.itemType != ItemType.NoItem)(view(worn, 1, InventoryState.gearBody(worn, Some(h)))),
+                      item       = Option.when(worn.itemType != ItemType.NoItem)(view(worn, 1, wornText(worn, h))),
                       busy       = Option.when(slot.busy(h.equipment))(EquipmentState.LeftBusyText),
                       belt       = belt(worn, content),
                       candidates = candidates(h, before, slot, inv.items.data, describe, now),
@@ -502,6 +502,15 @@ object MiniAppView {
   }
 
   /** Камни в гнёздах вещи и что спросить перед ломкой — как в боте. */
+  /** Что даёт надетая вещь — как в боте. Ячейки пояса приложение рисует само
+    * ([[BeltView]]), поэтому у пояса в тексте их нет: только характеристики,
+    * набор и камни в гнёздах — с тем, что камень даёт в этой вещи. Сказать
+    * нечего — пусто. */
+  private def wornText(worn: Item, h: Hero): String = worn.details match {
+    case _: ItemDetails.Belt => worn.copy(details = ItemDetails.Plain).statsLines.mkString("\n")
+    case _                   => InventoryState.gearBody(worn, Some(h))
+  }
+
   private def socketed(worn: Item, content: SceneContent): List[SocketedView] =
     GemBreaking.socketed(worn).map { case (i, g) =>
       SocketedView(i, g.displayName, content.format("equipment.breakGemConfirm",

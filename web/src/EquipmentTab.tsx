@@ -307,9 +307,14 @@ function SlotRow(props: {
       {open && (
         <div className="erow-body">
           {props.note && <p className="gear-note">{props.note}</p>}
-          {/* У пояса описание — его ячейки; у прочих — что вещь даёт, как в боте. */}
+          {/* У пояса — его ячейки, а под ними, что он даёт: характеристики и камни
+              (ячеек в этом тексте нет — их рисует BeltCard). У прочих — что вещь
+              даёт, как в боте. */}
           {slot.belt ? (
-            <BeltCard belt={slot.belt} onTake={gear && ((cell) => gear.beltTake(slot, cell))} busy={!!gear?.busy} />
+            <>
+              <BeltCard belt={slot.belt} onTake={gear && ((cell) => gear.beltTake(slot, cell))} busy={!!gear?.busy} />
+              {item && item.text && <div className="item-text equip-desc">{item.text}</div>}
+            </>
           ) : (
             item && <div className="item-text equip-desc">{item.text}</div>
           )}

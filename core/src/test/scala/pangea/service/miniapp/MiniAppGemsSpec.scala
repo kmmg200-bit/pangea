@@ -2,8 +2,13 @@ package pangea.service.miniapp
 
 import pangea.engine.SceneContent
 import pangea.model.artifact.{Artifact, ArtifactKind, HeroArtifacts}
+import pangea.model.bank.BankVault
+import pangea.model.barrel.Barrel
+import pangea.model.home.HomeData
+import pangea.model.inventory.Inventory
 import pangea.model.inventory.Inventory.Items
-import pangea.model.item.{Gem, GemKind, Item, ItemDetails, ItemType, Rarity}
+import pangea.model.item.{BeltSlot, FlaskKind, Gem, GemKind, Item, ItemDetails, ItemType, Rarity}
+import pangea.service.state.states.InventoryState
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.equipment.GemWork
 import pangea.service.storage.ItemStore
@@ -39,7 +44,40 @@ object MiniAppGemsSpec extends ZIOSpecDefault {
       lines <- Ref.make(Vector.empty[String])
     } yield (hero, dao, bag, arts, casket, new GemWork(dao, bag, TestItemRepository.make, c), new MiniApp.Collect(lines), lines, c)
 
+  /** Синий пояс с флягой целителя; гнёзда — какие дали. */
+  private def belt(sockets: Option[Gem]*): Item =
+    Item(30L, "Пояс", 1L, Rarity.Blue, ItemType.Belt, attack = 0, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0,
+      details = ItemDetails.Belt(List(BeltSlot.Flask(FlaskKind.Healer, Rarity.Blue, 3))), sockets = sockets.toList)
+
+  private def worn(beltItem: Item, helmItem: Item, c: SceneContent): MiniAppView.InventoryView = {
+    val hero = TestFixtures.hero(userId).copy(equipment = TestFixtures.emptyEquipment.copy(belt = beltItem, helmet = helmItem))
+    MiniAppView.inventory(hero, Inventory(1L, hero.id, 20L, Items(Nil)),
+      MiniAppView.Stores(HeroArtifacts.empty(hero.id), Barrel.empty(hero.id), BankVault.empty(hero.id), HomeData.empty),
+      c, _.name, 0L)
+  }
+
   def spec = suite("MiniApp: камни и резец")(
+    test("пояс: под ячейками — что он даёт и камни в гнёздах; ячеек в тексте нет, они идут ячейками") {
+      for {
+        c <- ZIO.attempt(SceneContent.load())
+        v  = worn(belt(Some(gem)), helm(None), c)
+        b  = v.equipment.find(_.name == "Пояс")
+        h  = v.equipment.find(_.name == "Шлем")
+        text = b.flatMap(_.item).map(_.text).getOrElse("")
+        bare = worn(belt(), helm(None), c).equipment.find(_.name == "Пояс").flatMap(_.item).map(_.text)
+      } yield assertTrue(
+        b.exists(_.belt.exists(_.cells.map(_.name) == List(BeltSlot.Flask(FlaskKind.Healer, Rarity.Blue, 3).name))),
+        text.contains("🔲 Гнёзда: 1/1"),
+        text.contains(s"💎 ${gem.displayName}: ${gem.armorEffect}"),
+        !text.contains("🎽 Ячеек"),
+        b.exists(_.gems.map(_.name) == List(gem.displayName)),
+        // пояс без статов и гнёзд — сказать нечего, только ячейки
+        bare.contains(""),
+        // у прочих — как в боте
+        h.flatMap(_.item).map(_.text).contains(InventoryState.gearBody(helm(None), Some(TestFixtures.hero(userId))))
+      )
+    },
+
     test("камень из Ларца: лёг в гнездо, из Ларца ушёл, сумка не тронута") {
       for {
         t <- setup(helm(None))
