@@ -240,7 +240,10 @@ case class BattleEffects(
   heroWards:            Option[Set[Ward]]          = None,
   // Паутина сетеплёта на герое: сколько концов раунда она ещё держит (см.
   // SpiderWeb). Option — чтобы бои, записанные до паутины, читались.
-  heroWebTurns:         Option[Int]                = None
+  heroWebTurns:         Option[Int]                = None,
+  // Яд красного сетеплёта: следующее активное умение героя сорвётся (см.
+  // RedSpider). Option — чтобы бои, записанные до этого, читались.
+  heroSkillJammed:      Option[Boolean]            = None
 ) {
 
   /** Только то, что висит на МОБЕ: яд, кровь, огонь, дебафы. Геройская
@@ -336,6 +339,9 @@ case class BattleEffects(
 
   /** Пригвождён ли моб: с места он сейчас не сходит. */
   def monsterRooted: Boolean = monsterRootedTurns > 0
+
+  /** Сорвётся ли следующее умение героя: его отравил красный сетеплёт (см. RedSpider). */
+  def skillJammed: Boolean = heroSkillJammed.contains(true)
 
   /** Опутан ли герой паутиной сетеплёта (см. SpiderWeb). */
   def heroWebbed: Boolean = heroWebTurns.exists(_ > 0)

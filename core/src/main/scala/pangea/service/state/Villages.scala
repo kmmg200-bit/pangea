@@ -237,6 +237,18 @@ object Villages {
       breed = Some(breed))
   }
 
+  /** Новорождённый сетеплёт — его рождает матка в бою: тот же молодой, только
+    * на [[VillageRates.NewbornPct]]% его силы. */
+  def newborn(lvl: Int): Monster = {
+    val young = spider(Breed.YoungSpider, lvl)
+    val s     = young.fightStats
+    def cut(v: Long): Long = v * VillageRates.NewbornPct / 100L
+    young.copy(
+      fightStats = s.copy(atk = cut(s.atk).max(1L), hp = cut(s.hp).max(1L), armor = cut(s.armor),
+        defence = cut(s.defence), evasion = cut(s.evasion), accuracy = cut(s.accuracy)),
+      customName = Some(Breed.NewbornSpider.displayName), breed = Some(Breed.NewbornSpider))
+  }
+
   /** Повадки пород, что ложатся на бой при его начале: удар молодого
     * сетеплёта, дошедший до HP, травит — всегда, и героя, и союзников
     * (`monsterPoisonsOnHit`, как у Крысиного короля). */

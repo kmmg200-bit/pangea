@@ -55,7 +55,9 @@ final case class BattleAlly(
   strike:     Option[Element]  = None,
   /** Паутина сетеплёта на нём: сколько концов раунда она ещё держит (см.
     * SpiderWeb). Пока держит — с места он не сходит, а удары идут мимо брони. */
-  webbed:     Int              = 0
+  webbed:     Int              = 0,
+  /** Его отравил красный сетеплёт: следующее его умение сорвётся (см. RedSpider). */
+  skillJammed: Boolean         = false
 ) {
   /** Нежить ли он: миазмы её лечат, а живых — травят. */
   def isUndead: Boolean = kind.race == Race.Undead
@@ -152,8 +154,9 @@ object BattleAlly {
       grown    <- c.getOrElse[Long]("grown")(0L)
       strike   <- c.getOrElse[Option[Element]]("strike")(None)
       webbed   <- c.getOrElse[Int]("webbed")(0)
+      jammed   <- c.getOrElse[Boolean]("skillJammed")(false)
     } yield BattleAlly(kind, position, hp, armor, energy, stats, lvl, undead, home, poison, bleed, burn, stood,
-                       coldCut, kills, hitBy, rooted, grown, strike, webbed)
+                       coldCut, kills, hitBy, rooted, grown, strike, webbed, jammed)
 }
 
 /** Моб группы, стоящий НЕ в паре с героем: всё, что описывает его и его текущее

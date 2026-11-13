@@ -7,7 +7,7 @@ import pangea.domain.Rng
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.generator.loot.LootGenerator
 import pangea.generator.monster.MonsterGenerator
-import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Element, Formation, GroupState, HealedWounds, MonsterSlot, Nature, Poison, RaceTactics, Regen, SlainMonster, SoloPveBattle, SkillSlotState, SpiderWeb, TimedDefenceDebuff, Ward}
+import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Element, Formation, GroupState, HealedWounds, MonsterSlot, Nature, Poison, RaceTactics, Regen, RedSpider, SlainMonster, SoloPveBattle, SkillSlotState, SpiderWeb, TimedDefenceDebuff, Ward}
 import pangea.model.cave.CaveGenerator
 import pangea.model.item.ItemSet
 import pangea.model.squad.AllySkill
@@ -2721,7 +2721,7 @@ case class BattleState(
       case None =>
         val (armorMult, hpMult) = powderSplit(tmp).getOrElse((1.0, 1.0))
         // Опутанного паутиной броня принимает не весь удар: часть идёт прямо в HP.
-        val rawArmor = math.min(a.armor, (damage * SpiderWeb.armorShare(a.webbed > 0)).toLong)
+        val rawArmor = math.min(a.armor, (damage * RedSpider.armorShare(a.webbed > 0, tmp.monsterBreed)).toLong)
         ((rawArmor * armorMult).toLong.min(a.armor).max(0L), ((damage - rawArmor) * hpMult).toLong.max(0L))
     }
 
@@ -3109,7 +3109,9 @@ case class BattleState(
             reachedHp = newHp < hero.fightStats.hp
             bladeHits <- chanceRoll(reachedHp && !battle.effects.monsterPoisonsOnHit &&
                            Race.withNameOption(battle.monsterRace).exists(_.weaponPoison), Poison.WeaponChancePct)
-            poisons = reachedHp && (battle.effects.monsterPoisonsOnHit || bladeHits)
+            // Красный сетеплёт травит с шансом (см. RedSpider).
+            redPoison <- chanceRoll(reachedHp && RedSpider.is(battle.monsterBreed), RedSpider.PoisonPct)
+            poisons = reachedHp && (battle.effects.monsterPoisonsOnHit || bladeHits || redPoison)
             // Паутина взрослого и красного сетеплёта: удар с шансом опутывает (см. SpiderWeb).
             webs <- chanceRoll(SpiderWeb.weaves(battle.monsterBreed), SpiderWeb.chancePct(battle.monsterLvl,
                       hero.effectiveBaseStats(nowMs).agi, buffedEff.evasion, buffedEff.defence))
@@ -3123,6 +3125,8 @@ case class BattleState(
             // и в лог идёт «не взяло», а не «подожгли».
             fireWarded   = ignites && !thawed && battle.effects.warded(Ward.Fire)
             poisonWarded = poisons && battle.effects.warded(Ward.Poison)
+            // Отравил красный — с шансом следующее умение героя сорвётся.
+            jams <- chanceRoll(redPoison && !poisonWarded, RedSpider.JamPct)
             coldWarded   = mobProc && procElement.contains(Element.Cold) && !quenched &&
                              battle.effects.warded(Ward.Cold)
             effectsAfterHit = {
@@ -3154,7 +3158,10 @@ case class BattleState(
             thorned = battle.hurtActive(0L, thorns)
             battleAfterAtk = thorned.battle.copy(
               toughnessUsed    = battle.toughnessUsed || toughTriggered,
-              effects          = if (webs) effectsAfterHit.copy(heroWebTurns = Some(SpiderWeb.Turns)) else effectsAfterHit
+              effects          = {
+                val webbedFx = if (webs) effectsAfterHit.copy(heroWebTurns = Some(SpiderWeb.Turns)) else effectsAfterHit
+                if (jams) webbedFx.copy(heroSkillJammed = Some(true)) else webbedFx
+              }
             )
             lines = List(
               Option.when(impenTriggered)(content.format("battle.impenetrable",
@@ -3777,7 +3784,8 @@ case class BattleState(
       // Пригвождённому рваться некуда — ход не тратится.
       case Some(slot) if slot.skill == Skill.Ram && !battle.group.hasMonster(target) =>
         if (battle.effects.heroRooted) cont(hero, battle, content.text(heldKey(battle, "battle.group.ramPinnedSpot")))
-        else if (BattleState.ramSpots(battle).contains(target)) ramDash(paid(hero, slot), battle, slot, target, nowMs)
+        else if (BattleState.ramSpots(battle).contains(target))
+          (if (battle.effects.skillJammed) jammed(hero, battle, slot, nowMs) else ramDash(paid(hero, slot), battle, slot, target, nowMs))
         else if (skillTargets(hero, battle, slot.skill).isEmpty) cont(hero, battle, content.text("battle.group.noTarget"))
         else cont(hero, battle, content.text("battle.group.targetGone"))
       case Some(slot) if BattleState.needsEnemy(slot.skill.effect) && skillTargets(hero, battle, slot.skill).isEmpty =>
@@ -3789,6 +3797,11 @@ case class BattleState(
       // Блок и Контрудар тратят бонусное действие раунда — то же, что пояс.
       case Some(slot) if BattleState.bonusAction(slot.skill.effect) && battle.consumableUsedThisRound =>
         cont(hero, battle, content.text("battle.consumableAlreadyUsed"))
+      // Яд красного сетеплёта: умение срывается — энергия ушла, умения нет, ход
+      // потрачен. Перекат на чужое место — сперва отказ, как всегда.
+      case Some(slot) if battle.effects.skillJammed &&
+                         !(BattleState.rolls(slot.skill.effect) && !skillAims(hero, battle, slot.skill).contains(target)) =>
+        jammed(hero, battle, slot, nowMs)
       case Some(slot) if BattleState.charges(slot.skill.effect) =>
         drawAim(paid(hero, slot), battle, slot, nowMs)
       // Перекат — только на свободное место рядом, пригвождённому — никуда;
@@ -3803,6 +3816,19 @@ case class BattleState(
       case Some(slot) =>
         skillHit(paid(hero, slot), battle, slot, nowMs, target)
     }
+
+  /** Умение сорвал яд красного сетеплёта: энергия ушла, умения нет, перезарядка
+    * не началась. Потрачено то, что взяло бы само умение: обычное — ход (враги
+    * отвечают), Блок и Контрудар — бонусное действие раунда, ход остаётся.
+    * Срыв один: дальше умения работают (см. RedSpider). */
+  private def jammed(hero: Hero, battle: SoloPveBattle, slot: SkillSlotState, nowMs: Long): Task[TurnResult] = {
+    val cleared = battle.copy(effects = battle.effects.copy(heroSkillJammed = None))
+    val line    = Vector(content.text("battle.skillJammed"))
+    if (BattleState.bonusAction(slot.skill.effect))
+      ZIO.succeed(TurnResult(paid(hero, slot), cleared.copy(consumableUsedThisRound = true), line, Outcome.Continue,
+        endsRound = false))
+    else closeTurn(TurnResult(paid(hero, slot), cleared, line, Outcome.Continue), nowMs, Set.empty)
+  }
 
   /** «Перекат»: герой встаёт на свободное место своего ряда и за каждое
     * пройденное место получает прибавку к уклонению на `rounds` раундов —
@@ -4478,7 +4504,8 @@ case class BattleState(
         case FlaskEffect.Cleanse =>
           val cleaned = battle.effects.copy(
             heroBurn = None, heroPoison = None, heroBleed = None,
-            heroStunnedTurns = 0, heroGroundedTurns = 0, heroColdDefenceCut = 0, heroWebTurns = None)
+            heroStunnedTurns = 0, heroGroundedTurns = 0, heroColdDefenceCut = 0, heroWebTurns = None,
+            heroSkillJammed = None)
           TurnResult(hero, battle.copy(effects = cleaned),
             Vector(content.text("battle.flaskCleanse")) ++ qhLog, Outcome.Continue, endsRound = false)
 
@@ -5380,7 +5407,11 @@ case class BattleState(
         else Random.nextIntBetween(0, options.size).flatMap { i =>
           val cast = options(i)
           val paid = b1.copy(group = b1.group.updateAlly(a1.position)(x => x.copy(energy = x.energy - cast.skill.cost(a1.lvl))))
-          cast match {
+          // Яд красного сетеплёта: умение срывается — энергия ушла, умения нет.
+          if (a1.skillJammed)
+            ZIO.succeed((AllyBlow(paid.copy(group = paid.group.updateAlly(a1.position)(_.copy(skillJammed = false))),
+              None, 0L, slew = false), Vector(content.format("battle.ally.skillJammed", "name" -> a1.name))))
+          else cast match {
             case BattleState.AllyCast.Strike(target, crushing) =>
               val factor = if (crushing) AllySkill.CrushingStrikeFactor else AllySkill.QuickStrikeFactor
               allyHits(a1, paid, target, (a1.stats.atk * factor).toLong.max(1L),
@@ -5529,7 +5560,9 @@ case class BattleState(
           mobProc <- chanceRoll(procElement.isDefined, Element.ProcChancePct)
           bladeHits <- chanceRoll(hpDmg > 0L && !tmp.effects.monsterPoisonsOnHit &&
                          Race.withNameOption(tmp.monsterRace).exists(_.weaponPoison), Poison.WeaponChancePct)
-          poisons  = hpDmg > 0L && (tmp.effects.monsterPoisonsOnHit || bladeHits)
+          redPoison <- chanceRoll(hpDmg > 0L && RedSpider.is(tmp.monsterBreed), RedSpider.PoisonPct)
+          poisons  = hpDmg > 0L && (tmp.effects.monsterPoisonsOnHit || bladeHits || redPoison)
+          jams <- chanceRoll(redPoison, RedSpider.JamPct)
           // Паутина — и по союзнику: у него ловкости нет, вместо неё его уровень (см. SpiderWeb).
           webs <- chanceRoll(SpiderWeb.weaves(tmp.monsterBreed),
                     SpiderWeb.chancePct(tmp.monsterLvl, a.lvl, a.stats.evasion, a.stats.defence))
@@ -5547,7 +5580,10 @@ case class BattleState(
             if (quenched) poisoned.copy(burn = None)
             else if (bites) poisoned.copy(coldCut = poisoned.coldCut + Element.Cold.DefenceReductionCut)
             else poisoned
-          hurt     = if (webs) hurt0.copy(webbed = SpiderWeb.Turns) else hurt0
+          hurt     = {
+            val webbedA = if (webs) hurt0.copy(webbed = SpiderWeb.Turns) else hurt0
+            if (jams) webbedA.copy(skillJammed = true) else webbedA
+          }
           after    = if (airy) tmp.copy(effects = tmp.effects.copy(mobAirBoostTurns = Element.Air.ProcTurns)) else tmp
           line     = content.format("battle.ally.mobHit", "monster" -> tmp.monsterName, "name" -> a.name,
                        "damage" -> (armorDmg + hpDmg).toString, "poison" -> (poisonMark(poisons) + webMark(webs)))
@@ -5957,6 +5993,33 @@ case class BattleState(
     })
   }
 
+  /** Матка сетеплётов рождает новорождённых: каждые
+    * [[pangea.model.village.VillageRates.MotherBroodEvery]] раунда — по
+    * [[pangea.model.village.VillageRates.MotherBroodCount]], уровнем в саму матку,
+    * пока в строю есть место (в очередь они не встают). Где бы она ни стояла —
+    * в паре или в строю; пала — не рождает. Ни опыта, ни добычи за них нет. */
+  private def motherBrood(b: SoloPveBattle): Task[(SoloPveBattle, Vector[String])] = {
+    val mother = pangea.model.monster.Breed.SpiderMother
+    val rates  = pangea.model.village.VillageRates
+    val lvl    = Option.when(b.monsterBreed.contains(mother) && b.monsterCurrentHp > 0L)(b.monsterLvl)
+                   .orElse(b.group.others.collectFirst { case s if s.alive && s.breed.contains(mother) => s.lvl })
+    val n      = rates.MotherBroodCount.min(b.group.freePlaces.size)
+    lvl match {
+      case Some(l) if b.group.round % rates.MotherBroodEvery == 0 && n > 0 =>
+        ZIO.foreach(List.fill(n)(()))(_ => Random.nextLongBetween(MonsterEnergy.StartPctMin, MonsterEnergy.StartPctMax + 1L))
+          .map { pcts =>
+            val slots = pcts.map { pct =>
+              val m = Villages.newborn(l.toInt)
+              MonsterSlot(m.lvl, m.race.entryName, m.rarity.entryName, m.fightStats, m.fightStats.hp, m.fightStats.armor,
+                m.marked, MonsterEnergy.startEnergy(m.lvl, m.rarity, pct), BattleEffects.empty,
+                customName = m.customName, breed = m.breed)
+            }
+            (slots.foldLeft(b)(_ admit _), Vector(content.format("battle.spiderBrood", "n" -> n.toString)))
+          }
+      case _ => ZIO.succeed((b, Vector.empty[String]))
+    }
+  }
+
   /** Моб, который никого не достаёт, тратит энергию только на себя. */
   private def selfAid(hero: Hero, caster: SoloPveBattle, nowMs: Long): Task[(SoloPveBattle, String)] = {
     val race = Race.withName(caster.monsterRace)
@@ -6006,12 +6069,16 @@ case class BattleState(
           }
         (b1b, log1b) = summoned
         // очередь: освободилось место — из-за спин выходят следующие
-        (b1q, entered) = b1b.admitQueued
+        (b1e, entered) = b1b.admitQueued
+        // Матка сетеплётов: каждые три раунда — новорождённые на места, что
+        // остались после очереди.
+        hatched <- motherBrood(b1e)
+        (b1q, log1h) = hatched
         // дальние подтягиваются к герою на одно свободное место — чтобы в
         // следующем раунде достать его сбоку; в сводку это не идёт, перестановка
         // и так видна по строю
         (b1, _) = if (b1q.arena.isDefined) (b1q, Nil) else b1q.closeIn
-        log1 = log1a ++ log1b ++ entered.map(m => content.format("battle.group.fromQueue", "monster" -> m.name)).toVector
+        log1 = log1a ++ log1b ++ entered.map(m => content.format("battle.group.fromQueue", "monster" -> m.name)).toVector ++ log1h
         // перемешивание: каждый шестой раунд, если есть кого мешать. Жребий
         // тянут только подвижные — сооружения стоят где стояли. Группу берём у
         // УЖЕ перемешанного боя — иначе новый активный встанет поверх старого
@@ -6173,7 +6240,10 @@ case class BattleState(
       // Редкость последнего павшего — в обычном бою это и есть моб в полях.
       lastRarity = fallen0.lastOption.map(m => Rarity.withName(m.rarity)).getOrElse(battle.rarity)
       fallen  = {
-        val spoils = fallen0.filterNot(m => Race.withNameOption(m.race).exists(Race.immovable))
+        // Новорождённых сетеплётов матка рожает прямо в бою: за них, как и за
+        // башни, — ни опыта, ни добычи, и в счёт павших они не идут.
+        val spoils = fallen0.filterNot(m => Race.withNameOption(m.race).exists(Race.immovable) ||
+                       m.breed.contains(pangea.model.monster.Breed.NewbornSpider))
         // Бой из одних башен всё же должен чем-то кончиться — тогда берём как есть.
         if (spoils.nonEmpty) spoils else fallen0
       }
