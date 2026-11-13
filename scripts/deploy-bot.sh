@@ -67,12 +67,17 @@ echo "$(date +%T) Готово: $(docker compose ps app --format '{{.Name}} — 
 
 # Кэш сборки: каждая сборка бота оставляет ~290 МБ слоёв, которые следующей уже
 # не нужны, — копию app.jar с шагами после неё, `sbt app/assembly`, исходники и
-# контекст. Базовые образы, зависимости sbt и npm, apt-get остаются; слои
-# последней сборки — тоже (until=1h): тот же код выкладывается из кэша. Запись
-# с потомками BuildKit не удаляет, поэтому — от последнего шага к первому;
-# номера шагов — по Dockerfile. Сбой здесь выкладку не трогает: она готова.
+# контекст. А когда меняются зависимости или базовый образ, заново собирается и
+# подготовка — `apt-get`, `sbt update` (~400 МБ), — и прежняя тоже не нужна.
+# Остаётся то, чем пользовалась последняя сборка (until=1h), и всё, на что оно
+# опирается: запись с потомками BuildKit не удаляет. Поэтому — от последнего
+# шага к первому; номера шагов — по Dockerfile. Базовые образы не трогаем. Сбой
+# здесь выкладку не трогает: она готова.
 for f in "chmod.+entrypoint" "stage-1.8/9" "stage-1.7/9" "app/target/scala-2.13/app.jar" \
-         "sbt.app/assembly" "builder.+9/10.+COPY" "local.source.for.context"; do
+         "keytool.-printcert" "stage-1.4/9" \
+         "sbt.app/assembly" "builder.+9/10.+COPY" "sbt.update" \
+         "builder.+7/10" "builder.+6/10" "builder.+5/10" "builder.+4/10" \
+         "apt-get.update" "local.source.for.context"; do
   docker builder prune -f --filter "description~=$f" --filter until=1h >/dev/null 2>&1 || true
 done
 echo "$(date +%T) Кэш сборки: $(docker builder du 2>/dev/null | awk '/^Total:/{print $2}')"
