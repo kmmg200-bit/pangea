@@ -144,7 +144,7 @@ object CaravanWagonsSpec extends ZIOSpecDefault {
         c   <- ZIO.attempt(SceneContent.load())
         _   <- BattleState(dao, TestInventoryRepository.accepting, TestItemRepository.make, c).enter(testUser, r)
         all <- r.sentScreens.map(_.map(_.text).mkString("\n"))
-      } yield assertTrue(all.contains("1. 🟢 Вы · 🛒 100% VS") && all.contains("3. 🛒 Повозка ❤ 100% 🧥 100% VS ⚪"))
+      } yield assertTrue(all.contains("1. 🟢 Вы · 🐂 100% VS") && all.contains("3. 🐂 Повозка ❤ 100% 🧥 100% VS ⚪"))
     },
 
     test("после победы повозки уходят туда, откуда начался бой: какими вышли из боя, огонь потушен") {
