@@ -40,7 +40,7 @@ case class InventoryState(
   private val outfit = new Outfit(heroDao, inventoryRepo, itemRepository, content)
 
   /** Распаковать стопку — общее с Mini App. */
-  private val bundles = new BundleWork(inventoryRepo, content)
+  private val bundles = new BundleWork(inventoryRepo, itemRepository, content)
 
   /** Резец — общее с Mini App. */
   private val gemWork = new GemWork(heroDao, inventoryRepo, itemRepository, content)
@@ -344,33 +344,17 @@ case class InventoryState(
     renderer.show(user, Screen(text, choices)).as(StateType.Inventory)
   }
 
-  /** Собрать стопку: пять одинаковых — с конца, как и всё на карточке (см.
-    * [[withSelected]]), — в одну вещь на одном месте. Показанная вещь остаётся в
-    * сумке, пока таких больше пяти, и игрок возвращается на её карточку.
-    * Собирают где угодно, и в лабиринте. Места стопка не просит, а освобождает —
-    * кроме пыли: та места не занимала, а стопке оно нужно. */
+  /** Собрать стопку (см. [[BundleWork.pack]]): итог — над карточкой. Игрок
+    * возвращается на карточку показанной вещи — она в сумке, пока таких
+    * больше пяти. */
   private def packSelected(user: User, renderer: Renderer): Task[StateType] =
     for {
       scene <- readScene(user)
       hero  <- getHero(user)
       inv   <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
       res   <- scene.selectedId.flatMap(id => inv.items.data.find(_.id == id)) match {
-                 case None => showList(user, renderer)
-                 case Some(item) =>
-                   val taken = stackOf(inv.items.data, item).takeRight(Bundling.Size)
-                   Bundling.pack(taken) match {
-                     // Таких уже меньше пяти (или вещь не собирается) — карточка скажет, что есть.
-                     case None => backToCard(user, renderer)
-                     case Some(draft) if inv.swapped(taken, List(draft)).isLeft =>
-                       backToCard(user, renderer, Some(content.text("inventory.bundle.noRoom")))
-                     case Some(draft) =>
-                       for {
-                         bundle <- itemRepository.persist(hero.id, draft)
-                         _      <- inventoryRepo.swap(hero.id, taken, List(bundle)).mapError(e => new Throwable(e.toString))
-                         r      <- backToCard(user, renderer, Some(content.format("inventory.bundle.packed",
-                                     "name" -> item.displayTitle, "n" -> Bundling.contents(bundle).size.toString)))
-                       } yield r
-                   }
+                 case None       => showList(user, renderer)
+                 case Some(item) => bundles.pack(hero.id, inv, item).flatMap(note => backToCard(user, renderer, note))
                }
     } yield res
 

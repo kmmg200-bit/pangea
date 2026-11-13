@@ -89,7 +89,8 @@ export interface BrewAskView {
 }
 
 /** Чем можно воспользоваться из сумки. `beltFull` — на поясе нет места, и вот вопрос, что снять;
- *  `unpack` — это стопка, её можно распаковать; `crush` — это камень, его можно расколоть, и вот
+ *  `unpack` — это стопка, её можно распаковать; `pack` — таких в сумке на стопку хватает, её можно
+ *  собрать (у бота старше приложения поля нет); `crush` — это камень, его можно расколоть, и вот
  *  вопрос перед этим; `dust` — это пыль, ею посыпают надетое оружие; `read` — это трактат, его
  *  можно читать; `quest` — кнопка задания на карточке сюжетного предмета. */
 export interface BagActView {
@@ -98,6 +99,7 @@ export interface BagActView {
   belt: boolean
   beltFull: string | null
   unpack: boolean
+  pack?: boolean
   crush: string | null
   dust: boolean
   read: boolean

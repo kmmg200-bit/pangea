@@ -149,12 +149,13 @@ object MiniAppView {
   /** Чем можно воспользоваться из сумки: `item` — как в списке вещей, `brew` —
     * что можно сделать с отваром, `belt` — кладётся ли на пояс, `beltFull` — на
     * поясе нет места, и вот вопрос, что снять, `unpack` — это стопка, её можно
-    * распаковать, `crush` — это камень, его можно расколоть, и вот вопрос
+    * распаковать, `pack` — таких в сумке на стопку хватает, её можно собрать
+    * (как «📦 В стопку» в боте), `crush` — это камень, его можно расколоть, и вот вопрос
     * перед этим (те же слова, что в боте), `dust` — это пыль, ею посыпают
     * надетое оружие, `read` — это трактат, его можно читать, `quest` — кнопка
     * задания на карточке сюжетного предмета. */
   final case class BagActView(item: Long, brew: List[BrewAskView], belt: Boolean, beltFull: Option[String],
-                              unpack: Boolean, crush: Option[String], dust: Boolean, read: Boolean,
+                              unpack: Boolean, pack: Boolean, crush: Option[String], dust: Boolean, read: Boolean,
                               quest: Option[QuestActView])
 
   /** Кнопка задания — та же, что в боте: `act` — её имя у бота, `label` —
@@ -474,7 +475,7 @@ object MiniAppView {
     * из сумки ничего не достать. */
   private def bagActs(h: Hero, inv: Inventory, content: SceneContent, now: Long, quests: NpcQuests): List[BagActView] =
     if (MiniApp.inBattle(h)) Nil
-    else InventoryState.listed(inv.items.data).flatMap { case (item, _) =>
+    else InventoryState.listed(inv.items.data).flatMap { case (item, count) =>
       val asks  = brewAsks(h, item, content, now)
       val slot  = BeltSlot.of(item)
       val crush = item.gem.map(g => content.format("inventory.crushGemConfirm",
@@ -484,9 +485,12 @@ object MiniAppView {
       val read  = item.questItem.exists(HerbLore.isTreatise)
       // Кнопка задания — та же, что на карточке в боте (см. QuestCard).
       val quest = QuestCard.choice(content, item, quests).map(c => QuestActView(c.id, bare(c.label)))
-      Option.when(asks.nonEmpty || slot.isDefined || item.isBundle || crush.isDefined || dust || read || quest.isDefined)(
+      // «В стопку» — как в боте: таких в сумке на стопку хватает (см. Bundling).
+      val pack  = Bundling.packable(item) && count >= Bundling.Size
+      Option.when(asks.nonEmpty || slot.isDefined || item.isBundle || pack || crush.isDefined || dust || read ||
+          quest.isDefined)(
         BagActView(item.id, asks, slot.isDefined, slot.flatMap(beltFull(h, _, content)), unpack = item.isBundle,
-          crush = crush, dust = dust, read = read, quest = quest))
+          pack = pack, crush = crush, dust = dust, read = read, quest = quest))
     }
 
   /** Подпись кнопки бота без значка впереди: в приложении у кнопок значков нет. */

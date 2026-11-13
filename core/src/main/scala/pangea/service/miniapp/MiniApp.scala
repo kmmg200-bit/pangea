@@ -88,6 +88,10 @@ trait MiniApp {
     * боте; не в бою. */
   def unpack(hero: Hero, itemId: Long): Task[InventoryActionView]
 
+  /** Собрать в стопку пять вещей, как `itemId`, из сумки — как кнопкой
+    * «В стопку» на её карточке в боте; не в бою. */
+  def pack(hero: Hero, itemId: Long): Task[InventoryActionView]
+
   /** Расколоть камень `itemId` из сумки — как кнопкой «Расколоть камень» на
     * его карточке в боте; не в бою. */
   def crush(hero: Hero, itemId: Long): Task[InventoryActionView]
@@ -293,7 +297,7 @@ object MiniApp {
         new AuctionPurchase(heroDao, inventories, lots, users, bank, payouts, players, content),
         new Outfit(heroDao, inventories, items, content), new GemWork(heroDao, inventories, items, content),
         new BrewWork(heroDao, inventories, content), new BeltWork(heroDao, inventories, items, content),
-        new SquadOrders(heroDao, content),
+        new BundleWork(inventories, items, content), new SquadOrders(heroDao, content),
         new ItemStore.All(heroDao, inventories, artifactRepo, barrelRepo, bank, content),
         new BarrelRobbery(heroDao, barrelRepo, items, content), lock,
         new AppQuests(heroDao, inventories, new QuestCard(heroDao, inventories, items, content), content, door))
@@ -320,6 +324,7 @@ final class MiniAppLive(
   gemWork:     GemWork,
   brewWork:    BrewWork,
   beltWork:    BeltWork,
+  bundleWork:  BundleWork,
   orders:      SquadOrders,
   places:      ItemStore.All,
   robbery:     BarrelRobbery,
@@ -327,9 +332,6 @@ final class MiniAppLive(
   appQuests:   AppQuests
 ) extends MiniApp {
   import MiniApp.{BrewAct, CubeAct, Denied, GearAct, Outcome, SquadAct}
-
-  /** Распаковать стопку — общее с карточкой стопки в боте. */
-  private val bundleWork = new BundleWork(inventories, content)
 
   override def player(launchParams: String): Task[Either[Denied, Hero]] =
     config.vkSecret.map(_.trim).filter(_.nonEmpty) match {
@@ -458,6 +460,19 @@ final class MiniAppLive(
         inv.items.data.find(_.id == itemId) match {
           case None       => ZIO.succeed(content.text("stack.gone"))
           case Some(item) => bundleWork.unpack(fresh.id, inv, item).map(_.getOrElse(content.text("stack.gone")))
+        }
+      }
+    }
+
+  /** Те же правила и слова, что у «В стопку» на карточке вещи в боте
+    * ([[BundleWork.pack]]). Вещи уже нет или она в стопку не собирается — так
+    * и сказать. */
+  override def pack(hero: Hero, itemId: Long): Task[InventoryActionView] =
+    notInBattle(hero, content.text("miniapp.storages.inBattle")) { fresh =>
+      inventories.get(fresh.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
+        inv.items.data.find(_.id == itemId) match {
+          case None       => ZIO.succeed(content.text("stack.gone"))
+          case Some(item) => bundleWork.pack(fresh.id, inv, item).map(_.getOrElse(content.text("stack.gone")))
         }
       }
     }

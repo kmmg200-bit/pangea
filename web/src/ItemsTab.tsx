@@ -221,6 +221,11 @@ function BagActs(props: {
             Распаковать
           </button>
         )}
+        {act.pack && (
+          <button className="equip-off" disabled={acts.busy} onClick={() => finish(() => api.bagPack(item.id))}>
+            В стопку
+          </button>
+        )}
         {act.crush && (
           <button className="equip-off" disabled={acts.busy} onClick={() => setAsk('crush')}>
             Расколоть камень

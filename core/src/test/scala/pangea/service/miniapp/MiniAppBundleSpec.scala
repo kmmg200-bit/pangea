@@ -11,11 +11,11 @@ import pangea.model.inventory.Inventory
 import pangea.model.item.{BrewKind, Bundling, Item, ItemType, MaterialKind, Rarity}
 import pangea.model.user.UserId
 import pangea.service.equipment.BundleWork
-import pangea.test.{TestFixtures, TestInventoryRepository}
+import pangea.test.{TestFixtures, TestInventoryRepository, TestItemRepository}
 import zio.test._
 
-/** Стопка в приложении: кнопка «Распаковать» приходит данными, а сама
-  * распаковка — та же, что на карточке стопки в боте ([[BundleWork]]): вещи
+/** Стопка в приложении: кнопки «Распаковать» и «В стопку» приходят данными, а сами
+  * распаковка и сборка — те же, что на карточке в боте ([[BundleWork]]): вещи
   * ложатся в сумку, мест не хватает — сказано, сколько освободить. */
 object MiniAppBundleSpec extends ZIOSpecDefault {
 
@@ -56,7 +56,7 @@ object MiniAppBundleSpec extends ZIOSpecDefault {
 
     test("распаковать: место есть — пять вещей в сумке, стопки нет, и об этом сказано") {
       val bag  = TestInventoryRepository.withItems(List(stack))
-      val work = new BundleWork(bag, content)
+      val work = new BundleWork(bag, TestItemRepository.make, content)
       for {
         inv  <- bag.get(base.id).mapError(e => new Throwable(e.toString))
         note <- work.unpack(base.id, inv, stack)
@@ -69,7 +69,7 @@ object MiniAppBundleSpec extends ZIOSpecDefault {
       // 1 стопка + 18 мечей = 19 из 20; распакованная займёт пять мест вместо одного.
       val swords = (1L to 18L).toList.map(sword)
       val bag    = TestInventoryRepository.withItems(stack :: swords)
-      val work   = new BundleWork(bag, content)
+      val work   = new BundleWork(bag, TestItemRepository.make, content)
       for {
         inv  <- bag.get(base.id).mapError(e => new Throwable(e.toString))
         note <- work.unpack(base.id, inv, stack)
@@ -79,11 +79,61 @@ object MiniAppBundleSpec extends ZIOSpecDefault {
 
     test("не стопка — говорить не о чем") {
       val bag  = TestInventoryRepository.withItems(List(sword(1L)))
-      val work = new BundleWork(bag, content)
+      val work = new BundleWork(bag, TestItemRepository.make, content)
       for {
         inv  <- bag.get(base.id).mapError(e => new Throwable(e.toString))
         note <- work.unpack(base.id, inv, sword(1L))
       } yield assertTrue(note.isEmpty && bag.snapshot.map(_.id) == List(1L))
+    },
+
+    test("«В стопку» — когда таких в сумке на стопку хватает: пять мифрила — да, четыре — нет; мечам и стопке — нет") {
+      val five  = (111L to 115L).toList.map(mithril)
+      val acts  = view(five ++ (201L to 205L).toList.map(sword) :+ stack).bagActs
+      val four  = view((111L to 114L).toList.map(mithril)).bagActs
+      val metal = acts.find(a => five.exists(_.id == a.item))
+      assertTrue(metal.exists(a => a.pack && !a.unpack)) &&
+      assertTrue(!acts.exists(a => a.item >= 201L)) &&
+      assertTrue(acts.find(_.item == stack.id).exists(a => a.unpack && !a.pack)) &&
+      assertTrue(!four.exists(_.pack))
+    },
+
+    test("собрать: пять последних — в стопку с новым номером, остальное на месте, и об этом сказано") {
+      val seven = (111L to 117L).toList.map(mithril)
+      val bag   = TestInventoryRepository.withItems(sword(201L) :: seven)
+      val work  = new BundleWork(bag, TestItemRepository.make, content)
+      for {
+        inv   <- bag.get(base.id).mapError(e => new Throwable(e.toString))
+        note  <- work.pack(base.id, inv, seven.head)
+        packed = bag.snapshot.filter(_.isBundle)
+      } yield assertTrue(note.contains(content.format("inventory.bundle.packed",
+                "name" -> mithril(111L).displayTitle, "n" -> "5"))) &&
+              assertTrue(packed.map(b => Bundling.contents(b).map(_.id)) == List((113L to 117L).toList)) &&
+              assertTrue(packed.forall(_.id > 0L)) &&
+              assertTrue(bag.snapshot.filterNot(_.isBundle).map(_.id) == List(201L, 111L, 112L))
+    },
+
+    test("собрать: таких уже меньше пяти — сказано, что нужно пять, сумка как была") {
+      val four = (111L to 114L).toList.map(mithril)
+      val bag  = TestInventoryRepository.withItems(four)
+      val work = new BundleWork(bag, TestItemRepository.make, content)
+      for {
+        inv  <- bag.get(base.id).mapError(e => new Throwable(e.toString))
+        note <- work.pack(base.id, inv, four.head)
+      } yield assertTrue(note.contains(content.format("inventory.bundle.short", "n" -> "5"))) &&
+              assertTrue(bag.snapshot.map(_.id) == (111L to 114L).toList)
+    },
+
+    test("собрать пыль в полной сумке — стопке нужно место, сумка как была; меч в стопку не собирается") {
+      val dust   = (111L to 115L).toList.map(i => MaterialGenerator.item(MaterialKind.RubyDust).copy(id = i))
+      val swords = (201L to 220L).toList.map(sword)
+      val bag    = TestInventoryRepository.withItems(swords ++ dust)
+      val work   = new BundleWork(bag, TestItemRepository.make, content)
+      for {
+        inv   <- bag.get(base.id).mapError(e => new Throwable(e.toString))
+        full  <- work.pack(base.id, inv, dust.head)
+        blade <- work.pack(base.id, inv, swords.head)
+      } yield assertTrue(full.contains(content.text("inventory.bundle.noRoom")) && blade.isEmpty) &&
+              assertTrue(bag.snapshot.size == 25 && !bag.snapshot.exists(_.isBundle))
     }
   )
 }
