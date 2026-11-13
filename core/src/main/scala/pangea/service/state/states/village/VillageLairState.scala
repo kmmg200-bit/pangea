@@ -91,9 +91,11 @@ case class VillageLairState(
 
   private def text(k: String): String = content.text(key(k))
 
+  /** Вход в логово: что там, сложность и что из этого боя не сбежать. */
   private def introScreen(c: VillageContract): Screen =
     Screen(
-      Villages.joined(content.format(key("intro"), Villages.args(content, c): _*), difficulty(c.level)),
+      Villages.joined(content.format(key("intro"), Villages.args(content, c): _*), difficulty(c.level),
+        content.text("village.lair.noEscape")),
       List(
         content.choice(s"${ids}Fight", key("fightLabel")).copy(row = Some(0)),
         content.choice("OpenCharacter", "village.lair.characterLabel").copy(row = Some(1)),

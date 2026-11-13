@@ -14,6 +14,15 @@ sealed abstract class MaterialKind(val displayName: String) extends EnumEntry {
   /** Сколько дублонов даёт за материал Ришелье. 0 — обычная продажа за серебро. */
   val doubloonPrice: Long = 0L
 
+  /** Твёрдая цена в серебре у Ришелье — без уровня и редкости (награбленное
+    * с обозов). 0 — серебром по общей формуле. */
+  val silverPrice: Long = 0L
+
+  /** Пока ни во что не идёт: на карточке под описанием — пометка
+    * [[MaterialKind.NotYetUsedNote]]. Войдёт в ремесло — снять (так просил
+    * пользователь). */
+  val notYetUsed: Boolean = false
+
   /** Из какого камня получена эта пыль. Задан только у пылей: по нему собирают
     * камень обратно (три пыли — надколотый) и берут грань, которой пыль
     * покрывает оружие. У прочих материалов — None. */
@@ -228,13 +237,14 @@ object MaterialKind extends Enum[MaterialKind] {
 
   // ── Добыча из гнёзд сетеплётов ───────────────────────────────────────────
   // Паучье добро — как и крысиное: Ришелье его не берёт, носят ради будущих
-  // рецептов.
+  // рецептов. Пока ни во что не идёт — на карточке пометка (notYetUsed).
 
   case object SpiderSilk extends MaterialKind("Паучий шёлк") {
     override val description: String =
       "Моток липкой серой нити, снятый с кокона. Тянется лучше жил и режется хуже кожи. " +
       "Кто знает, откуда он, держит его подальше от лица."
     override val worthless: Boolean = true
+    override val notYetUsed: Boolean = true
   }
 
   case object VenomGland extends MaterialKind("Ядовитая железа") {
@@ -242,6 +252,7 @@ object MaterialKind extends Enum[MaterialKind] {
       "Мутный пузырь с кулак величиной, вырезанный из-под жвал сетеплёта. Внутри что-то " +
       "плещется и на свету густеет. Брать лучше в перчатке."
     override val worthless: Boolean = true
+    override val notYetUsed: Boolean = true
   }
 
   /** Кокон из гнезда сетеплётов. Что в нём — пока не открыть (так решил
@@ -251,6 +262,7 @@ object MaterialKind extends Enum[MaterialKind] {
       "Плотный кокон, туго перетянутый паутиной. Внутри прощупывается что-то твёрдое — " +
       "пряжка? монета? — но паутина не поддаётся даже ножу."
     override val worthless: Boolean = true
+    override val notYetUsed: Boolean = true
   }
 
   /** Железа красного сетеплёта — редкий ингредиент будущих рецептов; Ришелье
@@ -260,6 +272,69 @@ object MaterialKind extends Enum[MaterialKind] {
       "Тёмно-красная железа, горячая даже сквозь перчатку. Яд в ней не плещется, а " +
       "медленно ворочается, будто ещё живой."
     override val doubloonPrice: Long = 5L
+    override val notYetUsed: Boolean = true
+  }
+
+  // ── Награбленное с обозов ────────────────────────────────────────────────
+  // Что снимают с обозов: материалы будущих ремёсел. Больше всего его на
+  // разбойничьих заставах, но носят его и прочие смертные (см.
+  // LootGenerator.BanditSpoils). Ришелье берёт его по твёрдой цене
+  // (silverPrice), какого бы уровня ни был бой. Пока ни во что не идёт.
+
+  case object IronIngot extends MaterialKind("Железный слиток") {
+    override val description: String =
+      "Брусок серого железа с клеймом чужой литейни. Тяжёлый и холодный: в обозе за такой " +
+      "платят пошлину, а на заставе им подпирали дверь."
+    override val silverPrice: Long = 250L
+    override val notYetUsed: Boolean = true
+  }
+
+  case object Timber extends MaterialKind("Древесина") {
+    override val description: String =
+      "Сухие ровные плахи, перетянутые бечёвкой. Дерево выдержанное, без сучков — плотник " +
+      "за такое торговаться не станет."
+    override val silverPrice: Long = 100L
+    override val notYetUsed: Boolean = true
+  }
+
+  case object TannedLeather extends MaterialKind("Выделанная кожа") {
+    override val description: String =
+      "Мягкий лоскут хорошо выделанной кожи — хватит на пару сапог или добрый ремень. " +
+      "Пахнет дёгтем и чужим амбаром."
+    override val silverPrice: Long = 200L
+    override val notYetUsed: Boolean = true
+  }
+
+  case object WoolCloth extends MaterialKind("Отрез сукна") {
+    override val description: String =
+      "Плотное крашеное сукно, скатанное в тугой рулон. Край прошит цеховой меткой: ткали " +
+      "на продажу, а продали, похоже, не те, кто ткал."
+    override val silverPrice: Long = 200L
+    override val notYetUsed: Boolean = true
+  }
+
+  case object CopperIngot extends MaterialKind("Медный слиток") {
+    override val description: String =
+      "Рыжий брусок, тёплый на ощупь даже в холод. Медники берут такие без торга — лишь " +
+      "бы не спрашивали, чьё на нём клеймо."
+    override val silverPrice: Long = 400L
+    override val notYetUsed: Boolean = true
+  }
+
+  case object HempRope extends MaterialKind("Моток пеньки") {
+    override val description: String =
+      "Крепкая пеньковая верёвка, смотанная в бухту. Такой на обозах вяжут тюки, а на " +
+      "заставе, судя по узлам, вязали не только тюки."
+    override val silverPrice: Long = 100L
+    override val notYetUsed: Boolean = true
+  }
+
+  case object PineTar extends MaterialKind("Бочонок смолы") {
+    override val description: String =
+      "Небольшой бочонок густой сосновой смолы под восковой пробкой. Ею смолят днища, " +
+      "бочки и факелы — горит долго и чадит на всю округу."
+    override val silverPrice: Long = 300L
+    override val notYetUsed: Boolean = true
   }
 
   /** Единственное в канализации, за что платят: редкий ингредиент будущего
@@ -288,6 +363,9 @@ object MaterialKind extends Enum[MaterialKind] {
       "а мёртвое жжёт, как огнём."
     override val worthless: Boolean = true
   }
+
+  /** Пометка на карточке материала, который пока ни во что не идёт (см. [[notYetUsed]]). */
+  val NotYetUsedNote: String = "(пока не используется)"
 
   /** Всё, что выносят из канализации. Кровь короля среди них одна чего-то
     * стоит, прочее не берёт никто. */

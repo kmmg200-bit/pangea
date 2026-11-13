@@ -3,6 +3,7 @@ package pangea.service.state.states.merchant
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
 import pangea.generator.item.{GemGenerator, MaterialGenerator}
+import pangea.generator.loot.LootGenerator
 import pangea.model.item.{Item, ItemDetails, ItemType, GemKind, MaterialKind, PassiveKind, Rarity, TrophyKind}
 import pangea.model.rune.{Rune, RuneStone, RuneStoneSize}
 import pangea.model.state.StateType
@@ -599,6 +600,23 @@ object MerchantStateSpec extends ZIOSpecDefault {
               assertTrue(hero.silver == richHero.silver) && // серебро не тронуто
               assertTrue(invRepo.snapshot.isEmpty) &&
               assertTrue(screens.map(_.text).mkString.contains("за 5 🟡"))
+    },
+
+    test("награбленное Ришелье берёт по твёрдой цене: железный слиток — 250 серебра, какого бы ни был уровня") {
+      val ingot = MaterialGenerator.item(MaterialKind.IronIngot).copy(id = 2L, lvl = 80L, rarity = Rarity.Orange)
+      for {
+        t <- makeState(richHero.copy(silver = 0L), items = List(ingot))
+        (state, heroDao, invRepo, renderer) = t
+        _       <- state.action(testUser, tap("Sell"), renderer)
+        _       <- state.action(testUser, tap("SellItem_2"), renderer)
+        confirm <- renderer.sentScreens.map(_.last)
+        _       <- state.action(testUser, tap("ConfirmSellItem"), renderer)
+        hero    <- heroDao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(confirm.text.contains("🪙 Цена продажи: 250")) &&
+              assertTrue(hero.silver == 250L && hero.doubloons == richHero.doubloons && invRepo.snapshot.isEmpty) &&
+              // у всего награбленного — своя цена в серебре, не в дублонах; Ришелье его берёт
+              assertTrue(LootGenerator.BanditSpoils.forall { case (k, _) =>
+                k.silverPrice > 0L && k.doubloonPrice == 0L && !k.worthless && !k.isHerb && k.description.nonEmpty })
     },
 
     test("камни не продаются даже при включённых трофеях") {

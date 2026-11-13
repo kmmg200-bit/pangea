@@ -6335,7 +6335,10 @@ case class BattleState(
             killLevel,
             rng
           )
-          (acc :+ (name -> (d ++ extra)), r)
+          // Награбленное с обозов: на разбойничьей заставе — с каждого павшего,
+          // в прочих боях — со смертных и вдвое реже.
+          val (spoils, r2) = BattleState.plunder(battle.story, storyFight, Race.withNameOption(m.race), r)
+          (acc :+ (name -> (d ++ extra ++ spoils)), r2)
       }
       // Благословение: 5% шанс дополнительной экипировки после боя.
       (blessingGear, rngAfter3) =
@@ -7045,6 +7048,16 @@ object BattleState {
     * пауки, и с них паучье; везде прочее — крысиное, как было. */
   def beastSpoils(story: Option[String]): List[(Option[pangea.model.item.MaterialKind], Int)] =
     if (story.contains(Villages.SpidersStory)) LootGenerator.SpiderSpoils else LootGenerator.RatSpoils
+
+  /** Награбленное с обозов (см. LootGenerator.BanditSpoils) — сверх таблицы, с
+    * одного павшего. На разбойничьей заставе — с шансом
+    * LootGenerator.BanditSpoilsChancePct; в прочих боях — вдвое реже и только
+    * со смертных: его носят люди, а не звери, нежить и сооружения. Сюжетный
+    * бой — нет, там добычу кладёт сюжет; тогда и броска нет. */
+  def plunder(story: Option[String], storyFight: Boolean, race: Option[Race], rng: Rng): (List[LootGenerator.LootDrop], Rng) =
+    if (story.contains(Villages.BanditsStory)) LootGenerator.banditLoot(rng, LootGenerator.BanditSpoilsChancePct)
+    else if (storyFight || !race.exists(Race.mortals.contains)) (Nil, rng)
+    else LootGenerator.banditLoot(rng, LootGenerator.StraySpoilsChancePct)
 
   /** Добыча породы сверх таблицы: с красного сетеплёта — его железа, всегда. */
   def breedDrops(breed: Option[pangea.model.monster.Breed]): List[LootGenerator.LootDrop] =

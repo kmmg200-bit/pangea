@@ -212,6 +212,34 @@ object LootGenerator {
     None                              -> 3
   )
 
+  /** Награбленное с обозов — сверх обычной добычи: с каждого павшего одна вещь
+    * с шансом, вид — по весу (в сумме сто). На разбойничьей заставе шанс
+    * [[BanditSpoilsChancePct]]%, в прочих боях со смертных — вдвое меньше,
+    * [[StraySpoilsChancePct]]% (так решил пользователь). Ришелье берёт его по
+    * твёрдой цене (MaterialKind.silverPrice). */
+  val BanditSpoilsChancePct: Long = 30L
+  val StraySpoilsChancePct: Long  = 15L
+  val BanditSpoils: List[(MaterialKind, Int)] = List(
+    MaterialKind.Timber        -> 25,
+    MaterialKind.HempRope      -> 18,
+    MaterialKind.TannedLeather -> 15,
+    MaterialKind.WoolCloth     -> 15,
+    MaterialKind.IronIngot     -> 10,
+    MaterialKind.PineTar       -> 10,
+    MaterialKind.CopperIngot   -> 7
+  )
+
+  /** Бросок награбленного с одного павшего: с шансом `chancePct`% — одна вещь
+    * (см. [[BanditSpoils]]). */
+  def banditLoot(rng: Rng, chancePct: Long): (List[LootDrop], Rng) = {
+    val (fired, r1) = rng.between(0L, 100L)
+    if (fired >= chancePct) (Nil, r1)
+    else {
+      val (kind, r2) = pickWeighted(BanditSpoils, r1)
+      (List(LootDrop.Gear(MaterialGenerator.item(kind))), r2)
+    }
+  }
+
   /** Сколько бросков добычи со зверя: с обычного один, с чумного два — второй
     * пожиже. Легендарных и мифических зверей пока не водится, но если заведутся
     * — считаются как чумные. */

@@ -5,7 +5,7 @@ import io.circe.parser.parse
 import io.circe.syntax.EncoderOps
 import pangea.domain.Rng
 import pangea.engine.SceneContent
-import pangea.model.battle.SoloPveBattle
+import pangea.model.battle.{SlainMonster, SoloPveBattle}
 import pangea.model.caravan.CaravanScene
 import pangea.model.hero.{Hero, LoreData}
 import pangea.model.item.{Item, QuestItemKind}
@@ -13,6 +13,7 @@ import pangea.generator.monster.MonsterGenerator
 import pangea.model.monster.{Breed, Monster, Race, Rarity}
 import pangea.model.quest.{DailyQuests, Difficulty, NpcQuest, NpcQuests}
 import pangea.model.state.StateType
+import pangea.model.stats.FightStats
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.model.village.{VillageContract, VillageQuest, VillageRates, VillageScene}
 import pangea.service.state.states.LootState.LootData
@@ -20,6 +21,7 @@ import pangea.service.state.states.battle.BattleState
 import pangea.service.state.states.dungeon.DungeonState
 import pangea.service.state.states.{DeathState, InventoryState}
 import pangea.generator.loot.LootGenerator
+import pangea.generator.item.MaterialGenerator
 import pangea.model.item.MaterialKind
 import pangea.service.state.{NpcQuestLog, QuestJournal, UserAction, VillageLair, Villages}
 import pangea.test._
@@ -598,6 +600,81 @@ object VillageSpec extends ZIOSpecDefault {
               assertTrue(Villages.toBandits(q2)) &&
               assertTrue(BattleState.RaidStories.contains(Villages.RaidStory) && BattleState.RaidStories.contains(Villages.BanditsStory) &&
                 BattleState.RaidStories.contains(Villages.SpidersStory))
+    },
+
+    test("вход в логово предупреждает: из этого боя не сбежать — у разбойников и у пауков") {
+      for {
+        c       <- content
+        r       <- TestRenderer.make
+        d1      <- dao(q = Some(withContract()))
+        _       <- lair(d1, TestInventoryRepository.withItems(List(paper)), c).enter(testUser, r)
+        bandits <- r.sentScreens.map(_.last)
+        d2      <- dao(q = Some(withSpiders()))
+        _       <- spiderLair(d2, TestInventoryRepository.withItems(List(paper)), c).enter(testUser, r)
+        spiders <- r.sentScreens.map(_.last)
+        warn     = c.text("village.lair.noEscape")
+      } yield assertTrue(warn.contains("Сбежать из этого боя не получится")) &&
+              assertTrue(bandits.text.endsWith(warn) && spiders.text.endsWith(warn))
+    },
+
+    test("награбленное: на заставе — 30% с каждого павшего, в прочих боях со смертных — вдвое реже; со зверей, нежити и в сюжетном бою — нет") {
+      def kinds(drops: List[LootGenerator.LootDrop]): List[MaterialKind] =
+        drops.collect { case LootGenerator.LootDrop.Gear(i) => i.material }.flatten
+      def rolls(story: Option[String], race: Race): List[List[LootGenerator.LootDrop]] =
+        (1L to 2000L).toList.map(seed => BattleState.plunder(story, storyFight = false, Some(race), Rng(seed))._1)
+      val lair  = rolls(Some(Villages.BanditsStory), Race.Human)
+      val stray = rolls(None, Race.Orc).count(_.nonEmpty)
+      val raid  = rolls(Some(Villages.RaidStory), Race.Elf).count(_.nonEmpty)
+      val rng   = Rng(7L)
+      def none(story: Option[String], storyFight: Boolean, race: Option[Race]): Boolean =
+        BattleState.plunder(story, storyFight, race, rng) == ((Nil, rng))
+      // 30% от двух тысяч — шестьсот, 15% — триста
+      assertTrue(lair.count(_.nonEmpty) > 480 && lair.count(_.nonEmpty) < 720 && lair.forall(_.size <= 1)) &&
+      assertTrue(stray > 220 && stray < 380 && raid > 220 && raid < 380) &&
+      assertTrue(LootGenerator.BanditSpoilsChancePct == 30L && LootGenerator.StraySpoilsChancePct == 15L) &&
+      assertTrue(lair.flatMap(kinds).toSet == LootGenerator.BanditSpoils.map(_._1).toSet &&
+        LootGenerator.BanditSpoils.map(_._2).sum == 100 && LootGenerator.BanditSpoils.size == 7) &&
+      assertTrue(List(Race.Animal, Race.Undead, Race.Elemental, Race.Construct).forall(r => none(None, storyFight = false, Some(r)))) &&
+      assertTrue(none(Some("collector"), storyFight = true, Some(Race.Human)) && none(None, storyFight = false, None))
+    },
+
+    test("награбленное: цены у Ришелье — 100, 100, 200, 200, 250, 300, 400; на карточке — «(пока не используется)», как у паучьего; у прочих — нет") {
+      val prices = Map[MaterialKind, Long](MaterialKind.Timber -> 100L, MaterialKind.HempRope -> 100L,
+        MaterialKind.TannedLeather -> 200L, MaterialKind.WoolCloth -> 200L, MaterialKind.IronIngot -> 250L,
+        MaterialKind.PineTar -> 300L, MaterialKind.CopperIngot -> 400L)
+      val spider = List(MaterialKind.SpiderSilk, MaterialKind.VenomGland, MaterialKind.CocoonTreasure, MaterialKind.RedSpiderGland)
+      val cards  = (LootGenerator.BanditSpoils.map(_._1) ++ spider).map(k => k -> MaterialGenerator.item(k).statsLines)
+      assertTrue(LootGenerator.BanditSpoils.forall { case (k, _) => prices.get(k).contains(k.silverPrice) }) &&
+      assertTrue(cards.forall { case (k, lines) =>
+        k.notYetUsed && lines.contains(k.description) && lines.lastOption.contains(MaterialKind.NotYetUsedNote) }) &&
+      assertTrue(MaterialKind.NotYetUsedNote == "(пока не используется)") &&
+      assertTrue(List(MaterialKind.EverburningIron, MaterialKind.DiamondDust, MaterialKind.Mithril).forall(k =>
+        !k.notYetUsed && !MaterialGenerator.item(k).statsLines.contains(MaterialKind.NotYetUsedNote)))
+    },
+
+    test("награбленное в настоящем бою: на заставе с банды падает; с нежити в обычном бою — нет") {
+      val strong = hero().copy(fightStats = FightStats(atk = 1000000L, hp = 500000L, armor = 0, defence = 0, evasion = 0,
+                     accuracy = 9999, energy = 0))
+      def rogue(race: Race) = Monster(0L, QuestLevel.toLong, race, Rarity.Common,
+                     FightStats(atk = 1, hp = 1, armor = 0, defence = 0, evasion = 0, accuracy = 1, energy = 0))
+      // пятнадцать уже полегли: хоть с кого-то из шестнадцати да упадёт
+      def gang(race: Race) = List.fill(15)(SlainMonster(QuestLevel.toLong, race.entryName, Rarity.Common.entryName,
+                     marked = false, name = "Разбойник"))
+      def materials(story: Option[String], race: Race): Task[List[MaterialKind]] =
+        for {
+          c  <- content
+          d  <- dao(strong)
+          b   = SoloPveBattle.from(rogue(race), strong, squad = false)
+          _  <- d.writeActiveBattle(userId, b.copy(noKin = true, story = story, group = b.group.copy(slain = gang(race))).asJson)
+          r  <- TestRenderer.make
+          _  <- BattleState(d, TestInventoryRepository.accepting, TestItemRepository.make, c).action(testUser, tap("Attack"), r)
+          ld <- d.readSceneData(userId).map(_.flatMap(_.as[LootData].toOption))
+        } yield ld.toList.flatMap(l => l.items ++ l.queue.flatMap(_.items)).flatMap(_.material)
+      val bandit = LootGenerator.BanditSpoils.map(_._1).toSet
+      for {
+        lair  <- materials(Some(Villages.BanditsStory), Race.Human)
+        plain <- materials(None, Race.Undead)
+      } yield assertTrue(lair.exists(bandit.contains)) && assertTrue(!plain.exists(bandit.contains))
     },
 
     test("тексты: у каждой расы — названия, приход и староста; у каждой беды — всё, что ей нужно; первая беда — с порога деревень") {

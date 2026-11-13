@@ -701,8 +701,11 @@ case class MerchantState(
   // Фляга к уровню не привязана: у неё своя цена по редкости (см. FlaskKind.priceFor).
   private def sellPrice(item: Item): Long =
     if (item.itemType == ItemType.Flask) FlaskKind.priceFor(item.rarity)
-    // Рунный камень стоит своё по размеру: ни уровня, ни редкости у него нет.
-    else item.runeStone.map(_.size.price).getOrElse(((item.lvl + 5) * 1.2 * item.rarity.factorR).toLong.max(1L))
+    // Добро с разбойничьих застав — по твёрдой цене (см. MaterialKind.silverPrice);
+    // рунный камень стоит своё по размеру: ни уровня, ни редкости у них нет.
+    else item.material.map(_.silverPrice).filter(_ > 0L)
+      .orElse(item.runeStone.map(_.size.price))
+      .getOrElse(((item.lvl + 5) * 1.2 * item.rarity.factorR).toLong.max(1L))
 
   /** Сколько дублонов Ришелье платит за предмет; 0 — обычная продажа за серебро.
     * Пока золотом он выкупает только материалы (см. [[MaterialKind.doubloonPrice]]). */

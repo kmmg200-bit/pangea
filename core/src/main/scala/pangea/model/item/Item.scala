@@ -274,8 +274,10 @@ case class Item(
       // Название материала уже стоит заголовком предмета, повторять его строкой
       // «Материал: …» незачем — она остаётся только у тех, кому нечего сказать о
       // себе, чтобы экран не выглядел пустым.
+      // Пока ни во что не идёт — пометка под описанием (см. MaterialKind.notYetUsed).
       case ItemDetails.Material(k)       =>
-        if (k.description.isEmpty) List(s"Материал: ${k.displayName}") else List(k.description)
+        (if (k.description.isEmpty) List(s"Материал: ${k.displayName}") else List(k.description)) ++
+          Option.when(k.notYetUsed)(MaterialKind.NotYetUsedNote).toList
       // Клык Белого волка — трофей с историей; у обычных трофеев описания нет.
       case ItemDetails.Trophy(_, k, _)   => if (k.description.isEmpty) Nil else List(k.description)
       // Отвар: только описание. Рецепты в карточках предметов не пишем — их
