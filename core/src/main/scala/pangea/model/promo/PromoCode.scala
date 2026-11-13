@@ -39,7 +39,14 @@ object PromoCode {
     untilMs = moscowMidnight(LocalDate.of(2026, 11, 5)),
     reward  = PromoReward(items = List(QuestItemKind.item(QuestItemKind.NameCoupon)), blessingMs = 0L, doubloons = 0L))
 
-  val all: List[PromoCode] = List(Zhivyom, Rename)
+  /** «Лаг»: благословение Азата на двое суток — и всё; неделя, до 00:00 20 ноября 2026 года по Москве. */
+  val Lag: PromoCode = PromoCode(
+    key     = "lag",
+    word    = "Лаг",
+    untilMs = moscowMidnight(LocalDate.of(2026, 11, 20)),
+    reward  = PromoReward(items = Nil, blessingMs = 48L * HourMs, doubloons = 0L))
+
+  val all: List[PromoCode] = List(Zhivyom, Rename, Lag)
 
   /** Код, который набран этим текстом. Регистр, «ё» и «е», пробелы, кавычки и
     * знаки препинания не важны: «живем!» — тот же «Живём». */

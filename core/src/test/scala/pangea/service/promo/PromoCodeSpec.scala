@@ -71,6 +71,33 @@ object PromoCodeSpec extends ZIOSpecDefault {
       assertTrue(r.untilMs == PromoCode.moscowMidnight(java.time.LocalDate.of(2026, 11, 5)))
     },
 
+    test("«Лаг»: только благословение Азата на двое суток, до 00:00 20 ноября по Москве") {
+      val l = PromoCode.Lag
+      assertTrue(PromoCode.find("лаг").contains(l) && PromoCode.find("«ЛАГ!»").contains(l)) &&
+      assertTrue(PromoCode.find("лаги").isEmpty && PromoCode.find("лаг лаг").isEmpty) &&
+      assertTrue(l.reward.items.isEmpty && l.reward.doubloons == 0L && l.reward.blessingMs == 2 * day) &&
+      assertTrue(l.untilMs == PromoCode.moscowMidnight(java.time.LocalDate.of(2026, 11, 20))) &&
+      assertTrue(l.untilMs == Instant.parse("2026-11-19T21:00:00Z").toEpochMilli)
+    },
+
+    test("«Лаг» принят: благословение на 48 ч, сумка и дублоны не тронуты; второй раз — отказ") {
+      // Суббота, 14 ноября 2026-го, полдень по Москве: код ещё действует.
+      val saturday = Instant.parse("2026-11-14T09:00:00Z").toEpochMilli
+      for {
+        t <- world(bag = junk(3))
+        (codes, heroDao, inv, dao) = t
+        hero  <- heroOf(heroDao)
+        said  <- codes.redeem(me, hero, PromoCode.Lag, saturday)
+        after <- heroOf(heroDao)
+        azat  <- azatOf(heroDao)
+        again <- codes.redeem(me, after, PromoCode.Lag, saturday + hour)
+      } yield assertTrue(azat.blessingUntil.contains(saturday + 2 * day)) &&
+              assertTrue(said.contains("Код «Лаг» принят") && said.contains("Благословение Азата на 48 ч")) &&
+              assertTrue(inv.snapshot.size == 3 && after.doubloons == 7L) &&
+              assertTrue(dao.snapshot.get((me.userId, PromoCode.Lag.key)).contains(saturday)) &&
+              assertTrue(again.contains("уже вводили"))
+    },
+
     test("слово: регистр, «ё» и «е», кавычки и знаки не важны; похожее — не код, кнопка — не код") {
       assertTrue(PromoCode.find("Живём").contains(code)) &&
       assertTrue(PromoCode.find("живем").contains(code)) &&
