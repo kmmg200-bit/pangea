@@ -731,7 +731,7 @@ final class MiniAppLive(
     case AuctionPurchase.Result.NoMoney(lot) => content.format("bank.auction.noMoney", "price" -> lot.priceLine) -> false
     case AuctionPurchase.Result.NoRoom       => content.text("bank.auction.noRoom") -> false
     case AuctionPurchase.Result.Bought(lot)  =>
-      content.format("bank.auction.bought", "name" -> lot.item.displayTitle, "price" -> lot.priceLine) -> true
+      content.format("bank.auction.bought", "name" -> lot.title, "price" -> lot.priceLine) -> true
   }
 
   /** Список и место героя — из одного снимка в памяти: база на открытие топа

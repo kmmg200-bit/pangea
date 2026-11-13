@@ -503,6 +503,21 @@ object MiniAppViewSpec extends ZIOSpecDefault {
         inCity.away.isEmpty,
         away.away.contains(c.text("miniapp.auction.away"))
       )
+    },
+
+    test("аукцион: стопка на витрине и в своих лотах — со счётом, как в боте; прочее — как было") {
+      val c      = SceneContent.load()
+      val hero   = TestFixtures.hero(UserId(1L), state = StateType.TradeHouse)
+      val gems   = (101L to 105L).toList.map(i => pangea.generator.item.GemGenerator.item(GemKind.Ruby, 1).copy(id = i))
+      val bundle = pangea.model.item.Bundling.pack(gems).get.copy(id = 60L)
+      val pack   = AuctionLot(3L, HeroId(2L), bundle, 300L, AuctionCurrency.Silver, 0L, AuctionLot.LifetimeMs)
+      val one    = AuctionLot(4L, hero.id, sword, 300L, AuctionCurrency.Silver, 0L, AuctionLot.LifetimeMs)
+      val view   = MiniAppView.auction(hero, List(pack, one), List(one), 0L, _ => "",
+                     MiniAppView.Funds(silver = 0L, bagFree = 1L), c)
+      assertTrue(
+        view.lots.map(_.item.title) == List("📦 Надколотый рубин ×5", sword.displayTitle),
+        view.mine.map(_.item.title) == List(sword.displayTitle)
+      )
     }
   )
 }

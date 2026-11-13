@@ -749,7 +749,8 @@ object MiniAppView {
     def lot(l: AuctionLot): LotView =
       LotView(
         id        = l.id,
-        item      = view(l.item, 1, describe(l.item)),
+        // Стопка на торгах — со счётом, как и в боте (см. AuctionLot.titleOf).
+        item      = view(l.item, 1, describe(l.item)).copy(title = l.title),
         price     = l.price,
         currency  = currency(l.currency),
         hoursLeft = l.hoursLeft(now),

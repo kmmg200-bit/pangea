@@ -342,7 +342,33 @@ object AuctionSpec extends ZIOSpecDefault {
           lots  = f.lots.snapshot
         } yield assertTrue(list.choices.exists(c => c.id == "AucSell_7" && c.label == "📦 Рубиновая пыль")) &&
                 assertTrue(lots.size == 1 && lots.head.item == bundle && f.inv.snapshot.isEmpty) &&
-                assertTrue(f.players.announcedTrade.exists(_.contains("📦 Рубиновая пыль")))
+                assertTrue(f.players.announcedTrade.exists(_.contains("📦 Рубиновая пыль ×5")))
+      },
+
+      test("стопка на торгах — со счётом: на витрине, в карточке, при покупке и в своих лотах") {
+        import pangea.generator.item.GemGenerator
+        import pangea.model.item.{Bundling, GemKind}
+        val gems   = (101L to 105L).toList.map(i => GemGenerator.item(GemKind.Ruby, 1).copy(id = i))
+        val bundle = Bundling.pack(gems).get.copy(id = 60L)
+        val theirs = AuctionLot(1L, seller, bundle, 300L, AuctionCurrency.Silver, 0L, AuctionLot.LifetimeMs)
+        val mine   = AuctionLot(2L, heroId, bundle.copy(id = 61L), 400L, AuctionCurrency.Silver, 0L, AuctionLot.LifetimeMs)
+        val title  = "📦 Надколотый рубин ×5"
+        for {
+          f      <- auction(lots = List(theirs, mine), silver = 1000L)
+          _      <- f.state.action(testUser, tap("AuctionBrowse"), f.renderer)
+          browse <- f.renderer.sentScreens.map(_.last)
+          _      <- f.state.action(testUser, tap("ShowLot", "id" -> "1"), f.renderer)
+          card   <- f.renderer.sentScreens.map(_.last)
+          _      <- f.state.action(testUser, tap("BuyLot", "id" -> "1"), f.renderer)
+          ask    <- f.renderer.sentScreens.map(_.last)
+          _      <- f.state.action(testUser, tap("MyLots"), f.renderer)
+          own    <- f.renderer.sentScreens.map(_.last)
+          labels  = browse.choices.map(_.label)
+        } yield assertTrue(labels.contains(s"№1 $title — 🪙 300") && labels.contains(s"№2 $title — 🪙 400")) &&
+                assertTrue(card.text.contains(s"Лот №1\n$title\n") && ask.text.contains(title)) &&
+                assertTrue(own.text.contains(title) && own.choices.exists(_.label.contains(title))) &&
+                // одна вещь — как была, без счёта
+                assertTrue(AuctionLot.titleOf(gems.head) == gems.head.displayTitle)
       },
 
       test("купленная стопка ложится в сумку целиком — одной вещью, как была") {

@@ -2,7 +2,7 @@ package pangea.model.auction
 
 import enumeratum.{DoobieEnum, Enum, EnumEntry}
 import pangea.model.hero.HeroId
-import pangea.model.item.Item
+import pangea.model.item.{Bundling, Item}
 
 /** Чем расплачиваются за лот. Дублоны лежат только на руках, серебро — ещё и в
  *  ячейке Торгового дома (см. `Purse`). */
@@ -37,6 +37,9 @@ final case class AuctionLot(
   def hoursLeft(now: Long): Long = ((expiresAt - now).max(0L)) / 3600000L
 
   def priceLine: String = s"${currency.emoji} $price"
+
+  /** Как вещь лота названа на торгах (см. [[AuctionLot.titleOf]]). */
+  def title: String = AuctionLot.titleOf(item)
 }
 
 object AuctionLot {
@@ -62,10 +65,19 @@ object AuctionLot {
   def fresh(sellerId: HeroId, item: Item, price: Long, currency: AuctionCurrency, now: Long): AuctionLot =
     AuctionLot(0L, sellerId, item, price, currency, now, now + LifetimeMs)
 
+  /** Как вещь названа на торгах: у стопки — со счётом, «📦 Надколотый череп
+    * ×5», чтобы покупатель видел, что берёт не одну вещь, а пять. В сумке
+    * стопка пишется без счёта (см. `Item.displayTitle`). */
+  def titleOf(item: Item): String =
+    Bundling.contents(item) match {
+      case Nil    => item.displayTitle
+      case inside => s"${item.displayTitle} ×${inside.size}"
+    }
+
   /** Объявление в торговую беседу: номер, вещь целиком и цена. */
   def announcement(lot: AuctionLot): String = {
     val stats = lot.item.statsLines
     val body  = if (stats.isEmpty) "" else "\n" + stats.mkString("\n")
-    s"📢 Выставлен лот номер ${lot.id}\n${lot.item.displayTitle}$body\nЦена: ${lot.priceLine}"
+    s"📢 Выставлен лот номер ${lot.id}\n${lot.title}$body\nЦена: ${lot.priceLine}"
   }
 }

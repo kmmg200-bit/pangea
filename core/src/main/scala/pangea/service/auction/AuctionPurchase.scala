@@ -91,7 +91,7 @@ final class AuctionPurchase(
       seller <- userRepo.getUserById(hero.userId).someOrFailException
       key     = if (intoVault) "bank.auction.soldNoticeVault" else "bank.auction.soldNoticeCity"
       _      <- players.notify(seller, content.format(key,
-                  "id" -> lot.id.toString, "name" -> lot.item.displayTitle, "price" -> lot.priceLine))
+                  "id" -> lot.id.toString, "name" -> lot.title, "price" -> lot.priceLine))
     } yield ()).ignore
 }
 

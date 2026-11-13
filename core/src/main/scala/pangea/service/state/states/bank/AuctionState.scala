@@ -122,7 +122,7 @@ case class AuctionState(
              // Не больше восьми лотов на страницу: девятый ряд занимает навигация.
              val buttons = lots.map(lot => Choice("ShowLot",
                ItemMenu.truncate(content.format("bank.auction.lotButton",
-                 "id" -> lot.id.toString, "name" -> lot.item.displayTitle, "price" -> lot.priceLine)),
+                 "id" -> lot.id.toString, "name" -> lot.title, "price" -> lot.priceLine)),
                data = Map("id" -> lot.id.toString)))
                .zipWithIndex.map { case (c, i) => c.copy(row = Some(i)) }
              val nav = List(
@@ -156,7 +156,7 @@ case class AuctionState(
           val stats = lot.item.statsLines
           val card  = content.format("bank.auction.card",
             "id"    -> lot.id.toString,
-            "title" -> lot.item.displayTitle,
+            "title" -> lot.title,
             // Описание вещи идёт сразу под именем: цену смотрят, уже зная, за что.
             "stats" -> (if (stats.isEmpty) "" else "\n" + stats.mkString("\n")),
             "price" -> lot.priceLine,
@@ -194,7 +194,7 @@ case class AuctionState(
         case Right(lot) =>
           renderer.show(user, Screen(
             content.format("bank.auction.buyConfirm",
-              "id" -> lot.id.toString, "name" -> lot.item.displayTitle, "price" -> lot.priceLine),
+              "id" -> lot.id.toString, "name" -> lot.title, "price" -> lot.priceLine),
             List(
               Choice("BuyLotYes", content.text("bank.auction.buyConfirmYes"), color = ChoiceColor.Positive, data = Map("id" -> lot.id.toString), row = Some(0)),
               Choice("Auction",   content.text("bank.auction.buyConfirmNo"),  color = ChoiceColor.Negative, row = Some(0))
@@ -212,7 +212,7 @@ case class AuctionState(
       case AuctionPurchase.Result.NoRoom       => renderer.show(user, Screen(content.text("bank.auction.noRoom"), backRow))
       case AuctionPurchase.Result.Bought(lot)  =>
         renderer.show(user, Screen(content.format("bank.auction.bought",
-          "name" -> lot.item.displayTitle, "price" -> lot.priceLine), Nil)) *>
+          "name" -> lot.title, "price" -> lot.priceLine), Nil)) *>
           afterPurchase(user, renderer)
     }
 
@@ -275,7 +275,7 @@ case class AuctionState(
         case Some(item) =>
           writeScene(user, scene.copy(itemId = Some(itemId))) *>
             renderer.show(user, Screen(
-              content.format("bank.auction.pickCurrency", "name" -> item.displayTitle),
+              content.format("bank.auction.pickCurrency", "name" -> AuctionLot.titleOf(item)),
               AuctionCurrency.values.toList.map { c =>
                 Choice("SellCurrency", s"${c.emoji} ${c.label}", data = Map("cur" -> c.entryName), row = Some(0))
               } :+ Choice("Auction", content.text("bank.auction.back"), color = ChoiceColor.Negative, row = Some(1))))
@@ -319,7 +319,7 @@ case class AuctionState(
           writeScene(user, scene.copy(price = Some(p))) *>
             renderer.show(user, Screen(
               content.format("bank.auction.sellConfirm",
-                "name"  -> it.displayTitle,
+                "name"  -> AuctionLot.titleOf(it),
                 "price" -> s"${c.emoji} $p",
                 "fee"   -> s"${c.emoji} ${AuctionLot.fee(p)}"),
               List(
@@ -363,7 +363,7 @@ case class AuctionState(
                          DailyQuestLog.add(heroDao, user.userId, DailyNpc.Rakhadim, DailyKind.BankLot, 1L) *>
                          resetScene(user) *>
                          renderer.show(user, Screen(content.format("bank.auction.listed",
-                           "id" -> lot.id.toString, "name" -> it.displayTitle, "price" -> lot.priceLine,
+                           "id" -> lot.id.toString, "name" -> AuctionLot.titleOf(it), "price" -> lot.priceLine,
                            "fee" -> s"${c.emoji} $fee"), Nil)) *>
                          showMenu(user, renderer)
               )
@@ -399,7 +399,7 @@ case class AuctionState(
                Choice("Reclaim",
                  ItemMenu.truncate(content.format(
                    if (lot.unsold(now)) "bank.auction.reclaimOne" else "bank.auction.withdrawOne",
-                   "id" -> lot.id.toString, "name" -> lot.item.displayTitle)),
+                   "id" -> lot.id.toString, "name" -> lot.title)),
                  data = Map("id" -> lot.id.toString), row = Some(i))
              }
              renderer.show(user, Screen(
@@ -414,7 +414,7 @@ case class AuctionState(
       if (lot.unsold(now)) content.text("bank.auction.mineUnsold")
       else                 content.format("bank.auction.mineOnSale", "hours" -> lot.hoursLeft(now).toString)
     content.format("bank.auction.mineLine",
-      "id" -> lot.id.toString, "name" -> lot.item.displayTitle, "price" -> lot.priceLine, "state" -> state)
+      "id" -> lot.id.toString, "name" -> lot.title, "price" -> lot.priceLine, "state" -> state)
   }
 
   /** Снять лот с торгов или забрать непроданное: вещь возвращается в сумку. */
@@ -436,7 +436,7 @@ case class AuctionState(
               case _                       => renderer.show(user, Screen(content.text("bank.auction.lotGone"), backRow))
             },
             _ => renderer.show(user, Screen(content.format("bank.auction.reclaimed",
-                   "id" -> lot.id.toString, "name" -> lot.item.displayTitle), Nil)) *>
+                   "id" -> lot.id.toString, "name" -> lot.title), Nil)) *>
                    showMine(user, renderer)
           )
       }
