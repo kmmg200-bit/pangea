@@ -93,6 +93,7 @@ import pangea.model.state.StateType.{
   FaelinRoots,
   Village,
   VillageBandits,
+  VillageSpiders,
   RaceQuest,
   NameChange,
   TreasureHunt,
@@ -163,7 +164,8 @@ import pangea.service.state.states.hedgesong.HedgeSongState
 import pangea.service.state.states.barrelthieves.{BarrelReturnState, BarrelThievesState}
 import pangea.service.state.states.barti.{BartiCaravanState, BartiHouseState, BartiMeetState}
 import pangea.service.state.states.merc.{BramblHallState, FaelinRootsState, JorgenLairState, PlukhHuntState}
-import pangea.service.state.states.village.{VillageBanditsState, VillageState}
+import pangea.service.state.states.village.{VillageLairState, VillageState}
+import pangea.service.state.VillageLair
 import pangea.service.state.states.story.{StoryArchiveState, StoryBinderyState, StoryBridgeState, StoryCacheState, StoryCloakState,
   StoryGraveyardState, StoryMeetingState, StorySojkaState, StoryWarehouseState}
 import pangea.service.state.states.race.RaceQuestState
@@ -373,7 +375,8 @@ object StatesMap {
           PlukhHunt         -> PlukhHuntState(heroDao, inventoryRepo, content),
           FaelinRoots       -> FaelinRootsState(heroDao, inventoryRepo, content),
           Village           -> VillageState(heroDao, inventoryRepo, itemRepo, content),
-          VillageBandits    -> VillageBanditsState(heroDao, inventoryRepo, content),
+          VillageBandits    -> VillageLairState(heroDao, inventoryRepo, content, VillageLair.Bandits),
+          VillageSpiders    -> VillageLairState(heroDao, inventoryRepo, content, VillageLair.Spiders),
           RaceQuest         -> RaceQuestState(heroDao, inventoryRepo, content),
           NameChange        -> NameChangeState(heroDao, inventoryRepo, content),
           Outskirts -> OutskirtsState(

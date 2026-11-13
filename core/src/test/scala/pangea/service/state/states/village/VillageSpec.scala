@@ -9,7 +9,8 @@ import pangea.model.battle.SoloPveBattle
 import pangea.model.caravan.CaravanScene
 import pangea.model.hero.{Hero, LoreData}
 import pangea.model.item.{Item, QuestItemKind}
-import pangea.model.monster.{Monster, Race, Rarity}
+import pangea.generator.monster.MonsterGenerator
+import pangea.model.monster.{Breed, Monster, Race, Rarity}
 import pangea.model.quest.{DailyQuests, Difficulty, NpcQuest, NpcQuests}
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
@@ -18,7 +19,9 @@ import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.battle.BattleState
 import pangea.service.state.states.dungeon.DungeonState
 import pangea.service.state.states.{DeathState, InventoryState}
-import pangea.service.state.{NpcQuestLog, QuestJournal, UserAction, Villages}
+import pangea.generator.loot.LootGenerator
+import pangea.model.item.MaterialKind
+import pangea.service.state.{NpcQuestLog, QuestJournal, UserAction, VillageLair, Villages}
 import pangea.test._
 import zio.test._
 import zio.{Task, ZIO}
@@ -67,7 +70,15 @@ object VillageSpec extends ZIOSpecDefault {
     VillageState(d, inv, TestItemRepository.make, c)
 
   private def lair(d: TestHeroDao, inv: TestInventoryRepository, c: SceneContent) =
-    VillageBanditsState(d, inv, c)
+    VillageLairState(d, inv, c, VillageLair.Bandits)
+
+  private def spiderLair(d: TestHeroDao, inv: TestInventoryRepository, c: SceneContent) =
+    VillageLairState(d, inv, c, VillageLair.Spiders)
+
+  // Та же деревня, только беда другая — гнездо сетеплётов, главаря нет.
+  private val spiderScene = scene.copy(quest = VillageQuest.SpiderNests, leader = None, leaderRace = None)
+  private def withSpiders(step: Int = VillageContract.Taken): NpcQuests =
+    NpcQuests.empty.copy(village = Some(VillageContract.of(spiderScene).copy(step = step)))
 
   private def sceneOf(d: TestHeroDao): Task[Option[VillageScene]] =
     d.readSceneData(userId).map(_.flatMap(_.as[VillageScene].toOption))
@@ -105,7 +116,7 @@ object VillageSpec extends ZIOSpecDefault {
       assertTrue(routing.as[VillageScene].isLeft)
     },
 
-    test("пул: деревня — с 20-го уровня, один билет; выпала — с чистого листа; при контракте деревни не выпадает") {
+    test("пул: деревня — с 15-го уровня, один билет; выпала — с чистого листа; при контракте деревни не выпадает") {
       def roll(q: Option[NpcQuests]) =
         for {
           d         <- dao(TestFixtures.hero(userId, dungeonLevel = 20), q, Some(Json.obj("stale" -> Json.True)))
@@ -121,8 +132,8 @@ object VillageSpec extends ZIOSpecDefault {
         bound <- roll(Some(withContract()))
       } yield assertTrue(free._1 == StateType.Village && free._2.contains(Json.Null)) &&
               assertTrue(bound._1 != StateType.Village) &&
-              assertTrue(StateType.eventsAt(19, 1.0).count(_ == StateType.Village) == 0 &&
-                StateType.eventsAt(20, 1.0).count(_ == StateType.Village) == 1)
+              assertTrue(StateType.eventsAt(14, 1.0).count(_ == StateType.Village) == 0 &&
+                StateType.eventsAt(15, 1.0).count(_ == StateType.Village) == 1)
     },
 
     test("приход: новая деревня — раса, название из её списка, беда, главарь и сложность; вход ещё раз — та же деревня") {
@@ -139,12 +150,12 @@ object VillageSpec extends ZIOSpecDefault {
         typed <- st.action(testUser, UserAction("привет", None), r)
         third <- r.sentScreens.map(_.last)
       } yield assertTrue(s.exists(x => x.level == Level && x.step == VillageScene.Arrival &&
-                x.quest == VillageQuest.BanditLair && x.leader.isDefined)) &&
-              assertTrue(s.exists(x => x.leaderRace.exists(r => Race.mortals.contains(r) &&
-                Monster.legendaryNames.get(r).exists(names => x.leader.exists(names.contains)))) ) &&
+                VillageQuest.openAt(Level).contains(x.quest) && x.leader.isDefined == (x.quest == VillageQuest.BanditLair))) &&
+              assertTrue(s.exists(x => x.quest != VillageQuest.BanditLair || x.leaderRace.exists(r => Race.mortals.contains(r) &&
+                Monster.legendaryNames.get(r).exists(names => x.leader.exists(names.contains))))) &&
               assertTrue(s.exists(x => first.text.contains("«" + Villages.name(c, x.race, x.name) + "»") &&
                 Villages.names(c, x.race).contains(Villages.name(c, x.race, x.name)))) &&
-              assertTrue(first.text.contains(c.text("village.trouble.bandits").trim)) &&
+              assertTrue(s.exists(x => first.text.contains(c.text(s"village.trouble.${x.quest.key}").trim))) &&
               assertTrue(s.exists(x => Villages.lands(c, x.race).lift(x.land).exists(first.text.contains(_)))) &&
               assertTrue(s.exists(x => x.questLevel >= Level + VillageRates.QuestLevelMin && x.questLevel <= Level + VillageRates.QuestLevelMax)) &&
               assertTrue(s.exists(x => x.silver >= VillageRates.silver(x.questLevel, 80L) && x.silver <= VillageRates.silver(x.questLevel, 120L) &&
@@ -272,7 +283,7 @@ object VillageSpec extends ZIOSpecDefault {
               assertTrue(Villages.toBandits(q))
     },
 
-    test("карточка контракта: сложность, деревня, главарь и плата; «Идти к логову» — из лабиринта с 20-го уровня; сделано — «Вернуться в деревню»") {
+    test("карточка контракта: сложность, деревня, главарь и плата; «Идти к логову» — из лабиринта с 15-го уровня; сделано — «Вернуться в деревню»") {
       def card(from: StateType, lvl: Int, step: Int) =
         for {
           d     <- dao(hero(lvl), Some(withContract(step)))
@@ -287,17 +298,17 @@ object VillageSpec extends ZIOSpecDefault {
           sd    <- d.readSceneData(userId)
         } yield (shown, go, said, sd)
       for {
-        deep    <- card(StateType.Dungeon, 20, VillageContract.Taken)
-        city    <- card(StateType.GlobalMap, 20, VillageContract.Taken)
-        shallow <- card(StateType.Dungeon, 19, VillageContract.Taken)
-        back    <- card(StateType.Dungeon, 20, VillageContract.Done)
+        deep    <- card(StateType.Dungeon, 15, VillageContract.Taken)
+        city    <- card(StateType.GlobalMap, 15, VillageContract.Taken)
+        shallow <- card(StateType.Dungeon, 14, VillageContract.Taken)
+        back    <- card(StateType.Dungeon, 15, VillageContract.Done)
       } yield assertTrue(deep._1.text.contains("Сложность: " + Difficulty.render(QuestLevel)) &&
                 deep._1.text.contains(s"Деревня орков «$VillageName»") && deep._1.text.contains("верховодит Чёрный Виктор") &&
                 deep._1.text.contains(s"Плата — $Silver серебра")) &&
               assertTrue(deep._1.choices.exists(_.id == "VillageGo") && deep._2 == StateType.VillageBandits && deep._4.contains(Json.Null)) &&
               assertTrue(city._2 == StateType.Inventory && city._3.contains("идти туда можно только из него")) &&
-              assertTrue(shallow._2 == StateType.Inventory && shallow._3.contains("не ближе 20-го уровня")) &&
-              assertTrue(back._1.choices.exists(_.id == "VillageReturn") && back._1.text.contains("Логово разбито") &&
+              assertTrue(shallow._2 == StateType.Inventory && shallow._3.contains("не ближе 15-го уровня")) &&
+              assertTrue(back._1.choices.exists(_.id == "VillageReturn") && back._1.text.contains("Дело сделано") &&
                 back._2 == StateType.Village)
     },
 
@@ -329,7 +340,7 @@ object VillageSpec extends ZIOSpecDefault {
     test("банда перебита: логово разбито — дальше к старосте; в логове больше пусто") {
       for {
         c     <- content
-        d     <- dao(q = Some(withContract()), sc = Some(VillageBanditsState.Won(won = true).asJson))
+        d     <- dao(q = Some(withContract()), sc = Some(VillageLairState.wonMark(VillageLair.Bandits)))
         r     <- TestRenderer.make
         st     = lair(d, TestInventoryRepository.withItems(List(paper)), c)
         _     <- st.enter(testUser, r)
@@ -398,6 +409,160 @@ object VillageSpec extends ZIOSpecDefault {
       assertTrue(Villages.banditGang(contract().copy(leaderRace = None), Rng(1L)).lastOption.exists(_.race == Race.Human))
     },
 
+    test("пауки: староста про сетеплётов — свой разговор с городом и платой; «Взяться» — контракт на гнездо, без главаря") {
+      for {
+        c     <- content
+        d     <- dao(sc = Some(spiderScene.asJson))
+        inv    = TestInventoryRepository.accepting
+        r     <- TestRenderer.make
+        st     = village(d, inv, c)
+        _     <- st.enter(testUser, r)
+        come  <- r.sentScreens.map(_.last)
+        _     <- st.action(testUser, tap("VillageHeadman"), r)
+        shown <- r.sentScreens.map(_.takeRight(2))
+        _     <- st.action(testUser, tap("VillageAccept"), r)
+        last  <- r.sentScreens.map(_.last)
+        q     <- questOf(d)
+      } yield assertTrue(come.text.contains(c.text("village.trouble.spiders").trim)) &&
+              assertTrue(shown.lastOption.exists(s => s.text.contains("вышли сетеплёты") && s.text.contains(s"знахарь из города $City") &&
+                s.text.contains(s"Плата — $Silver серебра") && s.text.contains("Сложность: " + Difficulty.render(QuestLevel)))) &&
+              assertTrue(last.text.contains("Овраг за деревней") && last.text.contains("«Контракт деревни»")) &&
+              assertTrue(q.village.exists(cc => cc.quest == VillageQuest.SpiderNests && cc.leader.isEmpty && cc.level == QuestLevel)) &&
+              assertTrue(Villages.lairOf(q).contains(VillageLair.Spiders) && !Villages.toBandits(q))
+    },
+
+    test("пауки: карточка ведёт к гнезду — «🕸 Идти к гнезду», из лабиринта") {
+      for {
+        d     <- dao(hero(20), Some(withSpiders()))
+        _     <- d.writeReturnState(userId, Some(StateType.Dungeon))
+        r     <- TestRenderer.make
+        c     <- content
+        state  = InventoryState(d, TestInventoryRepository.withItems(List(paper)), TestItemRepository.make, c)
+        _     <- state.action(testUser, UserAction("", Some(s"""{"action":"${InventoryState.ItemActionPrefix}${paper.id}"}""")), r)
+        shown <- r.sentScreens.map(_.last)
+        go    <- state.action(testUser, tap("VillageGo"), r)
+      } yield assertTrue(shown.text.contains("гнездо сетеплётов") &&
+                shown.choices.exists(ch => ch.id == "VillageGo" && ch.label == c.choice("x", "village.card.spidersLabel").label)) &&
+              assertTrue(go == StateType.VillageSpiders)
+    },
+
+    test("пауки: гнездо — выводок и матка у входа; бой — восемь молодых, шесть взрослых и матка уровня задания, у пород свои имена, без бегства") {
+      for {
+        c     <- content
+        d     <- dao(q = Some(withSpiders()))
+        r     <- TestRenderer.make
+        st     = spiderLair(d, TestInventoryRepository.withItems(List(paper)), c)
+        _     <- st.enter(testUser, r)
+        intro <- r.sentScreens.map(_.last)
+        res   <- st.action(testUser, tap("SpidersFight"), r)
+        b     <- battleOf(d)
+        loot  <- d.readSceneData(userId).map(_.flatMap(_.as[LootData].toOption))
+        slots  = b.toList.flatMap(x => x.group.others ++ x.group.queue)
+        names  = Breed.spiders.map(_.displayName)
+        breeds = b.toList.flatMap(x => x.monsterBreed.toList ++ slots.flatMap(_.breed))
+      } yield assertTrue(intro.text.contains("матка") && intro.text.contains("Сложность: " + Difficulty.render(QuestLevel))) &&
+              assertTrue(intro.choices.map(_.id) == List("SpidersFight", "OpenCharacter", "SpidersLeave", "SpidersAbandon")) &&
+              assertTrue(res == StateType.Battle) &&
+              assertTrue(b.exists(x => x.story.contains(Villages.SpidersStory) && x.lootLevel.contains(QuestLevel.toLong) &&
+                x.cantFlee && x.monsterRace == Race.Animal.entryName && names.contains(x.monsterName))) &&
+              // красный выползает раз на сотню — тогда их шестнадцать
+              assertTrue(breeds.count(_ == Breed.YoungSpider) == VillageRates.SpiderYoung &&
+                breeds.count(_ == Breed.AdultSpider) == VillageRates.SpiderAdult &&
+                breeds.count(_ == Breed.SpiderMother) == 1 && breeds.count(_ == Breed.RedSpider) <= 1 &&
+                breeds.size == slots.size + 1) &&
+              assertTrue(slots.forall(s => s.race == Race.Animal.entryName && s.lvl == QuestLevel.toLong &&
+                s.customName.exists(names.contains) && s.breed.exists(br => s.customName.contains(br.displayName)))) &&
+              assertTrue(slots.exists(s => s.breed.contains(Breed.SpiderMother) && s.rarity == Rarity.Mythical.entryName &&
+                s.customName.contains("Матка сетеплётов"))) &&
+              // яд — у молодых, и только у них
+              assertTrue(slots.forall(s => s.effects.monsterPoisonsOnHit == s.breed.contains(Breed.YoungSpider)) &&
+                b.exists(x => x.effects.monsterPoisonsOnHit == x.monsterBreed.contains(Breed.YoungSpider))) &&
+              assertTrue(loot.exists(_.returnState.contains(StateType.VillageSpiders)))
+    },
+
+    test("пауки: выводок перебит — гнездо выжжено, дальше к старосте; плата по-паучьи; отметка победы у логов своя") {
+      for {
+        c    <- content
+        d    <- dao(q = Some(withSpiders()), sc = Some(VillageLairState.wonMark(VillageLair.Spiders)))
+        inv   = TestInventoryRepository.withItems(List(paper))
+        r    <- TestRenderer.make
+        _    <- spiderLair(d, inv, c).enter(testUser, r)
+        won  <- r.sentScreens.map(_.last)
+        q    <- questOf(d)
+        _    <- village(d, inv, c).enter(testUser, r)
+        paid <- r.sentScreens.map(_.last)
+        q2   <- questOf(d)
+      } yield assertTrue(won.text.contains("Гнезда больше нет") && won.choices.map(_.id) == List("SpidersOut")) &&
+              assertTrue(Villages.toPay(q)) &&
+              assertTrue(paid.text.contains("собаки лаяли на луну") && paid.text.contains(s"Получено $Silver серебра")) &&
+              assertTrue(q2.village.isEmpty && inv.snapshot.isEmpty) &&
+              assertTrue(!VillageLairState.won(VillageLair.Spiders, VillageLairState.wonMark(VillageLair.Bandits)) &&
+                VillageLairState.won(VillageLair.Bandits, Json.obj("villageBanditsWon" -> Json.True)))
+    },
+
+    test("пауки: с них шёлк и ядовитые железы, крысиного нет; со зверей в прочих боях — крысиное, как было") {
+      def kinds(drops: List[LootGenerator.LootDrop]): Set[MaterialKind] =
+        drops.collect { case LootGenerator.LootDrop.Gear(i) => i.material }.flatten.toSet
+      val spiders = (1L to 200L).toList.flatMap(seed =>
+        LootGenerator.roll(Rarity.Rare, Race.Animal, 20L, Rng(seed), beastSpoils = LootGenerator.SpiderSpoils)._1)
+      val rats    = (1L to 200L).toList.flatMap(seed => LootGenerator.roll(Rarity.Rare, Race.Animal, 20L, Rng(seed))._1)
+      assertTrue(kinds(spiders) == Set[MaterialKind](MaterialKind.SpiderSilk, MaterialKind.VenomGland, MaterialKind.CocoonTreasure)) &&
+      assertTrue(kinds(rats).contains(MaterialKind.RatPelt) &&
+        kinds(rats).intersect(Set[MaterialKind](MaterialKind.SpiderSilk, MaterialKind.VenomGland)).isEmpty) &&
+      assertTrue(BattleState.beastSpoils(Some(Villages.SpidersStory)) == LootGenerator.SpiderSpoils &&
+        BattleState.beastSpoils(Some(Villages.BanditsStory)) == LootGenerator.RatSpoils &&
+        BattleState.beastSpoils(None) == LootGenerator.RatSpoils)
+    },
+
+    test("пауки: сила — как у образцов: молодой — орк первого ранга, взрослый — каджит третьего, матка — каджит четвёртого, красный — именной эльф") {
+      val lvl = QuestLevel
+      def like(race: Race, rarity: Rarity) = MonsterGenerator.generateOfRaceAndRarity(lvl, race, rarity).fightStats
+      val young  = Villages.spider(Breed.YoungSpider, lvl)
+      val adult  = Villages.spider(Breed.AdultSpider, lvl)
+      val mother = Villages.spider(Breed.SpiderMother, lvl)
+      val red    = Villages.spider(Breed.RedSpider, lvl)
+      assertTrue(young.fightStats == like(Race.Orc, Rarity.Common) && young.rarity == Rarity.Common) &&
+      assertTrue(adult.fightStats == like(Race.Khajiit, Rarity.Rare) && adult.rarity == Rarity.Rare) &&
+      assertTrue(mother.fightStats == like(Race.Khajiit, Rarity.Mythical) && mother.rarity == Rarity.Mythical) &&
+      assertTrue(red.fightStats == like(Race.Elf, Rarity.Legendary) && red.rarity == Rarity.Legendary) &&
+      assertTrue(List(young, adult, mother, red).forall(m => m.race == Race.Animal && m.lvl == lvl.toLong &&
+        m.breed.exists(b => m.customName.contains(b.displayName))))
+    },
+
+    test("пауки: красный сетеплёт — раз на сотню, последним; с него всегда его железа; Ришелье берёт её за 5 дублонов") {
+      val contract = VillageContract.of(spiderScene)
+      val reds     = (1L to 2000L).count(seed => Villages.spiderBrood(contract, Rng(seed)).exists(_.breed.contains(Breed.RedSpider)))
+      val withRed  = Villages.spiderBrood(contract, red = true)
+      val gland    = BattleState.breedDrops(Some(Breed.RedSpider)).flatMap(_.itemOpt).flatMap(_.material)
+      assertTrue(reds > 0 && reds < 60) &&
+      assertTrue(withRed.size == VillageRates.SpiderYoung + VillageRates.SpiderAdult + 2 &&
+        withRed.lastOption.exists(_.breed.contains(Breed.RedSpider)) &&
+        Villages.spiderBrood(contract, red = false).forall(!_.breed.contains(Breed.RedSpider))) &&
+      assertTrue(gland == List(MaterialKind.RedSpiderGland) &&
+        Breed.values.filterNot(_ == Breed.RedSpider).forall(b => BattleState.breedDrops(Some(b)).isEmpty) &&
+        BattleState.breedDrops(None).isEmpty) &&
+      assertTrue(MaterialKind.RedSpiderGland.doubloonPrice == 5L && !MaterialKind.RedSpiderGland.worthless &&
+        MaterialKind.CocoonTreasure.worthless && MaterialKind.CocoonTreasure.description.nonEmpty)
+    },
+
+    test("порода в бою: старые записи слота, павшего и боя без неё читаются, чужое имя — тоже, своя едет туда и обратно") {
+      val hero0  = hero()
+      val battle = Villages.withBreedTraits(SoloPveBattle.fromGroup(Villages.spiderBrood(VillageContract.of(spiderScene), red = false),
+                     hero0, Nil))
+      val slot   = battle.group.others.headOption
+      val oldSlot   = slot.map(s => s.asJson.mapObject(_.remove("breed")))
+      val oddSlot   = slot.map(s => s.asJson.mapObject(_.add("breed", Json.fromString("Тарантул"))))
+      val oldBattle = battle.asJson.mapObject(_.remove("monsterBreed"))
+      val dead      = battle.slainActive
+      val oldDead   = dead.asJson.mapObject(_.remove("breed"))
+      assertTrue(slot.exists(s => s.breed.isDefined && s.asJson.as[pangea.model.battle.MonsterSlot].toOption.contains(s))) &&
+      assertTrue(oldSlot.exists(_.as[pangea.model.battle.MonsterSlot].exists(_.breed.isEmpty)) &&
+        oddSlot.exists(_.as[pangea.model.battle.MonsterSlot].exists(_.breed.isEmpty))) &&
+      assertTrue(battle.asJson.as[SoloPveBattle].exists(_.monsterBreed == battle.monsterBreed) && battle.monsterBreed.isDefined &&
+        oldBattle.as[SoloPveBattle].exists(_.monsterBreed.isEmpty)) &&
+      assertTrue(dead.breed == battle.monsterBreed && oldDead.as[pangea.model.battle.SlainMonster].exists(_.breed.isEmpty))
+    },
+
     test("журнал: по контракту — к логову, потом за платой") {
       for {
         c <- content
@@ -422,10 +587,17 @@ object VillageSpec extends ZIOSpecDefault {
         _   <- DeathState(d2, TestInventoryRepository.withItems(List(paper)), c).enter(testUser, r)
         w2  <- d2.readSceneData(userId)
         q2  <- questOf(d2)
-      } yield assertTrue(wakeLines(w1) == List("village.raid.death") && wakeLines(w2) == List("village.bandits.death")) &&
+        d3  <- dao(q = Some(withSpiders()))
+        _   <- d3.writeActiveBattle(userId, SoloPveBattle.fromGroup(Villages.spiderBrood(VillageContract.of(spiderScene), Rng(1L)),
+                 hero(), Nil).copy(story = Some(Villages.SpidersStory)).asJson)
+        _   <- DeathState(d3, TestInventoryRepository.withItems(List(paper)), c).enter(testUser, r)
+        w3  <- d3.readSceneData(userId)
+      } yield assertTrue(wakeLines(w1) == List("village.raid.death") && wakeLines(w2) == List("village.bandits.death") &&
+                wakeLines(w3) == List("village.spiders.death")) &&
               assertTrue(w1.exists(_.hcursor.downField("wakeTo").failed) && w2.exists(_.hcursor.downField("wakeTo").failed)) &&
               assertTrue(Villages.toBandits(q2)) &&
-              assertTrue(BattleState.RaidStories.contains(Villages.RaidStory) && BattleState.RaidStories.contains(Villages.BanditsStory))
+              assertTrue(BattleState.RaidStories.contains(Villages.RaidStory) && BattleState.RaidStories.contains(Villages.BanditsStory) &&
+                BattleState.RaidStories.contains(Villages.SpidersStory))
     },
 
     test("тексты: у каждой расы — названия, приход и староста; у каждой беды — всё, что ей нужно; первая беда — с порога деревень") {
@@ -447,8 +619,23 @@ object VillageSpec extends ZIOSpecDefault {
                 List(s"village.trouble.${q.key}", s"village.plea.${q.key}.text", s"village.plea.${q.key}.accepted",
                   s"village.waiting.${q.key}", s"village.pay.${q.key}", s"village.card.${q.key}", s"journal.village.${q.key}")
                   .forall(k => c.text(k).nonEmpty))) &&
-              assertTrue(VillageQuest.BanditLair.minLevel == Villages.MinDungeonLevel && Villages.MinDungeonLevel == 20) &&
-              assertTrue(VillageQuest.openAt(20) == List(VillageQuest.BanditLair) && VillageQuest.openAt(1) == List(VillageQuest.BanditLair))
+              assertTrue(VillageQuest.BanditLair.minLevel == Villages.MinDungeonLevel && Villages.MinDungeonLevel == 15) &&
+              assertTrue(VillageQuest.openAt(15) == List(VillageQuest.BanditLair) && VillageQuest.openAt(19) == List(VillageQuest.BanditLair) &&
+                VillageQuest.openAt(20) == List(VillageQuest.BanditLair, VillageQuest.SpiderNests) &&
+                VillageQuest.openAt(1) == List(VillageQuest.BanditLair)) &&
+              assertTrue(VillageLair.all.forall(l =>
+                List("intro", "fight", "victory", "left", "gone", "death").forall(k => c.text(s"village.${l.texts}.$k").nonEmpty) &&
+                c.choice("x", s"village.${l.texts}.fightLabel").label.nonEmpty &&
+                c.choice("x", s"village.card.${l.texts}Label").label.nonEmpty)) &&
+              // у каждой беды — своё логово, и у логов разные сцены, бои, кнопки и отметки
+              assertTrue(VillageQuest.values.forall(q => VillageLair.of(q).isDefined) &&
+                VillageLair.all.map(_.scene).distinct.size == VillageLair.all.size &&
+                VillageLair.all.map(_.story).distinct.size == VillageLair.all.size &&
+                VillageLair.all.map(_.ids).distinct.size == VillageLair.all.size &&
+                VillageLair.all.map(_.wonKey).distinct.size == VillageLair.all.size) &&
+              assertTrue(c.text("village.spiders.redSpider").nonEmpty) &&
+              assertTrue(MaterialKind.SpiderSilk.description.nonEmpty && MaterialKind.VenomGland.description.nonEmpty &&
+                MaterialKind.SpiderSilk.worthless && MaterialKind.VenomGland.worthless)
     }
   )
 }

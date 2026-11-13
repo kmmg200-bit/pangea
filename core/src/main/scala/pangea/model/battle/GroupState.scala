@@ -193,7 +193,9 @@ final case class MonsterSlot(
   bossRevives:         Int     = 0,
   bossFirstSkillSpent: Boolean = false,
   bossTaken:           Long    = 0L,
-  bossArmorTaken:      Long    = 0L
+  bossArmorTaken:      Long    = 0L,
+  /** Порода (сетеплёты у деревни): по ней свои умения и своя добыча. */
+  breed:               Option[pangea.model.monster.Breed] = None
 ) {
   /** Есть ли у него свой круг — хоть что-то, кроме нулей. */
   def hasBossCycle: Boolean =
@@ -227,7 +229,7 @@ final case class MonsterSlot(
   def alive: Boolean = currentHp > 0L
 
   /** Слот как запись о павшем — для добычи после боя. */
-  def slain: SlainMonster = SlainMonster(lvl, race, rarity, marked, name, undead, boss)
+  def slain: SlainMonster = SlainMonster(lvl, race, rarity, marked, name, undead, boss, breed)
 
   /** Проценты для строки группового экрана. */
   def hpPct: Long    = if (stats.hp <= 0L) 0L else currentHp * 100L / stats.hp
@@ -261,9 +263,11 @@ object MonsterSlot {
       firstSkill    <- c.getOrElse[Boolean]("bossFirstSkillSpent")(false)
       bossTaken     <- c.getOrElse[Long]("bossTaken")(0L)
       bossArmor     <- c.getOrElse[Long]("bossArmorTaken")(0L)
+      // Порода — с сетеплётов; в старых записях её нет, чужое имя — тоже нет.
+      breed         <- pangea.model.monster.Breed.read(c, "breed")
     } yield MonsterSlot(lvl, race, rarity, stats, currentHp, currentArmor, marked, currentEnergy, effects,
                         boss, customName, undead, arenaUnit, lastAllyHit,
-                        bossTurn, bossCharges, bossRevives, firstSkill, bossTaken, bossArmor)
+                        bossTurn, bossCharges, bossRevives, firstSkill, bossTaken, bossArmor, breed)
 }
 
 /** Убитый моб — ровно то, что нужно, чтобы после боя накатать за него добычу. */
@@ -271,7 +275,9 @@ final case class SlainMonster(lvl: Long, race: String, rarity: String, marked: B
                               undead: Boolean = false,
                               /** Пал минибоссом: по этой метке победа и платит за
                                 * него как за босса, даже если его добили не последним. */
-                              boss: Option[String] = None)
+                              boss: Option[String] = None,
+                              /** Порода павшего: по ней своя добыча (красный сетеплёт). */
+                              breed: Option[pangea.model.monster.Breed] = None)
 
 object SlainMonster {
   implicit val encoder: Encoder[SlainMonster] = deriveEncoder
@@ -284,7 +290,8 @@ object SlainMonster {
       name   <- c.getOrElse[String]("name")("")
       undead <- c.getOrElse[Boolean]("undead")(false)
       boss   <- c.getOrElse[Option[String]]("boss")(None)
-    } yield SlainMonster(lvl, race, rarity, marked, name, undead, boss)
+      breed  <- pangea.model.monster.Breed.read(c, "breed")
+    } yield SlainMonster(lvl, race, rarity, marked, name, undead, boss, breed)
 }
 
 /** Групповая часть боя. Мобы стоят в строю по местам 1, 2, …; герой стоит на

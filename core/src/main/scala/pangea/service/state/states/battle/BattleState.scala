@@ -6156,6 +6156,8 @@ case class BattleState(
       raid       = battle.story.exists(BattleState.RaidStories.contains)
       storyFight = battle.story.isDefined && !raid
       killLevel  = battle.lootLevel.getOrElse(if (raid) hero.lvl else hero.dungeonLevel.toLong)
+      // Что срезают со зверей этого боя: в гнезде сетеплётов — паучье.
+      beastSpoils = BattleState.beastSpoils(battle.story)
       // Минибосс боя — тот, кто пал минибоссом, когда бы он ни пал: Некроманта
       // со свитой бьют первым, Крысиный король падает раньше своих крыс. Смотреть
       // только на последнего добитого нельзя — тогда бой считался бы рядовым.
@@ -6201,8 +6203,9 @@ case class BattleState(
                   val (dd, r3) = LootGenerator.roll(
                     Rarity.withName(m.rarity), Race.withName(m.race), killLevel, rr,
                     gearChanceBonusPct = hero.gems.gearDropBonusPct,
-                    rarityBumpPct = if (blessed) BattleState.BlessingBonusPct else 0L)
-                  (acc :+ (m.name -> dd), r3)
+                    rarityBumpPct = if (blessed) BattleState.BlessingBonusPct else 0L,
+                    beastSpoils = beastSpoils)
+                  (acc :+ (m.name -> (dd ++ BattleState.breedDrops(m.breed))), r3)
               }
           }
         case None =>
@@ -6213,9 +6216,10 @@ case class BattleState(
               killLevel,
               rng,
               gearChanceBonusPct = hero.gems.gearDropBonusPct,
-              rarityBumpPct = if (blessed) BattleState.BlessingBonusPct else 0L
+              rarityBumpPct = if (blessed) BattleState.BlessingBonusPct else 0L,
+              beastSpoils = beastSpoils
             )
-            (acc :+ (m.name -> d), r)
+            (acc :+ (m.name -> (d ++ BattleState.breedDrops(m.breed))), r)
           }
       }
       // «Таксидермист»/«Ювелир» дают отдельные доп. дропы поверх основного лута —
@@ -6925,7 +6929,21 @@ object BattleState {
     Set(MurlocQuest.RaidStory, LostSquadQuest.EscortStory, HedgeSongQuest.WaveStory, BarrelThievesQuest.FightStory,
       StoryMarkQuest.FightStory, StoryPowderQuest.FightStory, StoryListQuest.FightStory, StoryFaceQuest.FightStory,
       StoryToolQuest.FightStory, HotGoodsQuest.FightStory, BigDealQuest.AmbushStory, JorgenQuest.LairStory,
-      BramblQuest.HallStory, PlukhQuest.HuntStory, FaelinQuest.RootsStory, Villages.RaidStory, Villages.BanditsStory)
+      BramblQuest.HallStory, PlukhQuest.HuntStory, FaelinQuest.RootsStory, Villages.RaidStory, Villages.BanditsStory,
+      Villages.SpidersStory)
+
+  /** Что срезают со зверей в бою с этим сюжетом: в гнезде сетеплётов звери —
+    * пауки, и с них паучье; везде прочее — крысиное, как было. */
+  def beastSpoils(story: Option[String]): List[(Option[pangea.model.item.MaterialKind], Int)] =
+    if (story.contains(Villages.SpidersStory)) LootGenerator.SpiderSpoils else LootGenerator.RatSpoils
+
+  /** Добыча породы сверх таблицы: с красного сетеплёта — его железа, всегда. */
+  def breedDrops(breed: Option[pangea.model.monster.Breed]): List[LootGenerator.LootDrop] =
+    breed match {
+      case Some(pangea.model.monster.Breed.RedSpider) =>
+        List(LootGenerator.LootDrop.Gear(pangea.generator.item.MaterialGenerator.item(pangea.model.item.MaterialKind.RedSpiderGland)))
+      case _ => Nil
+    }
 
   /** Умение союзника, выбранное на ход. Удар несёт свою цель: без цели его
     * в выборе просто нет, и доставать её потом неоткуда. */

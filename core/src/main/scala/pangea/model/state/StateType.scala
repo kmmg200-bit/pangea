@@ -53,7 +53,7 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
     ElementalLair -> 7,  // минибосс
     MonsterCave   -> 10,
     Caravan       -> 10,
-    Village       -> 20  // решил пользователь; задания старосты — по своим порогам (VillageQuest.minLevel)
+    Village       -> 15  // решил пользователь; задания старосты — по своим порогам (VillageQuest.minLevel)
   )
 
   /** Открыто ли событие на этом уровне лабиринта. */
@@ -207,6 +207,7 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   // или помочь старосте (см. Villages).
   case object Village        extends StateType // деревня в лабиринте: приход, налёт или староста; плата за сделанное
   case object VillageBandits extends StateType // логово разбойников у деревни: бой с бандой и её главарём
+  case object VillageSpiders extends StateType // гнездо сетеплётов у деревни: бой с выводком и маткой
 
   // Смена расы: купон из лавки Фета — история расы до пробуждения в новом теле.
   case object RaceQuest extends StateType

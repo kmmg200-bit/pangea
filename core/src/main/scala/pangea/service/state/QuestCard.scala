@@ -97,7 +97,7 @@ final class QuestCard(heroDao: HeroDao, inventoryRepo: InventoryRepository, item
       // лабиринта и не ближе уровня, где встречаются деревни. Сцена — с
       // чистого листа: что осталось в scene_data от прошлой деревни, не её.
       case "VillageGo" =>
-        inMazeFresh(Villages.toBandits(quests), StateType.VillageBandits)
+        Villages.lairOf(quests).fold[Go](Go.Stale)(lair => inMazeFresh(onStep = true, lair.scene))
       case "VillageReturn" =>
         inMazeFresh(Villages.toPay(quests), StateType.Village)
       case "PlukhHuntGo"   => inMaze(PlukhQuest.toHunt(quests), "plukhGaff.card.onlyInLabyrinth", StateType.PlukhHunt)
@@ -245,9 +245,9 @@ object QuestCard {
       // Караван пришёл: ночью к нему, к Сухому колодцу.
       case Some(QuestItemKind.BartiAddress) if BigDealQuest.toCaravan(quests) =>
         Some(plain("BartiCaravanGo", "barti.card.caravanLabel"))
-      // Контракт деревни: к логову — пока оно стоит; сделано — назад за платой.
-      case Some(QuestItemKind.VillageContract) if Villages.toBandits(quests) =>
-        Some(plain("VillageGo", "village.card.banditsLabel"))
+      // Контракт деревни: к логову беды — пока оно стоит; сделано — назад за платой.
+      case Some(QuestItemKind.VillageContract) if Villages.lairOf(quests).isDefined =>
+        Villages.lairOf(quests).map(lair => plain("VillageGo", s"village.card.${lair.texts}Label"))
       case Some(QuestItemKind.VillageContract) if Villages.toPay(quests) =>
         Some(positive("VillageReturn", "village.card.returnLabel"))
       case _ => None

@@ -127,6 +127,7 @@ object HomeAlert {
       FaelinRoots      -> "старые корни изгороди: лук Фаэлина",
       Village          -> "деревня в лабиринте",
       VillageBandits   -> "логово разбойников: контракт деревни",
+      VillageSpiders   -> "гнездо сетеплётов: контракт деревни",
       RaceQuest        -> "квест смены расы",
       NameChange       -> "смена имени"
     )

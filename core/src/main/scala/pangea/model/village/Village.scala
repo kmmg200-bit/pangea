@@ -3,13 +3,14 @@ package pangea.model.village
 import enumeratum._
 import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, DecodingFailure, Encoder, HCursor, Json}
-import pangea.model.monster.{Race, Rarity}
+import pangea.model.monster.{Breed, Race, Rarity}
 import pangea.model.quest.BoardRates
 
 /** Беда деревни — то, о чём просит староста (см. [[VillageContract]]). Задания
-  * открываются по мере того, как герой уходит дальше в лабиринт: первое — с
-  * того же поворота, что и сами деревни, каждое следующее — на пять поворотов
-  * дальше ([[minLevel]]). `entryName` лежит в базе — в `scene_data` и в
+  * открываются по мере того, как герой уходит дальше в лабиринт ([[minLevel]]):
+  * логово разбойников — с того же уровня, что и сами деревни (15-го), гнездо
+  * сетеплётов — с 20-го; следующим будет караван (25-й), дальше порядок решит
+  * пользователь. `entryName` лежит в базе — в `scene_data` и в
   * `npc_quests`: не переименовывать и не удалять.
   *
   * @param key      ключ текстов задания в `scenes.yaml` (`village.trouble.<key>` и соседи)
@@ -20,8 +21,12 @@ sealed abstract class VillageQuest(val key: String, val minLevel: Int) extends E
 object VillageQuest extends Enum[VillageQuest] {
   val values: IndexedSeq[VillageQuest] = findValues
 
-  /** Логово разбойников: банда с главарём обирает деревню — разбить логово. */
-  case object BanditLair extends VillageQuest("bandits", 20)
+  /** Логово разбойников: банда с главарём грабит дороги у деревни — разбить логово. */
+  case object BanditLair extends VillageQuest("bandits", 15)
+
+  /** Гнездо сетеплётов: пауки из изгороди засели в овраге у деревни и по ночам
+    * таскают скотину и людей — выжечь гнездо с маткой. */
+  case object SpiderNests extends VillageQuest("spiders", 20)
 
   /** О чём староста может попросить на этом повороте. Мельче порога первого
     * задания деревни не встречаются; если всё же встретилась — просят о первом. */
@@ -240,4 +245,23 @@ object VillageRates {
   val BanditBack: Int                   = 6
   val BanditBackRarities: List[Rarity]  = List(Rarity.Rare, Rarity.Mythical)
   val BanditLeaderRarity: Rarity        = Rarity.Legendary
+
+  /** Гнездо сетеплётов: пауки — звери своих пород ([[Breed]]): восемь
+    * молодых, шестеро взрослых и матка; с шансом [[RedSpiderChancePct]]% к ним
+    * выползает ещё и красный — шестнадцатым, ждёт места в строю. С пауков —
+    * паучья добыча, а не крысиная (см. LootGenerator.SpiderSpoils). */
+  val SpiderRace: Race       = Race.Animal
+  val SpiderYoung: Int       = 8
+  val SpiderAdult: Int       = 6
+  val RedSpiderChancePct: Int = 1
+
+  /** Сила и ранг каждой породы — как у моба этой расы и этого ранга (так решил
+    * пользователь): молодой — как орк первого ранга, взрослый — как каджит
+    * третьего, матка — как каджит четвёртого, красный — как именной эльф (но
+    * бьёт вблизи: он зверь, и повадок эльфа-стрелка у него нет). */
+  val SpiderLike: Map[Breed, (Race, Rarity)] = Map(
+    Breed.YoungSpider  -> (Race.Orc -> Rarity.Common),
+    Breed.AdultSpider  -> (Race.Khajiit -> Rarity.Rare),
+    Breed.SpiderMother -> (Race.Khajiit -> Rarity.Mythical),
+    Breed.RedSpider    -> (Race.Elf -> Rarity.Legendary))
 }

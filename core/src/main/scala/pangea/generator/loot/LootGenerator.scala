@@ -202,6 +202,16 @@ object LootGenerator {
     Some(MaterialKind.RatKingBlood) -> 1
   )
 
+  /** Добыча с паука из гнезда сетеплётов — вместо крысиной: шёлк, ядовитые
+    * железы, сокровища в коконе, изредка — малая руна, застрявшая в паутине. С
+    * красного сверх того — его железа, всегда (см. BattleState.breedDrops). */
+  val SpiderSpoils: List[(Option[MaterialKind], Int)] = List(
+    Some(MaterialKind.SpiderSilk)     -> 35,
+    Some(MaterialKind.VenomGland)     -> 15,
+    Some(MaterialKind.CocoonTreasure) -> 5,
+    None                              -> 3
+  )
+
   /** Сколько бросков добычи со зверя: с обычного один, с чумного два — второй
     * пожиже. Легендарных и мифических зверей пока не водится, но если заведутся
     * — считаются как чумные. */
@@ -215,7 +225,7 @@ object LootGenerator {
     * крыса не носит кошелька и не числится ни за одной гильдией — с неё берут
     * только то, что можно срезать. Вид, уже выпавший в этом бою, из следующего
     * броска выбывает: двух одинаковых шкурок с одной крысы не снять. */
-  private def ratLoot(tier: MobRarity, rng: Rng): (List[LootDrop], Rng) = {
+  private def beastLoot(tier: MobRarity, spoils: List[(Option[MaterialKind], Int)], rng: Rng): (List[LootDrop], Rng) = {
     @tailrec
     def loop(slots: List[Int], used: Set[MaterialKind], acc: List[LootDrop], r: Rng): (List[LootDrop], Rng) =
       slots match {
@@ -224,7 +234,7 @@ object LootGenerator {
           val (fired, r1) = r.between(0L, 100L)
           if (fired >= chance) loop(rest, used, acc, r1)
           else {
-            val active     = RatSpoils.filterNot { case (m, _) => m.exists(used.contains) }
+            val active     = spoils.filterNot { case (m, _) => m.exists(used.contains) }
             val (roll, r2) = r1.between(0L, 100L)
             @tailrec
             def walk(rem: List[(Option[MaterialKind], Int)], acc2: Long): Option[Option[MaterialKind]] =
@@ -251,8 +261,10 @@ object LootGenerator {
       killLevel: Long,
       rng: Rng,
       gearChanceBonusPct: Long = 0L,
-      rarityBumpPct: Long = 0L
-  ): (List[LootDrop], Rng) = if (race == Race.Animal) ratLoot(tier, rng) else {
+      rarityBumpPct: Long = 0L,
+      // Что срезают со зверя: по умолчанию — крысиное, в гнезде сетеплётов — паучье.
+      beastSpoils: List[(Option[MaterialKind], Int)] = RatSpoils
+  ): (List[LootDrop], Rng) = if (race == Race.Animal) beastLoot(tier, beastSpoils, rng) else {
     // Бонус к шансу экипировки (топаз в снаряжении) добавляется к весу категории Gear.
     val weights = categoryWeights(tier).map {
       case (Category.Gear, w) => Category.Gear -> (w + gearChanceBonusPct.toInt)

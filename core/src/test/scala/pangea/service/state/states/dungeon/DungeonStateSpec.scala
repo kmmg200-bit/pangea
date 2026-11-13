@@ -157,7 +157,7 @@ object DungeonStateSpec extends ZIOSpecDefault {
       assertTrue(StateType.events.count(_ == StateType.Village) == 1 && StateType.events.count(_ == StateType.Battle) == 36)
     },
 
-    test("события открываются по мере спуска: жила и схрон со 2-го, девушка и мобы с сокровищем с 5-го, элементаль с 7-го, пещера и караван с 10-го, деревня с 20-го") {
+    test("события открываются по мере спуска: жила и схрон со 2-го, девушка и мобы с сокровищем с 5-го, элементаль с 7-го, пещера и караван с 10-го, деревня с 15-го") {
       def at(lvl: Int): Set[StateType] = StateType.eventsAt(lvl, 1.0).toSet
       val first = at(1)
       val second = Set[StateType](StateType.SilverVein, StateType.TreasureDig)
@@ -171,9 +171,9 @@ object DungeonStateSpec extends ZIOSpecDefault {
       assertTrue(l4.intersect(group).isEmpty && group.subsetOf(l5)) &&
       assertTrue(!l6.contains(StateType.ElementalLair) && l7.contains(StateType.ElementalLair)) &&
       assertTrue(l9.intersect(deep).isEmpty && deep.subsetOf(l10)) &&
-      assertTrue(!at(19).contains(StateType.Village) && at(20).contains(StateType.Village)) &&
-      // с двадцатого и до самого конца пул полный
-      assertTrue(StateType.eventsAt(20, 1.0) == StateType.events && StateType.eventsAt(150, 1.0) == StateType.events) &&
+      assertTrue(!at(14).contains(StateType.Village) && at(15).contains(StateType.Village)) &&
+      // с пятнадцатого и до самого конца пул полный
+      assertTrue(StateType.eventsAt(15, 1.0) == StateType.events && StateType.eventsAt(150, 1.0) == StateType.events) &&
       // «Охотник» множит бой и наверху
       assertTrue(StateType.eventsAt(1, 1.2).count(_ == StateType.Battle) == StateType.eventsWithBattleFactor(1.2).count(_ == StateType.Battle))
     },

@@ -126,7 +126,7 @@ case class InventoryState(
         StateType.StrayCasket, StateType.BarrelThieves, StateType.StoryCache, StateType.StoryWarehouse,
         StateType.StoryMeeting, StateType.StoryBridge, StateType.StorySojka, StateType.StoryArchive, StateType.StoryBindery,
         StateType.StoryGraveyard, StateType.BartiHouse, StateType.BartiCaravan, StateType.JorgenLair,
-        StateType.PlukhHunt, StateType.FaelinRoots, StateType.Village, StateType.VillageBandits) ++ BackpackOrigins
+        StateType.PlukhHunt, StateType.FaelinRoots, StateType.Village, StateType.VillageBandits, StateType.VillageSpiders) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.

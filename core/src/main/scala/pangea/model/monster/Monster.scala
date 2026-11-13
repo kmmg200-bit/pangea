@@ -16,7 +16,9 @@ case class Monster(
   /** Поднятый некромантом: тот же, кем был при жизни, только мёртвый. Раса и
     * имя остаются своими, а природа становится могильной — миазмы его лечат, и
     * ни отравить, ни обескровить его уже нельзя (см. Nature.of). */
-  undead: Boolean = false
+  undead: Boolean = false,
+  /** Особая порода (сетеплёты у деревни): свои умения в бою и своя добыча. */
+  breed: Option[Breed] = None
 ) {
   def name: String = {
     val base = customName.getOrElse(

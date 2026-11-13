@@ -3,10 +3,11 @@ package pangea.service.state
 import pangea.dao.hero.HeroDao
 import pangea.domain.Rng
 import pangea.engine.{SceneContent, Screen}
+import pangea.model.battle.{MonsterSlot, SoloPveBattle}
 import pangea.generator.monster.MonsterGenerator
 import pangea.model.hero.Hero
 import pangea.model.item.QuestItemKind
-import pangea.model.monster.{Monster, Race, Rarity}
+import pangea.model.monster.{Breed, Monster, Race, Rarity}
 import pangea.model.quest.NpcQuests
 import pangea.model.state.StateType
 import pangea.model.user.UserId
@@ -14,6 +15,26 @@ import pangea.model.village.{VillageContract, VillageQuest, VillageRates, Villag
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import zio.{Task, ZIO}
+
+/** Логово беды деревни — куда ведёт контракт, пока дело не сделано: своя
+  * сцена, свой сюжетный бой и свои тексты (`village.<texts>.*`), кнопки —
+  * `<ids>Fight` и соседи, отметка победы в scene_data — `wonKey`. Сцена у всех
+  * логов одна — VillageLairState. Ключи логова разбойников — те же, что были у
+  * его сцены до того, как она стала общей: в базе могут лежать его бои и
+  * отметки. */
+final case class VillageLair(quest: VillageQuest, scene: StateType, story: String, ids: String, texts: String,
+                             wonKey: String)
+
+object VillageLair {
+  val Bandits: VillageLair =
+    VillageLair(VillageQuest.BanditLair, StateType.VillageBandits, Villages.BanditsStory, "Bandits", "bandits", "villageBanditsWon")
+  val Spiders: VillageLair =
+    VillageLair(VillageQuest.SpiderNests, StateType.VillageSpiders, Villages.SpidersStory, "Spiders", "spiders", "villageSpidersWon")
+
+  val all: List[VillageLair] = List(Bandits, Spiders)
+
+  def of(quest: VillageQuest): Option[VillageLair] = all.find(_.quest == quest)
+}
 
 /** «Деревня» — событие лабиринта (1%, с [[MinDungeonLevel]]-го поворота): за
   * поворотом изгороди — деревня одной из смертных рас, и видно, что ей нужна
@@ -27,8 +48,9 @@ import zio.{Task, ZIO}
   * делу, потом — назад за платой. Пока контракт при герое, деревни ему не
   * встречаются (см. DungeonState).
   *
-  * Беды открываются по поворотам ([[VillageQuest.minLevel]]); первая — логово
-  * разбойников. Сцены: деревня (VillageState) и логово (VillageBanditsState). */
+  * Беды открываются по уровням лабиринта ([[VillageQuest.minLevel]]): логово
+  * разбойников, гнездо сетеплётов. Сцены: деревня (VillageState) и логово беды
+  * (VillageLairState — одна на все логова, см. [[VillageLair]]). */
 object Villages {
 
   /** Ключ сюжетного боя — налёта на деревню (см. `SoloPveBattle.story`):
@@ -38,6 +60,10 @@ object Villages {
   /** Ключ сюжетного боя в логове разбойников: так же — без «Сбежать», награда
     * как за обычный бой уровня задания. */
   val BanditsStory: String = "villageBandits"
+
+  /** Ключ сюжетного боя в гнезде сетеплётов: так же — без «Сбежать», награда
+    * как за обычный бой уровня задания, а добыча со зверей — паучья. */
+  val SpidersStory: String = "villageSpiders"
 
   /** С какого поворота встречаются деревни: порог события (см.
     * `StateType.EventMinLevel`). К их бедам ходят не ближе. */
@@ -98,9 +124,16 @@ object Villages {
   /** Взят ли контракт какой-нибудь деревни (выполнен — его уже нет). */
   def taken(q: NpcQuests): Boolean = q.village.isDefined
 
+  /** Логово этой беды ещё стоит — идти к нему. */
+  def toLair(q: NpcQuests, quest: VillageQuest): Boolean =
+    q.village.exists(c => c.quest == quest && c.step == VillageContract.Taken)
+
   /** Логово разбойников ещё стоит — идти к нему. */
-  def toBandits(q: NpcQuests): Boolean =
-    q.village.exists(c => c.quest == VillageQuest.BanditLair && c.step == VillageContract.Taken)
+  def toBandits(q: NpcQuests): Boolean = toLair(q, VillageQuest.BanditLair)
+
+  /** Куда ведёт контракт, пока дело не сделано: логово его беды. */
+  def lairOf(q: NpcQuests): Option[VillageLair] =
+    q.village.filter(_.step == VillageContract.Taken).flatMap(c => VillageLair.of(c.quest))
 
   /** Дело сделано — вернуться к старосте за платой. */
   def toPay(q: NpcQuests): Boolean = q.village.exists(_.done)
@@ -115,10 +148,10 @@ object Villages {
         NpcQuestLog.save(heroDao, userId, q.copy(village = Some(contract))).as(true)
     }
 
-  /** Логово разбито: дальше — к старосте за платой. Не тот шаг — ничего (false). */
-  def banditsBeaten(heroDao: HeroDao, userId: UserId): Task[Boolean] =
+  /** Логово беды разбито: дальше — к старосте за платой. Не тот шаг — ничего (false). */
+  def lairCleared(heroDao: HeroDao, userId: UserId, quest: VillageQuest): Task[Boolean] =
     NpcQuestLog.load(heroDao, userId).flatMap { q =>
-      if (!toBandits(q)) ZIO.succeed(false)
+      if (!toLair(q, quest)) ZIO.succeed(false)
       else NpcQuestLog.save(heroDao, userId, q.copy(village = q.village.map(_.copy(step = VillageContract.Done)))).as(true)
     }
 
@@ -172,6 +205,48 @@ object Villages {
     val chief       = contract.leaderRace.getOrElse(VillageRates.BanditLeaderDefaultRace)
     front ++ back :+ MonsterGenerator.generateOfRaceAndRarity(lvl, chief, VillageRates.BanditLeaderRarity,
       Some(leader(contract.leader)))
+  }
+
+  /** Обитатели логова беды контракта: банда или выводок. */
+  def lairMonsters(contract: VillageContract, rng: Rng): List[Monster] =
+    contract.quest match {
+      case VillageQuest.BanditLair  => banditGang(contract, rng)
+      case VillageQuest.SpiderNests => spiderBrood(contract, rng)
+    }
+
+  /** Выводок в гнезде: молодые, взрослые и матка — уровня задания; с шансом
+    * [[VillageRates.RedSpiderChancePct]]% последним — ещё и красный. */
+  def spiderBrood(contract: VillageContract, rng: Rng): List[Monster] = {
+    val (roll, _) = rng.between(0L, 100L)
+    spiderBrood(contract, red = roll < VillageRates.RedSpiderChancePct.toLong)
+  }
+
+  def spiderBrood(contract: VillageContract, red: Boolean): List[Monster] = {
+    val lvl = contract.level.max(1)
+    List.fill(VillageRates.SpiderYoung)(spider(Breed.YoungSpider, lvl)) ++
+      List.fill(VillageRates.SpiderAdult)(spider(Breed.AdultSpider, lvl)) ++
+      (spider(Breed.SpiderMother, lvl) :: Option.when(red)(spider(Breed.RedSpider, lvl)).toList)
+  }
+
+  /** Паук этой породы: зверь, но сила и ранг — как у моба-образца
+    * ([[VillageRates.SpiderLike]]), имя — породы. */
+  def spider(breed: Breed, lvl: Int): Monster = {
+    val (race, rarity) = VillageRates.SpiderLike.getOrElse(breed, Race.Orc -> Rarity.Common)
+    val like           = MonsterGenerator.generateOfRaceAndRarity(lvl.max(1), race, rarity)
+    Monster(0L, like.lvl, VillageRates.SpiderRace, rarity, like.fightStats, customName = Some(breed.displayName),
+      breed = Some(breed))
+  }
+
+  /** Повадки пород, что ложатся на бой при его начале: удар молодого
+    * сетеплёта, дошедший до HP, травит — всегда, и героя, и союзников
+    * (`monsterPoisonsOnHit`, как у Крысиного короля). */
+  def withBreedTraits(battle: SoloPveBattle): SoloPveBattle = {
+    def poisons(b: Option[Breed]) = b.contains(Breed.YoungSpider)
+    def slot(s: MonsterSlot): MonsterSlot =
+      if (poisons(s.breed)) s.copy(effects = s.effects.copy(monsterPoisonsOnHit = true)) else s
+    battle.copy(
+      effects = if (poisons(battle.monsterBreed)) battle.effects.copy(monsterPoisonsOnHit = true) else battle.effects,
+      group   = battle.group.copy(others = battle.group.others.map(slot), queue = battle.group.queue.map(slot)))
   }
 
   /** `n` бандитов уровня `lvl`: раса у каждого своя — из [[VillageRates.BanditRaces]],

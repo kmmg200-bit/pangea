@@ -157,7 +157,9 @@ case class SoloPveBattle(
   // оставался дома, и резерв цел. Арена тоже его не берёт — на песке копии.
   // В записях до этого поля его нет: такой бой читается как бой без отряда —
   // начат по старым правилам, и резерв из него не уходит.
-  squadTaken: Boolean = false
+  squadTaken: Boolean = false,
+  // Порода того, кто в полях (сетеплёты у деревни): ездит со слотом, как имя.
+  monsterBreed: Option[pangea.model.monster.Breed] = None
 ) {
 
   /** Множитель Стены трофеев к урону героя по тому, кто сейчас в полях. */
@@ -176,7 +178,8 @@ case class SoloPveBattle(
     customName = customName, undead = monsterUndead, arenaUnit = monsterArenaUnit,
     lastAllyHit = monsterLastAllyHit,
     bossTurn = bossTurn, bossCharges = bossCharges, bossRevives = bossRevives,
-    bossFirstSkillSpent = bossFirstSkillSpent, bossTaken = bossTaken, bossArmorTaken = bossArmorTaken)
+    bossFirstSkillSpent = bossFirstSkillSpent, bossTaken = bossTaken, bossArmorTaken = bossArmorTaken,
+    breed = monsterBreed)
 
   /** Поставить слот в пару: его состояние и эффекты — в поля активного моба,
     * геройская половина эффектов (и разовые флаги героя вроде «Крепкости»)
@@ -193,7 +196,8 @@ case class SoloPveBattle(
     bossKind = slot.boss, customName = slot.customName, monsterUndead = slot.undead,
     monsterArenaUnit = slot.arenaUnit, monsterLastAllyHit = slot.lastAllyHit,
     bossTurn = slot.bossTurn, bossCharges = slot.bossCharges, bossRevives = slot.bossRevives,
-    bossFirstSkillSpent = slot.bossFirstSkillSpent, bossTaken = slot.bossTaken, bossArmorTaken = slot.bossArmorTaken)
+    bossFirstSkillSpent = slot.bossFirstSkillSpent, bossTaken = slot.bossTaken, bossArmorTaken = slot.bossArmorTaken,
+    monsterBreed = slot.breed)
 
   /** Кто на чужой стороне держит ауру и сколько у него энергии: живой минибосс
     * со своей аурой, где бы он ни стоял — в паре или в строю, первым или за
@@ -441,7 +445,7 @@ case class SoloPveBattle(
 
   /** Активный моб как запись о павшем — для добычи после боя. */
   def slainActive: SlainMonster =
-    SlainMonster(monsterLvl, monsterRace, monsterRarity, monsterMarked, monsterName, monsterUndead, bossKind)
+    SlainMonster(monsterLvl, monsterRace, monsterRarity, monsterMarked, monsterName, monsterUndead, bossKind, monsterBreed)
 
   /** Куда встанет пришедший: за спины своих, на первое место позади последнего
     * из них. Хвост схемы занят (в караване там башни) — на самое дальнее
@@ -967,6 +971,7 @@ object SoloPveBattle {
     monsterMarked       = monster.marked,
     monsterUndead       = monster.undead,
     customName          = monster.customName,
+    monsterBreed        = monster.breed,
     skillSlots          = hero.activeSkillSlots,
     // Зеркальный настой выпит до боя — копии входят в бой вместе с героем.
     effects             = BattleEffects(heroMirrors = hero.weaponDust.mirrors),
@@ -1004,7 +1009,7 @@ object SoloPveBattle {
     val slots = monsters.zip(energies).map { case (m, e) =>
       MonsterSlot(m.lvl, m.race.entryName, m.rarity.entryName, m.fightStats, m.fightStats.hp,
         m.fightStats.armor, m.marked, e, BattleEffects.empty, customName = m.customName,
-        undead = m.undead)
+        undead = m.undead, breed = m.breed)
     }
     // Хотя бы один боец в строю нужен: с него начинается бой, и сооружению эта
     // роль не подходит — оно не ходит и не встаёт в пару.
@@ -1082,6 +1087,7 @@ object SoloPveBattle {
       bossArmorTaken      <- c.getOrElse[Long]("bossArmorTaken")(0L)
       // Бой, начатый до этого поля, — без отряда: резерв из него не уходит.
       squadTaken          <- c.getOrElse[Boolean]("squadTaken")(false)
+      monsterBreed        <- pangea.model.monster.Breed.read(c, "monsterBreed")
     } yield SoloPveBattle(monsterLvl, monsterRace, monsterRarity, monsterStats,
                          monsterCurrentHp, monsterCurrentArmor, heroBattleState, consumableUsed, monsterMarked,
                          monsterUndead,
@@ -1090,7 +1096,7 @@ object SoloPveBattle {
                          noFlee, lootLevel, holyWater, heroBlockPct, monsterBlockPct,
                          heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall,
                          monsterLastAllyHit, heroStruck, roundsFought, secondWindUsed, preyName, preyGone,
-                         monsterDodgeBonus, comboUsed, bossArmorTaken, squadTaken).cycleToBossSlot
+                         monsterDodgeBonus, comboUsed, bossArmorTaken, squadTaken, monsterBreed).cycleToBossSlot
       // ↑ Бой, сохранённый до того, как круг минибосса переехал на слот: круг
       // того, кто стоит в строю, забираем с боя на его слот.
 

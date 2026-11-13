@@ -226,6 +226,42 @@ object MaterialKind extends Enum[MaterialKind] {
     override val worthless: Boolean = true
   }
 
+  // ── Добыча из гнёзд сетеплётов ───────────────────────────────────────────
+  // Паучье добро — как и крысиное: Ришелье его не берёт, носят ради будущих
+  // рецептов.
+
+  case object SpiderSilk extends MaterialKind("Паучий шёлк") {
+    override val description: String =
+      "Моток липкой серой нити, снятый с кокона. Тянется лучше жил и режется хуже кожи. " +
+      "Кто знает, откуда он, держит его подальше от лица."
+    override val worthless: Boolean = true
+  }
+
+  case object VenomGland extends MaterialKind("Ядовитая железа") {
+    override val description: String =
+      "Мутный пузырь с кулак величиной, вырезанный из-под жвал сетеплёта. Внутри что-то " +
+      "плещется и на свету густеет. Брать лучше в перчатке."
+    override val worthless: Boolean = true
+  }
+
+  /** Кокон из гнезда сетеплётов. Что в нём — пока не открыть (так решил
+    * пользователь): носят ради будущего. */
+  case object CocoonTreasure extends MaterialKind("Сокровища в коконе") {
+    override val description: String =
+      "Плотный кокон, туго перетянутый паутиной. Внутри прощупывается что-то твёрдое — " +
+      "пряжка? монета? — но паутина не поддаётся даже ножу."
+    override val worthless: Boolean = true
+  }
+
+  /** Железа красного сетеплёта — редкий ингредиент будущих рецептов; Ришелье
+    * берёт её золотом, как кровь крысиного короля. */
+  case object RedSpiderGland extends MaterialKind("Железа красного паука") {
+    override val description: String =
+      "Тёмно-красная железа, горячая даже сквозь перчатку. Яд в ней не плещется, а " +
+      "медленно ворочается, будто ещё живой."
+    override val doubloonPrice: Long = 5L
+  }
+
   /** Единственное в канализации, за что платят: редкий ингредиент будущего
     * набора, и Ришелье берёт его золотом, как железо огненного. */
   case object RatKingBlood extends MaterialKind("Кровь крысиного короля") {
