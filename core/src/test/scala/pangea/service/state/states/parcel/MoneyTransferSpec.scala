@@ -231,7 +231,7 @@ object MoneyTransferSpec extends ZIOSpecDefault {
         (handler, _, bank, _, _, api) = t
         _    <- say(handler, "Передать надколотый рубин", -1L)
         sent <- api.sentMessages.map(_.map(_._1).mkString("\n"))
-      } yield assertTrue(sent.contains("Посыльный носит вещи только из хранилища Торгового дома")) &&
+      } yield assertTrue(sent.contains("Посыльный ищет вещь в хранилище Торгового дома, а потом дома")) &&
               assertTrue(!sent.contains("только в городе") && bank.silverSnapshot == 300L)
     },
 

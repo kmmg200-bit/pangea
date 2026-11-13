@@ -3,7 +3,7 @@ package pangea.service.parcel
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Players, SceneContent}
 import pangea.model.hero.{Hero, HeroId}
-import pangea.model.home.{HomeIntake, HomePlace}
+import pangea.model.home.{HomeData, HomeIntake, HomePlace}
 import pangea.model.item.{Bundling, Item, ItemStack, ItemType}
 import pangea.model.parcel.Parcel
 import pangea.model.user.{User, UserId}
@@ -16,6 +16,7 @@ import pangea.service.sender.ChatTarget
 import pangea.service.payout.Payouts
 import pangea.service.purse.Purse
 import pangea.service.state.PlayerLock
+import pangea.service.storage.ItemStore
 import zio.{Task, ZIO, ZLayer}
 
 import java.util.concurrent.TimeUnit
@@ -177,10 +178,15 @@ final case class Transfers(
           "to"    -> to)
     }
 
-  /** Отдать вещи из хранилища Торгового дома — вне города, с личным посыльным
-    * (см. `Furniture.Courier`). Сумку он не трогает: что при герое вне города,
-    * то при нём и остаётся, как и серебро на руках. В городе вещи передают
-    * только из сумки (см. [[quickSend]]).
+  /** Отдать вещи вне города — с личным посыльным (см. `Furniture.Courier`).
+    * Ищет он сперва в хранилище Торгового дома, а нет там ничего похожего —
+    * дома, на полках ([[Transfers.CourierShelves]]): травы и отвары у верстака
+    * травника, камни в хранилище острова. Нашлось в хранилище — несёт оттуда и
+    * дом не трогает, даже если там такого больше. Одно исключение: вещь
+    * названа ровно, а в хранилище лишь похожие (см. [[named]]), — несёт
+    * названную из дома. Сумку он не трогает: что при герое вне города, то при
+    * нём и остаётся, как и серебро на руках. В городе вещи передают только из
+    * сумки (см. [[quickSend]]).
     *
     * Несёт он только то, что понятно без выбора: одну подходящую вещь или
     * стопку одинаковых. Подходит несколько разных — экрана выбора нет: он затёр
@@ -196,32 +202,66 @@ final case class Transfers(
     chat:   Option[ChatTarget.Peer] = None
   ): Task[Transfers.Outcome] =
     for {
-      vault <- bank.get(hero.id).mapError(e => new Throwable(e.toString))
-      items  = vault.items.data
-      fit    = matching(items, query)
-      res   <- refusal(items, query) match {
-                 case Some(key)           =>
-                   ZIO.succeed(Transfers.Outcome.Forbidden(content.format(key, "query" -> query)))
-                 case None if fit.isEmpty =>
-                   ZIO.succeed(Transfers.Outcome.Forbidden(content.format("transfer.courier.nothing", "query" -> query)))
-                 case None if !unambiguous(fit) =>
-                   ZIO.succeed(Transfers.Outcome.Forbidden(content.format("transfer.courier.ambiguous",
-                     "query" -> query, "items" -> Transfers.namesOf(fit))))
-                 case None =>
-                   ship(sender, target, fit.take(count.max(1)), now, chat)(item =>
-                     bank.withdraw(hero.id, item.id).mapError(e => new Throwable(e.toString)).unit
-                   ).map { shipment =>
-                     val key = if (shipment.items.headOption.exists(HomeIntake.wanted)) "transfer.courier.sentHome"
-                               else "transfer.courier.sent"
-                     Transfers.Outcome.Sent(content.format(key,
-                       "what" -> shipment.items.headOption.fold("")(what(_, shipment.items.size)),
-                       "to"   -> target.name), shipment.handOver)
-                   }
-               }
+      vault   <- bank.get(hero.id).mapError(e => new Throwable(e.toString))
+      stored   = vault.items.data
+      inVault  = matching(stored, query)
+      shelves <- if (named(inVault, query)) ZIO.succeed(Nil) else homeShelves(hero)
+      atHome   = matching(shelves.map(_._2), query)
+      // Хранилище — первым, но названное ровно бьёт похожее: «рубин» дома
+      // важнее «надколотого рубина» в хранилище.
+      res     <- if (inVault.nonEmpty && (named(inVault, query) || !named(atHome, query)))
+                   courierCarry(sender, target, query, inVault, count, now, chat, "transfer.courier", "")(item =>
+                     bank.withdraw(hero.id, item.id).mapError(e => new Throwable(e.toString)).unit)
+                 else if (atHome.nonEmpty) {
+                   val shelfOf = shelves.map { case (kind, item) => item.id -> kind }.toMap
+                   val from    = atHome.headOption.flatMap(i => shelfOf.get(i.id))
+                     .fold("")(kind => content.text(s"transfer.courier.home.from.${kind.id}"))
+                   courierCarry(sender, target, query, atHome, count, now, chat, "transfer.courier.home", from)(item =>
+                     shelfOf.get(item.id) match {
+                       case Some(kind) =>
+                         new ItemStore.HomeShelf(heroDao, kind, content).remove(hero, item).flatMap(removed =>
+                           ZIO.unless(removed)(ZIO.fail(new Throwable(s"Вещи ${item.id} уже нет на полке дома"))).unit)
+                       case None => ZIO.fail(new Throwable(s"Вещи ${item.id} нет на полках дома"))
+                     })
+                 }
+                 else ZIO.succeed(Transfers.Outcome.Forbidden(content.format(
+                   refusal(stored ++ shelves.map(_._2), query).getOrElse("transfer.courier.nothing"), "query" -> query)))
     } yield res
 
+  /** Посыльный несёт найденное `fit` — если ясно, что нести: иначе просит
+    * назвать точнее. `texts` — ключи его строк (хранилище или дом), `from` —
+    * откуда в доме взято; `take` убирает вещь оттуда, где она лежит. */
+  private def courierCarry(sender: User, target: TransferTarget, query: String, fit: List[Item], count: Int,
+                           now: Long, chat: Option[ChatTarget.Peer], texts: String, from: String)(
+      take: Item => Task[Unit]): Task[Transfers.Outcome] =
+    if (!unambiguous(fit))
+      ZIO.succeed(Transfers.Outcome.Forbidden(content.format(s"$texts.ambiguous",
+        "query" -> query, "items" -> Transfers.namesOf(fit))))
+    else
+      ship(sender, target, fit.take(count.max(1)), now, chat)(take).map { shipment =>
+        val key = if (shipment.items.headOption.exists(HomeIntake.wanted)) s"$texts.sentHome" else s"$texts.sent"
+        Transfers.Outcome.Sent(content.format(key,
+          "what" -> shipment.items.headOption.fold("")(what(_, shipment.items.size)),
+          "from" -> from,
+          "to"   -> target.name), shipment.handOver)
+      }
+
+  /** Названо ли найденное ровно по имени: [[matching]] тогда отдаёт только
+    * такое, похожее отбрасывает. */
+  private def named(fit: List[Item], query: String): Boolean = {
+    val rest = ChatCommand.bundleQuery(query)._2
+    fit.exists(i => ChatCommand.sameName(rest, Transfers.searchName(i)))
+  }
+
+  /** Что лежит на полках дома, куда ходит посыльный, — с полкой, откуда брать.
+    * Полки, которой в этом доме нет, он не смотрит. */
+  private def homeShelves(hero: Hero): Task[List[(ItemStore.HomeShelf.Kind, Item)]] =
+    heroDao.readHomeData(hero.userId).map(_.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty)).map { home =>
+      Transfers.CourierShelves.filter(_.stands(home)).flatMap(kind => kind.get(home).map(kind -> _))
+    }
+
   /** Вещи — в посылки получателю: `take` убирает каждую оттуда, где она лежит
-    * (сумка или хранилище), плюс строка в беседу (см. [[log]]). */
+    * (сумка, хранилище или полка дома), плюс строка в беседу (см. [[log]]). */
   private def ship(sender: User, target: TransferTarget, items: List[Item], now: Long, chat: Option[ChatTarget.Peer])(
       take: Item => Task[Unit]): Task[Transfers.Shipment] =
     for {
@@ -526,6 +566,13 @@ object Transfers {
 
   /** Сколько подходящих вещей посыльный перечисляет, прося назвать точнее. */
   val NamesShown: Int = 5
+
+  /** Где в доме посыльный ищет вещь, когда в хранилище Торгового дома её нет:
+    * полки трав и отваров у верстака травника и хранилище камней на острове.
+    * Стойки оружейной, котелок, рунический алтарь и Стену трофеев он не
+    * трогает. */
+  val CourierShelves: List[ItemStore.HomeShelf.Kind] =
+    List(ItemStore.HomeShelf.Herbs, ItemStore.HomeShelf.Brews, ItemStore.HomeShelf.Gems)
 
   /** Подходящие вещи одной строкой: названия, стопки — со счётом, не больше
     * [[NamesShown]], остальное — «и ещё N». */

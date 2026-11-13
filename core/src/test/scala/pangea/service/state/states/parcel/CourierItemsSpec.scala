@@ -3,10 +3,10 @@ package pangea.service.state.states.parcel
 import io.circe.Json
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.generator.item.MaterialGenerator
+import pangea.generator.item.{GemGenerator, MaterialGenerator}
 import pangea.model.hero.{Hero, HeroId}
 import pangea.model.home.{Furniture, HomeData}
-import pangea.model.item.{Item, ItemType, MaterialKind, Rarity}
+import pangea.model.item.{GemKind, Item, ItemType, MaterialKind, Rarity}
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.admin.AdminPanel
@@ -18,10 +18,10 @@ import pangea.test._
 import zio.ZIO
 import zio.test._
 
-/** Вещи с личным посыльным: вне города «Передать …» берёт вещь только из
-  * хранилища Торгового дома, сумку не трогает и экрана выбора не открывает —
-  * несёт лишь то, что понятно без выбора. В городе всё как раньше: только из
-  * сумки. */
+/** Вещи с личным посыльным: вне города «Передать …» берёт вещь из хранилища
+  * Торгового дома, а нет там — с полок дома; сумку не трогает и экрана выбора
+  * не открывает — несёт лишь то, что понятно без выбора. В городе всё как
+  * раньше: только из сумки. */
 object CourierItemsSpec extends ZIOSpecDefault {
 
   private val userId     = UserId(1L)
@@ -32,6 +32,11 @@ object CourierItemsSpec extends ZIOSpecDefault {
 
   private def mithril(id: Long): Item = MaterialGenerator.item(MaterialKind.Mithril).copy(id = id)
 
+  private def herb(id: Long): Item = MaterialGenerator.item(MaterialKind.Chamomile).copy(id = id)
+
+  /** Рубин: 1 — «Надколотый рубин», 3 — просто «Рубин», 4 — «Безупречный рубин». */
+  private def gem(id: Long, grade: Int): Item = GemGenerator.item(GemKind.Ruby, grade).copy(id = id)
+
   private def sword(id: Long, attack: Int): Item =
     Item(id, "Острый меч", lvl = 3L, Rarity.Blue, ItemType.Weapon,
       attack = attack, accuracy = 2, energy = 0, armor = 0, defence = 0, evasion = 0)
@@ -40,16 +45,17 @@ object CourierItemsSpec extends ZIOSpecDefault {
                          mine: TestBankRepository, theirs: TestBankRepository, players: TestPlayers, api: TestApi)
 
   /** Отправитель там, где `state`; хранилище у него своё, у получателя — своё:
-    * по ним видно, откуда ушло и куда легло. */
+    * по ним видно, откуда ушло и куда легло. `house` — дом отправителя с тем,
+    * что лежит на его полках. */
   private def chat(state: StateType = StateType.Dungeon, courier: Boolean = true, stored: Boolean = false,
-                   bag: List[Item] = Nil, vault: List[Item] = Nil) =
+                   bag: List[Item] = Nil, vault: List[Item] = Nil, house: HomeData = HomeData(tier = 1)) =
     for {
       heroDao  <- TestHeroDao.withHero(userId, TestFixtures.hero(userId, state = state))
       _        <- heroDao.insertHero(TestFixtures.hero(friendUs).copy(id = friendHero))
       // Личный посыльный — обстановка домика; спрятанный в кладовую не работает.
       _        <- ZIO.when(courier)(heroDao.writeHomeData(userId,
-                    (if (stored) HomeData(tier = 1, stored = List(Furniture.Courier.key))
-                     else HomeData(tier = 1, furniture = List(Furniture.Courier.key))).asJson))
+                    (if (stored) house.copy(stored = List(Furniture.Courier.key))
+                     else house.copy(furniture = List(Furniture.Courier.key))).asJson))
       userRepo <- TestUserRepository.withUsers(sender, friend)
       api      <- TestApi.make
       content  <- ZIO.attempt(SceneContent.load())
@@ -71,6 +77,9 @@ object CourierItemsSpec extends ZIOSpecDefault {
   private def sent(f: Fix) = f.api.sentMessages.map(_.map(_._1).mkString("\n"))
 
   private def heroOf(dao: TestHeroDao): zio.Task[Hero] = dao.getHeroByUserId(userId).someOrFail(new Throwable("no hero"))
+
+  private def homeOf(dao: TestHeroDao): zio.Task[HomeData] =
+    dao.readHomeData(userId).map(_.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty))
 
   override def spec = suite("Посыльный и вещи")(
 
@@ -119,8 +128,73 @@ object CourierItemsSpec extends ZIOSpecDefault {
         f    <- chat(bag = List(mithril(21L)))
         _    <- say(f, "Передать мифрил")
         text <- sent(f)
-      } yield assertTrue(text.contains("Посыльный носит вещи только из хранилища Торгового дома, а там нет ничего похожего на «мифрил»")) &&
+      } yield assertTrue(text.contains("Посыльный ищет вещь в хранилище Торгового дома, а потом дома")) &&
+              assertTrue(text.contains("Ничего похожего на «мифрил» он не нашёл")) &&
               assertTrue(f.bag.snapshot.map(_.id) == List(21L) && f.theirs.itemsSnapshot.isEmpty)
+    },
+
+    test("в хранилище нет — несёт с полок дома: травы уходят с верстака травника, сумка и хранилище не тронуты") {
+      for {
+        f    <- chat(bag = List(herb(21L)), vault = List(mithril(11L)),
+                  house = HomeData(tier = 2, herbs = List(herb(41L), herb(42L), herb(43L))))
+        _    <- say(f, "Передать ромашка 2 шт")
+        text <- sent(f)
+        home <- homeOf(f.dao)
+      } yield assertTrue(home.herbs.map(_.id) == List(43L)) &&
+              assertTrue(f.theirs.itemsSnapshot.map(_.id).sorted == List(41L, 42L)) &&
+              assertTrue(f.mine.itemsSnapshot.map(_.id) == List(11L) && f.bag.snapshot.map(_.id) == List(21L)) &&
+              assertTrue(text.contains(s"🏃 В хранилище Торгового дома такого не нашлось — посыльный взял ${herb(1L).displayTitle} ×2 с полок верстака травника у вас дома и отнёс игроку")) &&
+              assertTrue(text.contains("Вещь ляжет к нему в дом или в банковскую ячейку.")) &&
+              assertTrue(f.players.announcedTrade.exists(_.contains("×2")))
+    },
+
+    test("есть и в хранилище, и дома — несёт из хранилища, полки не тронуты") {
+      for {
+        f    <- chat(vault = List(herb(11L)), house = HomeData(tier = 2, herbs = List(herb(41L))))
+        _    <- say(f, "Передать ромашка")
+        text <- sent(f)
+        home <- homeOf(f.dao)
+      } yield assertTrue(f.mine.itemsSnapshot.isEmpty && f.theirs.itemsSnapshot.map(_.id) == List(11L)) &&
+              assertTrue(home.herbs.map(_.id) == List(41L)) &&
+              assertTrue(text.contains("из вашего хранилища Торгового дома"))
+    },
+
+    test("названное ровно бьёт похожее: «рубин» — из хранилища камней дома, «надколотый рубин» — из хранилища Торгового дома") {
+      val island = HomeData(tier = 3, gems = List(gem(51L, 3)))
+      for {
+        f     <- chat(vault = List(gem(12L, 1)), house = island)
+        _     <- say(f, "Передать рубин")
+        text  <- sent(f)
+        home  <- homeOf(f.dao)
+        g     <- chat(vault = List(gem(12L, 1)), house = island)
+        _     <- say(g, "Передать надколотый рубин")
+        other <- homeOf(g.dao)
+      } yield assertTrue(f.theirs.itemsSnapshot.map(_.id) == List(51L) && home.gems.isEmpty) &&
+              assertTrue(f.mine.itemsSnapshot.map(_.id) == List(12L)) &&
+              assertTrue(text.contains("из хранилища камней у вас дома")) &&
+              assertTrue(g.theirs.itemsSnapshot.map(_.id) == List(12L) && g.mine.itemsSnapshot.isEmpty) &&
+              assertTrue(other.gems.map(_.id) == List(51L))
+    },
+
+    test("дома подходит несколько разных — посыльный просит назвать точнее: ничего не ушло") {
+      for {
+        f    <- chat(house = HomeData(tier = 3, gems = List(gem(51L, 1), gem(52L, 4))))
+        _    <- say(f, "Передать рубин")
+        text <- sent(f)
+        home <- homeOf(f.dao)
+      } yield assertTrue(text.contains("в хранилище Торгового дома такого нет, а дома под «рубин» подходит несколько вещей")) &&
+              assertTrue(text.contains("Назовите точнее")) &&
+              assertTrue(home.gems.size == 2 && f.theirs.itemsSnapshot.isEmpty && f.players.announcedTrade.isEmpty)
+    },
+
+    test("полки, которой в этом доме нет, посыльный не смотрит") {
+      for {
+        f    <- chat(house = HomeData(tier = 1, herbs = List(herb(41L))))
+        _    <- say(f, "Передать ромашка")
+        text <- sent(f)
+        home <- homeOf(f.dao)
+      } yield assertTrue(text.contains("Ничего похожего на «ромашка» он не нашёл")) &&
+              assertTrue(home.herbs.map(_.id) == List(41L) && f.theirs.itemsSnapshot.isEmpty)
     },
 
     test("без посыльного вещи из лабиринта не передать — и подсказка про посыльного") {
@@ -129,7 +203,7 @@ object CourierItemsSpec extends ZIOSpecDefault {
         _    <- say(f, "Передать мифрил")
         text <- sent(f)
       } yield assertTrue(text.contains("только в городе")) &&
-              assertTrue(text.contains("вещи из хранилища Торгового дома передаст откуда угодно личный посыльный")) &&
+              assertTrue(text.contains("вещи из хранилища Торгового дома и с полок дома передаст откуда угодно личный посыльный")) &&
               assertTrue(f.mine.itemsSnapshot.size == 1)
     },
 
