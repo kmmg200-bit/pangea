@@ -243,7 +243,10 @@ case class BattleEffects(
   heroWebTurns:         Option[Int]                = None,
   // Яд красного сетеплёта: следующее активное умение героя сорвётся (см.
   // RedSpider). Option — чтобы бои, записанные до этого, читались.
-  heroSkillJammed:      Option[Boolean]            = None
+  heroSkillJammed:      Option[Boolean]            = None,
+  // Проклятие Некроманта: сколько концов раунда раны героя ещё не затягиваются
+  // (см. HealCurse). Option — чтобы бои, записанные до проклятия, читались.
+  heroCursedTurns:      Option[Int]                = None
 ) {
 
   /** Только то, что висит на МОБЕ: яд, кровь, огонь, дебафы. Геройская
@@ -267,7 +270,10 @@ case class BattleEffects(
   )
 
   /** Геройская половина: реген, горение и яд на герое, срезы, флаги наборов. Она
-    * остаётся при смене пары — у героя противник сменился, а его раны нет. */
+    * остаётся при смене пары — у героя противник сменился, а его раны нет.
+    * Здесь — каждое поле героя: забытое пропадало, стоило смениться тому, кто в
+    * полях, или походить мобу из строя (паутина, яд красного сетеплёта, грань
+    * аметиста так и терялись). */
   def heroPart: BattleEffects = BattleEffects(
     heroColdDefenceCut   = heroColdDefenceCut,
     airBoostTurns        = airBoostTurns,
@@ -282,9 +288,13 @@ case class BattleEffects(
     heroPoisonCoatTurns  = heroPoisonCoatTurns,
     heroBleedCoatTurns   = heroBleedCoatTurns,
     heroSmokeTurns       = heroSmokeTurns,
+    heroTrueStrikeTurns  = heroTrueStrikeTurns,
     heroMirrors          = heroMirrors,
     heroRootedTurns      = heroRootedTurns,
-    heroWards            = heroWards
+    heroWards            = heroWards,
+    heroWebTurns         = heroWebTurns,
+    heroSkillJammed      = heroSkillJammed,
+    heroCursedTurns      = heroCursedTurns
   )
 
   /** Своя геройская половина плюс мобовая половина другого набора. */
@@ -351,6 +361,12 @@ case class BattleEffects(
 
   /** Конец раунда: паутина на герое держит на раунд меньше. */
   def webTicked: BattleEffects = copy(heroWebTurns = heroWebTurns.map(_ - 1).filter(_ > 0))
+
+  /** Держит ли героя проклятие Некроманта: HP он сейчас не восстанавливает (см. HealCurse). */
+  def heroCursed: Boolean = heroCursedTurns.exists(_ > 0)
+
+  /** Конец раунда: проклятие на герое держит на раунд меньше. */
+  def curseTicked: BattleEffects = copy(heroCursedTurns = heroCursedTurns.map(_ - 1).filter(_ > 0))
 
   /** Бережёт ли героя защитный отвар от этого. */
   def warded(w: Ward): Boolean = heroWards.exists(_.contains(w))

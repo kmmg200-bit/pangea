@@ -7,7 +7,7 @@ import pangea.domain.Rng
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.generator.loot.LootGenerator
 import pangea.generator.monster.MonsterGenerator
-import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Convoy, Element, Formation, GroupState, HealedWounds, MonsterSlot, Nature, Poison, RaceTactics, Regen, RedSpider, SlainMonster, SoloPveBattle, SkillSlotState, SpiderWeb, TimedDefenceDebuff, Wagon, Ward}
+import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Convoy, Element, Formation, GroupState, HealCurse, HealedWounds, MonsterSlot, Nature, Poison, RaceTactics, Regen, RedSpider, SlainMonster, SoloPveBattle, SkillSlotState, SpiderWeb, TimedDefenceDebuff, Wagon, Ward}
 import pangea.model.cave.CaveGenerator
 import pangea.model.item.ItemSet
 import pangea.model.squad.AllySkill
@@ -270,7 +270,8 @@ case class BattleState(
       pulled  = pullFreeStep(ratted)
       // Мобы своё прошли — теперь отряд: кому некого бить, идёт к врагу.
       advanced = squadStep(pulled)
-      // Паутина держит до самого конца раунда — после всех шагов она слабеет.
+      // Паутина держит до самого конца раунда — после всех шагов она слабеет;
+      // проклятие Некроманта — тоже, после всего лечения раунда.
       unwebbed = webTick(advanced)
       // Подсказка про поглощённый удар идёт последней строкой раунда — уже после
       // всего, что в нём случилось.
@@ -1256,16 +1257,33 @@ case class BattleState(
       if (battle.boss.exists(_.holdsPosition) && battle.monsterCurrentHp > 0L)
         bossTurnCast(hero, battle, nowMs, Victim.Hero)
       else ZIO.succeed((battle, hero, ""))
-    casted.map { case (afterCast, castHero, castLine) =>
+    for {
+      c <- casted
+      (afterCast0, castHero0, castLine) = c
+      // Удар проклятой энергией бьёт и отсюда: свалил союзника — тот уходит из
+      // строя, как от удара; по герою — может оставить травму, как всякий приём.
+      (afterCast, goneLines) = sweepCastFallen(battle, afterCast0)
+      trauma <- hitTrauma(hero, castHero0, nowMs)
+      (castHero, traumaLine) = trauma
+    } yield {
       val ticked = afterCast.tickBuffs(skip)
       val (tickedHero, tickedBattle, heroEffectLine) = tickHeroEffects(castHero, ticked, nowMs)
       val alive = tickedHero.fightStats.hp > 0
-      val fed   = if (alive) endOfRoundHero(tickedHero, nowMs) else tickedHero
-      val lines = (log ++ Vector(castLine).filter(_.nonEmpty) ++
+      val fed   = if (alive) endOfRoundHero(tickedHero, tickedBattle, nowMs) else tickedHero
+      val lines = (log ++ Vector(castLine).filter(_.nonEmpty) ++ goneLines ++ traumaLine.toVector ++
                     Vector(heroEffectLine).filter(_.nonEmpty)) ++ vampLine(vampHeal)
       TurnResult(fed, tickedBattle, lines, if (alive) Outcome.Continue else Outcome.Death)
     }
   }
+
+  /** Кого из стоявших на ногах до умения оно добило — тех убрать из строя (см.
+    * [[sweepFallenAlly]]). Бьёт умение не всегда того, кто стоит напротив:
+    * прыжок волка и удар проклятой энергией Некроманта цель ищут сами. */
+  private def sweepCastFallen(before: SoloPveBattle, after: SoloPveBattle): (SoloPveBattle, Vector[String]) =
+    before.group.allies.filter(_.alive).foldLeft((after, Vector.empty[String])) { case ((b, lines), a) =>
+      val (swept, line) = sweepFallenAlly(b, Some(a))
+      (swept, lines ++ line.toVector)
+    }
 
   /** Конец раунда: кому из отряда некого бить, шагает к ближайшему врагу
     * (`SoloPveBattle.squadAdvance`). Идут после мобов: те уже подтянулись к
@@ -1277,8 +1295,9 @@ case class BattleState(
     * ходом, а места после хода записываются стороне (`ArenaBattle.harvest`) —
     * соперник увидит его уже там. Чужих бойцов здесь никто не двигает. */
   /** Конец раунда: паутина на герое и на союзниках держит на раунд меньше —
-    * после всех шагов раунда, чтобы она держала и их (см. SpiderWeb). Ход,
-    * который раунда не кончил, её не трогает. */
+    * после всех шагов раунда, чтобы она держала и их (см. SpiderWeb). Так же и
+    * проклятие Некроманта (см. HealCurse): после всего лечения раунда. Ход,
+    * который раунда не кончил, их не трогает. */
   private def webTick(res: TurnResult): TurnResult =
     if (res.outcome != Outcome.Continue || !res.endsRound) res
     else res.copy(battle = BattleState.webTicked(res.battle))
@@ -1459,7 +1478,10 @@ case class BattleState(
             // Вампирская фляга: удар по HP лечит и тратит один из её ударов.
             flaskBite  = battle.effects.heroVampiricHits > 0 && hpDmg > 0
             flaskSteal = if (flaskBite) (hpDmg * FlaskRates.VampiricPct / 100L).max(0L) else 0L
-            healedHero = if (vamp + setSteal + flaskSteal > 0) hero.copy(fightStats = hero.fightStats.copy(hp = (hero.fightStats.hp + vamp + setSteal + flaskSteal).min(maxHp))) else hero
+            // Проклятого Некромантом выпитая кровь не лечит (см. HealCurse);
+            // удар вампирской фляги при этом всё равно тратится.
+            stolen     = if (battle.effects.heroCursed) 0L else vamp + setSteal + flaskSteal
+            healedHero = if (stolen > 0) hero.copy(fightStats = hero.fightStats.copy(hp = (hero.fightStats.hp + stolen).min(maxHp))) else hero
             vampGained = healedHero.fightStats.hp - hero.fightStats.hp
             effectsFed = if (!flaskBite) effectsWeak else effectsWeak.copy(heroVampiricHits = effectsWeak.heroVampiricHits - 1)
             hitBattle = hurt.battle.copy(heroStruck = true).withEffects(effectsFed)
@@ -1597,7 +1619,10 @@ case class BattleState(
       val hero     = res.hero
       val maxHp    = hero.effectiveMaxHp(nowMs)
       val maxArmor = hero.effectiveMaxArmor(nowMs)
-      val newHp    = (hero.fightStats.hp + maxHp * hero.sets.feastHpPct * kills / 100L).min(maxHp).max(hero.fightStats.hp)
+      // Проклятого пир кормит только бронёй: раны не затягиваются (см. HealCurse).
+      val newHp    =
+        if (res.battle.effects.heroCursed) hero.fightStats.hp
+        else (hero.fightStats.hp + maxHp * hero.sets.feastHpPct * kills / 100L).min(maxHp).max(hero.fightStats.hp)
       val newArmor = (hero.fightStats.armor + maxArmor * hero.sets.feastArmorPct * kills / 100L).min(maxArmor).max(hero.fightStats.armor)
       val hpGained    = newHp - hero.fightStats.hp
       val armorGained = newArmor - hero.fightStats.armor
@@ -1827,7 +1852,7 @@ case class BattleState(
       case Some(MiniBoss.RottenJoe)      => joeTurnCast(hero, battle, nowMs, victim)
       case Some(MiniBoss.WhiteWolf)      => wolfTurnCast(hero, battle, nowMs, victim)
       case Some(MiniBoss.RatKing)        => ratKingTurnCast(hero, battle)
-      case Some(MiniBoss.Necromancer)    => necromancerTurnCast(hero, battle)
+      case Some(MiniBoss.Necromancer)    => necromancerTurnCast(hero, battle, nowMs)
       case _                             => fireTurnCast(hero, battle, nowMs, victim)
     }
 
@@ -1844,21 +1869,57 @@ case class BattleState(
     case Victim.Ally(pos) => battle.group.allyAt(pos).map(a => (a.stats.hp - a.hp).max(0L)).getOrElse(0L)
   }
 
-  /** Круг Некроманта: воскрешение → мистический шаг → созидание.
+  /** Кого минибосс в полях боя достаёт приёмом, бьющим на `reach` мест, — как
+    * обычным ударом, только дальше: союзника напротив; нет его — героя (лежачего
+    * не трогают); нет и его — ближайшего союзника, не дальше `reach` мест. Цель
+    * и её место. Так ищут цель прыжок Белого волка и удар проклятой энергией
+    * Некроманта. */
+  private def reachTarget(b: SoloPveBattle, reach: Int): Option[(Victim, Int)] = {
+    val g   = b.group
+    val pos = g.activePos
+    g.allyAt(pos).filter(_.alive).map(a => (Victim.Ally(a.position): Victim) -> a.position)
+      .orElse(Option.when(!g.heroDown && math.abs(pos - g.heroPos) <= reach)((Victim.Hero: Victim) -> g.heroPos))
+      .orElse(b.allyWithin(pos, reach).map(a => (Victim.Ally(a.position): Victim) -> a.position))
+  }
+
+  /** Урон по цели приёма мимо брони — весь в HP: так бьёт проклятая энергия
+    * Некроманта. Герою — с поправкой на поднятый щит, наборы и «Упрямство», как
+    * всякий приём минибосса (см. [[hurtVictim]]), только броня удара не
+    * принимает; союзнику — по его защите и тоже мимо брони. Возвращает героя,
+    * бой и сколько урона прошло (для строки лога). */
+  private def hurtVictimHp(v: Victim, hero: Hero, battle: SoloPveBattle, damage: Long, nowMs: Long): (Hero, SoloPveBattle, Long) =
+    v match {
+      case Victim.Hero =>
+        val dealt = bossDamageTaken(hero, battle, BattleState.shieldCut(battle.heroBlockPct, damage))
+        val toHp  = hero.sets.stubbornLoss(dealt, hero.effectiveMaxHp(nowMs))
+        (hero.copy(fightStats = hero.fightStats.copy(hp = (hero.fightStats.hp - toHp).max(0L))), battle, toHp)
+      case Victim.Ally(pos) =>
+        battle.group.allyAt(pos).filter(_.alive) match {
+          case None => (hero, battle, 0L)
+          case Some(a) =>
+            val reduced = (damage * (1.0 - allyReduction(a, battle.monsterStats.atk))).toLong.max(1L)
+            val hurt    = a.copy(hp = (a.hp - reduced).max(0L), lastHitBy = Some(battle.monsterName))
+            (hero, battle.copy(group = battle.group.updateAlly(pos)(_ => hurt)), reduced)
+        }
+    }
+
+  /** Круг Некроманта: удар проклятой энергией → мистический шаг → созидание.
     *
-    * Воскрешение поднимает ВСЮ его павшую нежить — целой, с полным HP и бронёй,
-    * — и забирает её из добычи: за одного и того же мертвеца дважды не платят
-    * (так же, как за крыс, съеденных королём). Шаг уводит его за спины своих —
-    * на ближайшее свободное место, перед которым стоит его мертвец, и никогда
-    * не ближе к герою. Он и так за спинами своих — стоит, где стоял, молча;
-    * прятаться не за кем или некуда — пропуск со словами. Шаг на месте ничего
-    * не стоит. Созидание поднимает нового мертвеца той же расы, что пещера,
-    * третьего или четвёртого ранга.
+    * Удар проклятой энергией бьёт того, кого он достаёт на три места (цель —
+    * как у обычного удара, см. [[reachTarget]]), всей атакой сразу в HP, мимо
+    * брони, и проклинает: до конца следующего раунда раны цели не затягиваются
+    * (см. HealCurse). Достать некого — пропуск, бесплатный. Шаг уводит его за
+    * спины своих — на ближайшее свободное место, перед которым стоит его
+    * мертвец, и никогда не ближе к герою. Он и так за спинами своих — стоит, где
+    * стоял, молча; прятаться не за кем или некуда — пропуск со словами. Шаг на
+    * месте ничего не стоит. Созидание поднимает нового мертвеца той же расы, что
+    * пещера, третьего или четвёртого ранга, уровнем в саму пещеру.
     *
     * Не хватило энергии — способность не применяется, но очередь сдвигается. */
   private def necromancerTurnCast(
       hero: Hero,
-      battle: SoloPveBattle
+      battle: SoloPveBattle,
+      nowMs: Long
   ): Task[(SoloPveBattle, Hero, String)] = {
     val necro  = MiniBoss.Necromancer
     val lvl    = battle.monsterLvl
@@ -1868,29 +1929,29 @@ case class BattleState(
     def spend(cost: Long, b: SoloPveBattle): SoloPveBattle = b.copy(monsterCurrentEnergy = energy - cost)
 
     battle.bossTurn match {
-      // 1) Воскрешение: все его павшие встают целыми и уходят из добычи. Встают
-      // смертные — те, кого генератор умеет собрать заново (как и при
-      // «Созидании»). Павший нежитью по рождению (с расой «Нежить») лежит:
-      // мобов такой расы генератор не знает, и раньше ход падал на нём каждый
-      // раз — бой нельзя было ни продолжить, ни закончить, только /home.
+      // 1) Удар проклятой энергией: вся атака сразу в HP — и проклятие, раны
+      // не затягиваются до конца следующего раунда. В дыму из-за спин своих он
+      // никого не видит — так же, как не видят мобы вне пары.
       case 0 =>
-        val cost  = necro.ReviveCostPerLvl * lvl
-        def revivable(s: SlainMonster): Boolean =
-          s.undead && Race.withNameOption(s.race).exists(Race.mortals.contains)
-        val fallen = battle.group.slain.filter(revivable)
-        if (energy < cost || fallen.isEmpty) ZIO.succeed((next, hero, ""))
-        else {
-          val raised = fallen.foldLeft(spend(cost, next)) { (b, s) =>
-            val m = MonsterGenerator.generateOfRaceAndRarity(
-              s.lvl.toInt, Race.withName(s.race), Rarity.withName(s.rarity))
-            val slot = MonsterSlot(s.lvl, s.race, s.rarity, m.fightStats, m.fightStats.hp,
-              m.fightStats.armor, s.marked, 0L, BattleEffects.empty, undead = true)
-            b.admit(slot)
-          }
-          // Из добычи они уходят: поднятый второй раз платы не стоит.
-          val cleared = raised.copy(group = raised.group.copy(
-            slain = raised.group.slain.filterNot(revivable)))
-          ZIO.succeed((cleared, hero, content.format("battle.necro.revive", "n" -> fallen.size.toString)))
+        val cost = necro.CurseCostPerLvl * lvl
+        val prey =
+          if (battle.effects.heroInSmoke && !battle.group.paired) None
+          else reachTarget(battle, necro.CurseReach).map(_._1)
+        prey match {
+          case Some(victim) if energy >= cost =>
+            val raw = (monsterAttack(battle) * necro.CurseDamageFactor).toLong.max(1L)
+            val (hurt, struck, dealt) = hurtVictimHp(victim, hero, spend(cost, next), raw, nowMs)
+            val (cursed, line) = victim match {
+              case Victim.Hero =>
+                (struck.copy(effects = struck.effects.copy(heroCursedTurns = Some(HealCurse.Turns))),
+                 content.format("battle.necro.curse", "damage" -> dealt.toString))
+              case Victim.Ally(pos) =>
+                (struck.copy(group = struck.group.updateAlly(pos)(_.copy(cursed = HealCurse.Turns))),
+                 content.format("battle.necro.curseAlly",
+                   "name" -> struck.group.allyAt(pos).fold("")(_.name), "damage" -> dealt.toString))
+            }
+            ZIO.succeed((cursed, hurt, line))
+          case _ => ZIO.succeed((next, hero, ""))
         }
 
       // 2) Мистический шаг: за спины своих. Кто и так за ними, тот не уходит.
@@ -1909,6 +1970,12 @@ case class BattleState(
       // 3) Созидание: поднимает нового мертвеца.
       case _ =>
         val cost = necro.CreateCostPerLvl * lvl
+        // Уровнем в саму пещеру (лабиринт или задание), как и его охрана, а не
+        // в свой: у босса уровень — четверть геройского, и поднятый выходил
+        // пустышкой. В бою, записанном без уровня пещеры, — по старшему из строя.
+        val mobLvl =
+          if (battle.minionLvl > 0L) battle.minionLvl
+          else battle.group.others.map(_.lvl).maxOption.getOrElse(lvl)
         if (energy < cost || !battle.hasRoom) ZIO.succeed((next, hero, ""))
         else
           for {
@@ -1922,7 +1989,7 @@ case class BattleState(
                                   .find(Race.mortals.contains))
                         .getOrElse(Race.Orc)
             pct    <- Random.nextLongBetween(MonsterEnergy.StartPctMin, MonsterEnergy.StartPctMax + 1L)
-            m       = MonsterGenerator.generateOfRaceAndRarity(lvl.toInt, race, rarity)
+            m       = MonsterGenerator.generateOfRaceAndRarity(mobLvl.toInt, race, rarity)
             slot    = MonsterSlot(m.lvl, race.entryName, rarity.entryName, m.fightStats,
                         m.fightStats.hp, m.fightStats.armor, m.marked,
                         MonsterEnergy.startEnergy(m.lvl, rarity, pct), BattleEffects.empty, undead = true)
@@ -2252,17 +2319,6 @@ case class BattleState(
         (b2, hurt, text)
       }
 
-    /** Кого волк достаёт прыжком — как обычным ударом, только дальше: союзника
-      * напротив; нет его — героя (лежачего не трогают); нет и его — ближайшего
-      * союзника, не дальше `reach` мест. Цель и её место. */
-    def leapTarget(b: SoloPveBattle, reach: Int): Option[(Victim, Int)] = {
-      val g   = b.group
-      val pos = g.activePos
-      g.allyAt(pos).filter(_.alive).map(a => (Victim.Ally(a.position): Victim) -> a.position)
-        .orElse(Option.when(!g.heroDown && math.abs(pos - g.heroPos) <= reach)((Victim.Hero: Victim) -> g.heroPos))
-        .orElse(b.allyWithin(pos, reach).map(a => (Victim.Ally(a.position): Victim) -> a.position))
-    }
-
     /** Волк встаёт напротив цели на месте `at`; занято другим мобом — на
       * ближайшее к ней свободное место по пути от него. */
     def leapTo(b: SoloPveBattle, at: Int): SoloPveBattle = {
@@ -2333,7 +2389,7 @@ case class BattleState(
         if (energy < cost) ZIO.succeed((next, hero, ""))
         else {
           val dodgy = spend(cost, next).copy(effects = next.effects.copy(mobInstinctTurns = wolf.LeapDodgeTurns))
-          leapTarget(battle, if (pinned) GroupState.Reach else wolf.LeapReach) match {
+          reachTarget(battle, if (pinned) GroupState.Reach else wolf.LeapReach) match {
             case Some((prey, at)) =>
               val landed = if (pinned) dodgy else leapTo(dodgy, at)
               bite(landed, prey, (atk * wolf.LeapDamageFactor).toLong.max(1L), 0, d => leapLine(prey, landed, d))
@@ -2501,11 +2557,16 @@ case class BattleState(
     // (см. Bleed): рана затянута. Яд оно ослабляет, а пламя тратит собой:
     // горение до 50% сгорает целиком, сверх того остаётся гореть излишек
     // (см. HealedWounds). Из-под миазм тьмы лечение не выводит.
+    //
+    // Проклятого Некромантом лечение не лечит: фляга или умение тратятся и с
+    // ранами делают всё то же, только HP не прибавляют (см. HealCurse).
     val fx     = battle0.effects
+    val cursed = fx.heroCursed
     val healed = HealedWounds.of(raw, fx.heroPoison, fx.heroBurn)
-    val newHp  = (hero.fightStats.hp + healed.amount).min(hero.effectiveMaxHp(nowMs))
+    val newHp  = if (cursed) hero.fightStats.hp else (hero.fightStats.hp + healed.amount).min(hero.effectiveMaxHp(nowMs))
     val battle = battle0.copy(effects = fx.copy(heroBleed = None, heroPoison = healed.poison,
       heroBurn = healed.burn))
+    val curseLine = Option.when(cursed)(content.text("battle.necro.healCursed"))
     val burnLine = healed.burnCutPct.map(cut => healed.burn match {
       case None    => content.format("battle.burnEatsHealOut", "pct" -> cut.toString)
       case Some(b) => content.format("battle.burnEatsHeal", "pct" -> cut.toString, "left" -> b.pct.toString)
@@ -2514,7 +2575,7 @@ case class BattleState(
       case None    => content.text("battle.healCuresPoison")
       case Some(p) => content.format("battle.healEasesPoison", "left" -> p.pct.toString)
     })
-    val lines = List(burnLine, poisonLine).flatten
+    val lines = List(curseLine, burnLine, poisonLine).flatten
     (newHp, newHp - hero.fightStats.hp, battle, Option.when(lines.nonEmpty)(lines.mkString("\n")))
   }
 
@@ -3381,8 +3442,9 @@ case class BattleState(
       heroStands         = tickedHero.fightStats.hp > 0
       vampiresOnHeroSide = if (tickedHero.sets.healsFromBleed) 1 else 0
       bleedShare         = ItemSet.Ghoul.bleedHealShare(bleedDealt, vampiresOnHeroSide)
+      // Проклятого Некромантом чужая кровь не лечит (см. HealCurse).
       heroFedByBleed =
-        if (heroStands && bleedShare > 0L)
+        if (heroStands && bleedShare > 0L && !tickedBattle.effects.heroCursed)
           tickedHero.copy(fightStats = tickedHero.fightStats.copy(
             hp = (tickedHero.fightStats.hp + bleedShare).min(tickedHero.effectiveMaxHp(nowMs))))
         else tickedHero
@@ -3394,7 +3456,7 @@ case class BattleState(
 
       // Реген энергии в конце хода: +(Интеллект + 0.5·Ловкость), не меньше 1 и не
       // выше максимума. «Сосредоточенность» множит реген на 1.1. Пока герой жив.
-      finalHeroWithEnergy = if (heroStands) endOfRoundHero(heroFedByBleed, nowMs) else heroFedByBleed
+      finalHeroWithEnergy = if (heroStands) endOfRoundHero(heroFedByBleed, tickedBattle, nowMs) else heroFedByBleed
 
       // Сегмент монстра: пустой разделитель, строка атаки, затем (в исходном
       // порядке) каст моба, тики DoT на мобе, тики и реген героя, и последним —
@@ -3425,8 +3487,13 @@ case class BattleState(
     * Одна точка на все ходы. Раньше реген HP висел на базовой атаке героя, и
     * раунд без удара — «Ждать», шаг к союзнику, умение, после которого бить
     * некого, — проходил без регена вовсе. */
-  private def endOfRoundHero(hero: Hero, nowMs: Long): Hero =
-    regainEnergy(hero, nowMs).withCombatRegen(nowMs)
+  /** Конец раунда героя: энергия и боевой реген. Проклятого Некромантом реген
+    * HP не лечит — броню чинит, энергию копит, как всегда (см. HealCurse). */
+  private def endOfRoundHero(hero: Hero, battle: SoloPveBattle, nowMs: Long): Hero = {
+    val regen = regainEnergy(hero, nowMs).withCombatRegen(nowMs)
+    if (battle.effects.heroCursed) regen.copy(fightStats = regen.fightStats.copy(hp = hero.fightStats.hp))
+    else regen
+  }
 
   private def regainEnergy(hero: Hero, nowMs: Long): Hero = {
     val b       = hero.effectiveBaseStats(nowMs)
@@ -3446,7 +3513,7 @@ case class BattleState(
     * Раны героя здесь не тикают: кончится ли бой, решит промоут. Пойдёт бой
     * дальше — они тикают там (см. [[dueWounds]]). */
   private def victoryByHero(hero: Hero, battle: SoloPveBattle, log: Vector[String], nowMs: Long, skip: Set[Long]): TurnResult =
-    TurnResult(endOfRoundHero(hero, nowMs), battle.tickBuffs(skip), log, Outcome.Victory, woundsDue = true)
+    TurnResult(endOfRoundHero(hero, battle, nowMs), battle.tickBuffs(skip), log, Outcome.Victory, woundsDue = true)
 
   /** Раны героя в раунде, который он сам кончил, добив активного (см.
     * [[victoryByHero]]): до конца хода, где они тикают, — ответа моба в паре
@@ -3545,6 +3612,10 @@ case class BattleState(
       case None => (poisonedHero, poisonedBattle, "")
     }
     val (finalHero, finalBattle, regenLine) = bledBattle.effects.heroRegen match {
+      // Проклятого Некромантом реген не лечит, но срок его идёт (см. HealCurse);
+      // строки «+0» не пишем — значок проклятия у HP и так виден.
+      case Some(regen) if bledBattle.effects.heroCursed =>
+        (bledHero, bledBattle.copy(effects = bledBattle.effects.copy(heroRegen = regen.decayed)), "")
       case Some(regen) =>
         val maxHp  = bledHero.effectiveMaxHp(nowMs)
         // Регенерация горением НЕ режется: это не действие игрока, а эффект,
@@ -4208,10 +4279,15 @@ case class BattleState(
           val full  = if (heals) (raw * hero.passives.healMult).toLong.max(1L) else raw
           val (updated, gained, wounds) =
             if (heals) {
+              // Проклятого Некромантом лечение не лечит: умение тратится и с
+              // ранами делает то же, только HP не прибавляет (см. HealCurse).
               val w  = HealedWounds.of(full, ally.poison, ally.burn)
-              val nh = (ally.hp + w.amount).min(ally.stats.hp)
+              val nh = if (ally.healBlocked) ally.hp else (ally.hp + w.amount).min(ally.stats.hp)
+              val cursedLine =
+                if (ally.healBlocked) Vector(content.format("battle.necro.allyHealCursed", "name" -> ally.name))
+                else Vector.empty[String]
               (ally.copy(hp = nh, poison = w.poison, bleed = None, burn = w.burn),
-               nh - ally.hp, allyWoundLines(ally, w))
+               nh - ally.hp, cursedLine ++ allyWoundLines(ally, w))
             } else {
               val na = (ally.armor + full).min(ally.stats.armor)
               (ally.copy(armor = na), na - ally.armor, Vector.empty[String])
@@ -4532,12 +4608,13 @@ case class BattleState(
             else Vector(head) ++ procLog
           TurnResult(hero, guarded, lines ++ qhLog, Outcome.Continue, endsRound = false)
 
-        // Фляга очищения: всё вредное с героя долой — раны, дебафы, срез защиты.
+        // Фляга очищения: всё вредное с героя долой — раны, дебафы, срез защиты,
+        // проклятие Некроманта.
         case FlaskEffect.Cleanse =>
           val cleaned = battle.effects.copy(
             heroBurn = None, heroPoison = None, heroBleed = None,
             heroStunnedTurns = 0, heroGroundedTurns = 0, heroColdDefenceCut = 0, heroWebTurns = None,
-            heroSkillJammed = None)
+            heroSkillJammed = None, heroCursedTurns = None)
           TurnResult(hero, battle.copy(effects = cleaned),
             Vector(content.text("battle.flaskCleanse")) ++ qhLog, Outcome.Continue, endsRound = false)
 
@@ -4761,7 +4838,7 @@ case class BattleState(
                  else Vector.empty) ++ qhLog
               val outcome = if (swept.monsterCurrentHp <= 0L) Outcome.Victory else Outcome.Continue
               val hero1   = withBelt(hero, b.updated(idx, spent))
-              val after   = if (outcome == Outcome.Victory && swept.promoteNext.isEmpty) endOfRoundHero(hero1, nowMs) else hero1
+              val after   = if (outcome == Outcome.Victory && swept.promoteNext.isEmpty) endOfRoundHero(hero1, swept, nowMs) else hero1
               TurnResult(after, swept.copy(consumableUsedThisRound = consumed), log, outcome, endsRound = false)
             }
           case Some(h: BeltSlot.HolyWater) if h.spent =>
@@ -4856,7 +4933,7 @@ case class BattleState(
   ): TurnResult = {
     def done(h: Hero, b: SoloPveBattle, lines: Vector[String]): TurnResult = {
       val outcome = if (b.monsterCurrentHp <= 0L) Outcome.Victory else Outcome.Continue
-      val after   = if (outcome == Outcome.Victory && b.promoteNext.isEmpty) endOfRoundHero(h, nowMs) else h
+      val after   = if (outcome == Outcome.Victory && b.promoteNext.isEmpty) endOfRoundHero(h, b, nowMs) else h
       TurnResult(after, b, lines ++ qhLog, outcome, endsRound = false)
     }
     def boosted(name: String, buff: ParamsBuff, until: Long, line: String): TurnResult =
@@ -5329,6 +5406,8 @@ case class BattleState(
     val heroSign   = if (res.battle.group.heroDown) 0 else aura.sign(heroNature)
     val maxHp      = res.hero.effectiveMaxHp(0L)
     val heroHp     = heroSign match {
+      // Проклятого Некромантом аура не лечит (см. HealCurse).
+      case s if s > 0 && res.battle.effects.heroCursed => res.hero.fightStats.hp
       // Лечение не опускает: текущее HP выше потолка аура не срезает.
       case s if s > 0 => (res.hero.fightStats.hp + power(maxHp)).min(maxHp).max(res.hero.fightStats.hp)
       case s if s < 0 => (res.hero.fightStats.hp - power(maxHp)).max(0L)
@@ -5341,6 +5420,7 @@ case class BattleState(
     val allies = res.battle.group.allies.map { a =>
       val sign = if (!a.alive) 0 else aura.sign(Nature.of(a.kind.race))
       sign match {
+        case s if s > 0 && a.healBlocked => a
         case s if s > 0 => a.copy(hp = (a.hp + power(a.stats.hp)).min(a.stats.hp).max(a.hp))
         case s if s < 0 => a.copy(hp = (a.hp - power(a.stats.hp)).max(0L))
         case _          => a
@@ -5431,7 +5511,8 @@ case class BattleState(
       options = if (!a1.usesSkills) Nil else AllySkill.values.toList.flatMap {
         case AllySkill.QuickStrike     => target2.map(BattleState.AllyCast.Strike(_, crushing = false))
         case AllySkill.CrushingStrike  => target2.map(BattleState.AllyCast.Strike(_, crushing = true))
-        case AllySkill.HealingFlask    => Option.when(a1.hp < a1.stats.hp)(BattleState.AllyCast.Flask)
+        // Под проклятием Некроманта фляга его не вылечит — он её и не тратит.
+        case AllySkill.HealingFlask    => Option.when(a1.hp < a1.stats.hp && !a1.healBlocked)(BattleState.AllyCast.Flask)
         case AllySkill.EmergencyRepair => Option.when(a1.armor < a1.stats.armor)(BattleState.AllyCast.Repair)
       }.filter(_.skill.cost(a1.lvl) <= a1.energy)
       casted <-
@@ -5798,7 +5879,7 @@ case class BattleState(
 
   /** Минибосс, стоящий в строю, а не в полях боя. Его круг едет с ним в слоте
     * (см. `SoloPveBattle.withActive`), а приёмы меняют сам строй — зов крыс,
-    * воскрешение, шаг за спины своих. Поэтому на свой ход он встаёт в поля
+    * созидание, шаг за спины своих. Поэтому на свой ход он встаёт в поля
     * (как под удар героя, см.
     * [[strikeSide]]), ходит как тот, кто там стоит, и возвращается в строй.
     * Раньше его ход шёл во временном бою, и всё это пропадало: король звал крыс
@@ -5945,13 +6026,9 @@ case class BattleState(
         }
       (h2raw, t2cast, b2, log2raw) = casted
       // Союзника добило умение — уходит тем же путём, что и от удара. Бьёт оно
-      // не всегда того, кто стоит напротив: прыжок волка цель ищет сам, —
-      // поэтому смотрим всех, кто стоял на ногах до умения.
-      (t2, goneLines) = t1.group.allies.filter(_.alive).foldLeft((t2cast, Vector.empty[String])) {
-        case ((b, lines), a) =>
-          val (swept, line) = sweepFallenAlly(b, Some(a))
-          (swept, lines ++ line.toVector)
-      }
+      // не всегда того, кто стоит напротив, — поэтому смотрим всех, кто стоял на
+      // ногах до умения (см. sweepCastFallen).
+      (t2, goneLines) = sweepCastFallen(t1, t2cast)
       castSideTrauma <- hitTrauma(h1, h2raw, nowMs)
       (h2, castSideLine) = castSideTrauma
       log2 = log2raw ++ goneLines ++ castSideLine.toVector
@@ -6238,7 +6315,8 @@ case class BattleState(
     val marks = List(a.poison.map(_ => Poison.Icon), a.bleed.map(_ => Bleed.Icon), a.burn.map(_ => Burn.Icon),
                      Option.when(a.cold)(Element.Cold.emoji),
                      Option.when(a.rooted > 0)(content.text("battle.group.pinnedMark").trim),
-                     Option.when(a.webbed > 0)(SpiderWeb.Icon)).flatten
+                     Option.when(a.webbed > 0)(SpiderWeb.Icon),
+                     Option.when(a.healBlocked)(HealCurse.Icon)).flatten
     if (marks.isEmpty) "" else " " + marks.mkString
   }
 
@@ -6644,7 +6722,9 @@ case class BattleState(
         // бриллиант — ветер в спину за каждого задетого. Яд змеиного клинка
         // уже лёг на врагов в самом ударе.
         val maxHp   = hero.effectiveMaxHp(nowMs)
-        val drained = if (kind == DivineKind.DarkLordSword) (dealt * DivineRates.DrainPct / 100L).max(0L) else 0L
+        // Проклятого Некромантом выпитое черепом не лечит (см. HealCurse).
+        val drained = if (kind == DivineKind.DarkLordSword && !battle.effects.heroCursed)
+                        (dealt * DivineRates.DrainPct / 100L).max(0L) else 0L
         val healed  = ((hero.fightStats.hp + drained).min(maxHp) - hero.fightStats.hp).max(0L)
         val heroFed = if (healed > 0) hero.copy(fightStats = hero.fightStats.copy(hp = hero.fightStats.hp + healed)) else hero
 
@@ -6676,7 +6756,7 @@ case class BattleState(
         val outcome = if (hasted.monsterCurrentHp <= 0L) Outcome.Victory else Outcome.Continue
         // Божественное оружие раунд не завершает — энергию за раунд герой возьмёт своим
         // ударом; но если поле ею и закончилось, раунд кончился вместе с боем.
-        val heroAfter = if (outcome == Outcome.Victory && hasted.promoteNext.isEmpty) endOfRoundHero(heroAfter0, nowMs) else heroAfter0
+        val heroAfter = if (outcome == Outcome.Victory && hasted.promoteNext.isEmpty) endOfRoundHero(heroAfter0, hasted, nowMs) else heroAfter0
         ZIO.succeed(TurnResult(heroAfter, hasted.copy(divineUsedThisRound = true), log, outcome, endsRound = false))
     }
 
@@ -6696,7 +6776,7 @@ case class BattleState(
               val blow             = BrewRates.MushroomDamagePerLvl * hero.lvl
               val (swept, _, foes) = sweep(battle, blow, None, poisons = true)
               val outcome = if (swept.monsterCurrentHp <= 0L) Outcome.Victory else Outcome.Continue
-              val after   = if (outcome == Outcome.Victory && swept.promoteNext.isEmpty) endOfRoundHero(hero, nowMs) else hero
+              val after   = if (outcome == Outcome.Victory && swept.promoteNext.isEmpty) endOfRoundHero(hero, swept, nowMs) else hero
               inventoryRepo.removeItem(mix.id, hero.id).mapError(e => new Throwable(e.toString)) *>
                 ZIO.succeed(TurnResult(after, swept.copy(consumableUsedThisRound = consumed),
                   Vector(content.format("battle.mixThrown", "damage" -> blow.toString,
@@ -6840,7 +6920,8 @@ case class BattleState(
         heroFx.heroPoison.filterNot(_ => undeadHero).map(p => s"${Poison.Icon}-${heroPoisonDamage(hero, p, nowMs)}"),
         heroFx.heroBleed.filterNot(_ => undeadHero).map(b => s"${Bleed.Icon}-${heroBleedDamage(hero, b, nowMs)}"),
         heroFx.heroBurn.map(bn => s"${Burn.Icon}-${heroBurnDamage(hero, battle0, bn, nowMs)}"),
-        Option.when(heroFx.heroWebbed)(SpiderWeb.Icon)
+        Option.when(heroFx.heroWebbed)(SpiderWeb.Icon),
+        Option.when(heroFx.heroCursed)(HealCurse.Icon)
       ).flatten
       if (parts.isEmpty) "" else " (" + parts.mkString(" ") + ")"
     }
@@ -6848,7 +6929,8 @@ case class BattleState(
     // Реген HP/ход = зелье + «Целебный» и наборы (% макс.HP) + черепа в снаряжении (промилле макс.HP).
     val hpRegenTotal   = beltHpRegen + maxHp * (hero.passives.hpRegenPct + hero.sets.hpRegenPct) / 100L +
                            maxHp * hero.gems.hpRegenPerMille / 1000L
-    val heroRegen      = if (hpRegenTotal > 0) s" (+$hpRegenTotal)" else ""
+    // Под проклятием Некроманта реген HP не идёт — и обещать его незачем.
+    val heroRegen      = if (hpRegenTotal > 0 && !heroFx.heroCursed) s" (+$hpRegenTotal)" else ""
     val armorRegen     = maxArmor * (hero.passives.armorRegenPct + hero.sets.armorRegenPct) / 100L
     val heroArmorRegen = if (armorRegen > 0) s" (+$armorRegen)" else ""
     val text = content.format(
@@ -7105,12 +7187,14 @@ object BattleState {
       BramblQuest.HallStory, PlukhQuest.HuntStory, FaelinQuest.RootsStory, Villages.RaidStory, Villages.BanditsStory,
       Villages.SpidersStory, Villages.CaravanStory)
 
-  /** Паутина на герое и союзниках — на раунд меньше (см. SpiderWeb). */
+  /** Паутина и проклятие Некроманта на герое и союзниках — на раунд меньше (см.
+    * SpiderWeb, HealCurse). */
   def webTicked(battle: SoloPveBattle): SoloPveBattle =
     battle.copy(
-      effects = battle.effects.webTicked,
+      effects = battle.effects.webTicked.curseTicked,
       group   = battle.group.copy(allies = battle.group.allies.map(a =>
-        if (a.webbed > 0) a.copy(webbed = a.webbed - 1) else a)))
+        if (a.webbed > 0 || a.cursed > 0) a.copy(webbed = (a.webbed - 1).max(0), cursed = (a.cursed - 1).max(0))
+        else a)))
 
   /** Что срезают со зверей в бою с этим сюжетом: в гнезде сетеплётов звери —
     * пауки, и с них паучье; везде прочее — крысиное, как было. */

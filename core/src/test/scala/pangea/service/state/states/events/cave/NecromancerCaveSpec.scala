@@ -3,7 +3,7 @@ package pangea.service.state.states.events.cave
 import pangea.domain.Rng
 import pangea.generator.loot.LootGenerator
 import pangea.generator.loot.LootGenerator.LootDrop
-import pangea.model.battle.{Aura, Nature, SlainMonster, SoloPveBattle}
+import pangea.model.battle.{Aura, Nature, SoloPveBattle}
 import pangea.model.cave.{CaveGenerator, CaveRates, RoomKind}
 import pangea.model.item.{ItemSet, MaterialKind, Rarity => ItemRarity}
 import pangea.model.monster.{MiniBoss, Monster, Race, Rarity}
@@ -196,15 +196,11 @@ object NecromancerCaveSpec extends ZIOSpecDefault {
       assertTrue(formation(at = 12, risen = List(3, 8), heroAt = 5).necromancerCovered)
     },
 
-    test("воскрешение поднимает только своих мертвецов и забирает их из добычи") {
-      def slain(race: Race, undead: Boolean) =
-        SlainMonster(5L, race.entryName, Rarity.Common.entryName, marked = false, "кто-то", undead)
-      // Павшие: двое поднятых и один живой наёмник чужой стороны
-      val fallen = List(slain(Race.Orc, undead = true), slain(Race.Orc, undead = true),
-                        slain(Race.Goblin, undead = false))
-      val mine   = fallen.filter(s => s.undead || s.race == Race.Undead.entryName)
-      assertTrue(mine.size == 2) &&
-      assertTrue(necro.ReviveCostPerLvl == 10L && necro.StepCostPerLvl == 5L && necro.CreateCostPerLvl == 10L) &&
+    test("круг: удар проклятой энергией (вся атака, на три места), шаг, созидание — и их цены") {
+      assertTrue(necro.abilities == 3) &&
+      assertTrue(necro.CurseDamageFactor == 1.0 && necro.CurseReach == 3) &&
+      assertTrue(necro.CurseCostPerLvl == 10L && necro.StepCostPerLvl == 5L && necro.CreateCostPerLvl == 10L) &&
+      assertTrue(pangea.model.battle.HealCurse.Turns == 2) &&
       assertTrue(necro.CreateRarities == List(Rarity.Rare, Rarity.Mythical)) &&
       assertTrue(necro.GuardMin == 3 && necro.GuardMax == 4)
     },
@@ -252,7 +248,8 @@ object NecromancerCaveSpec extends ZIOSpecDefault {
               assertTrue(List("cave.necro.room.lair", "cave.necro.room.lairEmpty", "cave.necro.lord",
                 "cave.king.room.lair", "cave.king.room.lairEmpty", "cave.king.lord")
                 .forall(k => c.text(k).nonEmpty)) &&
-              assertTrue(List("battle.necro.revive", "battle.necro.step", "battle.necro.noHide",
+              assertTrue(List("battle.necro.curse", "battle.necro.curseAlly", "battle.necro.healCursed",
+                "battle.necro.allyHealCursed", "battle.necro.step", "battle.necro.noHide",
                 "battle.necro.create", "battle.aura.miasma.mobHolds", "battle.aura.miasma.mobFades")
                 .forall(k => c.text(k).nonEmpty))
     }

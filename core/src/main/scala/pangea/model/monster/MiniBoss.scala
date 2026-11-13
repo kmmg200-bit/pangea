@@ -598,12 +598,19 @@ object MiniBoss extends Enum[MiniBoss] {
     val LevelDivisor: Long = 4L
 
     // ── Способности (по кругу) ────────────────────────────────────────────────
-    /** Воскрешение: вся его павшая нежить встаёт целой — и в добычу уже не идёт. */
-    val ReviveCostPerLvl: Long = 10L
+    /** Удар проклятой энергией: `CurseDamageFactor` атаки сразу в HP — броню
+      * проклятая энергия не видит — по цели не дальше `CurseReach` мест. Цель —
+      * как у обычного удара: союзник напротив, нет его — герой, нет и его —
+      * ближайший союзник. До конца следующего раунда раны цели не затягиваются
+      * (см. pangea.model.battle.HealCurse). Достать некого — пропуск, бесплатный. */
+    val CurseDamageFactor: Double = 1.0
+    val CurseReach: Int           = 3
+    val CurseCostPerLvl: Long     = 10L
     /** Мистический шаг: уходит за спины своих, но не ближе к герою. Он и так за
       * ними или прятаться некуда — пропуск, и тогда шаг ничего не стоит. */
     val StepCostPerLvl: Long = 5L
-    /** Созидание: поднимает нового — третьего или четвёртого ранга. */
+    /** Созидание: поднимает нового — третьего или четвёртого ранга, уровнем в
+      * саму пещеру, как и те, что стоят вокруг него. */
     val CreateCostPerLvl: Long = 10L
     val CreateRarities: List[Rarity] = List(Rarity.Rare, Rarity.Mythical)
 
@@ -633,7 +640,7 @@ object MiniBoss extends Enum[MiniBoss] {
     /** Сухие кости занимаются охотно. */
     def immuneToBurn: Boolean = false
 
-    /** Воскрешение, шаг, созидание. */
+    /** Удар проклятой энергией, шаг, созидание. */
     def abilities: Int = 3
 
     override def fightsInGroup: Boolean = true

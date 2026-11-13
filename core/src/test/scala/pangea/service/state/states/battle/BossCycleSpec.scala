@@ -3,7 +3,7 @@ package pangea.service.state.states.battle
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
 import pangea.generator.monster.MonsterGenerator
-import pangea.model.battle.{Bleed, Burn, Poison, SlainMonster, SoloPveBattle}
+import pangea.model.battle.{Bleed, Burn, Poison, SoloPveBattle}
 import pangea.model.hero.Hero
 import pangea.model.monster.{MiniBoss, Monster, Race, Rarity => MobRarity}
 import pangea.model.squad.{Ally, AllyKind, Squad}
@@ -224,20 +224,18 @@ object BossCycleSpec extends ZIOSpecDefault {
               assertTrue(after.exists(_.effects.heroPoison.isEmpty))
     },
 
-    test("герой лежит — Некромант колдует сам: павшая нежить встаёт, миазмы держат поле") {
+    test("герой лежит — Некромант колдует сам: удар проклятой энергией по союзнику, миазмы держат поле") {
       // Он держит позицию и колдует в ход героя; пока герой лежит, хода героя
       // нет, — раньше Некромант так и стоял молча.
-      val h      = hero(behindAlly)
-      val base   = tough(bossOne(MiniBoss.Necromancer, h, turn = 0))
-      val fallen = SlainMonster(base.monsterLvl, Race.Orc.entryName, MobRarity.Common.entryName,
-                     marked = false, name = "Орк", undead = true)
-      val b      = base.copy(group = base.group.copy(slain = List(fallen)))
+      val h = hero(behindAlly)
+      val b = tough(bossOne(MiniBoss.Necromancer, h, turn = 0))
       for {
         t <- squadRound(h, b, seed = 13L)
         (out, after, log) = t
       } yield assertTrue(out == StateType.Battle) &&
-              assertTrue(log.contains("павшая нежить встаёт снова")) &&
-              assertTrue(after.exists(a => a.group.others.size == 1 && a.group.slain.isEmpty)) &&
+              assertTrue(log.contains("Удар проклятой энергией: Йорген Кремень получает")) &&
+              // проклятие легло на союзника и к концу раунда стало на раунд короче
+              assertTrue(after.exists(a => allyOf(a).exists(x => x.cursed == 1 && x.hp < 10000000L))) &&
               assertTrue(after.exists(_.bossTurn == 1)) &&
               // и его миазмы ходят по полю: держит их или выдохся — строка об этом есть
               assertTrue(log.contains("🟣"))
@@ -308,40 +306,20 @@ object BossCycleSpec extends ZIOSpecDefault {
               assertTrue(after.group.places.distinct.size == after.group.places.size)
     },
 
-    test("Некромант в строю, а не в паре, колдует свой круг: павшая нежить встаёт") {
+    test("Некромант в строю, а не в паре, колдует свой круг: удар проклятой энергией достаёт героя") {
       // Раньше он колдовал только в ход героя и только стоя в полях боя — в
       // строю молчал весь бой.
-      val h      = hero(Squad())
-      val necro  = MiniBoss.Necromancer
-      val base   = withBossInLine(h, necro)
-      val fallen = SlainMonster(base.monsterLvl, Race.Orc.entryName, MobRarity.Common.entryName,
-                     marked = false, name = "Орк", undead = true)
-      val b      = base.copy(group = base.group.copy(slain = List(fallen)))
+      val h     = hero(Squad())
+      val necro = MiniBoss.Necromancer
+      val b     = withBossInLine(h, necro)
       for {
         t <- act(h, b, UserAction("", Some("""{"action":"Wait"}""")), seed = 13L)
-        (after, _, log) = t
-      } yield assertTrue(log.contains("павшая нежить встаёт снова")) &&
-              assertTrue(after.group.others.size == 2 && after.group.slain.isEmpty) &&
+        (after, hurt, log) = t
+      } yield assertTrue(log.contains("Удар проклятой энергией! Вы получили")) &&
+              assertTrue(hurt.fightStats.hp < h.fightStats.hp) &&
+              // проклятие легло на героя и к концу раунда стало на раунд короче
+              assertTrue(after.effects.heroCursedTurns.contains(1)) &&
               assertTrue(turnOf(after, necro).contains(1))
-    },
-
-    test("Воскрешение: павший нежитью по рождению лежит, смертный мертвец встаёт — и ход не падает") {
-      // Раньше Некромант пытался поднять и того, у кого раса «Нежить», а мобов
-      // такой расы генератор не знает: ход падал на каждом нажатии игрока.
-      val h       = hero(Squad())
-      val base    = withBossInLine(h, MiniBoss.Necromancer)
-      val orc     = SlainMonster(base.monsterLvl, Race.Orc.entryName, MobRarity.Common.entryName,
-                      marked = false, name = "Орк", undead = true)
-      val unborn  = SlainMonster(base.monsterLvl, Race.Undead.entryName, MobRarity.Legendary.entryName,
-                      marked = false, name = "Некромант", undead = false, boss = Some(MiniBoss.Necromancer.entryName))
-      val b       = base.copy(group = base.group.copy(slain = List(orc, unborn)))
-      for {
-        t <- act(h, b, UserAction("", Some("""{"action":"Wait"}""")), seed = 13L)
-        (after, _, log) = t
-      } yield assertTrue(log.contains("павшая нежить встаёт снова")) &&
-              assertTrue(after.group.others.size == 2) &&
-              // поднят только орк; павший нежитью остаётся в павших — за ним и добыча
-              assertTrue(after.group.slain.map(_.name) == List("Некромант"))
     },
 
     test("Некромант за союзником берёт свой ход один раз за раунд") {

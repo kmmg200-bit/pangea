@@ -75,11 +75,13 @@ object AuraFellsHeroSpec extends ZIOSpecDefault {
     noKin               = true)
 
   /** Тот же противник — Некромант с полной энергией: миазмы ему держать есть
-    * чем (тысяча энергии — сотня в них за раунд), а колдовать в первом раунде
-    * нечего — поднимать некого. */
+    * чем (тысяча энергии — сотня в них за раунд), а колдовать в этом раунде
+    * нечего: на очереди мистический шаг, а прятаться не за кем. Удар проклятой
+    * энергией сюда не годится — он снял бы HP раньше миазм. */
   private def necromancer(b: SoloPveBattle): SoloPveBattle = b.copy(
     monsterRace          = Race.Undead.entryName,
     bossKind             = Some(MiniBoss.Necromancer.entryName),
+    bossTurn             = 1,
     monsterStats         = b.monsterStats.copy(energy = 1000L),
     monsterCurrentEnergy = 1000L)
 
@@ -166,7 +168,8 @@ object AuraFellsHeroSpec extends ZIOSpecDefault {
       // из тысячи: миазмы снимают с него 20 и сотню вложенной энергии
       val necro = MonsterSlot(10L, Race.Undead.entryName, Rarity.Legendary.entryName,
         FightStats(atk = 1, hp = 100000, armor = 0, defence = 0, evasion = 0, accuracy = 1, energy = 1000),
-        100000L, 0L, marked = false, 1000L, BattleEffects.empty, boss = Some(MiniBoss.Necromancer.entryName))
+        100000L, 0L, marked = false, 1000L, BattleEffects.empty, boss = Some(MiniBoss.Necromancer.entryName),
+        bossTurn = 1) // на очереди шаг, а не удар проклятой энергией: HP снимают одни миазмы
       val pair    = foe(hp = 1000L).copy(monsterCurrentHp = 30L,
         group = GroupState.empty.copy(others = List(necro), places = List(4)))
       val pioneer = hero(hp = 50L, gear = wearing(ItemSet.Pioneer, 12))

@@ -57,8 +57,14 @@ final case class BattleAlly(
     * SpiderWeb). Пока держит — с места он не сходит, а удары идут мимо брони. */
   webbed:     Int              = 0,
   /** Его отравил красный сетеплёт: следующее его умение сорвётся (см. RedSpider). */
-  skillJammed: Boolean         = false
+  skillJammed: Boolean         = false,
+  /** Проклятие Некроманта на нём: сколько концов раунда его раны ещё не
+    * затягиваются (см. HealCurse). */
+  cursed:      Int             = 0
 ) {
+  /** Держит ли его проклятие Некроманта: HP он сейчас не восстанавливает. */
+  def healBlocked: Boolean = cursed > 0
+
   /** Нежить ли он: миазмы её лечат, а живых — травят. */
   def isUndead: Boolean = kind.race == Race.Undead
 
@@ -155,8 +161,9 @@ object BattleAlly {
       strike   <- c.getOrElse[Option[Element]]("strike")(None)
       webbed   <- c.getOrElse[Int]("webbed")(0)
       jammed   <- c.getOrElse[Boolean]("skillJammed")(false)
+      cursed   <- c.getOrElse[Int]("cursed")(0)
     } yield BattleAlly(kind, position, hp, armor, energy, stats, lvl, undead, home, poison, bleed, burn, stood,
-                       coldCut, kills, hitBy, rooted, grown, strike, webbed, jammed)
+                       coldCut, kills, hitBy, rooted, grown, strike, webbed, jammed, cursed)
 }
 
 /** Моб группы, стоящий НЕ в паре с героем: всё, что описывает его и его текущее

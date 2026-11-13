@@ -657,7 +657,7 @@ case class MonsterCaveState(
       pcts   <- ZIO.foreach(boss :: guards)(m =>
                   Random.nextLongBetween(MonsterEnergy.StartPctMin, MonsterEnergy.StartPctMax + 1L)
                     .map(pct => MonsterEnergy.startEnergy(m.lvl, m.rarity, pct)))
-      // Сам он выходит с полной силой: аура и воскрешение стоят энергии, и без
+      // Сам он выходит с полной силой: аура и удар проклятой энергией стоят энергии, и без
       // неё первый его круг прошёл бы впустую.
       energies = stats.energy :: pcts.tail
       base     = SoloPveBattle.fromGroup(boss :: guards, hero, energies, headBoss = Some(lord))
