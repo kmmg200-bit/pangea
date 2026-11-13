@@ -1,21 +1,24 @@
 package pangea.service.state.states.village
 
 import io.circe.syntax.EncoderOps
-import io.circe.{Json, JsonObject}
+import io.circe.{Json, JsonObject, jawn}
 import pangea.dao.hero.HeroDao
 import pangea.domain.Rng
-import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
+import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.battle.SoloPveBattle
+import pangea.model.cave.CaveRates
 import pangea.model.hero.Hero
+import pangea.model.item.{Item, ItemDetails}
 import pangea.model.monster.Monster
 import pangea.model.quest.Difficulty
 import pangea.model.skill.MonsterEnergy
 import pangea.model.state.StateType
 import pangea.model.user.User
-import pangea.model.village.VillageContract
+import pangea.model.village.{NestPrep, VillageContract, VillageQuest, VillageRates}
 import pangea.repository.inventory.InventoryRepository
 import pangea.service.state.states.LootState.LootData
-import pangea.service.state.{CharacterMenu, NpcQuestLog, State, UserAction, VillageLair, Villages}
+import pangea.service.state.states.events.cave.{CaveSupply, NestBoon, Supply}
+import pangea.service.state.{CharacterMenu, ItemMenu, NpcQuestLog, State, UserAction, VillageLair, Villages}
 import zio.{Random, Task, ZIO}
 
 /** Логово беды деревни — куда ведёт карточка «Контракта деревни», из
@@ -27,6 +30,10 @@ import zio.{Random, Task, ZIO}
   * всеми обитателями логова уровня задания: без «Сбежать», награда как за
   * обычный бой, отряд с героем. Добыча возвращает сюда (отметка `lair.wonKey`):
   * логово разбито, дальше — к старосте за платой.
+  *
+  * У гнезда сетеплётов, как на пороге пещеры, можно пустить в дело вещь из
+  * сумки или с пояса (см. [[NestPrep]], `CaveSupply.nestBoonOf`): дым слабит
+  * пауков, огонь поджигает их ещё до боя, паучий цвет уводит выводок.
   *
   * «Уйти», смерть или ничья контракт не двигают: он при герое, логово ждёт.
   * «Отказаться от контракта» — с подтверждением: контракт и договор уходят, и
@@ -40,9 +47,18 @@ case class VillageLairState(
 
   private val ids = lair.ids
 
+  /** Пускают ли здесь вещь в дело у входа: пока только у гнезда сетеплётов. */
+  private val stocked: Boolean = lair.quest == VillageQuest.SpiderNests
+
+  private val usePrefix  = s"${ids}Use_"
+  private val beltPrefix = s"${ids}Belt_"
+
   private val branch = new Branch(
     routes = Map(
       s"${ids}Fight"      -> Target.Run { (u, _, r) => atLair(u, r)(c => fight(u, c, r)) },
+      s"${ids}Supply"     -> Target.Run { (u, _, r) => atLair(u, r)(_ => supplies(u, r)) },
+      s"${ids}SupplyPrev" -> Target.Run { (u, _, r) => atLair(u, r)(_ => turnPage(u, r, -1)) },
+      s"${ids}SupplyNext" -> Target.Run { (u, _, r) => atLair(u, r)(_ => turnPage(u, r, +1)) },
       s"${ids}Leave"      -> Target.Run { (u, _, r) => leave(u, r) },
       s"${ids}Abandon"    -> Target.Run { (u, _, r) => atLair(u, r)(c => askAbandon(u, c, r)) },
       s"${ids}AbandonYes" -> Target.Run { (u, _, r) => atLair(u, r)(_ => abandon(u, r)) },
@@ -50,7 +66,7 @@ case class VillageLairState(
       s"${ids}Out"        -> Target.Run { (u, _, _) => clear(u).as(StateType.Dungeon) },
       "OpenCharacter"     -> Target.Run { (u, _, _) => CharacterMenu.open(heroDao, u.userId, lair.scene) }
     ),
-    fallback = Target.Run { (u, _, r) => enter(u, r).as(lair.scene) }
+    fallback = Target.Run { (u, ua, r) => handleFallback(u, ua, r) }
   )
 
   override def targetStates: Set[StateType] =
@@ -91,42 +107,158 @@ case class VillageLairState(
 
   private def text(k: String): String = content.text(key(k))
 
-  /** Вход в логово: что там, сложность и что из этого боя не сбежать. */
+  /** Вход в логово: что там, сложность и что из этого боя не сбежать. У гнезда
+    * — ещё и «Использовать предмет». */
   private def introScreen(c: VillageContract): Screen =
     Screen(
       Villages.joined(content.format(key("intro"), Villages.args(content, c): _*), difficulty(c.level),
         content.text("village.lair.noEscape")),
       List(
-        content.choice(s"${ids}Fight", key("fightLabel")).copy(row = Some(0)),
-        content.choice("OpenCharacter", "village.lair.characterLabel").copy(row = Some(1)),
-        content.choice(s"${ids}Leave", "village.lair.leaveLabel").copy(row = Some(1)),
-        content.choice(s"${ids}Abandon", "village.lair.abandonLabel").copy(row = Some(2))))
+        Some(content.choice(s"${ids}Fight", key("fightLabel")).copy(row = Some(0))),
+        Option.when(stocked)(content.choice(s"${ids}Supply", key("supplyLabel")).copy(row = Some(0))),
+        Some(content.choice("OpenCharacter", "village.lair.characterLabel").copy(row = Some(1))),
+        Some(content.choice(s"${ids}Leave", "village.lair.leaveLabel").copy(row = Some(1))),
+        Some(content.choice(s"${ids}Abandon", "village.lair.abandonLabel").copy(row = Some(2)))).flatten)
 
   private def difficulty(level: Int): String =
     content.format("marisa.difficulty", "difficulty" -> Difficulty.render(level.max(1)))
 
   private def outChoice = content.choice(s"${ids}Out", "village.toDungeonLabel")
 
+  // ── Вещь, пущенная в дело у входа ───────────────────────────────────────────
+
+  /** Скарб героя кнопками, как на пороге пещеры: сперва пояс, потом сумка.
+    * Стопку в дело не пускают — вещи из неё идут в дело только распакованными. */
+  private def supplies(user: User, renderer: Renderer, note: String = ""): Task[StateType] =
+    if (!stocked) enter(user, renderer).as(lair.scene)
+    else
+      for {
+        hero <- getHero(user)
+        inv  <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
+        prep <- readPrep(user)
+        all   = CaveSupply.beltSupplies(hero.equipment.belt) ++ inv.items.data.filterNot(_.isBundle).map(Supply.Carried)
+        _    <- if (all.isEmpty) renderer.show(user, Screen(text("supply.empty"), List(backChoice)).noted(note))
+                else {
+                  val (pageItems, pages, p) = ItemMenu.page(all, prep.page)
+                  val buttons = pageItems.zipWithIndex.map {
+                    case (Supply.OnBelt(slot, item), i) =>
+                      Choice(s"$beltPrefix$slot", ItemMenu.truncate(content.format("common.onBelt", "name" -> item.displayTitle)),
+                        row = Some(i))
+                    case (Supply.Carried(item), i) =>
+                      Choice(s"$usePrefix${item.id}", ItemMenu.itemButtonLabel(item), row = Some(i))
+                  }
+                  val nav = List(
+                    Some(backChoice),
+                    Option.when(p > 0)(Choice(s"${ids}SupplyPrev", content.text("common.prev"), row = Some(ItemMenu.NavRow))),
+                    Option.when(p < pages - 1)(Choice(s"${ids}SupplyNext", content.text("common.next"), row = Some(ItemMenu.NavRow)))
+                  ).flatten
+                  renderer.show(user, Screen(content.format(key("supply.pick"),
+                    "page" -> (p + 1).toString, "total" -> pages.toString), buttons ++ nav).noted(note))
+                }
+      } yield lair.scene
+
+  private def backChoice: Choice =
+    content.choice(s"${ids}Back", key("supply.back")).copy(color = ChoiceColor.Negative, row = Some(ItemMenu.NavRow))
+
+  private def turnPage(user: User, renderer: Renderer, delta: Int): Task[StateType] =
+    readPrep(user).flatMap(p => writePrep(user, p.copy(page = (p.page + delta).max(0)))) *> supplies(user, renderer)
+
+  /** Вещь из сумки: у заряженной уходит один заряд, прочее — целиком. Сюжетное
+    * не трогаем: его не теряют нигде. */
+  private def useItem(user: User, itemId: Long, renderer: Renderer): Task[StateType] =
+    for {
+      hero <- getHero(user)
+      inv  <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
+      res  <- inv.items.data.find(i => i.id == itemId && !i.isBundle) match {
+                case None => supplies(user, renderer)
+                case Some(item) if item.isQuestItem || item.isStoryGear =>
+                  supplies(user, renderer, content.format(key("supply.quest"), "name" -> item.displayTitle))
+                case Some(item) => spend(user, item, renderer)(takeFrom(hero, item, CaveSupply.charged(item)))
+              }
+    } yield res
+
+  /** Вещь из ячейки пояса — как из сумки: ячейка помнит, чем была полна. */
+  private def useBelt(user: User, slot: Int, renderer: Renderer): Task[StateType] =
+    getHero(user).flatMap { hero =>
+      CaveSupply.beltSupplies(hero.equipment.belt).find(_.slot == slot) match {
+        case Some(s) =>
+          spend(user, s.item, renderer)(heroDao.updateEquipment(user.userId,
+            hero.equipment.copy(belt = CaveSupply.beltTaken(hero.equipment.belt, slot))))
+        case None => supplies(user, renderer)
+      }
+    }
+
+  /** Пустить вещь в дело: она уходит (`take`), а гнездо получает своё (см.
+    * `CaveSupply.nestBoonOf`). Второй раз то же самое ничего не добавляет — как
+    * и в пещере, вещь при этом всё равно уходит, о чём говорим честно. */
+  private def spend(user: User, item: Item, renderer: Renderer)(take: Task[Unit]): Task[StateType] =
+    if (CaveSupply.charged(item).exists(_.charges <= 0))
+      supplies(user, renderer, content.format(key("supply.emptyFlask"), "name" -> item.displayTitle))
+    else
+      readPrep(user).flatMap { prep =>
+        val boon = CaveSupply.nestBoonOf(item)
+        val already = boon match {
+          case NestBoon.Dope   => prep.weakened
+          case NestBoon.Poison => prep.poisoned
+          case NestBoon.Burn   => prep.burning
+          case NestBoon.Lure   => prep.lured
+          case NestBoon.None   => false
+        }
+        val next = boon match {
+          case NestBoon.Dope   => prep.copy(weakened = true)
+          case NestBoon.Poison => prep.copy(poisoned = true)
+          case NestBoon.Burn   => prep.copy(burning = true)
+          case NestBoon.Lure   => prep.copy(lured = true)
+          case NestBoon.None   => prep
+        }
+        val name = "name" -> item.displayTitle
+        val line = boon match {
+          case _ if already    => content.format(key("supply.already"), name)
+          case NestBoon.Dope   => content.format(key("supply.dope"), name, "pct" -> CaveRates.DopeCutPct.toString)
+          case NestBoon.Poison => content.format(key("supply.poison"), name)
+          case NestBoon.Burn   => content.format(key("supply.burn"), name, "pct" -> VillageRates.NestBurnPct.toString)
+          // «Двое красных» — словом в самом тексте (см. VillageRates.LuredRedSpiders).
+          case NestBoon.Lure   => content.format(key("supply.lure"), name)
+          case NestBoon.None   => content.format(key("supply.wasted"), name)
+        }
+        take *> writePrep(user, next) *> supplies(user, renderer, line)
+      }
+
+  private def takeFrom(hero: Hero, item: Item, charged: Option[ItemDetails.Charged]): Task[Unit] =
+    charged match {
+      case Some(c) => inventoryRepo.updateItem(hero.id, item.copy(details = c.spent)).mapError(e => new Throwable(e.toString)).unit
+      case None    => inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)).unit
+    }
+
   // ── Бой ─────────────────────────────────────────────────────────────────────
 
   /** Бой со всеми обитателями логова. Добыча вернёт сюда — с отметкой, что они
-    * перебиты. */
+    * перебиты. У гнезда подготовка входа ложится на бой: паучий цвет оставил
+    * матку и красных, дым слабит, гриб травит, огонь жжёт — всех, кто вышел. */
   private def fight(user: User, contract: VillageContract, renderer: Renderer): Task[StateType] =
     for {
       hero     <- getHero(user)
       seed     <- Random.nextLong
-      foes      = Villages.lairMonsters(contract, Rng(seed))
-      energies <- ZIO.foreach(foes)(startEnergy)
-      battle    = Villages.withBreedTraits(SoloPveBattle.fromGroup(foes, hero, energies)
+      prep     <- readPrep(user)
+      lured     = stocked && prep.lured
+      foes0     = if (lured) Villages.luredBrood(contract) else Villages.lairMonsters(contract, Rng(seed))
+      foes      = if (prep.weakened) foes0.map(CaveSupply.weaken) else foes0
+      energies <- ZIO.foreach(foes)(startEnergy).map(es => if (prep.weakened) es.map(CaveSupply.cutDope) else es)
+      plain     = Villages.withBreedTraits(SoloPveBattle.fromGroup(foes, hero, energies)
                     .copy(story = Some(lair.story), lootLevel = Some(contract.level.max(1).toLong)))
-      // Выполз красный сетеплёт — сказать об этом сразу, в начале боя.
+      poisoned  = if (prep.poisoned) CaveSupply.poisonAll(plain) else plain
+      battle    = if (prep.burning) CaveSupply.burnAll(poisoned, VillageRates.NestBurnPct) else poisoned
+      // Выполз красный сетеплёт — сказать об этом сразу, в начале боя. Цвет
+      // увёл выводок — у боя своё начало: внизу только матка и красные.
       red       = foes.exists(_.breed.contains(pangea.model.monster.Breed.RedSpider))
       routing   = LootData(Nil, Nil, returnState = Some(lair.scene), eventData = Some(VillageLairState.wonMark(lair)))
       _        <- heroDao.writeActiveBattle(user.userId, battle.asJson)
       _        <- heroDao.writeSceneData(user.userId, routing.asJson)
-      _        <- renderer.show(user, Screen(Villages.joined(
-                    content.format(key("fight"), Villages.args(content, contract): _*),
-                    if (red) content.text(key("redSpider")) else ""), Nil))
+      _        <- renderer.show(user, Screen(
+                    if (lured) content.format(key("fightLured"), Villages.args(content, contract): _*)
+                    else Villages.joined(
+                      content.format(key("fight"), Villages.args(content, contract): _*),
+                      if (red) content.text(key("redSpider")) else ""), Nil))
     } yield StateType.Battle
 
   /** Обитатели перебиты: логово разбито — к старосте за платой. */
@@ -143,7 +275,8 @@ case class VillageLairState(
 
   // ── Уход и отказ ────────────────────────────────────────────────────────────
 
-  /** «Уйти»: логово ждёт, контракт при герое. */
+  /** «Уйти»: логово ждёт, контракт при герое. Подготовка входа пропадает: дым
+    * развеется, огонь прогорит, выводок вернётся. */
   private def leave(user: User, renderer: Renderer): Task[StateType] =
     clear(user) *> renderer.show(user, Screen(text("left"), Nil)).as(StateType.Dungeon)
 
@@ -162,6 +295,29 @@ case class VillageLairState(
     } yield StateType.Dungeon
 
   // ── Вспомогательное ─────────────────────────────────────────────────────────
+
+  /** Кнопки вещей (`<приставка>Use_<id>`, `<приставка>Belt_<ячейка>`) — у
+    * гнезда; прочее и старые кнопки — вход, как было. */
+  private def handleFallback(user: User, ua: UserAction, renderer: Renderer): Task[StateType] = {
+    val action = ua.payload.flatMap(p => jawn.decode[Map[String, String]](p).toOption.flatMap(_.get("action")))
+    action match {
+      case Some(a) if stocked && a.startsWith(usePrefix) =>
+        a.drop(usePrefix.length).toLongOption.fold(supplies(user, renderer)) { id =>
+          atLair(user, renderer)(_ => useItem(user, id, renderer))
+        }
+      case Some(a) if stocked && a.startsWith(beltPrefix) =>
+        a.drop(beltPrefix.length).toIntOption.fold(supplies(user, renderer)) { slot =>
+          atLair(user, renderer)(_ => useBelt(user, slot, renderer))
+        }
+      case _ => enter(user, renderer).as(lair.scene)
+    }
+  }
+
+  private def readPrep(user: User): Task[NestPrep] =
+    heroDao.readSceneData(user.userId).map(_.flatMap(_.as[NestPrep].toOption).getOrElse(NestPrep.empty))
+
+  private def writePrep(user: User, prep: NestPrep): Task[Unit] =
+    heroDao.writeSceneData(user.userId, prep.asJson)
 
   private def startEnergy(m: Monster): Task[Long] =
     Random.nextLongBetween(MonsterEnergy.StartPctMin, MonsterEnergy.StartPctMax + 1L)

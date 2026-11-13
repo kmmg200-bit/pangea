@@ -8,7 +8,7 @@ import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Scree
 import pangea.generator.item.MaterialGenerator
 import pangea.generator.loot.{LootGenerator, SchronGenerator, TreasureHuntGenerator}
 import pangea.generator.monster.MonsterGenerator
-import pangea.model.battle.{Poison, SoloPveBattle}
+import pangea.model.battle.SoloPveBattle
 import pangea.model.cave.{CaveDir, CaveGenerator, CaveRates, CaveScene, RoomKind}
 import pangea.model.hero.{Hero, Knowledge}
 import pangea.generator.item.GemGenerator
@@ -716,25 +716,14 @@ case class MonsterCaveState(
       }
     }
 
-  /** Одурманенный моб бьёт слабее и копит энергию медленнее. */
-  private def weaken(m: Monster, on: Boolean): Monster =
-    if (!on) m
-    else m.copy(fightStats = m.fightStats.copy(
-      atk    = cut(m.fightStats.atk, on).max(1L),
-      energy = cut(m.fightStats.energy, on)))
+  /** Одурманенный моб бьёт слабее и копит энергию медленнее (см. CaveSupply.weaken). */
+  private def weaken(m: Monster, on: Boolean): Monster = if (on) CaveSupply.weaken(m) else m
 
-  private def cut(value: Long, on: Boolean): Long =
-    if (on) value * (100L - CaveRates.DopeCutPct) / 100L else value
+  private def cut(value: Long, on: Boolean): Long = if (on) CaveSupply.cutDope(value) else value
 
-  /** Глефовый гриб: отравлены все, и тот, кто в паре, и те, кто в строю. */
+  /** Глефовый гриб: отравлены все (см. CaveSupply.poisonAll). */
   private def poisonAll(battle: SoloPveBattle, on: Boolean): SoloPveBattle =
-    if (!on) battle
-    else {
-      val poison  = Some(Poison.onHit)
-      val paired  = battle.withEffects(battle.effects.copy(monsterPoison = poison))
-      val inLine  = paired.group.others.map(s => s.copy(effects = s.effects.copy(monsterPoison = poison)))
-      paired.copy(group = paired.group.copy(others = inLine))
-    }
+    if (on) CaveSupply.poisonAll(battle) else battle
 
   // ── Находки комнат ─────────────────────────────────────────────────────────
 

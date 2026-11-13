@@ -504,7 +504,7 @@ object VillageSpec extends ZIOSpecDefault {
         names  = Breed.spiders.map(_.displayName)
         breeds = b.toList.flatMap(x => x.monsterBreed.toList ++ slots.flatMap(_.breed))
       } yield assertTrue(intro.text.contains("матка") && intro.text.contains("Сложность: " + Difficulty.render(QuestLevel))) &&
-              assertTrue(intro.choices.map(_.id) == List("SpidersFight", "OpenCharacter", "SpidersLeave", "SpidersAbandon")) &&
+              assertTrue(intro.choices.map(_.id) == List("SpidersFight", "SpidersSupply", "OpenCharacter", "SpidersLeave", "SpidersAbandon")) &&
               assertTrue(res == StateType.Battle) &&
               assertTrue(b.exists(x => x.story.contains(Villages.SpidersStory) && x.lootLevel.contains(QuestLevel.toLong) &&
                 x.cantFlee && x.monsterRace == Race.Animal.entryName && names.contains(x.monsterName))) &&

@@ -322,6 +322,13 @@ object Villages {
       (spider(Breed.SpiderMother, lvl) :: Option.when(red)(spider(Breed.RedSpider, lvl)).toList)
   }
 
+  /** Гнездо, из которого паучий цвет увёл выводок (см. `NestPrep.lured`):
+    * матка и [[VillageRates.LuredRedSpiders]] красных — так решил пользователь. */
+  def luredBrood(contract: VillageContract): List[Monster] = {
+    val lvl = contract.level.max(1)
+    spider(Breed.SpiderMother, lvl) :: List.fill(VillageRates.LuredRedSpiders)(spider(Breed.RedSpider, lvl))
+  }
+
   /** Паук этой породы: зверь, но сила и ранг — как у моба-образца
     * ([[VillageRates.SpiderLike]]), имя — породы. */
   def spider(breed: Breed, lvl: Int): Monster = {
