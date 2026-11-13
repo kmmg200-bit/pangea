@@ -253,7 +253,8 @@ case class BattleState(
       // (а Джо — встаёт).
       promoted3 = promoteAfterKill(joeRises(wounded))
       // Аура держит всё поле: нежить крепнет, живые чахнут. Добитых ею разбираем
-      // тем же порядком, что павших от ран.
+      // тем же порядком, что павших от ран, — и героя тоже: обнулила его — это
+      // смерть в этот же ход, и «Первопроходец» спасает и от неё (см. auraFelled).
       // Раны союзников тикают там же, где и прочие: после всех ходов раунда.
       allyTicked = tickAllyEffects(promoted3)
       prefs   <- BattleState.prefs(heroDao, user.userId)
@@ -1100,7 +1101,8 @@ case class BattleState(
       promoted2 = promoteAfterKill(joeRises(sided))
       // Дальше — как в обычном раунде: раны на союзниках тикают, аура держит
       // поле. Свою ауру лежачий не держит — держать её нечем; чужая (миазмы
-      // Некроманта) работает как всегда.
+      // Некроманта) работает как всегда. Самого лежачего она не трогает, так
+      // что и смерти от неё ему нет: его исход решит отряд (см. auraFelled).
       allyTicked = tickAllyEffects(promoted2)
       fogged     = promoteAfterKill(joeRises(auraTick(allyTicked, on = false)))
       // Охрану доломали союзники, пока герой лежал, — башням некого
@@ -5144,16 +5146,30 @@ case class BattleState(
       auraFelled(if (byMob.battle.holyWater) holyTick(byMob) else byMob)
     }
 
-  /** Аура добила того, кто в полях боя, — это смерть, как от удара или ран, и
-    * исход хода — победа над ним; дальше её разбирают тем же порядком: Джо
-    * встаёт, в группе место перед героем пустеет. Раньше исход оставался «бой
-    * идёт», и мёртвый так и стоял в паре с нулём HP: бил героя, а в павших не
-    * числился — Некроманту было нечего поднимать. Если та же аура свалила и
-    * стоявшего героя, победы не даём. */
+  /** Кого аура добила, того и разбираем — так же, как павших от удара или ран.
+    *
+    * Сперва героя. Стоящий на нуле — это смерть, и она важнее победы, даже если
+    * та же аура свалила и того, кто в полях боя (как в [[monsterPhase]] и
+    * [[sideMobsPhase]]). «Первопроходец» спасает и от неё — как после хода.
+    * Дальше смерть разбирает commit: при живом отряде герой ляжет, и бой пойдёт
+    * без него. Раньше исход оставался «бой идёт»: герой стоял с нулём HP и
+    * следующим ходом ещё бил — добил активного один на один — победа на нуле
+    * HP, не добил — смерть ходом позже, а второго дыхания не было вовсе.
+    * Лежачего аура не трогает (см. [[applyAura]]) — его исход решит отряд.
+    *
+    * Потом того, кто в полях боя: аура добила его, а герой стоит (или его
+    * поднял «Первопроходец»), — это победа над ним, и дальше её разбирают тем
+    * же порядком: Джо встаёт, в группе место перед героем пустеет. Раньше
+    * мёртвый так и стоял в паре с нулём HP: бил героя, а в павших не числился —
+    * Некроманту было нечего поднимать. */
   private def auraFelled(res: TurnResult): TurnResult =
-    if (res.outcome != Outcome.Continue || !res.endsRound || res.battle.monsterCurrentHp > 0L) res
-    else if (res.hero.fightStats.hp <= 0L && !res.battle.group.heroDown) res
-    else res.copy(outcome = Outcome.Victory)
+    if (res.outcome != Outcome.Continue || !res.endsRound) res
+    else {
+      val heroFell = res.hero.fightStats.hp <= 0L && !res.battle.group.heroDown
+      val stood    = if (heroFell) secondWind(res.copy(outcome = Outcome.Death), side = false) else res
+      if (stood.outcome != Outcome.Continue || stood.battle.monsterCurrentHp > 0L) stood
+      else stood.copy(outcome = Outcome.Victory)
+    }
 
   /** Держатся ли на поле миазмы в этом раунде: герой их не свернул и ему есть
     * чем платить — или их держит моб, у которого хватает энергии. Осевшие
