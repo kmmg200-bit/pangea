@@ -122,6 +122,10 @@ sealed abstract class BrewKind(
 /** Числа отваров — отдельно от компаньона, чтобы варианты не читали его поля в
  *  конструкторе (см. FlaskRates: иначе класс-инициализация может встать в дедлок). */
 object BrewRates {
+  /** Яд красного паука на клинке: шанс (в %), что удар по HP собьёт врагу
+    * ближайшее умение. Так решил пользователь. */
+  val RedVenomBlockPct: Long = 50L
+
   /** Часовой баф: сколько процентов и на сколько. */
   val BoostPct: Int        = 10
   val BoostDurationMs: Long = 60L * 60L * 1000L
@@ -270,6 +274,15 @@ object BrewKind extends Enum[BrewKind] {
     List(Belladonna, Wormwood, Nettle),
     "Тёмная маслянистая мазь с запахом красавки. Смазать клинок — и в ближайшем бою каждый удар по HP травит врага; заодно заправляет флягу яда до краёв.",
     BrewEffect.Coat(WeaponCoat.Poison, RefillSource.Poison))
+
+  /** Не из трав — две железы сетеплётов: варит её только куб (см.
+    * CubeCraft.MaterialBrew). Так решил пользователь: яд — каждым ударом по HP,
+    * умение врага сбивается через раз. */
+  case object RedVenomSalve extends BrewKind(
+    "Яд красного паука",
+    List(RedSpiderGland, VenomGland),
+    "Тягучая тёмно-красная мазь, тёплая сквозь стекло. Смазать клинок — и в ближайшем бою каждый удар по HP травит врага, а то и сбивает ему ближайшее умение; заодно заправляет флягу яда до краёв.",
+    BrewEffect.Coat(WeaponCoat.RedVenom, RefillSource.Poison))
 
   case object BloodSalve extends BrewKind(
     "Кровавая смазка",

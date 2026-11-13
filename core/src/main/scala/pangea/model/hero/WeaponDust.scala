@@ -43,6 +43,8 @@ final case class WeaponDust(
 
   def poisonCoated: Boolean = coat.contains(WeaponCoat.Poison)
   def bleedCoated: Boolean  = coat.contains(WeaponCoat.Bleed)
+  /** Яд красного паука: травит, как простой яд, и с шансом сбивает врагу умение. */
+  def redVenomCoated: Boolean = coat.contains(WeaponCoat.RedVenom)
 }
 
 /** Чем смазано оружие (см. BrewEffect.Coat). */
@@ -50,6 +52,9 @@ sealed trait WeaponCoat extends enumeratum.EnumEntry
 object WeaponCoat extends enumeratum.Enum[WeaponCoat] {
   case object Poison extends WeaponCoat
   case object Bleed  extends WeaponCoat
+  /** Яд красного паука: удар по HP травит и с шансом сбивает врагу ближайшее
+    * умение (см. BrewRates.RedVenomBlockPct). */
+  case object RedVenom extends WeaponCoat
   val values: IndexedSeq[WeaponCoat] = findValues
 
   implicit val encoder: Encoder[WeaponCoat] = (c: WeaponCoat) => io.circe.Json.fromString(c.entryName)

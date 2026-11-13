@@ -266,8 +266,9 @@ object SkillsState {
                        .map { case (n, xs) => if (xs.sizeIs > 1) s"$n ×${xs.size}" else n }
                        .mkString(", ")))
     val coat     = dust.coat.map {
-                     case pangea.model.hero.WeaponCoat.Poison => t("coatPoison")
-                     case pangea.model.hero.WeaponCoat.Bleed  => t("coatBleed")
+                     case pangea.model.hero.WeaponCoat.Poison   => t("coatPoison")
+                     case pangea.model.hero.WeaponCoat.Bleed    => t("coatBleed")
+                     case pangea.model.hero.WeaponCoat.RedVenom => t("coatRedVenom")
                    }
     val mirrors  = Option.when(dust.mirrors > 0)(t("mirrors", "n" -> dust.mirrors.toString))
     val lines    = blessing.toList ++ boosts ++ frozen ++ layers ++ coat ++ mirrors

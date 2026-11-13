@@ -693,14 +693,16 @@ object VillageSpec extends ZIOSpecDefault {
       val prices = Map[MaterialKind, Long](MaterialKind.Timber -> 100L, MaterialKind.HempRope -> 100L,
         MaterialKind.TannedLeather -> 200L, MaterialKind.WoolCloth -> 200L, MaterialKind.IronIngot -> 250L,
         MaterialKind.PineTar -> 300L, MaterialKind.CopperIngot -> 400L)
-      // Ядовитая железа уже в деле — идёт в паучью сыворотку, пометки на ней нет.
-      val spider = List(MaterialKind.SpiderSilk, MaterialKind.CocoonTreasure, MaterialKind.RedSpiderGland)
+      // Ядовитая железа и железа красного паука уже в деле — идут в паучью
+      // сыворотку и яд красного паука, пометки на них нет.
+      val spider = List(MaterialKind.SpiderSilk, MaterialKind.CocoonTreasure)
       val cards  = (LootGenerator.BanditSpoils.map(_._1) ++ spider).map(k => k -> MaterialGenerator.item(k).statsLines)
       assertTrue(LootGenerator.BanditSpoils.forall { case (k, _) => prices.get(k).contains(k.silverPrice) }) &&
       assertTrue(cards.forall { case (k, lines) =>
         k.notYetUsed && lines.contains(k.description) && lines.lastOption.contains(MaterialKind.NotYetUsedNote) }) &&
       assertTrue(MaterialKind.NotYetUsedNote == "(пока не используется)") &&
-      assertTrue(List(MaterialKind.EverburningIron, MaterialKind.DiamondDust, MaterialKind.Mithril, MaterialKind.VenomGland).forall(k =>
+      assertTrue(List(MaterialKind.EverburningIron, MaterialKind.DiamondDust, MaterialKind.Mithril, MaterialKind.VenomGland,
+        MaterialKind.RedSpiderGland).forall(k =>
         !k.notYetUsed && !MaterialGenerator.item(k).statsLines.contains(MaterialKind.NotYetUsedNote)))
     },
 

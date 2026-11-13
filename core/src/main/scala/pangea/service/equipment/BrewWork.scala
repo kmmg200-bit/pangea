@@ -123,7 +123,11 @@ final class BrewWork(heroDao: HeroDao, inventoryRepo: InventoryRepository, conte
       case Some(BrewEffect.Coat(_, _)) if hero.equipment.unarmed =>
         renderer.show(user, Screen(content.text("brew.noWeapon"), Nil)).as(false)
       case Some(BrewEffect.Coat(coat, _)) =>
-        val key = coat match { case WeaponCoat.Poison => "brew.coatedPoison"; case WeaponCoat.Bleed => "brew.coatedBleed" }
+        val key = coat match {
+          case WeaponCoat.Poison   => "brew.coatedPoison"
+          case WeaponCoat.Bleed    => "brew.coatedBleed"
+          case WeaponCoat.RedVenom => "brew.coatedRedVenom"
+        }
         heroDao.updateWeaponDust(user.userId, hero.weaponDust.copy(coat = Some(coat))) *>
           spend(user, item, hero, content.format(key, "weapon" -> hero.equipment.mainWeapon.name), renderer)
       case _ => ZIO.succeed(false)

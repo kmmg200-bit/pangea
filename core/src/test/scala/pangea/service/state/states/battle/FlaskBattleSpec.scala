@@ -379,6 +379,27 @@ object FlaskBattleSpec extends ZIOSpecDefault {
               assertTrue(u2.weaponDust.isEmpty)
     },
 
+    test("яд красного паука: удар по HP травит всегда, а с шансом 50% ещё и сбивает врагу ближайшее умение") {
+      val h = hero(FlaskKind.Smith).copy(weaponDust = pangea.model.hero.WeaponDust(coat = Some(pangea.model.hero.WeaponCoat.RedVenom)))
+      def round(venomRoll: Int) =
+        for {
+          t   <- makeState(h, SoloPveBattle.from(monster(), h))
+          (state, dao, r) = t
+          // попадание героя, бросок яда на умение, затем ход моба
+          _   <- TestRandom.feedInts(60, venomRoll, 1, 99) *> TestRandom.feedLongs(100L, 100L)
+          _   <- state.action(testUser, tap("Attack"), r)
+          b   <- dao.readActiveBattle(userId).map(_.flatMap(_.as[SoloPveBattle].toOption).get)
+          log <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+        } yield (b, log)
+      for {
+        hit  <- round(1)
+        miss <- round(99)
+      } yield assertTrue(hit._1.effects.monsterPoison.isDefined && hit._1.effects.monsterSkillBlockedTurns >= 1) &&
+              assertTrue(hit._2.contains("🕷 Яд красного паука → ") && hit._2.contains("ближайшее умение сорвётся")) &&
+              assertTrue(miss._1.effects.monsterPoison.isDefined && miss._1.effects.monsterSkillBlockedTurns == 0) &&
+              assertTrue(!miss._2.contains("Яд красного паука →") && pangea.model.item.BrewRates.RedVenomBlockPct == 50L)
+    },
+
     test("глоток любой фляги тратит расходник раунда: второй в том же раунде не выпить") {
       val h = hero(FlaskKind.Smith, armor = 0L)
       for {

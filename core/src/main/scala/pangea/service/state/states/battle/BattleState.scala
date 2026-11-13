@@ -1429,7 +1429,8 @@ case class BattleState(
             // Фляги яда и крови (на раунды) и смазки из отваров (на весь бой): пока
             // оружие смазано, удар по HP травит (как отравленное оружие) либо пускает
             // кровь — стакается с тем, что висит.
-            coatPoisons = (battle.effects.heroPoisonCoat || hero.weaponDust.poisonCoated) && hpDmg > 0 && newHp > 0
+            coatPoisons = (battle.effects.heroPoisonCoat || hero.weaponDust.poisonCoated ||
+                            hero.weaponDust.redVenomCoated) && hpDmg > 0 && newHp > 0
             coatBleeds  = (battle.effects.heroBleedCoat || hero.weaponDust.bleedCoated) && hpDmg > 0 && newHp > 0
             effectsCoated =
               if (!coatPoisons) effectsAfterGem
@@ -1440,15 +1441,24 @@ case class BattleState(
               else effectsCoated.copy(
                 monsterBleed = Some(effectsCoated.monsterBleed.map(_.stackedWith(FlaskRates.CoatBleedPct))
                                  .getOrElse(Bleed(FlaskRates.CoatBleedPct))))
+            // Яд красного паука на клинке: удар по HP с шансом сбивает врагу
+            // ближайшее умение — тем же блоком, что и комбо Молния+Холод. Бросок
+            // без смазки не тратится.
+            venomBlocks <- chanceRoll(hero.weaponDust.redVenomCoated && hpDmg > 0 && newHp > 0,
+                             BrewRates.RedVenomBlockPct)
+            effectsVenom =
+              if (!venomBlocks) effects
+              else effects.copy(monsterSkillBlockedTurns =
+                effects.monsterSkillBlockedTurns.max(BattleState.VenomSkillBlockTurns))
             // «Упырь» (порог 6): шанс, что удар по HP пустит цели кровь. Бросок
             // не тратится, если набора нет, — детерминизм боевых тестов.
             setBleeds <- chanceRoll(
                            hero.sets.bleedOnHitChancePct > 0 && hpDmg > 0 && newHp > 0,
                            hero.sets.bleedOnHitChancePct)
             effectsBled =
-              if (!setBleeds) effects
-              else effects.copy(monsterBleed = Some(
-                effects.monsterBleed.map(_.stackedWith(hero.sets.bleedPct)).getOrElse(Bleed(hero.sets.bleedPct))))
+              if (!setBleeds) effectsVenom
+              else effectsVenom.copy(monsterBleed = Some(
+                effectsVenom.monsterBleed.map(_.stackedWith(hero.sets.bleedPct)).getOrElse(Bleed(hero.sets.bleedPct))))
             // «Крыса» (порог 4): шанс, что удар по HP ещё и отравит. Бросок без
             // набора не тратится — детерминизм боевых тестов.
             setPoisons <- chanceRoll(
@@ -1509,7 +1519,8 @@ case class BattleState(
               (if (poisonsNow || gemPoisons || coatPoisons || setPoisons)
                 log1 :+ content.format("battle.poisonApplied", "monster" -> battle.monsterName)
               else log1) ++ Option.when(weakens)(content.format("battle.groveWeaken", "monster" -> battle.monsterName,
-                "pct" -> ItemSet.QuietGrove.WeakenPct.toString, "turns" -> ItemSet.QuietGrove.WeakenTurns.toString)).toVector
+                "pct" -> ItemSet.QuietGrove.WeakenPct.toString, "turns" -> ItemSet.QuietGrove.WeakenTurns.toString)).toVector ++
+                Option.when(venomBlocks)(content.format("battle.redVenomBlocks", "monster" -> battle.monsterName)).toVector
             // Сам вампиризм о себе не говорит: его число уезжает в конец раунда и
             // там складывается с чужой кровью в одну строку (см. vampLine). Если
             // раунд кончился раньше хода моба, строку дописываем здесь же.
@@ -5206,8 +5217,9 @@ case class BattleState(
       // Смазка на клинок: держится до конца боя, как и наложенная до него.
       case BrewEffect.Coat(coat, _) =>
         val key = coat match {
-          case WeaponCoat.Poison => "battle.belt.coatPoison"
-          case WeaponCoat.Bleed  => "battle.belt.coatBleed"
+          case WeaponCoat.Poison   => "battle.belt.coatPoison"
+          case WeaponCoat.Bleed    => "battle.belt.coatBleed"
+          case WeaponCoat.RedVenom => "battle.belt.coatRedVenom"
         }
         done(hero.copy(weaponDust = hero.weaponDust.copy(coat = Some(coat))), battle,
           Vector(content.format(key, "weapon" -> hero.equipment.mainWeapon.name)))
@@ -8035,6 +8047,10 @@ object BattleState {
   /** На сколько тиков Боевой клич запирает умения мобов вокруг: гаснет один
     * каст — ближайший (двойка по той же причине, что и у ComboSkillBlockTurns). */
   val WarCrySkillBlockTurns: Int = 2
+
+  /** Яд красного паука на клинке гасит ближайший каст врага — двойка по той же
+    * причине, что и у ComboSkillBlockTurns. */
+  val VenomSkillBlockTurns: Int = 2
 
   /** Чем арена зовёт игрока к экрану и чем добивает просроченный ход. */
   val ArenaPokeAction: String = """{"action":"ArenaPoke"}"""

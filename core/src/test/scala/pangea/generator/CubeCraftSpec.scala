@@ -383,6 +383,16 @@ object CubeCraftSpec extends ZIOSpecDefault {
         !BrewKind.rank2.contains(BrewKind.SpiderSerum)) &&
       // железа теперь в деле — пометки «пока не используется» на ней нет
       assertTrue(!MaterialKind.VenomGland.notYetUsed)
+    },
+
+    test("железа красного паука и ядовитая железа → «Яд красного паука», смазка клинка, одна склянка") {
+      val pool   = List(MaterialKind.RedSpiderGland, MaterialKind.VenomGland).zipWithIndex
+                     .map { case (k, i) => MaterialGenerator.item(k).copy(id = 200L + i) }
+      val result = CubeCraft.craft(pool, charges = 5, Rng(1L))
+      val salve  = BrewKind.RedVenomSalve
+      assertTrue(result.items.flatMap(_.brew) == List(salve)) &&
+      assertTrue(salve.portions == 1 && salve.effect == BrewEffect.Coat(pangea.model.hero.WeaponCoat.RedVenom, RefillSource.Poison)) &&
+      assertTrue(!MaterialKind.RedSpiderGland.notYetUsed && MaterialKind.RedSpiderGland.doubloonPrice == 5L)
     }
 
   )

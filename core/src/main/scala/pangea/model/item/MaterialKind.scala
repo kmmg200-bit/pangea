@@ -284,7 +284,6 @@ object MaterialKind extends Enum[MaterialKind] {
       "Тёмно-красная железа, горячая даже сквозь перчатку. Яд в ней не плещется, а " +
       "медленно ворочается, будто ещё живой."
     override val doubloonPrice: Long = 5L
-    override val notYetUsed: Boolean = true
   }
 
   // ── Награбленное с обозов ────────────────────────────────────────────────
