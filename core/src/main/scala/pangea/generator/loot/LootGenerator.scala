@@ -583,18 +583,19 @@ object LootGenerator {
     * границах игры — на первом уровне разброс не уводит вещь в нулевой, на
     * последнем в 151-й. Имя перекатываем как сетовое: имя набора встаёт вместо
     * титула. */
-  private def setGear(boss: MiniBoss, heroLvl: Long, rarity: ItemRarity, rng: Rng): (LootDrop, Rng) =
+  private def setGear(boss: MiniBoss, heroLvl: Long, rarity: ItemRarity, rng: Rng): (LootDrop, Rng) = {
+    val (delta, r2) = rng.between(-1L, 2L)
+    val lvl         = (heroLvl + delta).max(1L).min(Hero.MaxLevel)
+    val (item, r3)  = ItemGenerator.createItemAtLevel(lvl, rarity, r2)
     boss.set match {
-      // Босс без набора сюда не ходит (его добыча своя) — но если дойдёт,
-      // пусть лучше выпадет руна, чем вещь неизвестно чья.
-      case None => bigRune(rng)
+      // Набора у него ещё нет (Громовой элементаль, пока его набор не сделан) —
+      // выпадает вещь его уровня той же редкости, только без набора.
+      case None => (LootDrop.Gear(item), r3)
       case Some(set) =>
-        val (delta, r2) = rng.between(-1L, 2L)
-        val lvl         = (heroLvl + delta).max(1L).min(Hero.MaxLevel)
-        val (item, r3)  = ItemGenerator.createItemAtLevel(lvl, rarity, r2)
-        val (name, r4)  = ItemNameGenerator.setName(item.itemType, item.rarity, set, r3, item.grip)
+        val (name, r4) = ItemNameGenerator.setName(item.itemType, item.rarity, set, r3, item.grip)
         (LootDrop.Gear(item.copy(name = name, set = Some(set))), r4)
     }
+  }
 
   /** Редкость вещи малого расового набора (в %, сумма = 100). */
   val RaceSetRarityWeights: List[(ItemRarity, Int)] = List(
@@ -672,10 +673,11 @@ object LootGenerator {
   /** Благословение Азата после минибосса: с шансом `chancePct`% — лишняя вещь его
     * набора: фиолетовая на 5%, легендарная на полпроцента, остальное синее (вся
     * её шкала — она сама, см. [[setRarity]]). Лишняя вещь — с того, кого убили,
-    * а не случайная. RNG тратится всегда. */
+    * а не случайная. Набора у него ещё нет (Громовой) — вещь его уровня той же
+    * редкости, как и в его добыче (см. [[setGear]]). RNG тратится всегда. */
   def rollBlessingBossGear(chancePct: Long, boss: MiniBoss, heroLvl: Long, rng: Rng): (Option[Item], Rng) = {
     val (roll, r1) = rng.between(0L, 100L)
-    if (roll < chancePct && boss.set.isDefined) {
+    if (roll < chancePct) {
       val (drop, r2) = setDrop(boss, heroLvl, 1L, 1L, r1)
       (drop.itemOpt, r2)
     } else (None, r1)

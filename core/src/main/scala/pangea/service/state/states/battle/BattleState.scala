@@ -1799,7 +1799,7 @@ case class BattleState(
             val rawArmor  = math.min(curArmor, damage)
             val rawHp     = damage - rawArmor
             val armorDmg  = (rawArmor * armorMult).toLong.min(curArmor).max(0L)
-            val hpDmg     = toHpAfter((rawHp * hpMult).toLong.max(0L))
+            val hpDmg     = toHpAfter(((rawHp * hpMult).toLong + lightningPierce(battle, armorDmg)).max(0L))
             ((hero.fightStats.hp - hpDmg).max(0L), curArmor - hero.sets.armorSpent(armorDmg), armorDmg + hpDmg)
         }
     }
@@ -1849,6 +1849,7 @@ case class BattleState(
   ): Task[(SoloPveBattle, Hero, String)] =
     battle.boss match {
       case Some(MiniBoss.StoneElemental) => stoneTurnCast(hero, battle, nowMs, victim)
+      case Some(MiniBoss.ThunderElemental) => thunderTurnCast(hero, battle, nowMs, victim)
       case Some(MiniBoss.RottenJoe)      => joeTurnCast(hero, battle, nowMs, victim)
       case Some(MiniBoss.WhiteWolf)      => wolfTurnCast(hero, battle, nowMs, victim)
       case Some(MiniBoss.RatKing)        => ratKingTurnCast(hero, battle)
@@ -2486,6 +2487,210 @@ case class BattleState(
     }
   }
 
+  /** Круг Громового: разряд → грозовой заряд → цепная молния → ионный покров →
+    * пропуск. Бьёт он молнией (см. MiniBoss.attackElement): по герою — гранями
+    * стихии через [[bossHit]], по союзнику — по его защите теми же гранями (см.
+    * [[zapVictim]]). Цель — та, что пришла: напротив, а нет — герой или
+    * ближайший союзник в трёх местах (он дальник, см. RaceTactics.reachOf). Не
+    * хватило энергии — шаг пропускается, а круг сдвигается. */
+  private def thunderTurnCast(
+      hero: Hero,
+      battle: SoloPveBattle,
+      nowMs: Long,
+      victim: Victim
+  ): Task[(SoloPveBattle, Hero, String)] = {
+    val thunder = MiniBoss.ThunderElemental
+    val lvl     = battle.monsterLvl
+    val atk     = monsterAttack(battle)
+    val energy  = battle.monsterCurrentEnergy
+    val next    = nextTurn(battle, thunder)
+
+    def spend(cost: Long, b: SoloPveBattle): SoloPveBattle = b.copy(monsterCurrentEnergy = energy - cost)
+
+    battle.bossTurn match {
+      // 1) Разряд: половина атаки и выжженная энергия цели.
+      case 0 =>
+        val cost = thunder.BoltCostPerLvl * lvl
+        if (energy < cost) ZIO.succeed((next, hero, ""))
+        else {
+          val (h1, b1, dealt) = zapVictim(victim, hero, spend(cost, next),
+                                  (atk * thunder.BoltDamageFactor).toLong.max(1L), nowMs)
+          val (h2, b2, burnt) = burnVictimEnergy(victim, h1, b1, thunder.BoltEnergyBurnPct, nowMs)
+          val head = victim match {
+            case Victim.Hero      => content.format("battle.thunder.bolt", "damage" -> dealt.toString)
+            case Victim.Ally(pos) => content.format("battle.thunder.boltAlly",
+                                       "name" -> b2.group.allyAt(pos).fold("")(_.name), "damage" -> dealt.toString)
+          }
+          val burnLine = Option.when(burnt > 0L)(victim match {
+            case Victim.Hero      => content.format("battle.mobLightningBurn", "energy" -> burnt.toString)
+            case Victim.Ally(pos) => content.format("battle.ally.lightningBurn",
+                                       "name" -> b2.group.allyAt(pos).fold("")(_.name), "energy" -> burnt.toString)
+          })
+          ZIO.succeed((b2, h2, (head +: burnLine.toVector).mkString("\n")))
+        }
+
+      // 2) Грозовой заряд: копится до трёх, третий сразу срывается в раскат.
+      case 1 =>
+        val cost = thunder.ChargeCostPerLvl * lvl
+        if (energy < cost) ZIO.succeed((next, hero, ""))
+        else {
+          val charges = battle.bossCharges + 1
+          if (charges < thunder.ChargesToBurst)
+            ZIO.succeed((spend(cost, next).copy(bossCharges = charges), hero,
+              content.format("battle.thunder.charge", "n" -> charges.toString, "of" -> thunder.ChargesToBurst.toString)))
+          else thunderClap(hero, spend(cost, next).copy(bossCharges = 0), atk, nowMs, victim)
+        }
+
+      // 3) Цепная молния: по цели и по тем, кто стоит с ней рядом.
+      case 2 =>
+        val cost = thunder.ChainCostPerLvl * lvl
+        if (energy < cost) ZIO.succeed((next, hero, ""))
+        else ZIO.succeed(chainLightning(hero, spend(cost, next), atk, nowMs, victim))
+
+      // 4) Ионный покров: чинит броню и HP, но только если есть что чинить.
+      case 3 =>
+        val cost     = thunder.CoverCostPerLvl * lvl
+        val maxHp    = battle.monsterStats.hp
+        val maxArmor = battle.monsterStats.armor
+        val hurt     = battle.monsterCurrentHp < maxHp || battle.monsterCurrentArmor < maxArmor
+        if (energy < cost || !hurt) ZIO.succeed((next, hero, ""))
+        else {
+          val newHp    = (battle.monsterCurrentHp + maxHp * thunder.CoverHpPct / 100L).min(maxHp)
+          val newArmor = (battle.monsterCurrentArmor + maxArmor * thunder.CoverArmorPct / 100L).min(maxArmor)
+          ZIO.succeed((
+            spend(cost, next).copy(monsterCurrentHp = newHp, monsterCurrentArmor = newArmor),
+            hero,
+            content.format("battle.thunder.cover",
+              "hp" -> (newHp - battle.monsterCurrentHp).toString,
+              "armor" -> (newArmor - battle.monsterCurrentArmor).toString)))
+        }
+
+      // 5) Пропуск хода.
+      case _ => ZIO.succeed((next, hero, ""))
+    }
+  }
+
+  /** Удар Громового по цели — молнией. Герою — гранями стихии через
+    * [[bossHit]], и поднятый щит режет его, как всякий приём минибосса (см.
+    * [[hurtVictim]]); союзнику — по его защите и теми же гранями (см.
+    * [[allyHitSplit]]). Возвращает героя, бой и сколько урона прошло. */
+  private def zapVictim(v: Victim, hero: Hero, battle: SoloPveBattle, damage: Long, nowMs: Long): (Hero, SoloPveBattle, Long) =
+    v match {
+      case Victim.Hero =>
+        val dealt                     = bossDamageTaken(hero, battle, BattleState.shieldCut(battle.heroBlockPct, damage))
+        val (newHp, newArmor, landed) = bossHit(battle, hero, dealt, nowMs)
+        (hero.copy(fightStats = hero.fightStats.copy(hp = newHp, armor = newArmor)), battle, landed)
+      case Victim.Ally(pos) =>
+        battle.group.allyAt(pos).filter(_.alive) match {
+          case None => (hero, battle, 0L)
+          case Some(a) =>
+            val reduced           = (damage * (1.0 - allyReduction(a, battle.monsterStats.atk))).toLong.max(1L)
+            val (armorDmg, hpDmg) = allyHitSplit(battle, a, reduced)
+            val hurt = a.copy(armor = a.armor - armorDmg, hp = (a.hp - hpDmg).max(0L),
+                         lastHitBy = Some(battle.monsterName))
+            (hero, battle.copy(group = battle.group.updateAlly(pos)(_ => hurt)), armorDmg + hpDmg)
+        }
+    }
+
+  /** Выжечь цели `pct`% потолка её энергии (разряд Громового): герою — из его
+    * запаса, союзнику — из своего. Возвращает героя, бой и сколько сгорело. */
+  private def burnVictimEnergy(v: Victim, hero: Hero, battle: SoloPveBattle, pct: Long, nowMs: Long): (Hero, SoloPveBattle, Long) =
+    v match {
+      case Victim.Hero =>
+        val burnt = BattleState.energyBurnOf(hero.maxEnergy(nowMs), hero.fightStats.energy, pct)
+        (hero.copy(fightStats = hero.fightStats.copy(energy = hero.fightStats.energy - burnt)), battle, burnt)
+      case Victim.Ally(pos) =>
+        battle.group.allyAt(pos).filter(_.alive) match {
+          case None => (hero, battle, 0L)
+          case Some(a) =>
+            val burnt = BattleState.energyBurnOf(a.stats.energy, a.energy, pct)
+            (hero, battle.copy(group = battle.group.updateAlly(pos)(_.copy(energy = a.energy - burnt))), burnt)
+        }
+    }
+
+  /** Громовой раскат: накопленные заряды разом — две атаки плюс 5% максимумов HP
+    * и брони цели, молнией. Дошёл до HP героя — с шансом 20% травма, как от
+    * смерча огненного («Подгорный мастер» с бронёй её не получает). И
+    * оглушение: следующее умение цели срывается — у героя и у союзника (тот же
+    * срыв, что от яда красного сетеплёта, см. RedSpider). */
+  private def thunderClap(
+      hero: Hero,
+      battle: SoloPveBattle,
+      atk: Long,
+      nowMs: Long,
+      victim: Victim
+  ): Task[(SoloPveBattle, Hero, String)] = {
+    val thunder = MiniBoss.ThunderElemental
+    // Раскат считается от запаса того, в кого летит: у союзника свои потолки.
+    val (maxHp, maxArmor) = victim match {
+      case Victim.Hero      => (hero.effectiveMaxHp(nowMs), hero.effectiveMaxArmor(nowMs))
+      case Victim.Ally(pos) => battle.group.allyAt(pos).fold((0L, 0L))(a => (a.stats.hp, a.stats.armor))
+    }
+    val raw      = atk * 2L + (maxHp * thunder.BurstHeroStatPct / 100L) + (maxArmor * thunder.BurstHeroStatPct / 100L)
+    val hpBefore = victimHp(victim, hero, battle)
+    val (hit, struck, damage) = zapVictim(victim, hero, battle, raw, nowMs)
+    val toHp     = (hpBefore - victimHp(victim, hit, struck)).max(0L)
+    val (stunned, lines) = victim match {
+      case Victim.Hero =>
+        (struck.copy(effects = struck.effects.copy(heroSkillJammed = Some(true))),
+          Vector(content.format("battle.thunder.clap", "damage" -> damage.toString),
+                 content.text("battle.thunder.stunned")))
+      case Victim.Ally(pos) =>
+        val name = struck.group.allyAt(pos).fold("")(_.name)
+        (struck.copy(group = struck.group.updateAlly(pos)(_.copy(skillJammed = true))),
+          Vector(content.format("battle.thunder.clapAlly", "name" -> name, "damage" -> damage.toString),
+                 content.format("battle.thunder.stunnedAlly", "name" -> name)))
+    }
+    val line   = lines.mkString("\n")
+    // Травма — геройская беда: союзник её не получает.
+    val steady = victim == Victim.Hero && hit.sets.steadfast(hit.fightStats.armor)
+    if (toHp <= 0 || victim != Victim.Hero || hit.fightStats.hp <= 0 || steady) ZIO.succeed((stunned, hit, line))
+    else
+      for {
+        roll   <- Random.nextIntBetween(1, 101)
+        result <- if (roll > thunder.BurstTraumaChancePct) ZIO.succeed((stunned, hit, line))
+                  else giveTrauma(hit, nowMs).map { case (h, traumaLine) => (stunned, h, line + "\n" + traumaLine) }
+      } yield result
+  }
+
+  /** Цепная молния: по цели — 0,4 атаки, и по 0,2 — каждому, кто стоит с ней
+    * рядом в её ряду (на соседних местах — герой или союзники). Лежачего героя
+    * молния не трогает. */
+  private def chainLightning(
+      hero: Hero,
+      battle: SoloPveBattle,
+      atk: Long,
+      nowMs: Long,
+      victim: Victim
+  ): (SoloPveBattle, Hero, String) = {
+    val thunder = MiniBoss.ThunderElemental
+    val g       = battle.group
+    val at      = victim match {
+      case Victim.Hero      => g.heroPos
+      case Victim.Ally(pos) => pos
+    }
+    val neighbours = List(at - 1, at + 1).flatMap { p =>
+      if (p == g.heroPos && !g.heroDown) Some(Victim.Hero: Victim)
+      else g.allyAt(p).filter(_.alive).map(a => Victim.Ally(a.position): Victim)
+    }
+    val (h1, b1, dealt) = zapVictim(victim, hero, battle, (atk * thunder.ChainDamageFactor).toLong.max(1L), nowMs)
+    val head = victim match {
+      case Victim.Hero      => content.format("battle.thunder.chain", "damage" -> dealt.toString)
+      case Victim.Ally(pos) => content.format("battle.thunder.chainAlly",
+                                 "name" -> b1.group.allyAt(pos).fold("")(_.name), "damage" -> dealt.toString)
+    }
+    val (bOut, hOut, lines) = neighbours.foldLeft((b1, h1, Vector(head))) { case ((b, h, acc), n) =>
+      val (h2, b2, d) = zapVictim(n, h, b, (atk * thunder.ChainNeighbourFactor).toLong.max(1L), nowMs)
+      val line = n match {
+        case Victim.Hero      => content.format("battle.thunder.chainJumpYou", "damage" -> d.toString)
+        case Victim.Ally(pos) => content.format("battle.thunder.chainJump",
+                                   "name" -> b2.group.allyAt(pos).fold("")(_.name), "damage" -> d.toString)
+      }
+      (b2, h2, acc :+ line)
+    }
+    (bOut, hOut, lines.mkString("\n"))
+  }
+
   /** Травма от смерча — та же механика, что и при смерти: прогресс по тирам
     * (лёгкие → средние → тяжёлые), уже полученные исключаются. Пишется сразу,
     * потому что `commit` сохраняет только экипировку и боевые статы. */
@@ -2680,6 +2885,15 @@ case class BattleState(
   private def powderSplit(battle: SoloPveBattle): Option[(Double, Double)] =
     powderElement(battle).map(e => (e.armorMult, e.hpMult))
 
+  /** Сколько из урона по броне молния минибосса пробивает дальше, в HP: та же
+    * доля, что у Молнии в оружии героя ([[Element.Lightning.ArmorToHpFrac]]).
+    * Так бьёт Громовой элементаль; у людей и гоблинов молния на оружии броню
+    * не пробивает. */
+  private def lightningPierce(battle: SoloPveBattle, armorDmg: Long): Long =
+    if (battle.boss.flatMap(_.attackElement).contains(Element.Lightning))
+      (armorDmg * Element.Lightning.ArmorToHpFrac).toLong
+    else 0L
+
   /** «Каменный страж» (порог 4): стихийный урон по герою слабее на 20%.
     * Стихийным считается ВЕСЬ урон элементаля — он не бьёт «обычной атакой», он
     * и есть огонь: и удар, и всплеск, и смерч, и шипы, и горение. У прочих мобов
@@ -2783,7 +2997,8 @@ case class BattleState(
         val (armorMult, hpMult) = powderSplit(tmp).getOrElse((1.0, 1.0))
         // Опутанного паутиной броня принимает не весь удар: часть идёт прямо в HP.
         val rawArmor = math.min(a.armor, (damage * RedSpider.armorShare(a.webbed > 0, tmp.monsterBreed)).toLong)
-        ((rawArmor * armorMult).toLong.min(a.armor).max(0L), ((damage - rawArmor) * hpMult).toLong.max(0L))
+        val armorDmg = (rawArmor * armorMult).toLong.min(a.armor).max(0L)
+        (armorDmg, (((damage - rawArmor) * hpMult).toLong + lightningPierce(tmp, armorDmg)).max(0L))
     }
 
   /** Тик ран союзников в конце раунда — те же три, что у героя и у мобов: яд
@@ -3058,8 +3273,28 @@ case class BattleState(
     if (fired(Element.Air) && !fireAir) {
       b = b.copy(effects = b.effects.copy(airBoostTurns = airTurns))
       log = log :+ Element.Air.procText.replace("{turns}", airTurns.toString)
+      // Громовому ветер вдобавок разгоняет тучу: гаснет один накопленный заряд,
+      // и на несколько раундов он бьёт менее точно — так же, как холод сковывает
+      // огненного.
+      if (b.boss.contains(MiniBoss.ThunderElemental)) {
+        val thunder = MiniBoss.ThunderElemental
+        b = b.copy(
+          bossCharges = (b.bossCharges - 1).max(0),
+          effects     = b.effects.copy(mobDispersedTurns = Some(thunder.DispersedTurns)))
+        log = log :+ content.format("battle.thunder.dispersed",
+          "pct" -> thunder.DispersedAccuracyCutPct.toString, "turns" -> thunder.DispersedTurns.toString,
+          "charges" -> b.bossCharges.toString)
+      }
     }
-    if (fired(Element.Lightning)) {
+    if (fired(Element.Lightning) && b.boss.contains(MiniBoss.ThunderElemental)) {
+      // Громовой молнию не теряет, а впитывает: энергии у него прибавляется.
+      val cap    = b.monsterStats.energy
+      val gained = ((cap * MiniBoss.ThunderElemental.LightningChargePct / 100L).max(1L))
+                     .min((cap - b.monsterCurrentEnergy).max(0L))
+      b = b.copy(monsterCurrentEnergy = b.monsterCurrentEnergy + gained)
+      log = log :+ content.format("battle.thunder.absorbs", "monster" -> b.monsterName, "energy" -> gained.toString)
+    }
+    else if (fired(Element.Lightning)) {
       // Выжиг энергии: снимаем долю от ПОТОЛКА, поэтому эффект не зависит от
       // того, сколько моб успел накопить, и одинаково чувствуется на любом
       // уровне. Умение, на которое он копил, откладывается. Строка одна: и
@@ -3191,9 +3426,13 @@ case class BattleState(
             )
             burnPct = battle.boss.map(_.heroIgniteBurnPct).getOrElse(Burn.Initial)
             // Прок стихии порошка — тот же 30%-й бросок, что и у стихий оружия.
-            // Огонь уже отыгран поджогом выше, здесь остаются холод и воздух.
-            procElement = powderElement(battle).filter(e => e == Element.Cold || e == Element.Air)
+            // Огонь уже отыгран поджогом выше, здесь остаются холод, воздух и
+            // молния: она выжигает герою энергию, как прок Молнии в оружии — мобу.
+            procElement = powderElement(battle).filter(e => e == Element.Cold || e == Element.Air || e == Element.Lightning)
             mobProc <- chanceRoll(procElement.isDefined, Element.ProcChancePct)
+            energyBurnt = if (mobProc && procElement.contains(Element.Lightning))
+                            BattleState.energyBurnOf(hero.maxEnergy(nowMs), hero.fightStats.energy, Element.LightningEnergyBurnPct)
+                          else 0L
             // Отравленное оружие: удар, дошедший до HP, травит. Мурлок и эльф
             // ходят с ним всегда (Race.weaponPoison), но травят через раз
             // (Poison.WeaponChancePct); Крысиному королю яд поставлен флагом при
@@ -3275,10 +3514,11 @@ case class BattleState(
                 "cut" -> Element.Cold.DefenceReductionCut.toString)),
               Option.when(coldWarded)(content.text("battle.ward.cold")),
               Option.when(quenched)(content.text("battle.elements.quenchHero")),
-              Option.when(mobProc && procElement.contains(Element.Air))(airBoostLine(battle.monsterName))
+              Option.when(mobProc && procElement.contains(Element.Air))(airBoostLine(battle.monsterName)),
+              Option.when(energyBurnt > 0L)(content.format("battle.mobLightningBurn", "energy" -> energyBurnt.toString))
             ).flatten
           } yield MobStrike(newHp, newArmor + restoredArmor, landed, lines, battleAfterAtk,
-                    poisoned = poisons && !poisonWarded, webbed = webs)
+                    poisoned = poisons && !poisonWarded, webbed = webs, energyBurnt = energyBurnt)
   }
 
   /** Умение моба поверх обычной атаки: самое дорогое по карману, оплачивается
@@ -3373,7 +3613,7 @@ case class BattleState(
             val line  = content.format("battle.mobHit", "damage" -> st.damage.toString, "monster" -> ticked.monsterName,
                           "elem" -> (strikeBy(ticked) + heroPoisonMark(st.poisoned) + heroWebMark(st.webbed)))
             val lines = if (st.mirrored) st.extraLines else line :: st.extraLines
-            (st.newHp, st.newArmor, lines.mkString("\n"), st.battle)
+            (st.newHp, st.newArmor, (hero.fightStats.energy - st.energyBurnt).max(0L), lines.mkString("\n"), st.battle)
           }
         else {
           val missLine = content.format("battle.mobMiss", "monster" -> ticked.monsterName)
@@ -3381,14 +3621,15 @@ case class BattleState(
           if (ticked.heroCounterReady)
             playerStrike(hero, ticked.copy(heroCounterReady = false), nowMs, Vector.empty, skip,
               retaliate = false, sureHit = true).map { res =>
-              (res.hero.fightStats.hp, res.hero.fightStats.armor,
+              (res.hero.fightStats.hp, res.hero.fightStats.armor, res.hero.fightStats.energy,
                 (Vector(missLine, content.text("battle.counter")) ++ res.log).mkString("\n"), res.battle)
             }
-          else ZIO.succeed((hero.fightStats.hp, hero.fightStats.armor, missLine, ticked))
+          else ZIO.succeed((hero.fightStats.hp, hero.fightStats.armor, hero.fightStats.energy, missLine, ticked))
         }
-      (hpAfterAtk, armorAfterAtk, mobLine0, battleAfterAtk) = atkResult
+      (hpAfterAtk, armorAfterAtk, energyAfterAtk, mobLine0, battleAfterAtk) = atkResult
       // Удар по HP может оставить травму — сразу за строкой удара.
-      struckTrauma <- hitTrauma(hero, hero.copy(fightStats = hero.fightStats.copy(hp = hpAfterAtk, armor = armorAfterAtk)), nowMs)
+      struckTrauma <- hitTrauma(hero, hero.copy(fightStats = hero.fightStats.copy(
+                        hp = hpAfterAtk, armor = armorAfterAtk, energy = energyAfterAtk)), nowMs)
       (heroAfterAtk, strikeTraumaLine) = struckTrauma
       mobLine = strikeTraumaLine.fold(mobLine0)(l => mobLine0 + "\n" + l)
 
@@ -3409,7 +3650,11 @@ case class BattleState(
         else if (battleAfterAtk.boss.isDefined)
           bossTurnCast(heroAfterAtk, battleAfterAtk, nowMs, Victim.Hero)
         else mobSkillCast(heroAfterAtk, battleAfterAtk, nowMs, Victim.Hero)
-      (finalBattle, finalHero0, castLine0) = castResult
+      (castBattle, finalHero0, castLine1) = castResult
+      // Приём, что бьёт не одного (цепная молния Громового), мог свалить и
+      // союзника рядом с героем — тот уходит из строя, как от удара.
+      (finalBattle, castGone) = sweepCastFallen(battleAfterAtk, castBattle)
+      castLine0 = (castLine1 +: castGone).filter(_.nonEmpty).mkString("\n")
       // Приём по HP — тоже может оставить травму.
       castTrauma <- hitTrauma(heroAfterAtk, finalHero0, nowMs)
       (finalHero, castTraumaLine) = castTrauma
@@ -5692,8 +5937,12 @@ case class BattleState(
                            .getOrElse(if (powderElement(tmp).contains(Element.Fire)) Element.ProcChancePct else 0L)
           ignites <- chanceRoll(igniteChance > 0L && !tmp.effects.chilled, igniteChance)
           burnPct      = tmp.boss.map(_.heroIgniteBurnPct).getOrElse(Burn.Initial)
-          procElement  = powderElement(tmp).filter(e => e == Element.Cold || e == Element.Air)
+          procElement  = powderElement(tmp).filter(e => e == Element.Cold || e == Element.Air || e == Element.Lightning)
           mobProc <- chanceRoll(procElement.isDefined, Element.ProcChancePct)
+          // Молния выжигает энергию и союзнику — так же, как герою.
+          zapped   = if (mobProc && procElement.contains(Element.Lightning))
+                       BattleState.energyBurnOf(a.stats.energy, a.energy, Element.LightningEnergyBurnPct)
+                     else 0L
           bladeHits <- chanceRoll(hpDmg > 0L && !tmp.effects.monsterPoisonsOnHit &&
                          Race.withNameOption(tmp.monsterRace).exists(_.weaponPoison), Poison.WeaponChancePct)
           redPoison <- chanceRoll(hpDmg > 0L && RedSpider.is(tmp.monsterBreed), RedSpider.PoisonPct)
@@ -5706,7 +5955,8 @@ case class BattleState(
           bites    = mobProc && procElement.contains(Element.Cold)
           quenched = bites && (a.burn.isDefined || (ignites && !thawed))
           airy     = mobProc && procElement.contains(Element.Air)
-          struck   = a.copy(armor = a.armor - armorDmg, hp = (a.hp - hpDmg).max(0L), lastHitBy = Some(tmp.monsterName))
+          struck   = a.copy(armor = a.armor - armorDmg, hp = (a.hp - hpDmg).max(0L), lastHitBy = Some(tmp.monsterName),
+                       energy = (a.energy - zapped).max(0L))
           burned   =
             if (!ignites) struck
             else if (thawed) struck.copy(coldCut = 0)
@@ -5729,7 +5979,9 @@ case class BattleState(
             Option.when(bites && !quenched)(content.format("battle.ally.coldBite", "name" -> a.name,
               "cut" -> Element.Cold.DefenceReductionCut.toString)),
             Option.when(quenched)(content.format("battle.ally.quench", "name" -> a.name)),
-            Option.when(airy)(airBoostLine(tmp.monsterName))
+            Option.when(airy)(airBoostLine(tmp.monsterName)),
+            Option.when(zapped > 0L)(content.format("battle.ally.lightningBurn", "name" -> a.name,
+              "energy" -> zapped.toString))
           ).flatten
           result   =
             if (hurt.alive) (after.copy(group = after.group.updateAlly(a.position)(_ => hurt)), line +: extras.toVector)
@@ -5946,7 +6198,7 @@ case class BattleState(
     // Стрелок на башне достаёт любое место и бьёт того, кто к нему ближе.
     // В дыму он не стреляет вовсе: цели не видно (см. дымную флягу).
     val tower       = BattleState.isTower(tmp)
-    val reach       = RaceTactics.reach(Race.withName(tmp.monsterRace))
+    val reach       = RaceTactics.reachOf(Race.withName(tmp.monsterRace), tmp.boss)
     // Напротив стоит союзник — моб занят им и до героя не тянется; у башни
     // «напротив» нет, поэтому ей ищем ближайшую цель по всему строю.
     val opposite    =
@@ -5976,17 +6228,22 @@ case class BattleState(
             else for {
               hitRoll <- Random.nextIntBetween(1, 101)
               dodge    = playerDodgeChance(hero, tmp, nowMs)
+              afar     = math.abs(pos - battle.group.heroPos) > GroupState.Reach
               out <-
                 if (hitRoll > dodge)
                   mobStrike(hero, tmp, effWithAir(hero, tmp, nowMs), nowMs).map { st =>
-                    val line = content.format("battle.group.sideHit", "monster" -> tmp.monsterName, "damage" -> st.damage.toString,
+                    // Сосед бьёт сбоку, а кто дальше (эльф, Громовой элементаль) — издалека.
+                    val line = content.format(if (afar) "battle.group.rangedHit" else "battle.group.sideHit",
+                                 "monster" -> tmp.monsterName, "damage" -> st.damage.toString,
                                  "elem" -> (strikeBy(tmp) + heroPoisonMark(st.poisoned)))
                     val head = if (st.mirrored) Vector.empty[String] else Vector(line)
-                    (hero.copy(fightStats = hero.fightStats.copy(hp = st.newHp, armor = st.newArmor)), st.battle,
+                    (hero.copy(fightStats = hero.fightStats.copy(hp = st.newHp, armor = st.newArmor,
+                       energy = (hero.fightStats.energy - st.energyBurnt).max(0L))), st.battle,
                       head ++ st.extraLines)
                   }
                 else {
-                  val miss = content.format("battle.group.sideMiss", "monster" -> tmp.monsterName)
+                  val miss = content.format(if (afar) "battle.group.rangedMiss" else "battle.group.sideMiss",
+                               "monster" -> tmp.monsterName)
                   // Контрудар и по соседу: увернулся от удара сбоку — бьёт в ответ, наверняка.
                   if (tmp.heroCounterReady)
                     playerStrike(hero, tmp.copy(heroCounterReady = false), nowMs, Vector.empty, Set.empty,
@@ -6083,6 +6340,7 @@ case class BattleState(
     monsterSkillBlockedTurns = (e.monsterSkillBlockedTurns - 1).max(0),
     monsterWeakenedTurns     = (e.monsterWeakenedTurns - 1).max(0),
     monsterRootedTurns       = (e.monsterRootedTurns - 1).max(0),
+    mobDispersedTurns        = e.mobDispersedTurns.map(_ - 1).filter(_ > 0),
     monsterDefenceDebuff     = e.monsterDefenceDebuff.flatMap(_.ticked)
   )
 
@@ -7158,9 +7416,11 @@ case class BattleState(
       else battle.boss.map(_.burnAccuracyCutPct).getOrElse(0L)
     // Прок Воздуха у самого моба поднимает ему точность на те же 10%.
     val airBoost = if (battle.effects.mobAirBoostTurns > 0) Element.Air.ProcBonusPct else 0L
+    // Громовой, чью тучу разогнал ветер, тоже бьёт менее точно.
+    val disperseCut = if (battle.effects.mobDispersed) MiniBoss.ThunderElemental.DispersedAccuracyCutPct else 0L
     val monsterAccuracy =
       (battle.monsterStats.accuracy * hero.passives.enemyAccuracyMult *
-        (100L + airBoost - chillCut - burnCut).max(0L) / 100.0).toLong
+        (100L + airBoost - chillCut - burnCut - disperseCut).max(0L) / 100.0).toLong
     (BattleState.dodgeChance(agi, buffed.evasion, buffed.defence, monsterAccuracy)
       + battle.heroBattleState.dodgeBonus + passiveBonus).min(95.0).max(5.0)
   }
@@ -7273,6 +7533,12 @@ object BattleState {
     val left   = (b.monsterCurrentEnergy - burned).max(0L)
     (b.copy(monsterCurrentEnergy = left), b.monsterCurrentEnergy - left)
   }
+
+  /** Сколько энергии выжигает молния герою или союзнику: `pct`% от потолка
+    * `max`, но не больше того, что у него есть сейчас (`current`). Так же, как
+    * прок Молнии в оружии выжигает её мобу (см. [[burnEnergy]]). */
+  def energyBurnOf(max: Long, current: Long, pct: Long): Long =
+    (max * pct / 100L).max(1L).min(current.max(0L))
 
   /** Серебро с боя, в %: благословение Азата и «Пройдоха» (порог 9) — сверху. */
   def silverScalePct(blessed: Boolean, setBonusPct: Long): Long =
@@ -7415,7 +7681,9 @@ object BattleState {
     /** Удар оставил в ране яд — строка удара помечена (см. `poisonMark`). */
     poisoned:   Boolean = false,
     /** Удар опутал героя паутиной — строка удара помечена (см. `heroWebMark`). */
-    webbed:     Boolean = false)
+    webbed:     Boolean = false,
+    /** Сколько энергии героя выжег прок Молнии в ударе (см. `energyBurnOf`). */
+    energyBurnt: Long   = 0L)
 
   /** Удар союзника: бой после него, кого бил, сколько снял, добил ли соседа. */
   /** Удар союзника: `slew` — добитый стоял в строю и уходит в павшие со своей

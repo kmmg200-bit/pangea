@@ -246,7 +246,11 @@ case class BattleEffects(
   heroSkillJammed:      Option[Boolean]            = None,
   // Проклятие Некроманта: сколько концов раунда раны героя ещё не затягиваются
   // (см. HealCurse). Option — чтобы бои, записанные до проклятия, читались.
-  heroCursedTurns:      Option[Int]                = None
+  heroCursedTurns:      Option[Int]                = None,
+  // Громовой элементаль: сколько раундов ещё держится разогнанная ветром туча —
+  // он бьёт менее точно (см. MiniBoss.ThunderElemental.DispersedTurns). Option —
+  // чтобы бои, записанные раньше, читались.
+  mobDispersedTurns:    Option[Int]                = None
 ) {
 
   /** Только то, что висит на МОБЕ: яд, кровь, огонь, дебафы. Геройская
@@ -266,7 +270,8 @@ case class BattleEffects(
     monsterMaxArmorCut       = monsterMaxArmorCut,
     monsterSkillBlockedTurns = monsterSkillBlockedTurns,
     mobInstinctTurns         = mobInstinctTurns,
-    monsterRootedTurns       = monsterRootedTurns
+    monsterRootedTurns       = monsterRootedTurns,
+    mobDispersedTurns        = mobDispersedTurns
   )
 
   /** Геройская половина: реген, горение и яд на герое, срезы, флаги наборов. Она
@@ -314,12 +319,16 @@ case class BattleEffects(
       monsterMaxArmorCut       = mp.monsterMaxArmorCut,
       monsterSkillBlockedTurns = mp.monsterSkillBlockedTurns,
       mobInstinctTurns         = mp.mobInstinctTurns,
-      monsterRootedTurns       = mp.monsterRootedTurns
+      monsterRootedTurns       = mp.monsterRootedTurns,
+      mobDispersedTurns        = mp.mobDispersedTurns
     )
   }
 
   /** Скован ли сейчас элементаль холодом. */
   def chilled: Boolean = chilledTurns > 0
+
+  /** Разогнал ли ветер тучу Громового элементаля: точность его ниже. */
+  def mobDispersed: Boolean = mobDispersedTurns.exists(_ > 0)
 
   /** Лежит ли на мобе холод: срез защиты от прока или оцепенение элементаля.
     * Огонь по такому растапливает лёд и сам не занимается. */

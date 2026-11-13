@@ -172,8 +172,9 @@ object NecromancerCaveSpec extends ZIOSpecDefault {
       assertTrue(necro.set.contains(ItemSet.Necromancer)) &&
       assertTrue(necro.ingredient == MaterialKind.CursedBones) &&
       assertTrue(TreasureHuntGenerator.bossIngredients.contains(MaterialKind.CursedBones)) &&
-      // у каждого минибосса свой набор и свой ингредиент
-      assertTrue(MiniBoss.values.flatMap(_.set).distinct.size == MiniBoss.values.size)
+      // у каждого минибосса с набором — свой набор и свой ингредиент (у Громового набора пока нет)
+      assertTrue(MiniBoss.values.flatMap(_.set).distinct.size == MiniBoss.values.count(_.set.isDefined)) &&
+      assertTrue(MiniBoss.values.map(_.ingredient).distinct.size == MiniBoss.values.size)
     },
 
     test("герой стоит вторым, впереди союзник: отметка босса — на самом Некроманте, а не на мертвеце в паре") {

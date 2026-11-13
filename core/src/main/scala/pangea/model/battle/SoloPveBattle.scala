@@ -499,7 +499,7 @@ case class SoloPveBattle(
     if (group.paired || !walks(activeSlot) || group.allyAt(group.activePos).exists(_.alive)) None
     else {
       val race  = Race.withName(monsterRace)
-      val reach = RaceTactics.reach(race)
+      val reach = RaceTactics.reachOf(race, boss)
       // Кто уже достаёт героя, тот и бьёт оттуда: вставать напротив ему незачем,
       // и место павшего он не занимает. Встал напротив союзника — занят им.
       // Напротив непокрытая повозка — моб занят ею, как союзником.
@@ -522,7 +522,7 @@ case class SoloPveBattle(
       order.foldLeft((this, List.empty[(MonsterSlot, Int)])) { case ((b, moved), idx) =>
         val slot  = b.group.others(idx)
         val race  = Race.withName(slot.race)
-        val reach = RaceTactics.reach(race)
+        val reach = RaceTactics.reachOf(race, slot.boss.flatMap(pangea.model.monster.MiniBoss.byName))
         // Шаг за шагом, сколько позволяет скорость. Сооружение стоит там, где
         // стоит: подтягивать его к герою нечем. Те, кто уже достаёт героя, тоже
         // стоят: место павшего в паре никто не занимает по принуждению (см.
@@ -559,7 +559,8 @@ case class SoloPveBattle(
   def closeInOnSquad: (SoloPveBattle, List[(MonsterSlot, Int)]) =
     if (!group.heroDown || effects.heroInSmoke) (this, Nil)
     else {
-      def reachOf(slot: MonsterSlot): Int = RaceTactics.reach(Race.withName(slot.race))
+      def reachOf(slot: MonsterSlot): Int =
+        RaceTactics.reachOf(Race.withName(slot.race), slot.boss.flatMap(pangea.model.monster.MiniBoss.byName))
       val walkers = ((group.activePos, activeSlot) :: group.entries).filter { case (pos, slot) =>
         slot.alive && walks(slot) && allyWithin(pos, reachOf(slot)).isEmpty && group.wagonBait(pos).isEmpty
       }
@@ -927,6 +928,8 @@ case class SoloPveBattle(
       heroSmokeTurns       = (effects.heroSmokeTurns - 1).max(0),
       heroTrueStrikeTurns  = (effects.heroTrueStrikeTurns - 1).max(0),
       monsterRootedTurns   = (effects.monsterRootedTurns - 1).max(0),
+      // Разогнанная ветром туча Громового собирается обратно за свои раунды.
+      mobDispersedTurns    = effects.mobDispersedTurns.map(_ - 1).filter(_ > 0),
       monsterDefenceDebuff = effects.monsterDefenceDebuff.flatMap(_.ticked)
     )
   )

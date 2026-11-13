@@ -57,7 +57,8 @@ case class ElementalLairState(heroDao: HeroDao, content: SceneContent) extends S
   private def approach(user: User, renderer: Renderer): Task[StateType] =
     for {
       scene <- readScene(user)
-      kind  <- scene.map(s => ZIO.succeed(s.kind)).getOrElse(randomElemental)
+      hero  <- getHero(user)
+      kind  <- scene.map(s => ZIO.succeed(s.kind)).getOrElse(randomElemental(hero.lvl))
       lore  <- readLore(user)
       _     <- writeScene(user, LairScene(kind))
       // Первая встреча даёт особую реплику и открывает кнопку у трактирщика.
@@ -89,7 +90,9 @@ case class ElementalLairState(heroDao: HeroDao, content: SceneContent) extends S
           val elemental = MiniBoss.byName(s.kind).getOrElse(MiniBoss.FireElemental)
           val lvl       = MiniBoss.bossLvl(hero.lvl)
           val monster   = Monster(0L, lvl, Race.Elemental, Rarity.Legendary, elemental.stats(lvl))
-          val battle    = SoloPveBattle.from(monster, hero).copy(bossKind = Some(s.kind))
+          val base      = SoloPveBattle.from(monster, hero).copy(bossKind = Some(s.kind))
+          // Дальник встаёт поодаль (Громовой — на четвёртом месте) и бьёт оттуда.
+          val battle    = base.copy(group = base.group.copy(activePos = elemental.startPos))
           heroDao.writeActiveBattle(user.userId, battle.asJson) *>
             // scene_data освобождаем: дальше им распоряжается бой и экран добычи.
             heroDao.writeSceneData(user.userId, Json.Null).as(StateType.Battle)
@@ -100,9 +103,13 @@ case class ElementalLairState(heroDao: HeroDao, content: SceneContent) extends S
     heroDao.writeSceneData(user.userId, Json.Null) *>
       renderer.show(user, Screen(content.text("elementalLair.left"), Nil)).as(StateType.Dungeon)
 
-  /** В логове водятся только элементали — Гнилой Джо сюда не заходит. */
-  private def randomElemental: Task[String] =
-    Random.nextIntBounded(MiniBoss.elementals.size).map(MiniBoss.elementals(_).entryName)
+  /** В логове водятся только элементали — Гнилой Джо сюда не заходит. Все, кто
+    * выходит к герою этого уровня, — поровну: Громовой — с 15-го (см.
+    * [[MiniBoss.lairMinHeroLvl]]). */
+  private def randomElemental(heroLvl: Long): Task[String] = {
+    val pool = ElementalLairState.lairPool(heroLvl)
+    Random.nextIntBounded(pool.size).map(pool(_).entryName)
+  }
 
   private def readScene(user: User): Task[Option[LairScene]] =
     heroDao.readSceneData(user.userId).map(_.flatMap(_.as[LairScene].toOption))
@@ -120,6 +127,10 @@ case class ElementalLairState(heroDao: HeroDao, content: SceneContent) extends S
 }
 
 object ElementalLairState {
+
+  /** Кто может выйти в логове к герою этого уровня. */
+  def lairPool(heroLvl: Long): IndexedSeq[MiniBoss] =
+    MiniBoss.elementals.filter(_.lairMinHeroLvl <= heroLvl)
 
   /** Какой элементаль выбран в этом логове (имя варианта [[Elemental]]). */
   final case class LairScene(kind: String)

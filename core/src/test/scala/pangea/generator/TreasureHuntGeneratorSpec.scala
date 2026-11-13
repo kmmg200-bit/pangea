@@ -102,7 +102,9 @@ object TreasureHuntGeneratorSpec extends ZIOSpecDefault {
         // все ингредиенты встречаются, шкура волка и кровь короля в том числе
         assertTrue(handfuls.flatten.flatMap(_.material).toSet == pool) &&
         assertTrue(pool.contains(MiniBoss.RatKing.ingredient)) &&
-        assertTrue(pool.size == MiniBoss.values.size)
+        // у кого набора ещё нет (Громовой), тот в клад не идёт: его ингредиент пока ни к чему
+        assertTrue(pool.size == MiniBoss.values.count(_.set.isDefined)) &&
+        assertTrue(!pool.contains(MiniBoss.ThunderElemental.ingredient))
     },
 
     test("редкие травы — только знающему цветы 2 ранга: наверняка по одной за ступень выше Кинэта, у ~15% — ещё горсть") {

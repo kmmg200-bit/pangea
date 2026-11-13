@@ -57,8 +57,11 @@ object PowerShotSpec extends ZIOSpecDefault {
 
   private val full = 100000L
 
+  /** Противник без стихии на оружии: у человека молния, и её прок тратит свой
+    * бросок — броски здесь не заданы, и от любой поправки в ударе моба выстрел
+    * мог бы уйти в те 5% промаха, что остаются всегда. */
   private def monster: Monster =
-    Monster(0L, lvl, Race.Human, Rarity.Common,
+    Monster(0L, lvl, Race.Orc, Rarity.Common,
       FightStats(atk = 1, hp = full, armor = 0, defence = 0, evasion = 0, accuracy = 1, energy = 0))
 
   /** Один моб в паре с героем; умения готовы. */

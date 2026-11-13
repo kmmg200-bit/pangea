@@ -111,6 +111,18 @@ sealed abstract class MiniBoss(
     * шагах без цели в досягаемости ход его круга не идёт. None — такого шага нет. */
   def leapTurn: Option[Int] = None
 
+  /** На сколько мест в обе стороны он бьёт — обычной атакой и приёмами. У
+    * минибоссов — соседей; дальник (Громовой элементаль) — дальше и к герою,
+    * которого и так достаёт, не подходит (см. `RaceTactics.reachOf`). */
+  def reach: Int = pangea.model.battle.GroupState.Reach
+
+  /** На каком месте он встаёт в начале боя в логове. Обычно — на первом;
+    * дальник встаёт поодаль и бьёт оттуда. */
+  def startPos: Int = 1
+
+  /** С какого уровня героя он выходит в логове элементаля. 0 — с любого. */
+  def lairMinHeroLvl: Long = 0L
+
   /** Имя в бою и в логе: «Огненный Элементаль», «Гнилой Джо». Редкость в него не
    *  входит — минибосс не «легендарный моб», он именной. */
   def monsterName: String
@@ -318,6 +330,107 @@ object MiniBoss extends Enum[MiniBoss] {
 
     def ingredient: MaterialKind = MaterialKind.MagicStone
     def set: Option[ItemSet]     = Some(ItemSet.StoneGuard)
+  }
+
+  // ── Громовой элементаль ──────────────────────────────────────────────────────
+  /** Гроза, собравшаяся в одно тело. Дальник: бьёт молнией на три места и в
+    * начале боя встаёт поодаль, на четвёртом, — к нему надо подойти или
+    * стрелять. Молния ему почти не вредит и не обесточивает его, а заряжает;
+    * ветер рвёт тучу. Выходит в логове элементаля с 15-го уровня героя. */
+  case object ThunderElemental extends MiniBoss("Громовой", "Громового", Race.Elemental) {
+
+    val HpPerLvl: Long          = 1200L
+    val ArmorPerLvl: Long       = 700L
+    val AtkPerLvl: Long         = 250L
+    val EnergyPerLvl: Long      = 200L
+    val AccuracyPerLvl: Long    = 150L
+    val EvasionPerLvl: Long     = 100L
+    val EnergyRegenPerLvl: Long = 10L
+    val ExpPerLvl: Long         = 200L
+
+    /** С какого уровня героя он выходит в логове. */
+    val MinHeroLvl: Long = 15L
+
+    /** Дальник: на сколько мест бьёт и на каком месте встаёт в начале боя. */
+    val Reach: Int    = 3
+    val StartPos: Int = 4
+
+    /** Молния по нему почти не проходит, ветер — наоборот. */
+    val LightningDamageTakenPct: Long = 20L
+    val AirDamageTakenPct: Long       = 150L
+
+    /** Прок Молнии его не обесточивает, а заряжает: столько % потолка энергии. */
+    val LightningChargePct: Long = 10L
+
+    /** Прок Воздуха разгоняет тучу: гасит один накопленный заряд и на столько
+      * раундов срезает ему точность — на столько %. */
+    val DispersedTurns: Int           = 5
+    val DispersedAccuracyCutPct: Long = 5L
+
+    // ── Способности (применяются по кругу) ──────────────────────────────────
+    /** Разряд: доля атаки в урон и сколько % потолка энергии он выжигает цели. */
+    val BoltDamageFactor: Double = 0.5
+    val BoltEnergyBurnPct: Long  = 20L
+    val BoltCostPerLvl: Long     = 7L
+
+    /** Грозовой заряд: сколько копится до громового раската и сколько стоит
+      * каждый. Раскат — две атаки плюс столько % максимумов HP и брони цели; до
+      * HP он может оставить травму, а следующее умение цели срывается. */
+    val ChargesToBurst: Int        = 3
+    val ChargeCostPerLvl: Long     = 14L
+    val BurstHeroStatPct: Long     = 5L
+    val BurstTraumaChancePct: Long = 20L
+
+    /** Цепная молния: доля атаки по цели и по каждому, кто стоит с ней рядом. */
+    val ChainDamageFactor: Double    = 0.4
+    val ChainNeighbourFactor: Double = 0.2
+    val ChainCostPerLvl: Long        = 10L
+
+    /** Ионный покров: сколько % своих максимумов он себе возвращает. */
+    val CoverArmorPct: Long   = 20L
+    val CoverHpPct: Long      = 5L
+    val CoverCostPerLvl: Long = 7L
+
+    def stats(bossLvl: Long): FightStats = FightStats(
+      atk      = AtkPerLvl * bossLvl,
+      hp       = HpPerLvl * bossLvl,
+      armor    = ArmorPerLvl * bossLvl,
+      defence  = 0L,
+      evasion  = EvasionPerLvl * bossLvl,
+      accuracy = AccuracyPerLvl * bossLvl,
+      energy   = EnergyPerLvl * bossLvl
+    )
+
+    def energyRegen(bossLvl: Long): Long = EnergyRegenPerLvl * bossLvl
+    def expReward(bossLvl: Long): Long   = ExpPerLvl * bossLvl
+
+    def damageTakenMult(e: Element): Double = e match {
+      case Element.Lightning => LightningDamageTakenPct / 100.0
+      case Element.Air       => AirDamageTakenPct / 100.0
+      case _                 => 1.0
+    }
+
+    def monsterName: String = s"$label ${Race.Elemental}"
+
+    /** Гроза горит, как и всякий элементаль, кроме огненного. */
+    def immuneToBurn: Boolean = false
+
+    /** Разряд, грозовой заряд, цепная молния, ионный покров и пропуск. */
+    def abilities: Int = 5
+
+    def plainDamageTakenMult: Double = 1.0
+
+    /** Бьёт как все: сперва броня, остаток в HP, — но молнией (см. attackElement). */
+    def heroHitSplit: Option[(Double, Double)] = None
+
+    override def attackElement: Option[Element] = Some(Element.Lightning)
+    override def reach: Int                     = Reach
+    override def startPos: Int                  = StartPos
+    override def lairMinHeroLvl: Long           = MinHeroLvl
+
+    def ingredient: MaterialKind = MaterialKind.StormHeart
+    /** Набора у него пока нет: сердце грозы копится под будущие рецепты. */
+    def set: Option[ItemSet] = None
   }
 
   // ── Гнилой Джо ──────────────────────────────────────────────────────────────

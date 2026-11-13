@@ -1,6 +1,6 @@
 package pangea.model.battle
 
-import pangea.model.monster.Race
+import pangea.model.monster.{MiniBoss, Race}
 
 /** Как мобы разных рас дерутся строем: на сколько мест достают и сколько мест
   * проходят за раунд. Эльфы — стрелки: бьют на три места в обе стороны и сами
@@ -19,6 +19,11 @@ object RaceTactics {
 
   /** На сколько мест в обе стороны достаёт моб этой расы. */
   def reach(race: Race): Int = if (race == Race.Elf) ElfReach else GroupState.Reach
+
+  /** На сколько мест в обе стороны достаёт этот моб: минибосс — своей
+    * досягаемостью (Громовой элементаль — дальник, см. [[MiniBoss.reach]]),
+    * прочие — по расе. */
+  def reachOf(race: Race, boss: Option[MiniBoss]): Int = boss.fold(reach(race))(_.reach)
 
   /** Сколько мест за раунд проходит моб этой расы, идя к герою. */
   def speed(race: Race): Int = if (race == Race.Orc) OrcSpeed else 1
