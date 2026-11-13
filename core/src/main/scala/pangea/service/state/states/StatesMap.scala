@@ -301,7 +301,7 @@ object StatesMap {
           Socketing -> SocketingState(heroDao, inventoryRepo, content, itemRepo),
           CityCenter -> CityCenterState(content),
           TradeHouse -> TradeHouseState(heroDao, userRepo, bankRepo, parcels, inventoryRepo, donations, content, artifacts),
-          Transfer   -> TransferState(heroDao, inventoryRepo, transfers, content, background),
+          Transfer   -> TransferState(heroDao, transfers, content, background),
           Mail       -> MailState(heroDao, inventoryRepo, parcels, content),
           BankVault  -> BankVaultState(heroDao, inventoryRepo, bankRepo, content, artifacts),
           Auction    -> AuctionState(heroDao, inventoryRepo, auctionRepo, userRepo, bankRepo, payouts, players, content),

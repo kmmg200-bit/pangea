@@ -2,11 +2,13 @@ package pangea.service.parcel
 
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Players, SceneContent}
+import pangea.model.artifact.ArtifactKind
 import pangea.model.hero.{Hero, HeroId}
 import pangea.model.home.{HomeData, HomeIntake, HomePlace}
 import pangea.model.item.{Bundling, Item, ItemStack, ItemType}
 import pangea.model.parcel.Parcel
 import pangea.model.user.{User, UserId}
+import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.bank.BankRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.user.UserRepository
@@ -27,7 +29,8 @@ final case class TransferTarget(heroId: HeroId, userId: UserId, name: String)
 
 /** Общая часть передачи вещей: что подходит под запрос, можно ли отдать сразу
  *  и как, собственно, отдать. Этим пользуются и команда из беседы, и экран
- *  выбора в личке — правила у них одни. Деньги передаются здесь же
+ *  выбора в личке — правила у них одни. Отдают то, что при герое (см.
+ *  [[carried]]): сумку, ларец, Живую сумку и шкаф. Деньги передаются здесь же
  *  ([[sendSilver]], [[takeDoubloons]]), но своим путём: в сумке их нет. */
 final case class Transfers(
   inventoryRepo: InventoryRepository,
@@ -38,10 +41,35 @@ final case class Transfers(
   heroDao:       HeroDao,
   bank:          BankRepository,
   payouts:       Payouts,
-  lock:          PlayerLock
+  lock:          PlayerLock,
+  // Ларец, Живая сумка и шкаф: без них (в тестах) отдают только из сумки.
+  artifacts:     Option[ArtifactRepository] = None
 ) {
 
   private val purse = Purse(heroDao, Some(bank))
+
+  /** Что при герое — оттуда отдают сами, без посыльного: сумка, а за ней
+    * ларец, Живая сумка и шкаф ([[Transfers.CarriedArtifacts]]). Сумка —
+    * первой: из одинаковых вещей уходят сперва её. */
+  def carried(hero: Hero): Task[List[Item]] =
+    for {
+      inv  <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
+      arts <- ZIO.foreach(artifacts)(_.get(hero.id).mapError(e => new Throwable(e.toString)))
+    } yield inv.items.data ++ arts.toList.flatMap(all => Transfers.CarriedArtifacts.flatMap(all.of(_).items.data))
+
+  /** Убрать вещь оттуда, где она при герое: из сумки, а нет её там — из
+    * ларца, Живой сумки или шкафа. Нет и там — снимаем из сумки, как раньше:
+    * сумка и откажет, что такой вещи в ней нет. */
+  private def takeCarried(hero: Hero, item: Item): Task[Unit] =
+    inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
+      val stores =
+        if (inv.items.data.exists(_.id == item.id)) Nil
+        else artifacts.toList.flatMap(repo =>
+          Transfers.CarriedArtifacts.map(kind => new ItemStore.Artifact(repo, kind, content)))
+      ZIO.foldLeft(stores)(false)((taken, store) => if (taken) ZIO.succeed(true) else store.remove(hero, item))
+        .flatMap(taken => ZIO.unless(taken)(
+          inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString))).unit)
+    }
 
   /** Что вообще можно передать: вещь занимает место, не сюжетная (ни предмет,
     * ни экипировка — см. `Item.isStoryGear`) и не трофей. Трофеи — личная
@@ -101,35 +129,50 @@ final case class Transfers(
   def sameStack(a: Item, b: Item): Boolean =
     a.name == b.name && ItemStack.key(a) == ItemStack.key(b)
 
-  /** Попытка отдать без уточнения — с этого начинается любая передача.
-    * Экипировку всегда выбирают кнопками, всё остальное с точным названием
-    * уходит сразу. */
+  /** Попытка отдать без уточнения — с этого начинается любая передача в
+    * городе. Ищут в том, что при герое ([[carried]]). Экипировку всегда
+    * выбирают кнопками, всё остальное с точным названием уходит сразу.
+    *
+    * `courier` — дома есть личный посыльный (см. `Furniture.Courier`): чего
+    * нет при герое, то он отнесёт из хранилища Торгового дома, а нет там — с
+    * полок дома (см. [[carry]]). Безымянное «Передать» — только из того, что
+    * при герое: оно открывает экран выбора со всем этим, а посыльный носит
+    * лишь названное. */
   def quickSend(
-    sender: User,
-    hero:   Hero,
-    target: TransferTarget,
-    query:  String,
-    count:  Int,
-    now:    Long,
-    chat:   Option[ChatTarget.Peer] = None
+    sender:  User,
+    hero:    Hero,
+    target:  TransferTarget,
+    query:   String,
+    count:   Int,
+    now:     Long,
+    chat:    Option[ChatTarget.Peer] = None,
+    courier: Boolean = false
   ): Task[Transfers.Outcome] =
-    for {
-      inv <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
-      fit  = matching(inv.items.data, query)
-      res <- refusal(inv.items.data, query) match {
-               case Some(key)                 =>
-                 ZIO.succeed(Transfers.Outcome.Forbidden(content.format(key, "query" -> query)))
-               case None if fit.isEmpty       => ZIO.succeed(Transfers.Outcome.Empty)
-               case None if !unambiguous(fit) => ZIO.succeed(Transfers.Outcome.NeedPick)
-               case None =>
-                 send(sender, hero, target, fit.take(count.max(1)), now, chat).map { shipment =>
-                   Transfers.Outcome.Sent(sentText(shipment.items, target.name), shipment.handOver)
-                 }
-             }
-    } yield res
+    carried(hero).flatMap { bag =>
+      if (courier && ChatCommand.bundleQuery(query)._2.nonEmpty)
+        carry(sender, hero, target, query, count, now, chat, Some(bag))
+      else {
+        val fit = matching(bag, query)
+        refusal(bag, query) match {
+          case Some(key)           => ZIO.succeed(Transfers.Outcome.Forbidden(content.format(key, "query" -> query)))
+          case None if fit.isEmpty => ZIO.succeed(Transfers.Outcome.Empty)
+          case None                => fromBag(sender, hero, target, fit, count, now, chat)
+        }
+      }
+    }
 
-  /** Отдать вещи: из сумки отправителя — в посылки получателю, плюс строка в
-    * беседу `chat`, где передачу затеяли (см. [[log]]). Возвращает, что ушло, и
+  /** Отдать из того, что при герое, найденное `fit`: одно понятное — сразу,
+    * иначе — выбор кнопками. */
+  private def fromBag(sender: User, hero: Hero, target: TransferTarget, fit: List[Item], count: Int, now: Long,
+                      chat: Option[ChatTarget.Peer]): Task[Transfers.Outcome] =
+    if (!unambiguous(fit)) ZIO.succeed(Transfers.Outcome.NeedPick)
+    else send(sender, hero, target, fit.take(count.max(1)), now, chat).map { shipment =>
+      Transfers.Outcome.Sent(sentText(shipment.items, target.name), shipment.handOver)
+    }
+
+  /** Отдать вещи: из того, что при отправителе (сумка, ларец, Живая сумка,
+    * шкаф — см. [[carried]]), — в посылки получателю, плюс строка в беседу
+    * `chat`, где передачу затеяли (см. [[log]]). Возвращает, что ушло, и
     * доставку получателю — её запускают, отпустив лок отправителя (см.
     * [[handOver]]). */
   def send(
@@ -140,8 +183,7 @@ final case class Transfers(
     now:    Long,
     chat:   Option[ChatTarget.Peer] = None
   ): Task[Transfers.Shipment] =
-    ship(sender, target, items, now, chat)(item =>
-      inventoryRepo.removeItem(item.id, hero.id).mapError(e => new Throwable(e.toString)))
+    ship(sender, target, items, now, chat)(takeCarried(hero, _))
 
   /** Что переданное назвать в строках о передаче: «Надколотый череп ×2», а у
     * стопки — «стопку «Надколотый череп»», «2 стопки «…»», «5 стопок «…»».
@@ -179,14 +221,10 @@ final case class Transfers(
     }
 
   /** Отдать вещи вне города — с личным посыльным (см. `Furniture.Courier`).
-    * Ищет он сперва в хранилище Торгового дома, а нет там ничего похожего —
-    * дома, на полках ([[Transfers.CourierShelves]]): травы и отвары у верстака
-    * травника, камни в хранилище острова. Нашлось в хранилище — несёт оттуда и
-    * дом не трогает, даже если там такого больше. Одно исключение: вещь
-    * названа ровно, а в хранилище лишь похожие (см. [[named]]), — несёт
-    * названную из дома. Сумку он не трогает: что при герое вне города, то при
-    * нём и остаётся, как и серебро на руках. В городе вещи передают только из
-    * сумки (см. [[quickSend]]).
+    * Ищет он сперва в хранилище Торгового дома, потом дома (см. [[carry]]).
+    * Что при герое (сумка, ларец, Живая сумка, шкаф), он не трогает: вне
+    * города оно при нём и остаётся, как и серебро на руках. В городе сперва
+    * смотрят то, что при герое (см. [[quickSend]]).
     *
     * Несёт он только то, что понятно без выбора: одну подходящую вещь или
     * стопку одинаковых. Подходит несколько разных — экрана выбора нет: он затёр
@@ -201,36 +239,63 @@ final case class Transfers(
     now:    Long,
     chat:   Option[ChatTarget.Peer] = None
   ): Task[Transfers.Outcome] =
+    carry(sender, hero, target, query, count, now, chat, None)
+
+  /** Где искать вещь, когда дома есть посыльный, — по порядку: что при герое
+    * (`bag`: сумка, ларец, Живая сумка, шкаф — только в городе), хранилище
+    * Торгового дома, полки дома ([[Transfers.CourierShelves]]: травы и отвары
+    * у верстака травника, камни в хранилище острова). Берут из первого места,
+    * где вещь есть, и дальше не смотрят, даже если там такого больше. Одно
+    * исключение: вещь названа ровно (см. [[named]]), а раньше по порядку лишь
+    * похожие, — берут названную: «рубин» дома важнее «надколотого рубина» в
+    * хранилище.
+    *
+    * Нашлось при герое — отдаёт он сам, как без посыльного: одно понятное
+    * сразу, несколько разных — выбор кнопками. Из хранилища и с полок несёт
+    * посыльный — только понятное без выбора (см. [[courierCarry]]). В городе
+    * у посыльного свои строки (`transfer.courier.city`): там сперва смотрели
+    * то, что при герое. */
+  private def carry(sender: User, hero: Hero, target: TransferTarget, query: String, count: Int, now: Long,
+                    chat: Option[ChatTarget.Peer], bag: Option[List[Item]]): Task[Transfers.Outcome] = {
+    val texts = if (bag.isDefined) "transfer.courier.city" else "transfer.courier"
+    val inBag = bag.fold(List.empty[Item])(matching(_, query))
     for {
-      vault   <- bank.get(hero.id).mapError(e => new Throwable(e.toString))
-      stored   = vault.items.data
+      stored  <- if (named(inBag, query)) ZIO.succeed(Nil)
+                 else bank.get(hero.id).mapError(e => new Throwable(e.toString)).map(_.items.data)
       inVault  = matching(stored, query)
-      shelves <- if (named(inVault, query)) ZIO.succeed(Nil) else homeShelves(hero)
+      shelves <- if (named(inBag, query) || named(inVault, query)) ZIO.succeed(Nil) else homeShelves(hero)
       atHome   = matching(shelves.map(_._2), query)
-      // Хранилище — первым, но названное ровно бьёт похожее: «рубин» дома
-      // важнее «надколотого рубина» в хранилище.
-      res     <- if (inVault.nonEmpty && (named(inVault, query) || !named(atHome, query)))
-                   courierCarry(sender, target, query, inVault, count, now, chat, "transfer.courier", "")(item =>
-                     bank.withdraw(hero.id, item.id).mapError(e => new Throwable(e.toString)).unit)
-                 else if (atHome.nonEmpty) {
-                   val shelfOf = shelves.map { case (kind, item) => item.id -> kind }.toMap
-                   val from    = atHome.headOption.flatMap(i => shelfOf.get(i.id))
-                     .fold("")(kind => content.text(s"transfer.courier.home.from.${kind.id}"))
-                   courierCarry(sender, target, query, atHome, count, now, chat, "transfer.courier.home", from)(item =>
-                     shelfOf.get(item.id) match {
-                       case Some(kind) =>
-                         new ItemStore.HomeShelf(heroDao, kind, content).remove(hero, item).flatMap(removed =>
-                           ZIO.unless(removed)(ZIO.fail(new Throwable(s"Вещи ${item.id} уже нет на полке дома"))).unit)
-                       case None => ZIO.fail(new Throwable(s"Вещи ${item.id} нет на полках дома"))
-                     })
+      found    = List[(Transfers.Place, List[Item])](
+                   Transfers.Place.Bag -> inBag, Transfers.Place.Vault -> inVault, Transfers.Place.Home -> atHome)
+      res     <- found.find { case (_, fit) => named(fit, query) }.orElse(found.find(_._2.nonEmpty)) match {
+                   case Some((Transfers.Place.Bag, fit)) =>
+                     fromBag(sender, hero, target, fit, count, now, chat)
+                   case Some((Transfers.Place.Vault, fit)) =>
+                     courierCarry(sender, target, query, fit, count, now, chat, texts, "")(item =>
+                       bank.withdraw(hero.id, item.id).mapError(e => new Throwable(e.toString)).unit)
+                   case Some((Transfers.Place.Home, fit)) =>
+                     val shelfOf = shelves.map { case (kind, item) => item.id -> kind }.toMap
+                     val from    = fit.headOption.flatMap(i => shelfOf.get(i.id))
+                       .fold("")(kind => content.text(s"transfer.courier.home.from.${kind.id}"))
+                     courierCarry(sender, target, query, fit, count, now, chat, s"$texts.home", from)(item =>
+                       shelfOf.get(item.id) match {
+                         case Some(kind) =>
+                           new ItemStore.HomeShelf(heroDao, kind, content).remove(hero, item).flatMap(removed =>
+                             ZIO.unless(removed)(ZIO.fail(new Throwable(s"Вещи ${item.id} уже нет на полке дома"))).unit)
+                         case None => ZIO.fail(new Throwable(s"Вещи ${item.id} нет на полках дома"))
+                       })
+                   case None =>
+                     val everything = bag.getOrElse(Nil) ++ stored ++ shelves.map(_._2)
+                     ZIO.succeed(Transfers.Outcome.Forbidden(content.format(
+                       refusal(everything, query).getOrElse(s"$texts.nothing"), "query" -> query)))
                  }
-                 else ZIO.succeed(Transfers.Outcome.Forbidden(content.format(
-                   refusal(stored ++ shelves.map(_._2), query).getOrElse("transfer.courier.nothing"), "query" -> query)))
     } yield res
+  }
 
   /** Посыльный несёт найденное `fit` — если ясно, что нести: иначе просит
-    * назвать точнее. `texts` — ключи его строк (хранилище или дом), `from` —
-    * откуда в доме взято; `take` убирает вещь оттуда, где она лежит. */
+    * назвать точнее. `texts` — ключи его строк (хранилище или дом, вне города
+    * или в городе), `from` — откуда в доме взято; `take` убирает вещь оттуда,
+    * где она лежит. */
   private def courierCarry(sender: User, target: TransferTarget, query: String, fit: List[Item], count: Int,
                            now: Long, chat: Option[ChatTarget.Peer], texts: String, from: String)(
       take: Item => Task[Unit]): Task[Transfers.Outcome] =
@@ -526,7 +591,7 @@ object Transfers {
       * `handOver` — доставка получателю: её запускают, отпустив лок
       * отправителя. У денег её нет — они дошли сразу. */
     final case class Sent(message: String, handOver: Task[Unit] = ZIO.unit) extends Outcome
-    /** В сумке нет ничего похожего. */
+    /** При герое нет ничего похожего. */
     case object Empty extends Outcome
     /** Так не передать: трофеи из рук в руки не ходят, денег не хватает или
       * сумму не назвали. Отправителю остаётся это сообщение. */
@@ -574,6 +639,18 @@ object Transfers {
   val CourierShelves: List[ItemStore.HomeShelf.Kind] =
     List(ItemStore.HomeShelf.Herbs, ItemStore.HomeShelf.Brews, ItemStore.HomeShelf.Gems)
 
+  /** Что при герое, кроме сумки: оттуда отдают так же, как из неё (см.
+    * `Transfers.carried`). Порядок — какие из одинаковых вещей уходят первыми. */
+  val CarriedArtifacts: List[ArtifactKind] = List(ArtifactKind.Casket, ArtifactKind.LivingBag, ArtifactKind.Wardrobe)
+
+  /** Где ищут вещь, когда дома есть посыльный (см. `Transfers.carry`). */
+  private sealed trait Place
+  private object Place {
+    case object Bag   extends Place
+    case object Vault extends Place
+    case object Home  extends Place
+  }
+
   /** Подходящие вещи одной строкой: названия, стопки — со счётом, не больше
     * [[NamesShown]], остальное — «и ещё N». */
   def namesOf(items: List[Item]): String = {
@@ -590,6 +667,10 @@ object Transfers {
   }
 
   val live: ZLayer[InventoryRepository with UserRepository with Parcels with Players with SceneContent
-                     with HeroDao with BankRepository with Payouts with PlayerLock, Nothing, Transfers] =
-    ZLayer.fromFunction(Transfers(_, _, _, _, _, _, _, _, _))
+                     with HeroDao with BankRepository with Payouts with PlayerLock with ArtifactRepository,
+                   Nothing, Transfers] =
+    ZLayer.fromFunction((inv: InventoryRepository, users: UserRepository, parcels: Parcels, players: Players,
+                         content: SceneContent, heroDao: HeroDao, bank: BankRepository, payouts: Payouts,
+                         lock: PlayerLock, artifacts: ArtifactRepository) =>
+      Transfers(inv, users, parcels, players, content, heroDao, bank, payouts, lock, Some(artifacts)))
 }

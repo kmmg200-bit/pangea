@@ -248,8 +248,9 @@ class StateHandler(
       items     = money.isEmpty
       inCity    = heroOp.exists(h => StateType.cityStates.contains(h.state))
       // Вне города серебро и вещи передаёт личный посыльный — серебро только из
-      // ячейки, вещи из хранилища Торгового дома, а нет там — с полок дома.
-      courier  <- if ((silver || items) && !inCity && heroOp.isDefined) hasCourier(sender.userId)
+      // ячейки, вещи из хранилища Торгового дома, а нет там — с полок дома. В
+      // городе он носит вещь, которой нет при герое.
+      courier  <- if (heroOp.isDefined && (items || (silver && !inCity))) hasCourier(sender.userId)
                   else ZIO.succeed(false)
       tail <- (heroOp, targetOp, targetHero) match {
         case (Some(hero), Some(target), Some(theirHero)) if target.userId != sender.userId =>
@@ -269,10 +270,12 @@ class StateHandler(
                           // Деньги, но без суммы: спрашиваем, сколько.
                           case Some((_, None)) =>
                             api.sendMessage(sender, content.text("transfer.money.howMuch"), List.empty, None).as(None)
-                          // Вещи: в городе — из сумки; вне города (сюда без
-                          // посыльного не дойти) — посыльный из хранилища или с полок дома.
+                          // Вещи: в городе — из того, что при герое, а с
+                          // посыльным, если там нет, — из хранилища или с полок
+                          // дома; вне города (сюда без посыльного не дойти) —
+                          // только посыльный.
                           case None if inCity =>
-                            sendItems(sender, hero, target, theirHero, to, query, renderer, chat)
+                            sendItems(sender, hero, target, theirHero, to, query, renderer, chat, courier)
                           case None =>
                             courierItems(sender, hero, to, query, chat)
                         }
@@ -331,20 +334,23 @@ class StateHandler(
       case Transfers.Outcome.Empty | Transfers.Outcome.NeedPick => ZIO.unit
     }
 
-  /** Вещь: понятное название уходит сразу; экран нужен только там, где вещь
-    * можно спутать, — в первую очередь у экипировки. Ушла — хвостом
-    * возвращаем доставку получателю: ей нужен его лок. */
+  /** Вещь в городе — из того, что при герое (сумка, ларец, Живая сумка,
+    * шкаф): понятное название уходит сразу; экран нужен только там, где вещь
+    * можно спутать, — в первую очередь у экипировки. Нет при герое, а дома
+    * есть посыльный (`courier`) — он несёт из хранилища или с полок дома (см.
+    * [[Transfers.quickSend]]). Ушла — хвостом возвращаем доставку получателю:
+    * ей нужен его лок. */
   private def sendItems(sender: User, hero: pangea.model.hero.Hero, target: User, theirHero: pangea.model.hero.Hero,
                         to: TransferTarget, query: String, renderer: Renderer,
-                        chat: Option[ChatTarget.Peer]): Task[Option[Task[Unit]]] = {
+                        chat: Option[ChatTarget.Peer], courier: Boolean): Task[Option[Task[Unit]]] = {
     val item  = ChatCommand.itemQuery(query)
     val count = ChatCommand.count(query)
     for {
       now     <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
-      outcome <- transfers.quickSend(sender, hero, to, item, count, now, chat)
+      outcome <- transfers.quickSend(sender, hero, to, item, count, now, chat, courier)
       tail <- outcome match {
         case Transfers.Outcome.Empty =>
-          api.sendMessage(sender, StateHandler.transferNothing(item), List.empty, None).as(None)
+          api.sendMessage(sender, content.format("transfer.nothing", "query" -> item), List.empty, None).as(None)
         case Transfers.Outcome.NeedPick =>
           // Выбирают в личке, а строка о передаче уйдёт в беседу, где её затеяли.
           val scene = TransferState.TransferScene(
@@ -615,9 +621,6 @@ object StateHandler {
     "Не понял, кому передавать. Ответьте на сообщение игрока (или перешлите его) и напишите «Передать …»."
 
   val TransferSomeone: String = "искатель"
-
-  def transferNothing(query: String): String =
-    s"В сумке нет ничего похожего на «$query»."
 
   val live: ZLayer[
     Api with StatesMap with HeroRepository with UserRepository with HeroDao with Payouts with Parcels

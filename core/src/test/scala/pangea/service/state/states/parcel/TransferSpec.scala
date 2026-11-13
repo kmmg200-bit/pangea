@@ -1,7 +1,7 @@
 package pangea.service.state.states.parcel
 
 import pangea.engine.SceneContent
-import pangea.model.artifact.HeroArtifacts
+import pangea.model.artifact.{ArtifactKind, HeroArtifacts}
 import pangea.model.hero.HeroId
 import pangea.model.item.{Item, ItemType, Rarity}
 import pangea.model.state.StateType
@@ -36,6 +36,12 @@ object TransferSpec extends ZIOSpecDefault {
     Live.live((ZIO.sleep(10.millis) *> ZIO.succeed(players.sentLetters)).repeatUntil(_.nonEmpty)
       .timeoutFail(new Throwable("письмо получателю не дошло"))(5.seconds))
 
+  /** Доставка из лички — тоже отдельным волокном: ждём, пока в ячейке
+    * получателя станет `n` вещей, и отдаём их номера. */
+  private def landed(bank: TestBankRepository, n: Int) =
+    Live.live((ZIO.sleep(10.millis) *> ZIO.succeed(bank.itemsSnapshot.map(_.id).sorted)).repeatUntil(_.size >= n)
+      .timeoutFail(new Throwable("посылки не дошли до ячейки"))(5.seconds))
+
   /** «Надколотый череп» — камень-усилитель первого грейда. */
   private def skull(id: Long): Item =
     pangea.generator.item.GemGenerator.item(pangea.model.item.GemKind.Skull, 1).copy(id = id)
@@ -53,8 +59,19 @@ object TransferSpec extends ZIOSpecDefault {
     TransferState.TransferScene(
       toHeroId = friend.value, toUserId = friendUs.value, toName = "Пётр", query = query, count = count)
 
+  /** Ромашка — трава: её берёт Живая сумка. */
+  private def herb(id: Long): Item =
+    pangea.generator.item.MaterialGenerator.item(pangea.model.item.MaterialKind.Chamomile).copy(id = id)
+
+  /** Ларец, Живая сумка и шкаф первой ступени с тем, что в них лежит. */
+  private def carriedArts(casket: List[Item] = Nil, bag: List[Item] = Nil, wardrobe: List[Item] = Nil) =
+    TestArtifactRepository.of(
+      casket   = TestArtifactRepository.artifact(ArtifactKind.Casket, tier = 1, items = casket),
+      bag      = TestArtifactRepository.artifact(ArtifactKind.LivingBag, tier = 1, items = bag),
+      wardrobe = TestArtifactRepository.artifact(ArtifactKind.Wardrobe, tier = 1, items = wardrobe))
+
   /** Сервис передачи и всё, что к нему прилагается. */
-  private def fixture(items: List[Item]) =
+  private def fixture(items: List[Item], arts: TestArtifactRepository = TestArtifactRepository.empty) =
     for {
       heroDao  <- TestHeroDao.withHero(userId, TestFixtures.hero(userId, state = StateType.TradeHouse))
       invRepo   = TestInventoryRepository.withItems(items)
@@ -67,10 +84,11 @@ object TransferSpec extends ZIOSpecDefault {
       payouts   = pangea.service.payout.Payouts(TestPayoutDao.empty, heroDao, content)
       lock     <- PlayerLock.make
       hero     <- heroDao.getHeroByUserId(userId).map(_.get)
-    } yield (Transfers(invRepo, userRepo, parcels, players, content, heroDao, bank, payouts, lock),
+    } yield (Transfers(invRepo, userRepo, parcels, players, content, heroDao, bank, payouts, lock, Some(arts)),
              hero, invRepo, parcelDao, players)
 
-  private def transfer(items: List[Item], query: String, count: Int = 1) =
+  private def transfer(items: List[Item], query: String, count: Int = 1,
+                       arts: TestArtifactRepository = TestArtifactRepository.empty) =
     for {
       heroDao  <- TestHeroDao.withHero(userId, TestFixtures.hero(userId, state = StateType.TradeHouse))
       _        <- heroDao.insertHero(TestFixtures.hero(friendUs).copy(id = friend))
@@ -85,9 +103,9 @@ object TransferSpec extends ZIOSpecDefault {
       parcels   = Parcels(parcelDao, bank, content)
       lock     <- PlayerLock.make
       transfers = Transfers(invRepo, userRepo, parcels, players, content, heroDao, bank,
-                    pangea.service.payout.Payouts(TestPayoutDao.empty, heroDao, content), lock)
+                    pangea.service.payout.Payouts(TestPayoutDao.empty, heroDao, content), lock, Some(arts))
       bg       <- Background.make(Background.Grace)
-    } yield (TransferState(heroDao, invRepo, transfers, content, bg),
+    } yield (TransferState(heroDao, transfers, content, bg),
              invRepo, parcelDao, bank, players, renderer)
 
   override def spec = suite("Передача вещей")(
@@ -241,6 +259,39 @@ object TransferSpec extends ZIOSpecDefault {
           (transfers, hero, _, _, _) = f
           out <- transfers.quickSend(testUser, hero, target, "череп", 1, 0L)
         } yield assertTrue(out == Transfers.Outcome.Empty)
+      },
+
+      test("ларец и Живая сумка — как сумка: понятная вещь оттуда уходит сразу") {
+        val arts = carriedArts(casket = List(skull(21L)), bag = List(herb(31L)))
+        for {
+          f   <- fixture(Nil, arts)
+          (transfers, hero, _, parcelDao, _) = f
+          one <- transfers.quickSend(testUser, hero, target, "надколотый череп", 1, 0L)
+          two <- transfers.quickSend(testUser, hero, target, "ромашка", 1, 0L)
+        } yield assertTrue(one.isInstanceOf[Transfers.Outcome.Sent] && two.isInstanceOf[Transfers.Outcome.Sent]) &&
+                assertTrue(parcelDao.snapshot.map(_.item.id) == List(21L, 31L)) &&
+                assertTrue(arts.snapshot.casket.items.data.isEmpty && arts.snapshot.bag.items.data.isEmpty)
+      },
+
+      test("одинаковые вещи — сперва из сумки, нехватка — из ларца") {
+        val arts = carriedArts(casket = List(skull(21L), skull(22L)))
+        for {
+          f   <- fixture(List(skull(1L)), arts)
+          (transfers, hero, inv, parcelDao, _) = f
+          out <- transfers.quickSend(testUser, hero, target, "надколотый череп", 2, 0L)
+        } yield assertTrue(out.isInstanceOf[Transfers.Outcome.Sent]) &&
+                assertTrue(parcelDao.snapshot.map(_.item.id) == List(1L, 21L) && inv.snapshot.isEmpty) &&
+                assertTrue(arts.snapshot.casket.items.data.map(_.id) == List(22L))
+      },
+
+      test("меч в сумке и другой в шкафу — уточняем кнопками, как два меча в сумке") {
+        val arts = carriedArts(wardrobe = List(sword(2L).copy(attack = 9)))
+        for {
+          f   <- fixture(List(sword(1L).copy(attack = 12)), arts)
+          (transfers, hero, _, parcelDao, _) = f
+          out <- transfers.quickSend(testUser, hero, target, "меч", 1, 0L)
+        } yield assertTrue(out == Transfers.Outcome.NeedPick && parcelDao.snapshot.isEmpty) &&
+                assertTrue(arts.snapshot.wardrobe.items.data.map(_.id) == List(2L))
       }
     ),
 
@@ -273,7 +324,7 @@ object TransferSpec extends ZIOSpecDefault {
         (state, inv, parcelDao, bank, players, renderer) = t
         _       <- state.action(testUser, tap("Give_1"), renderer)
         confirm <- renderer.sentScreens.map(_.last)
-        next    <- state.action(testUser, tap("TransferYes"), renderer)
+        next    <- state.action(testUser, tap("TransferYes", "id" -> "1"), renderer)
         letters <- lettersOf(players)
       } yield assertTrue(confirm.inline && confirm.text.contains("×2")) &&
               // ушли ровно две из пяти — и обе легли получателю в ячейку
@@ -281,8 +332,110 @@ object TransferSpec extends ZIOSpecDefault {
               assertTrue(bank.itemsSnapshot.map(_.id) == List(1L, 2L) && parcelDao.snapshot.isEmpty) &&
               assertTrue(letters.map(_._1) == List(friendUs)) &&
               assertTrue(letters.head._2.contains("Надколотый череп ×2. Уже в вашей банковской ячейке.")) &&
-              // возвращаемся туда, откуда пришли
-              assertTrue(next == StateType.GlobalMap)
+              // подходящее ещё есть — экран остаётся
+              assertTrue(next == StateType.Transfer)
+    },
+
+    test("передал — экран остаётся: над списком — что ушло; уходят «Отменой»") {
+      val skulls = (1L to 5L).toList.map(skull)
+      for {
+        t     <- transfer(skulls, query = "череп", count = 2)
+        (state, inv, _, bank, _, renderer) = t
+        _     <- state.action(testUser, tap("Give_1"), renderer)
+        stay  <- state.action(testUser, tap("TransferYes", "id" -> "1"), renderer)
+        list  <- renderer.sentScreens.map(_.last)
+        _     <- state.action(testUser, tap("Give_5"), renderer)
+        again <- state.action(testUser, tap("TransferYes", "id" -> "5"), renderer)
+        back  <- state.action(testUser, tap("TransferNo"), renderer)
+        last  <- renderer.sentScreens.map(_.last)
+        got   <- landed(bank, 4)
+      } yield assertTrue(stay == StateType.Transfer && again == StateType.Transfer) &&
+              assertTrue(list.text.startsWith("Надколотый череп ×2 отправлено игроку Пётр.")) &&
+              assertTrue(list.text.contains("Кому: Пётр. Сколько: 2.")) &&
+              // три оставшихся черепа — одной кнопкой (её номер — последнего из них)
+              assertTrue(list.choices.map(_.id).contains("Give_5") && list.choices.map(_.id).contains("TransferNo")) &&
+              assertTrue(inv.snapshot.map(_.id) == List(5L) && got == List(1L, 2L, 3L, 4L)) &&
+              assertTrue(back == StateType.GlobalMap && last.text == "Возвращаемся к делам.")
+    },
+
+    test("отдал последнее подходящее — назад, туда, откуда пришли, одним сообщением") {
+      for {
+        t    <- transfer(List(skull(1L), skull(2L), sword(3L)), query = "череп", count = 2)
+        (state, inv, _, bank, _, renderer) = t
+        _    <- state.action(testUser, tap("Give_1"), renderer)
+        next <- state.action(testUser, tap("TransferYes", "id" -> "1"), renderer)
+        last <- renderer.sentScreens.map(_.last)
+        got  <- landed(bank, 2)
+      } yield assertTrue(next == StateType.GlobalMap) &&
+              assertTrue(last.text.startsWith("Надколотый череп ×2 отправлено игроку Пётр.") &&
+                last.text.endsWith("\n\nВозвращаемся к делам.")) &&
+              assertTrue(inv.snapshot.map(_.id) == List(3L) && got == List(1L, 2L))
+    },
+
+    test("«Отказаться» — назад к списку: выбор сброшен, его «Передать» уже ничего не отдаёт") {
+      val two = List(sword(1L).copy(attack = 12), sword(2L).copy(attack = 9))
+      for {
+        t     <- transfer(two, query = "меч")
+        (state, inv, _, bank, _, renderer) = t
+        _     <- state.action(testUser, tap("Give_1"), renderer)
+        no    <- state.action(testUser, tap("TransferList"), renderer)
+        list  <- renderer.sentScreens.map(_.last)
+        stale <- state.action(testUser, tap("TransferYes", "id" -> "1"), renderer)
+      } yield assertTrue(no == StateType.Transfer && stale == StateType.Transfer) &&
+              assertTrue(list.choices.map(_.id).contains("Give_1") && list.choices.map(_.id).contains("Give_2")) &&
+              assertTrue(inv.snapshot.size == 2 && bank.itemsSnapshot.isEmpty)
+    },
+
+    test("«Передать» со старого подтверждения другой вещи ничего не отдаёт; с нового — отдаёт") {
+      val two = List(sword(1L).copy(attack = 12), sword(2L).copy(attack = 9))
+      for {
+        t     <- transfer(two, query = "меч")
+        (state, inv, _, bank, _, renderer) = t
+        _     <- state.action(testUser, tap("Give_1"), renderer)
+        _     <- state.action(testUser, tap("Give_2"), renderer)
+        _     <- state.action(testUser, tap("TransferYes", "id" -> "1"), renderer)
+        stale <- ZIO.succeed((inv.snapshot.map(_.id), bank.itemsSnapshot.map(_.id)))
+        _     <- state.action(testUser, tap("TransferYes", "id" -> "2"), renderer)
+        got   <- landed(bank, 1)
+      } yield assertTrue(stale == (List(1L, 2L), List.empty[Long])) &&
+              assertTrue(inv.snapshot.map(_.id) == List(1L) && got == List(2L))
+    },
+
+    test("из двух мечей с одним названием уходит выбранный, а не первый по сумке, — даже если просили два") {
+      for {
+        t   <- transfer(List(sword(1L).copy(attack = 12), sword(2L).copy(attack = 9)), query = "меч", count = 2)
+        (state, inv, _, bank, _, renderer) = t
+        _   <- state.action(testUser, tap("Give_2"), renderer)
+        _   <- state.action(testUser, tap("TransferYes", "id" -> "2"), renderer)
+        got <- landed(bank, 1)
+      } yield assertTrue(inv.snapshot.map(_.id) == List(1L) && got == List(2L))
+    },
+
+    test("кнопка «Передать», отправленная до номера вещи, отдаёт выбранное, как раньше") {
+      for {
+        t    <- transfer(List(sword(1L).copy(attack = 12), sword(2L).copy(attack = 9)), query = "меч")
+        (state, inv, _, bank, _, renderer) = t
+        _    <- state.action(testUser, tap("Give_2"), renderer)
+        _    <- state.action(testUser, tap("TransferYes"), renderer)
+        got  <- landed(bank, 1)
+      } yield assertTrue(inv.snapshot.map(_.id) == List(1L) && got == List(2L))
+    },
+
+    test("в списке — и то, что в ларце, Живой сумке и шкафу; отданное уходит оттуда, где лежало") {
+      val arts = carriedArts(casket = List(skull(21L)), bag = List(herb(31L)), wardrobe = List(sword(41L).copy(attack = 9)))
+      for {
+        t     <- transfer(List(sword(1L).copy(attack = 12)), query = "", arts = arts)
+        (state, inv, _, bank, _, renderer) = t
+        _     <- state.enter(testUser, renderer)
+        list  <- renderer.sentScreens.map(_.last)
+        _     <- state.action(testUser, tap("Give_41"), renderer)
+        _     <- state.action(testUser, tap("TransferYes", "id" -> "41"), renderer)
+        got   <- landed(bank, 1)
+        ids    = list.choices.map(_.id).toSet
+        shown  = Set("Give_1", "Give_21", "Give_31", "Give_41").subsetOf(ids)
+      } yield assertTrue(shown) &&
+              assertTrue(got == List(41L) && arts.snapshot.wardrobe.items.data.isEmpty) &&
+              assertTrue(inv.snapshot.map(_.id) == List(1L) && arts.snapshot.casket.items.data.map(_.id) == List(21L))
     },
 
     test("посылка сама ложится в банковскую ячейку получателя") {

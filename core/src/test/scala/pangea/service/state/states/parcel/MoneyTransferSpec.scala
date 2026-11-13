@@ -181,7 +181,7 @@ object MoneyTransferSpec extends ZIOSpecDefault {
               assertTrue(sent.contains("Меньше 🪙 50 не передать") && sent.contains("Меньше 🟡 50 не передать")) &&
               assertTrue(sent.contains("Сколько передать?")) &&
               // в сумке «серебро» не искали
-              assertTrue(!sent.contains("В сумке нет ничего похожего"))
+              assertTrue(!sent.contains("При вас нет ничего похожего"))
     },
 
     test("серебро из лабиринта не передать — только в городе") {

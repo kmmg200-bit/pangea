@@ -10,7 +10,6 @@ import pangea.model.item.{Item, ItemStack}
 import pangea.model.state.StateType
 import pangea.model.user.{User, UserId}
 import pangea.model.vk.Community
-import pangea.repository.inventory.InventoryRepository
 import pangea.service.parcel.{TransferTarget, Transfers}
 import pangea.service.sender.ChatTarget
 import pangea.service.{Background, ErrorLog}
@@ -25,22 +24,25 @@ import java.util.concurrent.TimeUnit
  *  всегда (два меча с одним именем и уровнем различаются характеристиками), а
  *  всё остальное с понятным названием уходит сразу, без этого экрана.
  *
+ *  В списке — всё подходящее, что при герое: сумка, ларец, Живая сумка, шкаф
+ *  (см. `Transfers.carried`). Передал — экран остаётся: можно отдать ещё, пока
+ *  не нажата «Отмена» или не отдано всё подходящее.
+ *
  *  Вещь идёт получателю посылкой, поэтому чужую сумку мы не трогаем и передача
  *  работает, где бы он ни был. */
 case class TransferState(
-  heroDao:       HeroDao,
-  inventoryRepo: InventoryRepository,
-  transfers:     Transfers,
-  content:       SceneContent,
-  background:    Background
+  heroDao:    HeroDao,
+  transfers:  Transfers,
+  content:    SceneContent,
+  background: Background
 ) extends State {
 
   private val branch = new Branch(
     routes = Map(
-      "TransferList" -> Target.Run { (u, _, r) => showList(u, r).as(StateType.Transfer) },
+      "TransferList" -> Target.Run { (u, _, r) => backToList(u, r).as(StateType.Transfer) },
       "TransferPrev" -> Target.Run { (u, _, r) => turnPage(u, r, -1).as(StateType.Transfer) },
       "TransferNext" -> Target.Run { (u, _, r) => turnPage(u, r, +1).as(StateType.Transfer) },
-      "TransferYes"  -> Target.Run { (u, _, r) => send(u, r) },
+      "TransferYes"  -> Target.Run { (u, ua, r) => send(u, r, field(ua.payload, ConfirmedKey).flatMap(_.toLongOption)) },
       "TransferNo"   -> Target.Run { (u, _, r) => leave(u, r) }
     ),
     fallback = Target.Run { (u, ua, r) => handleFallback(u, ua, r) }
@@ -55,17 +57,18 @@ case class TransferState(
 
   // ── Список подходящих вещей ────────────────────────────────────────────────
 
-  private def showList(user: User, renderer: Renderer): Task[Unit] =
+  /** Список подходящего; `note` — строка над ним (что только что ушло). */
+  private def showList(user: User, renderer: Renderer, note: String = ""): Task[Unit] =
     for {
       hero  <- getHero(user)
-      inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
+      held  <- transfers.carried(hero)
       scene <- readScene(user)
-      items  = transfers.matching(inv.items.data, scene.query)
+      items  = transfers.matching(held, scene.query)
       _ <- if (items.isEmpty)
              renderer.show(user, Screen(
-               transfers.refusal(inv.items.data, scene.query).fold(
+               transfers.refusal(held, scene.query).fold(
                  content.format("transfer.nothing", "query" -> scene.query))(
-                 content.format(_, "query" -> scene.query)), leaveRow))
+                 content.format(_, "query" -> scene.query)), leaveRow).noted(note))
            else {
              val (pageItems, pages, p) = ItemMenu.page(ItemStack.grouped(items), scene.page)
              val header = content.format("transfer.pick",
@@ -81,7 +84,7 @@ case class TransferState(
                Option.when(p > 0)(Choice("TransferPrev", content.text("common.prev"), row = Some(ItemMenu.NavRow))),
                Option.when(p < pages - 1)(Choice("TransferNext", content.text("common.next"), row = Some(ItemMenu.NavRow)))
              ).flatten
-             renderer.show(user, Screen(header, buttons ++ nav))
+             renderer.show(user, Screen(header, buttons ++ nav).noted(note))
            }
     } yield ()
 
@@ -101,67 +104,90 @@ case class TransferState(
 
   // ── Подтверждение и отправка ───────────────────────────────────────────────
 
+  /** Подтвердить выбранное. «Передать» несёт номер вещи: старое сообщение с
+    * подтверждением другой вещи ничего не отдаст. «Отказаться» — назад к
+    * списку: уходят с экрана только «Отменой». */
   private def confirm(user: User, itemId: Long, renderer: Renderer): Task[Unit] =
     for {
       hero  <- getHero(user)
-      inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
+      held  <- transfers.carried(hero)
       scene <- readScene(user)
-      chosen = inv.items.data.find(i => i.id == itemId && transfers.sendable(i))
+      chosen = held.find(i => i.id == itemId && transfers.sendable(i))
       _ <- chosen match {
         case None => showList(user, renderer)
         case Some(item) =>
           val stats = item.statsLines
           val text  = content.format("transfer.confirm",
-            "what" -> transfers.what(item, batch(inv.items.data, item, scene.count).size),
+            "what" -> transfers.what(item, batch(held, item, scene.count).size),
             "to"   -> scene.toName) + (if (stats.isEmpty) "" else "\n" + stats.mkString("\n"))
           writeScene(user, scene.copy(itemId = Some(item.id))) *>
             renderer.show(user, Screen(text, List(
-              Choice("TransferYes", content.text("transfer.confirmYes"), color = ChoiceColor.Positive, row = Some(0)),
-              Choice("TransferNo",  content.text("transfer.confirmNo"),  color = ChoiceColor.Negative, row = Some(0))
+              Choice("TransferYes", content.text("transfer.confirmYes"), data = Map(ConfirmedKey -> item.id.toString),
+                color = ChoiceColor.Positive, row = Some(0)),
+              Choice("TransferList", content.text("transfer.confirmNo"), color = ChoiceColor.Negative, row = Some(0))
             ), inline = true))
       }
     } yield ()
 
-  /** Сколько штук уходит: выбранная вещь и такие же, сколько просили. */
+  /** Сколько штук уходит: выбранная вещь и такие же, сколько просили. Вещь
+    * без стопки (экипировка) уходит одна — та, что выбрана: два меча с одним
+    * названием различаются характеристиками. Из одинаковых сперва уходят те,
+    * что в сумке (см. `Transfers.carried`). */
   private def batch(items: List[Item], item: Item, count: Int): List[Item] =
-    items.filter(transfers.sameStack(item, _)).take(count.max(1))
+    if (ItemStack.key(item).isEmpty) List(item)
+    else items.filter(transfers.sameStack(item, _)).take(count.max(1))
 
-  private def send(user: User, renderer: Renderer): Task[StateType] =
+  /** «Отказаться» на подтверждении: выбор сброшен — его «Передать» уже ничего
+    * не отдаст. */
+  private def backToList(user: User, renderer: Renderer): Task[Unit] =
+    readScene(user).flatMap(s => writeScene(user, s.copy(itemId = None))) *> showList(user, renderer)
+
+  /** Отдать выбранное и остаться: над списком — что ушло. Подходящего больше
+    * нет — уходим туда, откуда пришли. `confirmed` — номер вещи с кнопки
+    * «Передать»: не тот, что выбран сейчас, — кнопка со старого сообщения, и
+    * ничего не уходит. У кнопок, отправленных до этого номера, его нет. */
+  private def send(user: User, renderer: Renderer, confirmed: Option[Long]): Task[StateType] =
     for {
       now   <- nowMs
       hero  <- getHero(user)
-      inv   <- inventoryRepo.get(hero.id).mapError(asThrowable)
+      held  <- transfers.carried(hero)
       scene <- readScene(user)
-      chosen = scene.itemId.flatMap(id => inv.items.data.find(i => i.id == id && transfers.sendable(i)))
+      chosen = scene.itemId.filter(id => confirmed.forall(_ == id))
+                 .flatMap(id => held.find(i => i.id == id && transfers.sendable(i)))
       res <- chosen match {
         case None => showList(user, renderer).as(StateType.Transfer)
         case Some(item) =>
           val target = TransferTarget(HeroId(scene.toHeroId), UserId(scene.toUserId), scene.toName)
           for {
-            shipment <- transfers.send(user, hero, target, batch(inv.items.data, item, scene.count), now, scene.chatTarget)
+            shipment <- transfers.send(user, hero, target, batch(held, item, scene.count), now, scene.chatTarget)
             // Доставка ждёт лок получателя, а наш занят этим ходом — пусть
             // идёт отдельно и начнётся, как только получатель освободится.
             _        <- background.fork(shipment.handOver
                           .catchAllCause(ErrorLog.logged(s"Передача ${user.userId.value} → ${scene.toUserId}: доставка не прошла")))
-            _        <- renderer.show(user, Screen(transfers.sentText(shipment.items, scene.toName), Nil))
-            next     <- leave(user, renderer)
+            // Отданное подтверждать второй раз нечем: выбор сброшен.
+            _        <- writeScene(user, scene.copy(itemId = None))
+            sent      = transfers.sentText(shipment.items, scene.toName)
+            left     <- transfers.carried(hero).map(transfers.matching(_, scene.query))
+            next     <- if (left.isEmpty) leave(user, renderer, sent)
+                        else showList(user, renderer, sent).as(StateType.Transfer)
           } yield next
       }
     } yield res
 
-  /** Уйти туда, откуда игрока забрала команда из беседы. */
-  private def leave(user: User, renderer: Renderer): Task[StateType] =
+  /** Уйти туда, откуда игрока забрала команда из беседы; `note` — строка над
+    * прощанием (что ушло последним). */
+  private def leave(user: User, renderer: Renderer, note: String = ""): Task[StateType] =
     for {
       back <- heroDao.readReturnState(user.userId).map(_.getOrElse(StateType.GlobalMap))
       _    <- resetScene(user)
       to    = if (back == StateType.Transfer) StateType.GlobalMap else back
-      _    <- renderer.show(user, Screen(content.text("transfer.back"), Nil))
+      _    <- renderer.show(user, Screen(content.text("transfer.back"), Nil).noted(note))
     } yield to
 
   // ── Вспомогательное ────────────────────────────────────────────────────────
 
   private def handleFallback(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
-    parseAction(ua.payload) match {
+    field(ua.payload, "action") match {
       case Some(a) if a.startsWith(PickPrefix) =>
         a.drop(PickPrefix.length).toLongOption
           .fold(showList(user, renderer))(confirm(user, _, renderer)).as(StateType.Transfer)
@@ -186,16 +212,18 @@ case class TransferState(
   private def resetScene(user: User): Task[Unit] =
     heroDao.writeSceneData(user.userId, Json.Null)
 
-  private def parseAction(payload: Option[String]): Option[String] =
-    payload.flatMap(p => jawn.decode[Map[String, String]](p).toOption.flatMap(_.get("action")))
+  /** Поле кнопки: `action` — что нажато, [[TransferState.ConfirmedKey]] — номер вещи. */
+  private def field(payload: Option[String], key: String): Option[String] =
+    payload.flatMap(p => jawn.decode[Map[String, String]](p).toOption.flatMap(_.get(key)))
 
   private def nowMs: Task[Long] = ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
-
-  private def asThrowable(e: Any): Throwable = new Throwable(e.toString)
 }
 
 object TransferState {
   val PickPrefix = "Give_"
+
+  /** Номер вещи на кнопке «Передать» (см. `TransferState.send`). */
+  val ConfirmedKey = "id"
 
   /** Кому и что передают: сцена живёт от команды в беседе до подтверждения. */
   case class TransferScene(
