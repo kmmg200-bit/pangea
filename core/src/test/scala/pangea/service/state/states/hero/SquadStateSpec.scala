@@ -41,7 +41,7 @@ object SquadStateSpec extends ZIOSpecDefault {
       val form   = UndeadForm("Чумная крыса", lvl,
         pangea.model.stats.FightStats(atk = 40, hp = 400, armor = 200, defence = 5,
                                       evasion = 20, accuracy = 80, energy = 50))
-      val withRat = baseHero.copy(squad = Squad.empty.summonRat(form, lvl, 0L))
+      val withRat = baseHero.copy(squad = Squad.empty.summonRat(form, lvl, 0L, near = 2))
       def open(after: Long) =
         for {
           t <- makeState(withRat)

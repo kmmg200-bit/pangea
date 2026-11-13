@@ -5485,7 +5485,11 @@ case class BattleState(
     else
       ZIO.foldLeft(res.battle.group.allies.sortBy(_.position))((res.battle, Vector.empty[String])) {
         case ((b, log), a0) =>
-          b.group.allies.find(_.kind == a0.kind).filter(_.alive) match {
+          // Каждый ходит раз — свой, найденный по месту: за фазу союзники мест
+          // не меняют (шаг к врагу — после неё, см. squadAdvance). По виду
+          // искать нельзя: крыс, поднятых, караванщиков бывает по нескольку, и
+          // первый из них ходил за всех, а прочие стояли.
+          b.group.allyAt(a0.position).filter(x => x.alive && x.kind == a0.kind) match {
             case None    => ZIO.succeed((b, log))
             case Some(a) => allyTurn(a, b).map { case (b2, lines) => (b2, log ++ lines) }
           }
@@ -5502,8 +5506,9 @@ case class BattleState(
         case Some(pos) => allyHits(a, battle, pos, a.stats.atk, crushing = false)
       }
       b1 = struck.battle
-      // 2) случайное умение из тех, что по карману и к месту
-      a1 = b1.group.allies.find(_.kind == a.kind).getOrElse(a)
+      // 2) случайное умение из тех, что по карману и к месту — у него самого, по
+      // месту: таких же по виду в строю может быть несколько
+      a1 = b1.group.allyAt(a.position).getOrElse(a)
       target2 = b1.allyTarget(a1)
       // Крыса умений не знает — только кусает (см. AllyKind.usesSkills), а
       // Тёмный волк — уникальный, не наёмник (см. UndeadForm.unique).
@@ -5786,9 +5791,14 @@ case class BattleState(
             after.copy(position = placed.getOrElse(a.home, after.position) + back, hiredUntil = old.hiredUntil)
           }
         })
-    // Выжившие, пришедшие не из отряда, — в отряд: крыса на сутки, восставший
-    // на двое. Крысе мест не нашлось — разбежится, восставший будет ждать
-    // ответа, кем за него пожертвовать (см. Squad.admitRisen).
+    // Места боя → места отряда. Строй отряда в бой входил сдвинутым к первому
+    // месту (frontShift) — обратно на столько же, как у всех из отряда (`back`);
+    // отряд в бою не бился — сдвиг тот, с каким бой начался.
+    val toSquad = if (fought) back else hero.squad.frontShift
+    // Выжившие, пришедшие не из отряда, — в отряд: крыса на сутки — туда, где
+    // стояла в бою, — восставший на двое. Крысе мест не нашлось — разбежится,
+    // восставший будет ждать ответа, кем за него пожертвовать (см.
+    // Squad.admitRisen).
     val synced = joined.filter(_.alive).foldLeft(synced0) { (s, a) =>
       a.undead.fold(s) { form =>
         a.kind match {
@@ -5803,7 +5813,7 @@ case class BattleState(
           case pangea.model.squad.AllyKind.CaravanKhajiit => s
           // Караванщики деревни бились за свой обоз — с ним и остаются.
           case pangea.model.squad.AllyKind.CaravanGuard => s
-          case pangea.model.squad.AllyKind.Rat        => s.summonRat(form, a.lvl, nowMs)
+          case pangea.model.squad.AllyKind.Rat        => s.summonRat(form, a.lvl, nowMs, near = a.position + toSquad)
           case _                                      => s.admitRisen(form, a.lvl, nowMs)
         }
       }

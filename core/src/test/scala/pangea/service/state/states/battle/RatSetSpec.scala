@@ -256,12 +256,45 @@ object RatSetSpec extends ZIOSpecDefault {
               assertTrue(after.squad.allies.head.hiredUntil > 0L)
     },
 
+    test("после боя крыса встаёт в отряд рядом с героем, а не впереди: герой в отряде на девятом — она на десятом") {
+      // Моб с одним HP: удар его добивает, бой кончается победой. Союзников у
+      // героя нет, а сам он в отряде на девятом месте — в бою он на первом.
+      val weak = tough.copy(monsterStats = tough.monsterStats.copy(hp = 1L), monsterCurrentHp = 1L)
+      val far  = hero(12).copy(squad = Squad.empty.copy(heroPos = 9))
+      for {
+        t <- makeState(far, weak)
+        (state, dao, r) = t
+        _       <- state.enter(testUser, r)          // крыса порога 12 встаёт в строй рядом
+        inFight <- battleOf(dao)
+        _       <- hitAndAllPass
+        _       <- state.action(testUser, tap("Attack"), r)
+        after   <- dao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(inFight.group.heroPos == 1 && inFight.group.allies.map(_.position) == List(2)) &&
+              assertTrue(after.squad.heroPos == 9 && after.squad.allies.map(_.position) == List(10)) &&
+              // в следующем бою строй съедет к первому месту — крыса снова рядом
+              assertTrue(after.squad.frontShift == 8)
+    },
+
+    test("две крысы — каждая ходит раз: ближняя кусает, дальняя без цели стоит, а не кусает за неё") {
+      val rats = List(BattleState.ratAlly(hero(12), 2), BattleState.ratAlly(hero(12), 8))
+      val two  = tough.copy(group = tough.group.copy(allies = rats))
+      for {
+        t <- makeState(hero(12), two)
+        (state, dao, r) = t
+        _      <- hitAndAllPass
+        _      <- state.action(testUser, tap("Attack"), r)
+        log    <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+        swings  = (log.split("Чумная крыса бьёт").length - 1) +
+                  (log.split("Чумная крыса промахивается").length - 1)
+      } yield assertTrue(swings == 1)
+    },
+
     test("крыса остаётся при герое на сутки и в отряд попадает со своим сроком") {
       val now = 1_000_000L
       val sq  = Squad.empty.summonRat(
         pangea.model.squad.UndeadForm("Крыса", 10L,
           FightStats(atk = 10, hp = 100, armor = 50, defence = 1, evasion = 1, accuracy = 10, energy = 10)),
-        10L, now)
+        10L, now, near = 2)
       val rat = sq.allyAt(2)
       assertTrue(rat.exists(a => a.kind == AllyKind.Rat && a.hiredUntil == now + AllyRates.RatMs)) &&
       assertTrue(rat.exists(a => a.hp == 100L && a.armor == 50L && a.lvlAt(99L) == 10L)) &&

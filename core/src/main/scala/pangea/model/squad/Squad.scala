@@ -304,12 +304,21 @@ final case class Squad(
   def wolfRival(form: UndeadForm): Option[Ally] =
     if (form.unique) darkWolves.headOption else None
 
-  /** Крыса из-под ног встаёт на свободное место и держится [[AllyRates.RatMs]].
-    * Мест нет — отряд как был: лишней крысе в строю стоять негде. */
-  def summonRat(form: UndeadForm, lvl: Long, nowMs: Long): Squad =
-    freePosition.fold(this)(p => copy(allies = allies :+
+  /** Крыса из-под ног встаёт на свободное место, ближайшее к `near` — туда,
+    * где она стояла в бою, в местах отряда (см. [[freePositionNear]]), — и
+    * держится [[AllyRates.RatMs]]. Мест нет — отряд как был: лишней крысе в
+    * строю стоять негде. Раньше она вставала на первое свободное место, и у
+    * героя, стоящего в отряде дальше, оказывалась далеко впереди него. */
+  def summonRat(form: UndeadForm, lvl: Long, nowMs: Long, near: Int): Squad =
+    freePositionNear(near).fold(this)(p => copy(allies = allies :+
       Ally(AllyKind.Rat, p, 0L, 0L, 0L,
         hiredUntil = nowMs + AllyRates.RatMs, undead = Some(form)).restored(lvl)))
+
+  /** Свободное место, ближайшее к `near`: оно само, а занято — по одному в обе
+    * стороны; поровну — то, что дальше от первого места. Мест нет — None. */
+  def freePositionNear(near: Int): Option[Int] =
+    (1 to AllyRates.Positions).filter(p => p != heroPos && allyAt(p).isEmpty)
+      .sortBy(p => (math.abs(p - near), -p)).headOption
 
   /** Есть ли при герое хоть одна крыса: по ней порог 12 набора «Крыса» решает,
     * выдавать ли одну на входе в бой. */

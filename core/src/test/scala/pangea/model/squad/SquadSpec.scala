@@ -288,7 +288,7 @@ object SquadSpec extends ZIOSpecDefault {
       // строй полон: выставить можно только обменом
       val full    = (1 to AllyRates.Positions - 2).foldLeft(s1)((s, _) => s.raise(orc.copy(name = "Другой"), lvl, now))
       val swapped = full.swapIn(0, 2)
-      val withRat = Squad.empty.summonRat(rat, lvl, now)
+      val withRat = Squad.empty.summonRat(rat, lvl, now, near = 2)
       assertTrue(s1.allyAt(3).isEmpty && s1.reserve.map(_.name) == List("Поднятый орк")) &&
       assertTrue(s1.reserve.forall(_.position == 0)) &&
       assertTrue(back.allyAt(3).exists(_.name == "Поднятый орк") && back.reserve.isEmpty) &&
