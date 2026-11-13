@@ -151,6 +151,12 @@ object ItemDetails {
     def withCharges(n: Int): Rose = copy(charges = n)
   }
 
+  /** Ловчая сеть (см. [[TrapNet]]): носится в доп. слоте, бросков — сколько
+   *  осталось; на последнем рвётся. */
+  case class Net(charges: Int, maxCharges: Int) extends Charged {
+    def withCharges(n: Int): Net = copy(charges = n)
+  }
+
   // --- Покодечная сериализация с диспатчем по "type" ---
 
   private val weaponEnc: Encoder[Weapon]           = deriveEncoder
@@ -193,6 +199,8 @@ object ItemDetails {
   private val divineDec:  Decoder[Divine]            = deriveDecoder
   private val roseEnc:    Encoder[Rose]              = deriveEncoder
   private val roseDec:    Decoder[Rose]              = deriveDecoder
+  private val netEnc:     Encoder[Net]               = deriveEncoder
+  private val netDec:     Decoder[Net]               = deriveDecoder
   private val runeEnc:    Encoder[RuneStone]         = deriveEncoder
   private val runeDec:    Decoder[RuneStone]         = deriveDecoder
   // Вещи в стопке — те же `Item`, чей кодек сам держит этот. Кодек вещи берём
@@ -221,6 +229,7 @@ object ItemDetails {
     case b: Brew        => tagged("Brew", brewEnc(b))
     case d: Divine      => tagged("Divine", divineEnc(d))
     case r: Rose        => tagged("Rose", roseEnc(r))
+    case n: Net         => tagged("Net", netEnc(n))
     case r: RuneStone   => tagged("RuneStone", runeEnc(r))
     case b: Bundle      => tagged("Bundle", bundleEnc(b))
   }
@@ -243,6 +252,7 @@ object ItemDetails {
       case "Brew"        => brewDec(c)
       case "Divine"      => divineDec(c)
       case "Rose"        => roseDec(c)
+      case "Net"         => netDec(c)
       case "RuneStone"   => runeDec(c)
       case "Bundle"      => bundleDec(c)
       case other         => Left(DecodingFailure(s"Unknown ItemDetails type: $other", c.history))

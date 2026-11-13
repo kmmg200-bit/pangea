@@ -689,20 +689,22 @@ object VillageSpec extends ZIOSpecDefault {
       assertTrue(quiet && onlyBandits && oldQuiet)
     },
 
-    test("награбленное: цены у Ришелье — 100, 100, 200, 200, 250, 300, 400; на карточке — «(пока не используется)», как у паучьего; у прочих — нет") {
+    test("награбленное: цены у Ришелье — 100, 100, 200, 200, 250, 300, 400; на карточке — «(пока не используется)», кроме пеньки (она в ловчей сети), как у кокона; у прочих — нет") {
       val prices = Map[MaterialKind, Long](MaterialKind.Timber -> 100L, MaterialKind.HempRope -> 100L,
         MaterialKind.TannedLeather -> 200L, MaterialKind.WoolCloth -> 200L, MaterialKind.IronIngot -> 250L,
         MaterialKind.PineTar -> 300L, MaterialKind.CopperIngot -> 400L)
       // Ядовитая железа и железа красного паука уже в деле — идут в паучью
-      // сыворотку и яд красного паука, пометки на них нет.
-      val spider = List(MaterialKind.SpiderSilk, MaterialKind.CocoonTreasure)
-      val cards  = (LootGenerator.BanditSpoils.map(_._1) ++ spider).map(k => k -> MaterialGenerator.item(k).statsLines)
+      // сыворотку и яд красного паука; паучий шёлк с пенькой — в ловчую сеть.
+      // Пометки на них нет.
+      val spider = List(MaterialKind.CocoonTreasure)
+      val spoils = LootGenerator.BanditSpoils.map(_._1).filterNot(_ == MaterialKind.HempRope)
+      val cards  = (spoils ++ spider).map(k => k -> MaterialGenerator.item(k).statsLines)
       assertTrue(LootGenerator.BanditSpoils.forall { case (k, _) => prices.get(k).contains(k.silverPrice) }) &&
       assertTrue(cards.forall { case (k, lines) =>
         k.notYetUsed && lines.contains(k.description) && lines.lastOption.contains(MaterialKind.NotYetUsedNote) }) &&
       assertTrue(MaterialKind.NotYetUsedNote == "(пока не используется)") &&
       assertTrue(List(MaterialKind.EverburningIron, MaterialKind.DiamondDust, MaterialKind.Mithril, MaterialKind.VenomGland,
-        MaterialKind.RedSpiderGland).forall(k =>
+        MaterialKind.RedSpiderGland, MaterialKind.SpiderSilk, MaterialKind.HempRope).forall(k =>
         !k.notYetUsed && !MaterialGenerator.item(k).statsLines.contains(MaterialKind.NotYetUsedNote)))
     },
 

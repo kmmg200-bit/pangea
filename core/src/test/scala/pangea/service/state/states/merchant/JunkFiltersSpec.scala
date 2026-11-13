@@ -33,6 +33,13 @@ object JunkFiltersSpec extends ZIOSpecDefault {
       assertTrue(MerchantState.isJunk(helm, noFlask) && MerchantState.isJunk(helm, noSets))
     },
 
+    test("ловчая сеть не хлам: белая, но сплетена в кубе — «Продать хлам» её не берёт ни при каких редкостях") {
+      val net = pangea.model.item.TrapNet.item.copy(id = 4L)
+      val all = MerchantState.JunkSaleSettings(rarities = Rarity.values.toSet)
+      assertTrue(net.rarity == Rarity.White && MerchantState.JunkSaleSettings().rarities.contains(Rarity.White)) &&
+      assertTrue(!MerchantState.isJunk(net, MerchantState.JunkSaleSettings()) && !MerchantState.isJunk(net, all))
+    },
+
     test("старая настройка хлама без новых полей читается: фляги и наборы — как прежде") {
       val old = decode[MerchantState.JunkSaleSettings]("""{"rarities":["Gray"],"passives":true,"actives":true,"trophies":false}""")
       assertTrue(old.exists(s => s.flasks && s.sets))

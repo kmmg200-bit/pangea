@@ -2,7 +2,7 @@ package pangea.generator.item
 
 import pangea.domain.Rng
 import pangea.model.home.RecipeNote
-import pangea.model.item.{BrewKind, BrewRates, Gem, GemKind, Grip, Item, ItemDetails, ItemSet, ItemType, MaterialKind, Rarity, DivineKind, RoseKind, TrophyKind}
+import pangea.model.item.{BrewKind, BrewRates, Gem, GemKind, Grip, Item, ItemDetails, ItemSet, ItemType, MaterialKind, Rarity, DivineKind, RoseKind, TrapNet, TrophyKind}
 import pangea.model.monster.MiniBoss
 import pangea.model.rune.{Rune, RuneStone, RuneStoneSize}
 
@@ -377,12 +377,24 @@ object CubeCraft {
     }
   }
 
+  // Три мотка паучьего шёлка и моток пеньки → ловчая сеть (см. TrapNet): шёлк
+  // идёт на полотно, пенька — на утяжелённые края. Так решил пользователь.
+  private object NetWeave extends Recipe {
+    val size = 4
+    def tryMatch(pool: List[Item], rng: Rng): Option[(List[Item], Item, Rng)] = {
+      val silk = pool.filter(_.material.contains(MaterialKind.SpiderSilk))
+      val rope = pool.find(_.material.contains(MaterialKind.HempRope))
+      rope.filter(_ => silk.sizeIs >= 3).map(r => (silk.take(3) :+ r, TrapNet.item, rng))
+    }
+  }
+
   // От самого длинного рецепта к самому короткому.
   private val recipes: List[Recipe] = List(
     DivineForge,                                            // 9
     NineHeads,                                             // 9
     MaterialBrew,                                          // 6 (не из трав: гнилой зов)
     RuneFold,                                              // 5
+    NetWeave,                                              // 4 (шёлк ×3 + пенька)
     LegendaryReforge(mithril = 2, levelDelta = 1, keepName = true),  // 3
     GemUpgrade,                                            // 3
     DustAssembly,                                          // 3

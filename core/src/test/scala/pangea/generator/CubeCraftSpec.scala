@@ -393,6 +393,22 @@ object CubeCraftSpec extends ZIOSpecDefault {
       assertTrue(result.items.flatMap(_.brew) == List(salve)) &&
       assertTrue(salve.portions == 1 && salve.effect == BrewEffect.Coat(pangea.model.hero.WeaponCoat.RedVenom, RefillSource.Poison)) &&
       assertTrue(!MaterialKind.RedSpiderGland.notYetUsed && MaterialKind.RedSpiderGland.doubloonPrice == 5L)
+    },
+
+    test("три паучьего шёлка и пенька → ловчая сеть: доп. оружие на три броска; двух шёлков мало") {
+      val silk   = (0 until 3).toList.map(i => MaterialGenerator.item(MaterialKind.SpiderSilk).copy(id = 300L + i))
+      val rope   = MaterialGenerator.item(MaterialKind.HempRope).copy(id = 310L)
+      val result = CubeCraft.craft(silk :+ rope, charges = 5, Rng(1L))
+      val short  = CubeCraft.craft(silk.take(2) :+ rope, charges = 5, Rng(1L))
+      val nets   = result.items.filter(_.net.isDefined)
+      assertTrue(result.chargesUsed == 1 && result.items.size == 1) &&
+      assertTrue(nets.map(_.name) == List(TrapNet.Name) && nets.forall(_.itemType == ItemType.AdditionalWeapon)) &&
+      assertTrue(nets.flatMap(_.net) == List(ItemDetails.Net(TrapNet.Charges, TrapNet.Charges)) && TrapNet.Charges == 3) &&
+      assertTrue(short.chargesUsed == 0) &&
+      // шёлк и пенька теперь в деле — пометки «пока не используется» на них нет
+      assertTrue(!MaterialKind.SpiderSilk.notYetUsed && !MaterialKind.HempRope.notYetUsed) &&
+      // карточка сети не рассказывает, из чего её плетут
+      assertTrue(nets.flatMap(_.statsLines).map(_.toLowerCase).forall(l => !l.contains("шёлк") && !l.contains("пеньк")))
     }
 
   )

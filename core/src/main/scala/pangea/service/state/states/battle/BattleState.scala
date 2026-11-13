@@ -14,7 +14,7 @@ import pangea.model.squad.AllySkill
 import pangea.model.hero.{Achievement, AzatState, CubeStatus, Hero, HeroSets, WeaponCoat, WeaponDust}
 import pangea.model.item.QuestItemKind
 import pangea.model.quest.{BoardKind, NpcQuest}
-import pangea.model.item.{BeltSlot, BrewEffect, BrewKind, BrewRates, FlaskEffect, FlaskRates, GripRates, Item, ItemDetails, ItemType, PassiveKind, PotionKind, RefillSource, DivineKind, DivineRates}
+import pangea.model.item.{BeltSlot, BrewEffect, BrewKind, BrewRates, FlaskEffect, FlaskRates, GripRates, Item, ItemDetails, ItemType, PassiveKind, PotionKind, RefillSource, DivineKind, DivineRates, TrapNet}
 import pangea.model.home.HomeData
 import pangea.model.monster.{BossPercentDamage, Breed, MiniBoss, NamedTrophy, Race, Rarity}
 import pangea.model.stats.FightStats
@@ -84,6 +84,7 @@ case class BattleState(
       "Belt"        -> Target.Run((u, _,  r) => showBelt(u, r)),
       "BeltUse"     -> Target.Run((u, ua, r) => beltUse(u, ua, r)),
       "UseDivine"    -> Target.Run((u, _, r) => resolve(u, r, content.text("arena.turn.divine"))(divineTurn)),
+      "ThrowNet"     -> Target.Run((u, ua, r) => netRoute(u, BattleState.parseTarget(ua), r)),
       "BeltPick"     -> Target.Run((u, ua, r) => beltPick(u, ua, r)),
       "ThrowMix"     -> Target.Run((u, _, r) => resolve(u, r, content.text("arena.turn.mix"))(mixTurn)),
       "Miasma"      -> Target.Run((u, _, r) => toggleMiasma(u, r)),
@@ -967,6 +968,49 @@ case class BattleState(
           renderer.show(user, attackTargetScreen(hero, battle)).as(StateType.Battle)
         else resolveLoaded(user, renderer, hero, battle, now, content.text("arena.turn.attack"))(attackTurn(target))
     } yield state
+
+  /** «Ловчая сеть»: в кого бросить — врагов в досягаемости несколько, спросить,
+    * как у атаки; один — бросить сразу (см. [[netTurn]]). */
+  private def netRoute(user: User, target: Option[Int], renderer: Renderer): Task[StateType] =
+    for {
+      now    <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+      hero   <- getHero(user)
+      battle <- getBattle(user)
+      asks    = target.isEmpty && hero.equipment.additionalWeapon.net.isDefined && !battle.divineUsedThisRound &&
+                  battle.aimSlot.isEmpty && BattleState.netTargets(battle).size > 1
+      state  <-
+        if (asks)
+          renderer.show(user, targetChoices(battle, "ThrowNet", TrapNet.Name, support = false,
+            BattleState.netTargets(battle))).as(StateType.Battle)
+        else resolveLoaded(user, renderer, hero, battle, now, content.text("arena.turn.net"))(netTurn(target))
+    } yield state
+
+  /** Бросок ловчей сети из доп. слота (см. [[TrapNet]]): враг не дальше
+    * `TrapNet.Reach` мест раунд не сходит с места. Раз за раунд, как и
+    * божественное оружие того же слота, и раунд бросок не завершает — свой
+    * удар герой делает следом. Последний бросок рвёт сеть: слот пустеет. */
+  private def netTurn(target: Option[Int]): Turn = (hero, battle, _) =>
+    hero.equipment.additionalWeapon.net match {
+      case None                                  => cont(hero, battle, content.text("battle.net.none"))
+      case Some(_) if battle.aimSlot.isDefined   => cont(hero, battle, content.text("battle.powerShot.handsBusy"))
+      case Some(_) if battle.divineUsedThisRound => cont(hero, battle, content.text("battle.net.alreadyUsed"))
+      case Some(net) =>
+        val targets = BattleState.netTargets(battle)
+        target.orElse(targets.headOption) match {
+          case None                                => cont(hero, battle, content.text("battle.net.noTarget"))
+          case Some(pos) if !targets.contains(pos) => cont(hero, battle, content.text("battle.group.targetGone"))
+          case Some(pos) =>
+            val name      = battle.monsterAt(pos).fold("")(_.targetName)
+            val spent     = net.spent
+            val torn      = spent.charges <= 0
+            val slot      = if (torn) Item.NoItem else hero.equipment.additionalWeapon.copy(details = spent)
+            val heroAfter = hero.copy(equipment = hero.equipment.copy(additionalWeapon = slot))
+            val log       = Vector(content.format("battle.net.thrown", "monster" -> name)) ++
+                            Option.when(torn)(content.text("battle.net.torn")).toVector
+            ZIO.succeed(TurnResult(heroAfter, BattleState.netAt(battle, pos).copy(divineUsedThisRound = true), log,
+              Outcome.Continue, endsRound = false))
+        }
+    }
 
   /** Базовая атака по месту `target` (без цели — по единственной досягаемой):
     * по мобу в паре — с его ответом; по соседу — через подмену в полях, после
@@ -7314,6 +7358,16 @@ case class BattleState(
                 else pangea.engine.ChoiceColor.Positive,
         row = Some(3))
     }
+    // Ловчая сеть в доп. слоте — своя кнопка рядом: бросок в двух шагах, с
+    // числом оставшихся бросков. Бросить не в кого — кнопка красная.
+    val netButton = hero.equipment.additionalWeapon.net.map { n =>
+      pangea.engine.Choice("ThrowNet",
+        pangea.engine.Choice.fit(content.format("battle.net.label", "n" -> n.charges.toString)),
+        color = if (battle0.divineUsedThisRound || aiming.isDefined || BattleState.netTargets(battle0).isEmpty)
+                  pangea.engine.ChoiceColor.Negative
+                else pangea.engine.ChoiceColor.Positive,
+        row = Some(3))
+    }
     // Грибная смесь лежит в сумке, а не в слоте, — кнопка появляется, только
     // когда склянка при герое.
     val mixButton = Option.when(mixes > 0)(
@@ -7351,6 +7405,7 @@ case class BattleState(
         beltButton.toList ++
         mixButton.toList ++
         divineButton.toList ++
+        netButton.toList ++
         miasmaButton.toList ++
         // Из сюжетного боя не сбежать — и кнопки нет. У западни она есть: что
         // уйти некуда, герой узнаёт, попробовав.
@@ -8051,6 +8106,27 @@ object BattleState {
   /** Яд красного паука на клинке гасит ближайший каст врага — двойка по той же
     * причине, что и у ComboSkillBlockTurns. */
   val VenomSkillBlockTurns: Int = 2
+
+  /** Куда долетает ловчая сеть: моб в паре и живые враги не дальше
+    * `TrapNet.Reach` мест от героя, слева направо — как досягаемость оружия. */
+  def netTargets(battle: SoloPveBattle): List[Int] =
+    battle.group.targetsWithin(TrapNet.Reach).filter(p => battle.monsterAt(p).exists(_.alive))
+
+  /** Сеть на враге с места `pos`: `TrapNet.HoldRounds` раундов он не сходит с
+    * места — счётчик «Пригвоздить» с запасом в один тик (см. `rooted`). Новое не
+    * укорачивает уже наложенное. */
+  def netAt(battle: SoloPveBattle, pos: Int): SoloPveBattle = {
+    val hold = TrapNet.HoldRounds + 1
+    if (pos == battle.group.activePos)
+      battle.withEffects(battle.effects.copy(monsterRootedTurns = battle.effects.monsterRootedTurns.max(hold)))
+    else battle.group.idxOf(pos) match {
+      case -1  => battle
+      case idx =>
+        val slot = battle.group.others(idx)
+        battle.copy(group = battle.group.copy(others = battle.group.others.updated(idx,
+          slot.copy(effects = slot.effects.copy(monsterRootedTurns = slot.effects.monsterRootedTurns.max(hold))))))
+    }
+  }
 
   /** Чем арена зовёт игрока к экрану и чем добивает просроченный ход. */
   val ArenaPokeAction: String = """{"action":"ArenaPoke"}"""

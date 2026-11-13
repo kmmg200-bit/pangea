@@ -167,6 +167,12 @@ case class Item(
     case _                   => None
   }
 
+  /** Ловчая сеть, если это она (см. [[TrapNet]]). */
+  def net: Option[ItemDetails.Net] = details match {
+    case n: ItemDetails.Net => Some(n)
+    case _                  => None
+  }
+
   def material: Option[MaterialKind] = details match {
     case ItemDetails.Material(k) => Some(k)
     case _                       => None
@@ -288,6 +294,8 @@ case class Item(
       // Роза: описание и сколько раскрытий в ней осталось.
       case ItemDetails.Rose(k, c, m)      =>
         List(k.description, s"🌹 Раскрытий: $c/$m", "👝 Раскрывается из ячейки пояса.")
+      // Ловчая сеть: описание и сколько бросков в ней осталось.
+      case ItemDetails.Net(c, m)          => List(TrapNet.Description, s"🕸 Бросков: $c/$m")
       // Рунный камень: узор, ощущение от него и что даст сама руна.
       case ItemDetails.RuneStone(key, size) =>
         pangea.model.rune.Rune.byKey(key).map(pangea.model.rune.RuneStone.describe(_, size)).getOrElse(Nil)

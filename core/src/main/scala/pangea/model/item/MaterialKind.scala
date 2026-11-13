@@ -257,7 +257,6 @@ object MaterialKind extends Enum[MaterialKind] {
       "Моток липкой серой нити, снятый с кокона. Тянется лучше жил и режется хуже кожи. " +
       "Кто знает, откуда он, держит его подальше от лица."
     override val worthless: Boolean = true
-    override val notYetUsed: Boolean = true
   }
 
   case object VenomGland extends MaterialKind("Ядовитая железа") {
@@ -337,7 +336,6 @@ object MaterialKind extends Enum[MaterialKind] {
       "Крепкая пеньковая верёвка, смотанная в бухту. Такой на обозах вяжут тюки, а на " +
       "заставе, судя по узлам, вязали не только тюки."
     override val silverPrice: Long = 100L
-    override val notYetUsed: Boolean = true
   }
 
   case object PineTar extends MaterialKind("Бочонок смолы") {
