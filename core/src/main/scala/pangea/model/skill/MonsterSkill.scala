@@ -268,7 +268,8 @@ object MonsterSkill extends Enum[MonsterSkill] {
     val buffReduct  = math.min(battle.heroBattleState.armorBonus, damage)
     val afterBuff   = damage - buffReduct
     val curArmor    = hero.fightStats.armor.max(0L)
-    val armorAbsorb = math.min(curArmor, afterBuff)
+    // Опутанного паутиной броня принимает не весь удар: часть идёт прямо в HP.
+    val armorAbsorb = math.min(curArmor, (afterBuff * pangea.model.battle.SpiderWeb.armorShare(battle.effects.heroWebbed)).toLong)
     // «Орда» (порог 6): большой удар упрямство держит — режется то, что дошло до HP.
     val hpDmg       = hero.sets.stubbornLoss(afterBuff - armorAbsorb, hero.effectiveMaxHp(nowMs))
     val newArmor    = curArmor - hero.sets.armorSpent(armorAbsorb)

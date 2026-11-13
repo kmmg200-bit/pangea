@@ -237,7 +237,10 @@ case class BattleEffects(
   heroRootedTurns:      Int                        = 0,
   // От чего героя до конца боя бережёт выпитый защитный отвар (см. Ward). Option —
   // чтобы бои, записанные до защит, читались: без ключа это None.
-  heroWards:            Option[Set[Ward]]          = None
+  heroWards:            Option[Set[Ward]]          = None,
+  // Паутина сетеплёта на герое: сколько концов раунда она ещё держит (см.
+  // SpiderWeb). Option — чтобы бои, записанные до паутины, читались.
+  heroWebTurns:         Option[Int]                = None
 ) {
 
   /** Только то, что висит на МОБЕ: яд, кровь, огонь, дебафы. Геройская
@@ -334,8 +337,14 @@ case class BattleEffects(
   /** Пригвождён ли моб: с места он сейчас не сходит. */
   def monsterRooted: Boolean = monsterRootedTurns > 0
 
-  /** Пригвождён ли герой: двинуться он сейчас не может. */
-  def heroRooted: Boolean = heroRootedTurns > 0
+  /** Опутан ли герой паутиной сетеплёта (см. SpiderWeb). */
+  def heroWebbed: Boolean = heroWebTurns.exists(_ > 0)
+
+  /** Пригвождён ли герой: двинуться он сейчас не может. Опутанный паутиной — тоже. */
+  def heroRooted: Boolean = heroRootedTurns > 0 || heroWebbed
+
+  /** Конец раунда: паутина на герое держит на раунд меньше. */
+  def webTicked: BattleEffects = copy(heroWebTurns = heroWebTurns.map(_ - 1).filter(_ > 0))
 
   /** Бережёт ли героя защитный отвар от этого. */
   def warded(w: Ward): Boolean = heroWards.exists(_.contains(w))

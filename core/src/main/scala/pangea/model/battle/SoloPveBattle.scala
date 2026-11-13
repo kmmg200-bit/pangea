@@ -624,7 +624,8 @@ case class SoloPveBattle(
     * шагов мобов. Возвращает бой и кто куда шагнул. */
   def squadAdvance: (SoloPveBattle, List[(BattleAlly, Int)]) = {
     // Пригвождённый (арена) с места не сходит, даже когда бить ему некого.
-    val idle  = group.allies.filter(a => a.alive && a.rooted <= 0 && allyTarget(a).isEmpty)
+    // Опутанный паутиной — тоже.
+    val idle  = group.allies.filter(a => a.alive && a.rooted <= 0 && a.webbed <= 0 && allyTarget(a).isEmpty)
     val order = idle.sortBy(a => mobNear(a.position).fold(Int.MaxValue)(p => math.abs(p - a.position)))
     // Позиция союзника за чужие шаги не меняется: на занятую никто не встаёт.
     order.foldLeft((this, List.empty[(BattleAlly, Int)])) { case ((b, moved), a) =>

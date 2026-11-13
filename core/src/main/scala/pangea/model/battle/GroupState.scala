@@ -52,7 +52,10 @@ final case class BattleAlly(
   /** Чем он бьёт в этом бою, если не своей стихией: Йорген идёт в логово
     * огненных элементалей с мечом холода (см. `JorgenQuest`). None — своей
     * ([[AllyKind.element]]). Живёт только в бою: в отряд не возвращается. */
-  strike:     Option[Element]  = None
+  strike:     Option[Element]  = None,
+  /** Паутина сетеплёта на нём: сколько концов раунда она ещё держит (см.
+    * SpiderWeb). Пока держит — с места он не сходит, а удары идут мимо брони. */
+  webbed:     Int              = 0
 ) {
   /** Нежить ли он: миазмы её лечат, а живых — травят. */
   def isUndead: Boolean = kind.race == Race.Undead
@@ -148,8 +151,9 @@ object BattleAlly {
       rooted   <- c.getOrElse[Int]("rooted")(0)
       grown    <- c.getOrElse[Long]("grown")(0L)
       strike   <- c.getOrElse[Option[Element]]("strike")(None)
+      webbed   <- c.getOrElse[Int]("webbed")(0)
     } yield BattleAlly(kind, position, hp, armor, energy, stats, lvl, undead, home, poison, bleed, burn, stood,
-                       coldCut, kills, hitBy, rooted, grown, strike)
+                       coldCut, kills, hitBy, rooted, grown, strike, webbed)
 }
 
 /** Моб группы, стоящий НЕ в паре с героем: всё, что описывает его и его текущее

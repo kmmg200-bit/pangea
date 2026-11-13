@@ -7,7 +7,7 @@ import pangea.domain.Rng
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.generator.loot.LootGenerator
 import pangea.generator.monster.MonsterGenerator
-import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Element, Formation, GroupState, HealedWounds, MonsterSlot, Nature, Poison, RaceTactics, Regen, SlainMonster, SoloPveBattle, SkillSlotState, TimedDefenceDebuff, Ward}
+import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Element, Formation, GroupState, HealedWounds, MonsterSlot, Nature, Poison, RaceTactics, Regen, SlainMonster, SoloPveBattle, SkillSlotState, SpiderWeb, TimedDefenceDebuff, Ward}
 import pangea.model.cave.CaveGenerator
 import pangea.model.item.ItemSet
 import pangea.model.squad.AllySkill
@@ -270,9 +270,11 @@ case class BattleState(
       pulled  = pullFreeStep(ratted)
       // Мобы своё прошли — теперь отряд: кому некого бить, идёт к врагу.
       advanced = squadStep(pulled)
+      // Паутина держит до самого конца раунда — после всех шагов она слабеет.
+      unwebbed = webTick(advanced)
       // Подсказка про поглощённый удар идёт последней строкой раунда — уже после
       // всего, что в нём случилось.
-      hinted  = plainSteelHint(hero, advanced)
+      hinted  = plainSteelHint(hero, unwebbed)
       // Раунд не кончился — герой ещё в нём (см. SoloPveBattle.midRound).
       marked   = hinted.copy(battle = hinted.battle.copy(midRound = hinted.outcome == Outcome.Continue && !hinted.endsRound))
       state  <- commit(user, marked, now, renderer, hero, note)
@@ -1113,7 +1115,7 @@ case class BattleState(
       // к мобам. Каждый раунд, даже если в этом никто никого не задел: иначе
       // такой раунд ничем бы не кончался, и следующий тоже — бой стоял бы.
       res       = if (ended.outcome != Outcome.Continue) ended
-                  else ended.copy(battle = ended.battle.closeInOnSquad._1.squadAdvance._1)
+                  else ended.copy(battle = BattleState.webTicked(ended.battle.closeInOnSquad._1.squadAdvance._1))
     } yield res.copy(battle = res.battle.copy(group = res.battle.group.copy(downRounds = res.battle.group.downRounds + 1)))
 
   /** Кончился ли бой без героя: мобов не осталось, союзников не осталось или
@@ -1274,6 +1276,13 @@ case class BattleState(
     * (его отряд в его ход бьётся сам, см. `downTurn`): свой союзник шагает своим
     * ходом, а места после хода записываются стороне (`ArenaBattle.harvest`) —
     * соперник увидит его уже там. Чужих бойцов здесь никто не двигает. */
+  /** Конец раунда: паутина на герое и на союзниках держит на раунд меньше —
+    * после всех шагов раунда, чтобы она держала и их (см. SpiderWeb). Ход,
+    * который раунда не кончил, её не трогает. */
+  private def webTick(res: TurnResult): TurnResult =
+    if (res.outcome != Outcome.Continue || !res.endsRound) res
+    else res.copy(battle = BattleState.webTicked(res.battle))
+
   private def squadStep(res: TurnResult): TurnResult =
     if (res.outcome != Outcome.Continue || !res.endsRound || (res.battle.group.heroDown && res.battle.arena.isEmpty)) res
     else res.copy(battle = res.battle.squadAdvance._1)
@@ -2587,6 +2596,19 @@ case class BattleState(
   private def heroPoisonMark(poisoned: Boolean): String =
     if (poisoned) content.text("battle.poisonedYou") else ""
 
+  /** Удар опутал паутиной: «, опутан 🕸» — у союзника. */
+  private def webMark(webbed: Boolean): String =
+    if (webbed) content.text("battle.webbedStrike") else ""
+
+  /** То же, когда опутан герой: «, вы опутаны 🕸». */
+  private def heroWebMark(webbed: Boolean): String =
+    if (webbed) content.text("battle.webbedYou") else ""
+
+  /** Почему герой не сходит с места: опутан паутиной — своя строка, иначе
+    * прежняя, «пригвождён» (арена). */
+  private def heldKey(battle: SoloPveBattle, pinned: String): String =
+    if (battle.effects.heroWebbed) "battle.webHolds" else pinned
+
   /** Прок воздуха в ударе моба: ему точность и уклонение на несколько ходов. */
   private def airBoostLine(monster: String): String =
     content.format("battle.mobAirBoost", "monster" -> monster,
@@ -2698,7 +2720,8 @@ case class BattleState(
         (absorbed, (damage - absorbed).max((damage * hpPart).toLong))
       case None =>
         val (armorMult, hpMult) = powderSplit(tmp).getOrElse((1.0, 1.0))
-        val rawArmor = math.min(a.armor, damage)
+        // Опутанного паутиной броня принимает не весь удар: часть идёт прямо в HP.
+        val rawArmor = math.min(a.armor, (damage * SpiderWeb.armorShare(a.webbed > 0)).toLong)
         ((rawArmor * armorMult).toLong.min(a.armor).max(0L), ((damage - rawArmor) * hpMult).toLong.max(0L))
     }
 
@@ -3087,6 +3110,9 @@ case class BattleState(
             bladeHits <- chanceRoll(reachedHp && !battle.effects.monsterPoisonsOnHit &&
                            Race.withNameOption(battle.monsterRace).exists(_.weaponPoison), Poison.WeaponChancePct)
             poisons = reachedHp && (battle.effects.monsterPoisonsOnHit || bladeHits)
+            // Паутина взрослого и красного сетеплёта: удар с шансом опутывает (см. SpiderWeb).
+            webs <- chanceRoll(SpiderWeb.weaves(battle.monsterBreed), SpiderWeb.chancePct(battle.monsterLvl,
+                      hero.effectiveBaseStats(nowMs).agi, buffedEff.evasion, buffedEff.defence))
             // Огонь и холод гасят друг друга и на герое: огонь по замёрзшему
             // растапливает лёд и не занимается, холод по горящему гасит пламя и
             // не ложится.
@@ -3128,7 +3154,7 @@ case class BattleState(
             thorned = battle.hurtActive(0L, thorns)
             battleAfterAtk = thorned.battle.copy(
               toughnessUsed    = battle.toughnessUsed || toughTriggered,
-              effects          = effectsAfterHit
+              effects          = if (webs) effectsAfterHit.copy(heroWebTurns = Some(SpiderWeb.Turns)) else effectsAfterHit
             )
             lines = List(
               Option.when(impenTriggered)(content.format("battle.impenetrable",
@@ -3152,7 +3178,7 @@ case class BattleState(
               Option.when(mobProc && procElement.contains(Element.Air))(airBoostLine(battle.monsterName))
             ).flatten
           } yield MobStrike(newHp, newArmor + restoredArmor, landed, lines, battleAfterAtk,
-                    poisoned = poisons && !poisonWarded)
+                    poisoned = poisons && !poisonWarded, webbed = webs)
   }
 
   /** Умение моба поверх обычной атаки: самое дорогое по карману, оплачивается
@@ -3245,7 +3271,7 @@ case class BattleState(
         if (hitRoll > dodge)
           mobStrike(hero, ticked, buffedEff, nowMs).map { st =>
             val line  = content.format("battle.mobHit", "damage" -> st.damage.toString, "monster" -> ticked.monsterName,
-                          "elem" -> (strikeBy(ticked) + heroPoisonMark(st.poisoned)))
+                          "elem" -> (strikeBy(ticked) + heroPoisonMark(st.poisoned) + heroWebMark(st.webbed)))
             val lines = if (st.mirrored) st.extraLines else line :: st.extraLines
             (st.newHp, st.newArmor, lines.mkString("\n"), st.battle)
           }
@@ -3750,7 +3776,7 @@ case class BattleState(
       // Таран туда, где врага нет: рывок на свободное место без удара.
       // Пригвождённому рваться некуда — ход не тратится.
       case Some(slot) if slot.skill == Skill.Ram && !battle.group.hasMonster(target) =>
-        if (battle.effects.heroRooted) cont(hero, battle, content.text("battle.group.ramPinnedSpot"))
+        if (battle.effects.heroRooted) cont(hero, battle, content.text(heldKey(battle, "battle.group.ramPinnedSpot")))
         else if (BattleState.ramSpots(battle).contains(target)) ramDash(paid(hero, slot), battle, slot, target, nowMs)
         else if (skillTargets(hero, battle, slot.skill).isEmpty) cont(hero, battle, content.text("battle.group.noTarget"))
         else cont(hero, battle, content.text("battle.group.targetGone"))
@@ -3769,7 +3795,7 @@ case class BattleState(
       // отказ не стоит ни хода, ни энергии.
       case Some(slot) if BattleState.rolls(slot.skill.effect) && !skillAims(hero, battle, slot.skill).contains(target) =>
         cont(hero, battle, content.text(
-          if (battle.effects.heroRooted) "battle.roll.pinned"
+          if (battle.effects.heroRooted) heldKey(battle, "battle.roll.pinned")
           else if (skillAims(hero, battle, slot.skill).isEmpty) "battle.roll.noRoom"
           else "battle.group.targetGone"))
       case Some(slot) if BattleState.rolls(slot.skill.effect) =>
@@ -3979,7 +4005,7 @@ case class BattleState(
               whirlAlly.fold(content.format("battle.group.whirlStep", "n" -> p.toString))(a =>
                 content.format("battle.group.whirlStepSwap", "n" -> p.toString, "name" -> a.name)) + "\n"
             case None if battle0.effects.heroRooted && target != battle0.group.heroPos =>
-              content.text("battle.group.whirlPinned") + "\n"
+              content.text(heldKey(battle0, "battle.group.whirlPinned")) + "\n"
             case None => ""
           }
           dealSkillDamage(hero, bumped, reduced, dealt => step + tmpl.replace("{}", dealt.toString), next,
@@ -4062,7 +4088,7 @@ case class BattleState(
         case Skill.Effect.Leap =>
           // Прыжок уже сделан (см. начало): выстрел — как удар, срезанный защитой.
           val jump = leapTo.fold(content.text(
-              if (battle0.effects.heroRooted) "battle.group.leapPinned" else "battle.group.leapNoRoom"))(p =>
+              if (battle0.effects.heroRooted) heldKey(battle0, "battle.group.leapPinned") else "battle.group.leapNoRoom"))(p =>
               content.format("battle.group.leap", "n" -> p.toString)) + "\n"
           dealSkillDamage(hero, bumped, reduced, dealt => jump + tmpl.replace("{}", dealt.toString), next)
 
@@ -4452,7 +4478,7 @@ case class BattleState(
         case FlaskEffect.Cleanse =>
           val cleaned = battle.effects.copy(
             heroBurn = None, heroPoison = None, heroBleed = None,
-            heroStunnedTurns = 0, heroGroundedTurns = 0, heroColdDefenceCut = 0)
+            heroStunnedTurns = 0, heroGroundedTurns = 0, heroColdDefenceCut = 0, heroWebTurns = None)
           TurnResult(hero, battle.copy(effects = cleaned),
             Vector(content.text("battle.flaskCleanse")) ++ qhLog, Outcome.Continue, endsRound = false)
 
@@ -4732,7 +4758,7 @@ case class BattleState(
       case BrewEffect.Shift if battle.boss.exists(!_.fightsInGroup) =>
         Some(content.text("battle.belt.noFormation"))
       case BrewEffect.Shift if battle.effects.heroRooted =>
-        Some(content.text("battle.belt.shimmerPinned"))
+        Some(content.text(heldKey(battle, "battle.belt.shimmerPinned")))
       case BrewEffect.Shift if battle.group.freeHeroPlaces.isEmpty =>
         Some(content.text("battle.belt.noPlace"))
       // Защита того же толка уже держит до конца боя — второй склянке делать нечего.
@@ -5504,6 +5530,9 @@ case class BattleState(
           bladeHits <- chanceRoll(hpDmg > 0L && !tmp.effects.monsterPoisonsOnHit &&
                          Race.withNameOption(tmp.monsterRace).exists(_.weaponPoison), Poison.WeaponChancePct)
           poisons  = hpDmg > 0L && (tmp.effects.monsterPoisonsOnHit || bladeHits)
+          // Паутина — и по союзнику: у него ловкости нет, вместо неё его уровень (см. SpiderWeb).
+          webs <- chanceRoll(SpiderWeb.weaves(tmp.monsterBreed),
+                    SpiderWeb.chancePct(tmp.monsterLvl, a.lvl, a.stats.evasion, a.stats.defence))
           thawed   = ignites && a.cold
           bites    = mobProc && procElement.contains(Element.Cold)
           quenched = bites && (a.burn.isDefined || (ignites && !thawed))
@@ -5514,13 +5543,14 @@ case class BattleState(
             else if (thawed) struck.copy(coldCut = 0)
             else struck.copy(burn = Some(struck.burn.map(_.reignited).getOrElse(Burn(burnPct))))
           poisoned = if (poisons) burned.copy(poison = Some(burned.poison.map(_.stacked).getOrElse(Poison.onHit))) else burned
-          hurt     =
+          hurt0    =
             if (quenched) poisoned.copy(burn = None)
             else if (bites) poisoned.copy(coldCut = poisoned.coldCut + Element.Cold.DefenceReductionCut)
             else poisoned
+          hurt     = if (webs) hurt0.copy(webbed = SpiderWeb.Turns) else hurt0
           after    = if (airy) tmp.copy(effects = tmp.effects.copy(mobAirBoostTurns = Element.Air.ProcTurns)) else tmp
           line     = content.format("battle.ally.mobHit", "monster" -> tmp.monsterName, "name" -> a.name,
-                       "damage" -> (armorDmg + hpDmg).toString, "poison" -> poisonMark(poisons))
+                       "damage" -> (armorDmg + hpDmg).toString, "poison" -> (poisonMark(poisons) + webMark(webs)))
           extras   = List(
             Option.when(ignites && !thawed)(content.format("battle.ally.ignites", "name" -> a.name)),
             Option.when(thawed)(content.format("battle.ally.thaw", "name" -> a.name)),
@@ -6010,7 +6040,7 @@ case class BattleState(
           // Пригвождённый (так бывает на арене) Тараном бьёт, но с места не
           // сходит — и должен знать почему.
           case Some(_) if b2.effects.heroRooted =>
-            (b2.copy(group = b2.group.copy(pendingMove = None)), Vector(content.text("battle.group.ramPinned")))
+            (b2.copy(group = b2.group.copy(pendingMove = None)), Vector(content.text(heldKey(b2, "battle.group.ramPinned"))))
           case Some(pos) =>
             val moved =
               if (b2.group.hasMonster(pos)) b2.moveHeroTo(pos)
@@ -6035,7 +6065,7 @@ case class BattleState(
             val b  = b3.copy(group = b3.group.copy(pendingShift = None))
             val to = b.group.shiftSpot(want)
             if (b.group.heroDown) (b, Vector.empty[String])
-            else if (b.effects.heroRooted) (b, Vector(content.text("battle.group.shimmerPinned")))
+            else if (b.effects.heroRooted) (b, Vector(content.text(heldKey(b, "battle.group.shimmerPinned"))))
             else if (to == b.group.heroPos)
               (b, if (to == want) Vector.empty[String]
                   else Vector(content.format("battle.group.shimmerStay", "want" -> want.toString)))
@@ -6082,7 +6112,8 @@ case class BattleState(
   private def allyDots(a: BattleAlly): String = {
     val marks = List(a.poison.map(_ => Poison.Icon), a.bleed.map(_ => Bleed.Icon), a.burn.map(_ => Burn.Icon),
                      Option.when(a.cold)(Element.Cold.emoji),
-                     Option.when(a.rooted > 0)(content.text("battle.group.pinnedMark").trim)).flatten
+                     Option.when(a.rooted > 0)(content.text("battle.group.pinnedMark").trim),
+                     Option.when(a.webbed > 0)(SpiderWeb.Icon)).flatten
     if (marks.isEmpty) "" else " " + marks.mkString
   }
 
@@ -6667,7 +6698,8 @@ case class BattleState(
       val parts = List(
         heroFx.heroPoison.filterNot(_ => undeadHero).map(p => s"${Poison.Icon}-${heroPoisonDamage(hero, p, nowMs)}"),
         heroFx.heroBleed.filterNot(_ => undeadHero).map(b => s"${Bleed.Icon}-${heroBleedDamage(hero, b, nowMs)}"),
-        heroFx.heroBurn.map(bn => s"${Burn.Icon}-${heroBurnDamage(hero, battle0, bn, nowMs)}")
+        heroFx.heroBurn.map(bn => s"${Burn.Icon}-${heroBurnDamage(hero, battle0, bn, nowMs)}"),
+        Option.when(heroFx.heroWebbed)(SpiderWeb.Icon)
       ).flatten
       if (parts.isEmpty) "" else " (" + parts.mkString(" ") + ")"
     }
@@ -6932,6 +6964,13 @@ object BattleState {
       BramblQuest.HallStory, PlukhQuest.HuntStory, FaelinQuest.RootsStory, Villages.RaidStory, Villages.BanditsStory,
       Villages.SpidersStory)
 
+  /** Паутина на герое и союзниках — на раунд меньше (см. SpiderWeb). */
+  def webTicked(battle: SoloPveBattle): SoloPveBattle =
+    battle.copy(
+      effects = battle.effects.webTicked,
+      group   = battle.group.copy(allies = battle.group.allies.map(a =>
+        if (a.webbed > 0) a.copy(webbed = a.webbed - 1) else a)))
+
   /** Что срезают со зверей в бою с этим сюжетом: в гнезде сетеплётов звери —
     * пауки, и с них паучье; везде прочее — крысиное, как было. */
   def beastSpoils(story: Option[String]): List[(Option[pangea.model.item.MaterialKind], Int)] =
@@ -7079,7 +7118,8 @@ object BattleState {
     else {
       val here  = battle.group.heroPos
       val edge  = battle.group.rows.min(Formation.WalkPlaces)
-      List(here - 1, here + 1).filter(p => p >= 1 && p <= edge)
+      // Опутанный союзник с места не сойдёт — поменяться с ним нельзя.
+      List(here - 1, here + 1).filter(p => p >= 1 && p <= edge && !battle.group.allyAt(p).exists(a => a.alive && a.webbed > 0))
     }
 
   /** Исход хода — определяет переход и терминальные действия в [[BattleState.commit]]. */
@@ -7126,7 +7166,9 @@ object BattleState {
     /** Удар ушёл в призрачную копию: героя он не тронул, и строки об уроне не будет. */
     mirrored:   Boolean = false,
     /** Удар оставил в ране яд — строка удара помечена (см. `poisonMark`). */
-    poisoned:   Boolean = false)
+    poisoned:   Boolean = false,
+    /** Удар опутал героя паутиной — строка удара помечена (см. `heroWebMark`). */
+    webbed:     Boolean = false)
 
   /** Удар союзника: бой после него, кого бил, сколько снял, добил ли соседа. */
   /** Удар союзника: `slew` — добитый стоял в строю и уходит в павшие со своей
