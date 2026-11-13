@@ -174,11 +174,11 @@ object ElementalLairStateSpec extends ZIOSpecDefault {
               assertTrue(MiniBoss.StoneElemental.expReward(2L) == 400L)
     },
 
-    test("в логове поровну шансов встретить огненного и каменного, а с 15-го уровня героя — и Громового") {
+    test("в логове поровну шансов встретить огненного и каменного, а с 15-го уровня героя — и Громового с Ледяным") {
       // Вид тянется случайным индексом по тем, кто выходит к герою этого уровня:
-      // до 15-го их двое — 50/50, с 15-го трое — по трети.
+      // до 15-го их двое — 50/50, с 15-го четверо — по четверти.
       assertTrue(MiniBoss.elementals.toSet[MiniBoss] ==
-        Set[MiniBoss](MiniBoss.FireElemental, MiniBoss.StoneElemental, MiniBoss.ThunderElemental)) &&
+        Set[MiniBoss](MiniBoss.FireElemental, MiniBoss.StoneElemental, MiniBoss.ThunderElemental, MiniBoss.IceElemental)) &&
       assertTrue(ElementalLairState.lairPool(14L).toSet[MiniBoss] ==
         Set[MiniBoss](MiniBoss.FireElemental, MiniBoss.StoneElemental)) &&
       assertTrue(ElementalLairState.lairPool(15L).toSet[MiniBoss] == MiniBoss.elementals.toSet[MiniBoss]) &&

@@ -433,6 +433,112 @@ object MiniBoss extends Enum[MiniBoss] {
     def set: Option[ItemSet] = None
   }
 
+  // ── Ледяной элементаль ───────────────────────────────────────────────────────
+  /** Стужа, собравшаяся в одно тело. Дальник, как Громовой: бьёт холодом на три
+    * места и в начале боя встаёт на четвёртом. Он медленнее и слабее по урону,
+    * зато толст бронёй, держит героя на расстоянии — вмораживает и отбрасывает
+    * метелью — и разбирает его защиту. Холод ему почти не вредит и наращивает на
+    * нём лёд; огонь плавит. Выходит в логове элементаля с 15-го уровня героя. */
+  case object IceElemental extends MiniBoss("Ледяной", "Ледяного", Race.Elemental) {
+
+    val HpPerLvl: Long          = 1000L
+    val ArmorPerLvl: Long       = 1100L
+    val AtkPerLvl: Long         = 230L
+    val EnergyPerLvl: Long      = 180L
+    val AccuracyPerLvl: Long    = 140L
+    val EvasionPerLvl: Long     = 80L
+    val EnergyRegenPerLvl: Long = 9L
+    val ExpPerLvl: Long         = 200L
+
+    /** С какого уровня героя он выходит в логове. */
+    val MinHeroLvl: Long = 15L
+
+    /** Дальник: на сколько мест бьёт и на каком месте встаёт в начале боя. */
+    val Reach: Int    = 3
+    val StartPos: Int = 4
+
+    /** Холод по нему почти не проходит, огонь — наоборот. */
+    val ColdDamageTakenPct: Long = 20L
+    val FireDamageTakenPct: Long = 150L
+
+    /** Прок Холода его не сковывает, а наращивает лёд: столько % потолка брони. */
+    val ColdArmorGainPct: Long = 5L
+
+    /** Прок Огня, кроме пламени, плавит лёд: гаснет одна накопленная глыба, а
+      * потолок брони ниже на столько % от неё. */
+    val MeltMaxArmorCutPct: Long = 10L
+
+    // ── Способности (применяются по кругу) ──────────────────────────────────
+    /** Ледяной шип: доля атаки в урон; защита цели наверняка ниже — на столько
+      * же п.п., сколько от прока холода. */
+    val SpikeDamageFactor: Double = 0.5
+    val SpikeCostPerLvl: Long     = 7L
+
+    /** Ледяная глыба: сколько копится до ледопада и сколько стоит каждая.
+      * Ледопад — две атаки плюс столько % максимумов HP и брони цели; до HP он
+      * может оставить травму, а цель вмерзает: столько концов раунда не сходит
+      * с места. */
+    val BlocksToFall: Int          = 3
+    val BlockCostPerLvl: Long      = 14L
+    val FallHeroStatPct: Long      = 5L
+    val FallTraumaChancePct: Long  = 20L
+    val FrozenTurns: Int           = 2
+
+    /** Значок вмёрзшего — у HP героя и в строке союзника. */
+    val FrozenIcon: String = "🧊"
+
+    /** Метель: доля атаки каждому, кого он достаёт; задетых отбрасывает от него
+      * на столько мест. */
+    val BlizzardDamageFactor: Double = 0.25
+    val BlizzardPush: Int            = 1
+    val BlizzardCostPerLvl: Long     = 10L
+
+    /** Ледяной панцирь: сколько % потолка брони он себе возвращает (HP — нет). */
+    val ShellArmorPct: Long   = 30L
+    val ShellCostPerLvl: Long = 7L
+
+    def stats(bossLvl: Long): FightStats = FightStats(
+      atk      = AtkPerLvl * bossLvl,
+      hp       = HpPerLvl * bossLvl,
+      armor    = ArmorPerLvl * bossLvl,
+      defence  = 0L,
+      evasion  = EvasionPerLvl * bossLvl,
+      accuracy = AccuracyPerLvl * bossLvl,
+      energy   = EnergyPerLvl * bossLvl
+    )
+
+    def energyRegen(bossLvl: Long): Long = EnergyRegenPerLvl * bossLvl
+    def expReward(bossLvl: Long): Long   = ExpPerLvl * bossLvl
+
+    def damageTakenMult(e: Element): Double = e match {
+      case Element.Cold => ColdDamageTakenPct / 100.0
+      case Element.Fire => FireDamageTakenPct / 100.0
+      case _            => 1.0
+    }
+
+    def monsterName: String = s"$label ${Race.Elemental}"
+
+    /** Лёд горит — и тает от этого (см. MeltMaxArmorCutPct). */
+    def immuneToBurn: Boolean = false
+
+    /** Ледяной шип, ледяная глыба, метель, ледяной панцирь и пропуск. */
+    def abilities: Int = 5
+
+    def plainDamageTakenMult: Double = 1.0
+
+    /** Бьёт как все: сперва броня, остаток в HP, — но холодом (см. attackElement). */
+    def heroHitSplit: Option[(Double, Double)] = None
+
+    override def attackElement: Option[Element] = Some(Element.Cold)
+    override def reach: Int                     = Reach
+    override def startPos: Int                  = StartPos
+    override def lairMinHeroLvl: Long           = MinHeroLvl
+
+    def ingredient: MaterialKind = MaterialKind.EternalIce
+    /** Набора у него пока нет: вечный лёд копится под будущие рецепты. */
+    def set: Option[ItemSet] = None
+  }
+
   // ── Гнилой Джо ──────────────────────────────────────────────────────────────
   case object RottenJoe extends MiniBoss("Гнилой", "Гнилого", Race.Undead) {
 

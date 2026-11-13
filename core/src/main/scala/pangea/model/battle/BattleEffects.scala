@@ -250,7 +250,12 @@ case class BattleEffects(
   // Громовой элементаль: сколько раундов ещё держится разогнанная ветром туча —
   // он бьёт менее точно (см. MiniBoss.ThunderElemental.DispersedTurns). Option —
   // чтобы бои, записанные раньше, читались.
-  mobDispersedTurns:    Option[Int]                = None
+  mobDispersedTurns:    Option[Int]                = None,
+  // Ледопад Ледяного элементаля: сколько концов раунда герой ещё вмёрз в лёд и
+  // не сходит с места (см. MiniBoss.IceElemental.FrozenTurns). Своё поле, а не
+  // `heroRootedTurns`: тот — «пригвождён» с арены. Option — чтобы бои, записанные
+  // раньше, читались.
+  heroFrozenTurns:      Option[Int]                = None
 ) {
 
   /** Только то, что висит на МОБЕ: яд, кровь, огонь, дебафы. Геройская
@@ -299,7 +304,8 @@ case class BattleEffects(
     heroWards            = heroWards,
     heroWebTurns         = heroWebTurns,
     heroSkillJammed      = heroSkillJammed,
-    heroCursedTurns      = heroCursedTurns
+    heroCursedTurns      = heroCursedTurns,
+    heroFrozenTurns      = heroFrozenTurns
   )
 
   /** Своя геройская половина плюс мобовая половина другого набора. */
@@ -366,7 +372,13 @@ case class BattleEffects(
   def heroWebbed: Boolean = heroWebTurns.exists(_ > 0)
 
   /** Пригвождён ли герой: двинуться он сейчас не может. Опутанный паутиной — тоже. */
-  def heroRooted: Boolean = heroRootedTurns > 0 || heroWebbed
+  def heroRooted: Boolean = heroRootedTurns > 0 || heroWebbed || heroFrozen
+
+  /** Вмёрз ли герой в лёд от ледопада Ледяного элементаля: с места не сходит. */
+  def heroFrozen: Boolean = heroFrozenTurns.exists(_ > 0)
+
+  /** Конец раунда: лёд на герое держит на раунд меньше. */
+  def frozenTicked: BattleEffects = copy(heroFrozenTurns = heroFrozenTurns.map(_ - 1).filter(_ > 0))
 
   /** Конец раунда: паутина на герое держит на раунд меньше. */
   def webTicked: BattleEffects = copy(heroWebTurns = heroWebTurns.map(_ - 1).filter(_ > 0))

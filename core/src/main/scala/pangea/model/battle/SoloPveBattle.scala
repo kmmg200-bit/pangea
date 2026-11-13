@@ -628,7 +628,7 @@ case class SoloPveBattle(
     // Пригвождённый (арена) с места не сходит, даже когда бить ему некого.
     // Опутанный паутиной — тоже.
     // Караванщик на своей повозке её не бросает: стоит и ждёт, кто к ней сунется.
-    val idle  = group.allies.filter(a => a.alive && a.rooted <= 0 && a.webbed <= 0 && allyTarget(a).isEmpty &&
+    val idle  = group.allies.filter(a => a.alive && a.rooted <= 0 && a.webbed <= 0 && a.frozen <= 0 && allyTarget(a).isEmpty &&
                   !(a.kind == pangea.model.squad.AllyKind.CaravanGuard && group.convoy.exists(_.wagonAt(a.position).isDefined)))
     val order = idle.sortBy(a => mobNear(a.position).fold(Int.MaxValue)(p => math.abs(p - a.position)))
     // Позиция союзника за чужие шаги не меняется: на занятую никто не встаёт.

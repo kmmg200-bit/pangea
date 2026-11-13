@@ -60,7 +60,11 @@ final case class BattleAlly(
   skillJammed: Boolean         = false,
   /** Проклятие Некроманта на нём: сколько концов раунда его раны ещё не
     * затягиваются (см. HealCurse). */
-  cursed:      Int             = 0
+  cursed:      Int             = 0,
+  /** Ледопад Ледяного элементаля: сколько концов раунда он ещё вмёрз в лёд и с
+    * места не сходит (см. `MiniBoss.IceElemental.FrozenTurns`). Своё поле, а не
+    * `rooted`: тот — «пригвождён» с арены. */
+  frozen:      Int             = 0
 ) {
   /** Держит ли его проклятие Некроманта: HP он сейчас не восстанавливает. */
   def healBlocked: Boolean = cursed > 0
@@ -162,8 +166,9 @@ object BattleAlly {
       webbed   <- c.getOrElse[Int]("webbed")(0)
       jammed   <- c.getOrElse[Boolean]("skillJammed")(false)
       cursed   <- c.getOrElse[Int]("cursed")(0)
+      frozen   <- c.getOrElse[Int]("frozen")(0)
     } yield BattleAlly(kind, position, hp, armor, energy, stats, lvl, undead, home, poison, bleed, burn, stood,
-                       coldCut, kills, hitBy, rooted, grown, strike, webbed, jammed, cursed)
+                       coldCut, kills, hitBy, rooted, grown, strike, webbed, jammed, cursed, frozen)
 }
 
 /** Моб группы, стоящий НЕ в паре с героем: всё, что описывает его и его текущее

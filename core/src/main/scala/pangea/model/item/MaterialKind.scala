@@ -88,6 +88,19 @@ object MaterialKind extends Enum[MaterialKind] {
     override val notYetUsed: Boolean = true
   }
 
+  /** Падает с Ледяного элементаля. Набора у него пока нет — ни во что не идёт,
+    * на карточке пометка «пока не используется». */
+  case object EternalIce extends MaterialKind("Вечный лёд") {
+    override val description: String =
+      "Кусок льда, который не тает ни у костра, ни за пазухой. Холодит ладонь даже " +
+      "сквозь перчатку, а в глубине его, если приглядеться, медленно кружит снег."
+
+    /** Ришелье платит за него золотом, как и за добычу других элементалей. */
+    override val doubloonPrice: Long = 5L
+
+    override val notYetUsed: Boolean = true
+  }
+
   /** Падает с Гнилого Джо; в кубе переводит вещь в набор «Упырь». */
   case object GhoulSkin extends MaterialKind("Кожа упыря") {
     override val description: String =

@@ -1905,6 +1905,7 @@ case class BattleState(
     battle.boss match {
       case Some(MiniBoss.StoneElemental) => stoneTurnCast(hero, battle, nowMs, victim)
       case Some(MiniBoss.ThunderElemental) => thunderTurnCast(hero, battle, nowMs, victim)
+      case Some(MiniBoss.IceElemental)   => iceTurnCast(hero, battle, nowMs, victim)
       case Some(MiniBoss.RottenJoe)      => joeTurnCast(hero, battle, nowMs, victim)
       case Some(MiniBoss.WhiteWolf)      => wolfTurnCast(hero, battle, nowMs, victim)
       case Some(MiniBoss.RatKing)        => ratKingTurnCast(hero, battle)
@@ -2746,6 +2747,221 @@ case class BattleState(
     (bOut, hOut, lines.mkString("\n"))
   }
 
+  /** Круг Ледяного: ледяной шип → ледяная глыба → метель → ледяной панцирь →
+    * пропуск. Бьёт он холодом (см. MiniBoss.attackElement): по герою — гранями
+    * стихии через [[bossHit]] (по броне на 10% сильнее), по союзнику — по его
+    * защите теми же гранями (см. [[zapVictim]]). Цель — та, что пришла:
+    * напротив, а нет — герой или ближайший союзник в трёх местах (он дальник).
+    * Не хватило энергии — шаг пропускается, а круг сдвигается. */
+  private def iceTurnCast(
+      hero: Hero,
+      battle: SoloPveBattle,
+      nowMs: Long,
+      victim: Victim
+  ): Task[(SoloPveBattle, Hero, String)] = {
+    val ice    = MiniBoss.IceElemental
+    val lvl    = battle.monsterLvl
+    val atk    = monsterAttack(battle)
+    val energy = battle.monsterCurrentEnergy
+    val next   = nextTurn(battle, ice)
+
+    def spend(cost: Long, b: SoloPveBattle): SoloPveBattle = b.copy(monsterCurrentEnergy = energy - cost)
+
+    battle.bossTurn match {
+      // 1) Ледяной шип: половина атаки — и защита цели наверняка ниже.
+      case 0 =>
+        val cost = ice.SpikeCostPerLvl * lvl
+        if (energy < cost) ZIO.succeed((next, hero, ""))
+        else {
+          val (h1, b1, dealt) = zapVictim(victim, hero, spend(cost, next),
+                                  (atk * ice.SpikeDamageFactor).toLong.max(1L), nowMs)
+          val head = victim match {
+            case Victim.Hero      => content.format("battle.ice.spike", "damage" -> dealt.toString)
+            case Victim.Ally(pos) => content.format("battle.ice.spikeAlly",
+                                       "name" -> b1.group.allyAt(pos).fold("")(_.name), "damage" -> dealt.toString)
+          }
+          val (b2, biteLine) = coldBite(victim, b1)
+          ZIO.succeed((b2, h1, (head +: biteLine.toVector).mkString("\n")))
+        }
+
+      // 2) Ледяная глыба: копится до трёх, третья обрушивается ледопадом.
+      case 1 =>
+        val cost = ice.BlockCostPerLvl * lvl
+        if (energy < cost) ZIO.succeed((next, hero, ""))
+        else {
+          val blocks = battle.bossCharges + 1
+          if (blocks < ice.BlocksToFall)
+            ZIO.succeed((spend(cost, next).copy(bossCharges = blocks), hero,
+              content.format("battle.ice.block", "n" -> blocks.toString, "of" -> ice.BlocksToFall.toString)))
+          else iceFall(hero, spend(cost, next).copy(bossCharges = 0), atk, nowMs, victim)
+        }
+
+      // 3) Метель: всех, кого он достаёт, — и задетых отбросить от себя.
+      case 2 =>
+        val cost = ice.BlizzardCostPerLvl * lvl
+        if (energy < cost || blizzardTargets(battle).isEmpty) ZIO.succeed((next, hero, ""))
+        else ZIO.succeed(blizzard(hero, spend(cost, next), atk, nowMs))
+
+      // 4) Ледяной панцирь: броня обратно — не выше потолка, что оставил огонь;
+      //    HP он себе не возвращает.
+      case 3 =>
+        val cost = ice.ShellCostPerLvl * lvl
+        val cap  = monsterArmorCap(battle)
+        if (energy < cost || battle.monsterCurrentArmor >= cap) ZIO.succeed((next, hero, ""))
+        else {
+          val newArmor = (battle.monsterCurrentArmor + battle.monsterStats.armor * ice.ShellArmorPct / 100L).min(cap)
+          ZIO.succeed((spend(cost, next).copy(monsterCurrentArmor = newArmor), hero,
+            content.format("battle.ice.shell", "armor" -> (newArmor - battle.monsterCurrentArmor).toString)))
+        }
+
+      // 5) Пропуск хода.
+      case _ => ZIO.succeed((next, hero, ""))
+    }
+  }
+
+  /** Холод ледяного шипа — наверняка, как прок холода в ударе моба: защита цели
+    * ниже на [[Element.Cold.DefenceReductionCut]] п.п. и копится. Горящему холод
+    * гасит пламя и сам не ложится; героя от него бережёт защитный отвар. */
+  private def coldBite(v: Victim, b: SoloPveBattle): (SoloPveBattle, Option[String]) =
+    v match {
+      case Victim.Hero =>
+        if (b.effects.heroBurn.isDefined)
+          (b.copy(effects = b.effects.copy(heroBurn = None)), Some(content.text("battle.elements.quenchHero")))
+        else if (b.effects.warded(Ward.Cold)) (b, Some(content.text("battle.ward.cold")))
+        else
+          (b.copy(effects = b.effects.copy(
+             heroColdDefenceCut = b.effects.heroColdDefenceCut + Element.Cold.DefenceReductionCut)),
+           Some(content.format("battle.mobColdBite", "cut" -> Element.Cold.DefenceReductionCut.toString)))
+      case Victim.Ally(pos) =>
+        b.group.allyAt(pos).filter(_.alive) match {
+          case None => (b, None)
+          case Some(a) if a.burn.isDefined =>
+            (b.copy(group = b.group.updateAlly(pos)(_.copy(burn = None))),
+             Some(content.format("battle.ally.quench", "name" -> a.name)))
+          case Some(a) =>
+            (b.copy(group = b.group.updateAlly(pos)(x => x.copy(coldCut = x.coldCut + Element.Cold.DefenceReductionCut))),
+             Some(content.format("battle.ally.coldBite", "name" -> a.name,
+               "cut" -> Element.Cold.DefenceReductionCut.toString)))
+        }
+    }
+
+  /** Ледопад: накопленные глыбы разом — две атаки плюс 5% максимумов HP и брони
+    * цели, холодом. Дошёл до HP героя — с шансом 20% травма, как от смерча
+    * огненного. И цель вмерзает: не сходит с места остаток этого раунда и два
+    * следующих — ни шагом, ни Тараном, ни прыжком. «Подгорный мастер», пока на
+    * нём броня, не вмерзает и травмы не получает: с ног его не сбить. */
+  private def iceFall(
+      hero: Hero,
+      battle: SoloPveBattle,
+      atk: Long,
+      nowMs: Long,
+      victim: Victim
+  ): Task[(SoloPveBattle, Hero, String)] = {
+    val ice = MiniBoss.IceElemental
+    // Ледопад считается от запаса того, на кого рушится: у союзника свои потолки.
+    val (maxHp, maxArmor) = victim match {
+      case Victim.Hero      => (hero.effectiveMaxHp(nowMs), hero.effectiveMaxArmor(nowMs))
+      case Victim.Ally(pos) => battle.group.allyAt(pos).fold((0L, 0L))(a => (a.stats.hp, a.stats.armor))
+    }
+    val raw      = atk * 2L + (maxHp * ice.FallHeroStatPct / 100L) + (maxArmor * ice.FallHeroStatPct / 100L)
+    val hpBefore = victimHp(victim, hero, battle)
+    val (hit, struck, damage) = zapVictim(victim, hero, battle, raw, nowMs)
+    val toHp     = (hpBefore - victimHp(victim, hit, struck)).max(0L)
+    val steady   = victim == Victim.Hero && hit.sets.steadfast(hit.fightStats.armor)
+    // Лёг посреди раунда: держит остаток этого и ещё FrozenTurns раундов.
+    val holds    = ice.FrozenTurns + 1
+    val (frozen, lines) = victim match {
+      case Victim.Hero =>
+        val head = content.format("battle.ice.fall", "damage" -> damage.toString)
+        if (steady) (struck, Vector(head, content.text("battle.steadfast")))
+        else
+          (struck.copy(effects = struck.effects.copy(
+             heroFrozenTurns = Some(struck.effects.heroFrozenTurns.getOrElse(0).max(holds)))),
+            Vector(head, content.format("battle.ice.frozen", "turns" -> ice.FrozenTurns.toString)))
+      case Victim.Ally(pos) =>
+        val name = struck.group.allyAt(pos).fold("")(_.name)
+        (struck.copy(group = struck.group.updateAlly(pos)(a => a.copy(frozen = a.frozen.max(holds)))),
+          Vector(content.format("battle.ice.fallAlly", "name" -> name, "damage" -> damage.toString),
+                 content.format("battle.ice.frozenAlly", "name" -> name, "turns" -> ice.FrozenTurns.toString)))
+    }
+    val line = lines.mkString("\n")
+    // Травма — геройская беда: союзник её не получает.
+    if (toHp <= 0 || victim != Victim.Hero || hit.fightStats.hp <= 0 || steady) ZIO.succeed((frozen, hit, line))
+    else
+      for {
+        roll   <- Random.nextIntBetween(1, 101)
+        result <- if (roll > ice.FallTraumaChancePct) ZIO.succeed((frozen, hit, line))
+                  else giveTrauma(hit, nowMs).map { case (h, traumaLine) => (frozen, h, line + "\n" + traumaLine) }
+      } yield result
+  }
+
+  /** Кого накрывает метель Ледяного: героя на ногах и живых союзников не дальше
+    * его досягаемости (трёх мест) от того места, где он стоит. */
+  private def blizzardTargets(b: SoloPveBattle): List[Victim] = {
+    val g     = b.group
+    val reach = MiniBoss.IceElemental.Reach
+    val hero  = Option.when(!g.heroDown && math.abs(g.heroPos - g.activePos) <= reach)(Victim.Hero: Victim)
+    hero.toList ++ g.allies.filter(a => a.alive && math.abs(a.position - g.activePos) <= reach)
+      .sortBy(_.position).map(a => Victim.Ally(a.position): Victim)
+  }
+
+  /** Метель: по четверти атаки холодом каждому, кого Ледяной достаёт (см.
+    * [[blizzardTargets]]), — и всех задетых отбрасывает от него на место. Не
+    * сдвигается тот, кто вмёрз или опутан, «Подгорный мастер» с бронёй (с ног
+    * не сбить), и кому некуда: занятое место держит, за край строя не
+    * отбросить. Отбрасывает сперва дальних — ближним есть куда встать. Стоящего
+    * прямо напротив — к началу строя, а там занято — к концу. */
+  private def blizzard(hero: Hero, battle: SoloPveBattle, atk: Long, nowMs: Long): (SoloPveBattle, Hero, String) = {
+    val ice     = MiniBoss.IceElemental
+    val at      = battle.group.activePos
+    val targets = blizzardTargets(battle)
+    val raw     = (atk * ice.BlizzardDamageFactor).toLong.max(1L)
+    // 1) удар — каждому
+    val (struckB, struckH, hitLines) = targets.foldLeft((battle, hero, Vector.empty[String])) { case ((b, h, acc), v) =>
+      val (h2, b2, d) = zapVictim(v, h, b, raw, nowMs)
+      val line = v match {
+        case Victim.Hero      => content.format("battle.ice.blizzardYou", "damage" -> d.toString)
+        case Victim.Ally(pos) => content.format("battle.ice.blizzardAlly",
+                                   "name" -> b2.group.allyAt(pos).fold("")(_.name), "damage" -> d.toString)
+      }
+      (b2, h2, acc :+ line)
+    }
+    // 2) отбросить — от дальних к ближним
+    def placeOf(v: Victim, b: SoloPveBattle): Int = v match {
+      case Victim.Hero      => b.group.heroPos
+      case Victim.Ally(pos) => pos
+    }
+    def taken(b: SoloPveBattle, p: Int): Boolean = p == b.group.heroPos || b.group.allyAt(p).isDefined
+    def landing(b: SoloPveBattle, from: Int): Option[Int] = {
+      val ways = if (from < at) List(from - ice.BlizzardPush) else if (from > at) List(from + ice.BlizzardPush)
+                 else List(from - ice.BlizzardPush, from + ice.BlizzardPush)
+      ways.find(p => p >= 1 && p <= Formation.WalkPlaces && !taken(b, p))
+    }
+    val order = targets.sortBy(v => -math.abs(placeOf(v, battle) - at))
+    val (pushedB, pushLines) = order.foldLeft((struckB, Vector.empty[String])) { case ((b, acc), v) =>
+      v match {
+        case Victim.Hero =>
+          val standing = struckH.fightStats.hp > 0
+          if (!standing || b.effects.heroRooted) (b, acc)
+          else if (struckH.sets.steadfast(struckH.fightStats.armor)) (b, acc :+ content.text("battle.steadfast"))
+          else landing(b, b.group.heroPos).fold((b, acc)) { p =>
+            val moved = if (b.group.hasMonster(p)) b.moveHeroTo(p) else b.copy(group = b.group.copy(heroPos = p))
+            (moved, acc :+ content.format("battle.ice.pushedYou", "n" -> p.toString))
+          }
+        case Victim.Ally(pos) =>
+          b.group.allyAt(pos).filter(a => a.alive && a.rooted <= 0 && a.webbed <= 0 && a.frozen <= 0) match {
+            case None => (b, acc)
+            case Some(a) =>
+              landing(b, pos).fold((b, acc)) { p =>
+                (b.copy(group = b.group.updateAlly(pos)(_.copy(position = p))),
+                  acc :+ content.format("battle.ice.pushedAlly", "name" -> a.name, "n" -> p.toString))
+              }
+          }
+      }
+    }
+    (pushedB, struckH, ((content.text("battle.ice.blizzard") +: hitLines) ++ pushLines).mkString("\n"))
+  }
+
   /** Травма от смерча — та же механика, что и при смерти: прогресс по тирам
     * (лёгкие → средние → тяжёлые), уже полученные исключаются. Пишется сразу,
     * потому что `commit` сохраняет только экипировку и боевые статы. */
@@ -2925,10 +3141,12 @@ case class BattleState(
   private def heroWebMark(webbed: Boolean): String =
     if (webbed) content.text("battle.webbedYou") else ""
 
-  /** Почему герой не сходит с места: опутан паутиной — своя строка, иначе
-    * прежняя, «пригвождён» (арена). */
+  /** Почему герой не сходит с места: опутан паутиной — своя строка; вмёрз в лёд
+    * (ледопад Ледяного) — своя; иначе прежняя, «пригвождён» (арена). */
   private def heldKey(battle: SoloPveBattle, pinned: String): String =
-    if (battle.effects.heroWebbed) "battle.webHolds" else pinned
+    if (battle.effects.heroWebbed) "battle.webHolds"
+    else if (battle.effects.heroFrozen) "battle.iceHolds"
+    else pinned
 
   /** Прок воздуха в ударе моба: ему точность и уклонение на несколько ходов. */
   private def airBoostLine(monster: String): String =
@@ -3282,6 +3500,15 @@ case class BattleState(
       b = b.copy(effects = b.effects.copy(monsterBurn = None))
       log = log :+ content.format("battle.elements.quench", "monster" -> b.monsterName)
     }
+    // Ледяного мороз не сковывает, а наращивает на нём лёд: броня прибавляется
+    // (не выше потолка, что ему оставил огонь), а защита не тает.
+    else if (fired(Element.Cold) && !steam && b.boss.contains(MiniBoss.IceElemental)) {
+      val cap    = monsterArmorCap(b)
+      val gained = (b.monsterStats.armor * MiniBoss.IceElemental.ColdArmorGainPct / 100L).max(1L)
+                     .min((cap - b.monsterCurrentArmor).max(0L))
+      b = b.copy(monsterCurrentArmor = b.monsterCurrentArmor + gained)
+      log = log :+ content.format("battle.ice.coldGrows", "monster" -> b.monsterName, "armor" -> gained.toString)
+    }
     else if (fired(Element.Cold) && !steam) {
       b = b.copy(effects = b.effects.copy(
         monsterColdDefenceCut = b.effects.monsterColdDefenceCut + Element.Cold.DefenceReductionCut))
@@ -3322,6 +3549,17 @@ case class BattleState(
                 "pct" -> MiniBoss.StoneElemental.BurnedDamageCutPct.toString,
                 "turns" -> MiniBoss.StoneElemental.BurnedTurns.toString,
                 "armor" -> MiniBoss.StoneElemental.BurnedMaxArmorCut.toString)
+      }
+      // Ледяной от пламени тает: гаснет одна накопленная глыба, и потолок его
+      // брони ниже (текущая остаётся какая была — как у каменного).
+      if (b.boss.contains(MiniBoss.IceElemental)) {
+        val ice  = MiniBoss.IceElemental
+        val left = (b.bossCharges - 1).max(0)
+        val cut  = (b.monsterStats.armor * ice.MeltMaxArmorCutPct / 100L).max(1L)
+        b = b.copy(
+          bossCharges = left,
+          effects     = b.effects.copy(monsterMaxArmorCut = b.effects.monsterMaxArmorCut + cut))
+        log = log :+ content.format("battle.ice.melts", "blocks" -> left.toString, "armor" -> cut.toString)
       }
     }
     // Попутный ветер: срок — `airTurns` (у героя с «Пустынью» дольше, см. heroAirTurns).
@@ -4921,7 +5159,7 @@ case class BattleState(
           val cleaned = battle.effects.copy(
             heroBurn = None, heroPoison = None, heroBleed = None,
             heroStunnedTurns = 0, heroGroundedTurns = 0, heroColdDefenceCut = 0, heroWebTurns = None,
-            heroSkillJammed = None, heroCursedTurns = None)
+            heroSkillJammed = None, heroCursedTurns = None, heroFrozenTurns = None)
           TurnResult(hero, battle.copy(effects = cleaned),
             Vector(content.text("battle.flaskCleanse")) ++ qhLog, Outcome.Continue, endsRound = false)
 
@@ -6641,11 +6879,12 @@ case class BattleState(
   /** Строки группового экрана: кто с кем в паре, у кого сколько осталось. С
     * отрядом строй двухрядный: слева герой и союзники по позициям, справа мобы. */
   /** Значки ран союзника для строки строя: пусто, если на нём ничего нет.
-    * Пригвождённый — с булавкой, как моб. */
+    * Пригвождённый — с булавкой, как моб; вмёрзший в лёд Ледяного — со льдом. */
   private def allyDots(a: BattleAlly): String = {
     val marks = List(a.poison.map(_ => Poison.Icon), a.bleed.map(_ => Bleed.Icon), a.burn.map(_ => Burn.Icon),
                      Option.when(a.cold)(Element.Cold.emoji),
                      Option.when(a.rooted > 0)(content.text("battle.group.pinnedMark").trim),
+                     Option.when(a.frozen > 0)(MiniBoss.IceElemental.FrozenIcon),
                      Option.when(a.webbed > 0)(SpiderWeb.Icon),
                      Option.when(a.healBlocked)(HealCurse.Icon)).flatten
     if (marks.isEmpty) "" else " " + marks.mkString
@@ -7252,7 +7491,9 @@ case class BattleState(
         heroFx.heroBleed.filterNot(_ => undeadHero).map(b => s"${Bleed.Icon}-${heroBleedDamage(hero, b, nowMs)}"),
         heroFx.heroBurn.map(bn => s"${Burn.Icon}-${heroBurnDamage(hero, battle0, bn, nowMs)}"),
         Option.when(heroFx.heroWebbed)(SpiderWeb.Icon),
-        Option.when(heroFx.heroCursed)(HealCurse.Icon)
+        Option.when(heroFx.heroCursed)(HealCurse.Icon),
+        // Вмёрз в лёд (ледопад Ледяного элементаля).
+        Option.when(heroFx.heroFrozen)(MiniBoss.IceElemental.FrozenIcon)
       ).flatten
       if (parts.isEmpty) "" else " (" + parts.mkString(" ") + ")"
     }
@@ -7531,13 +7772,15 @@ object BattleState {
       BramblQuest.HallStory, PlukhQuest.HuntStory, FaelinQuest.RootsStory, Villages.RaidStory, Villages.BanditsStory,
       Villages.SpidersStory, Villages.CaravanStory)
 
-  /** Паутина и проклятие Некроманта на герое и союзниках — на раунд меньше (см.
-    * SpiderWeb, HealCurse). */
+  /** Паутина, проклятие Некроманта и лёд Ледяного элементаля на герое и
+    * союзниках — на раунд меньше (см. SpiderWeb, HealCurse,
+    * MiniBoss.IceElemental.FrozenTurns). */
   def webTicked(battle: SoloPveBattle): SoloPveBattle =
     battle.copy(
-      effects = battle.effects.webTicked.curseTicked,
+      effects = battle.effects.webTicked.curseTicked.frozenTicked,
       group   = battle.group.copy(allies = battle.group.allies.map(a =>
-        if (a.webbed > 0 || a.cursed > 0) a.copy(webbed = (a.webbed - 1).max(0), cursed = (a.cursed - 1).max(0))
+        if (a.webbed > 0 || a.cursed > 0 || a.frozen > 0)
+          a.copy(webbed = (a.webbed - 1).max(0), cursed = (a.cursed - 1).max(0), frozen = (a.frozen - 1).max(0))
         else a)))
 
   /** Что срезают со зверей в бою с этим сюжетом: в гнезде сетеплётов звери —
@@ -7706,7 +7949,8 @@ object BattleState {
       val here  = battle.group.heroPos
       val edge  = battle.group.rows.min(Formation.WalkPlaces)
       // Опутанный союзник с места не сойдёт — поменяться с ним нельзя.
-      List(here - 1, here + 1).filter(p => p >= 1 && p <= edge && !battle.group.allyAt(p).exists(a => a.alive && a.webbed > 0))
+      List(here - 1, here + 1).filter(p => p >= 1 && p <= edge &&
+        !battle.group.allyAt(p).exists(a => a.alive && (a.webbed > 0 || a.frozen > 0)))
     }
 
   /** Исход хода — определяет переход и терминальные действия в [[BattleState.commit]]. */

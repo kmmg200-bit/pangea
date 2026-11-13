@@ -104,7 +104,7 @@ object TreasureHuntGeneratorSpec extends ZIOSpecDefault {
         assertTrue(pool.contains(MiniBoss.RatKing.ingredient)) &&
         // у кого набора ещё нет (Громовой), тот в клад не идёт: его ингредиент пока ни к чему
         assertTrue(pool.size == MiniBoss.values.count(_.set.isDefined)) &&
-        assertTrue(!pool.contains(MiniBoss.ThunderElemental.ingredient))
+        assertTrue(!pool.contains(MiniBoss.ThunderElemental.ingredient) && !pool.contains(MiniBoss.IceElemental.ingredient))
     },
 
     test("редкие травы — только знающему цветы 2 ранга: наверняка по одной за ступень выше Кинэта, у ~15% — ещё горсть") {

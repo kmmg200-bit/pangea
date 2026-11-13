@@ -105,7 +105,7 @@ object ThunderElementalSpec extends ZIOSpecDefault {
       assertTrue(thunder.race == Race.Elemental && thunder.monsterName == "Громовой Элементаль") &&
       assertTrue(thunder.attackElement.contains(Element.Lightning) && !thunder.immuneToBurn) &&
       // прочие минибоссы как были: бьют соседей и встают на первом
-      assertTrue(MiniBoss.values.filterNot(_ == thunder).forall(b => b.reach == 1 && b.startPos == 1 && b.lairMinHeroLvl == 0L))
+      assertTrue(MiniBoss.values.filterNot(b => b == thunder || b == MiniBoss.IceElemental).forall(b => b.reach == 1 && b.startPos == 1 && b.lairMinHeroLvl == 0L))
     },
 
     test("стихии: молния проходит на 20%, ветер — на 150%, прочее как обычно") {
@@ -124,7 +124,7 @@ object ThunderElementalSpec extends ZIOSpecDefault {
       val early = ElementalLairState.lairPool(14L).toSet
       val ready = ElementalLairState.lairPool(15L).toSet
       assertTrue(early == Set[MiniBoss](MiniBoss.FireElemental, MiniBoss.StoneElemental)) &&
-      assertTrue(ready == Set[MiniBoss](MiniBoss.FireElemental, MiniBoss.StoneElemental, thunder))
+      assertTrue(ready == Set[MiniBoss](MiniBoss.FireElemental, MiniBoss.StoneElemental, thunder, MiniBoss.IceElemental))
     },
 
     test("бой в логове: Громовой встаёт на четвёртом месте, герой — на первом, пары нет") {
