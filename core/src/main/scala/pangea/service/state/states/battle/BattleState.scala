@@ -7,7 +7,7 @@ import pangea.domain.Rng
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.generator.loot.LootGenerator
 import pangea.generator.monster.MonsterGenerator
-import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Element, Formation, GroupState, HealedWounds, MonsterSlot, Nature, Poison, RaceTactics, Regen, RedSpider, SlainMonster, SoloPveBattle, SkillSlotState, SpiderWeb, TimedDefenceDebuff, Ward}
+import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Convoy, Element, Formation, GroupState, HealedWounds, MonsterSlot, Nature, Poison, RaceTactics, Regen, RedSpider, SlainMonster, SoloPveBattle, SkillSlotState, SpiderWeb, TimedDefenceDebuff, Wagon, Ward}
 import pangea.model.cave.CaveGenerator
 import pangea.model.item.ItemSet
 import pangea.model.squad.AllySkill
@@ -2767,8 +2767,40 @@ case class BattleState(
       val updated = res.battle.copy(group = res.battle.group.copy(allies = ticked))
       val swept   = fallen.foldLeft(updated)((b, a) => b.copy(group = b.group.withoutAlly(a.position)))
       val gone    = fallen.map(a => content.format(BattleState.goneKey(a), "name" -> a.name))
-      res.copy(battle = swept, log = res.log ++ lines ++ gone)
+      val (burnt, wagonLines) = wagonFires(swept)
+      res.copy(battle = burnt, log = res.log ++ lines ++ gone ++ wagonLines)
     }
+
+  /** Пламя на повозках обоза — в конце раунда, после ран союзников: кто стоит
+    * на горящей повозке, тот сбивает огонь, и она в этот раунд не горит; на
+    * непокрытой огонь жжёт HP (мимо брони) и разгорается. Сгоревшая — из обоза
+    * вон. Обоза нет — ничего. */
+  private def wagonFires(battle: SoloPveBattle): (SoloPveBattle, Vector[String]) =
+    battle.group.convoy.fold((battle, Vector.empty[String])) { convoy =>
+      val g = battle.group
+      val (wagons, lines) = convoy.wagons.foldLeft((List.empty[Wagon], Vector.empty[String])) { case ((acc, log), w) =>
+        w.burn match {
+          case Some(bn) if w.alive =>
+            douser(g, w.position) match {
+              case Some(line) => (acc :+ w.cooled, log :+ line)
+              case None =>
+                val dmg   = bn.damageOn(w.maxHp).max(1L)
+                val hot   = w.copy(hp = (w.hp - dmg).max(0L), burn = Some(bn.grown))
+                val burns = content.format("battle.group.wagonBurns", "n" -> w.position.toString, "damage" -> dmg.toString)
+                if (hot.alive) (acc :+ hot, log :+ burns)
+                else (acc :+ hot.cooled, log :+ burns :+ content.format("battle.group.wagonBurnt", "n" -> w.position.toString))
+            }
+          case _ => (acc :+ w, log)
+        }
+      }
+      (battle.copy(group = g.copy(convoy = Some(convoy.copy(wagons = wagons)))), lines)
+    }
+
+  /** Кто сбивает огонь с повозки на месте `pos`: герой на ногах, стоящий на ней,
+    * или живой союзник — строка об этом; никого — None. */
+  private def douser(g: GroupState, pos: Int): Option[String] =
+    if (pos == g.heroPos && !g.heroDown) Some(content.format("battle.group.wagonDousedHero", "n" -> pos.toString))
+    else g.allyAt(pos).filter(_.alive).map(a => content.format("battle.group.wagonDoused", "name" -> a.name, "n" -> pos.toString))
 
   /** Строка тика раны на союзнике — та же, что для мобов, только имя его. */
   private def allyDotTick(icon: String, label: String, damage: Long, name: String): String =
@@ -5534,6 +5566,24 @@ case class BattleState(
     } yield out
   }
 
+  /** Моб бьёт повозку напротив (засада на караван): увернуться ей нечем — удар
+    * доходит всегда, с тем же разбросом, что по союзнику; сперва броня, остаток —
+    * в HP. С шансом засады удар поджигает (см. Convoy.ignitePct). Разбитая
+    * повозка из обоза выбывает. */
+  private def mobStrikesWagon(w: Wagon, tmp: SoloPveBattle): Task[(SoloPveBattle, Vector[String])] =
+    tmp.group.convoy.fold[Task[(SoloPveBattle, Vector[String])]](ZIO.succeed((tmp, Vector.empty[String]))) { convoy =>
+      for {
+        spread <- Random.nextLongBetween(80L, 121L)
+        damage  = (monsterAttack(tmp) * spread / 100L).max(1L)
+        struck  = w.struck(damage)
+        fire   <- chanceRoll(struck.alive && convoy.ignitePct > 0L, convoy.ignitePct)
+        after   = if (fire) struck.ignited else struck
+        line    = content.format("battle.group.wagonHit", "monster" -> tmp.monsterName, "n" -> w.position.toString,
+                    "damage" -> damage.toString, "fire" -> (if (fire) content.text("battle.group.wagonFire") else ""))
+        broken  = Option.when(!after.alive)(content.format("battle.group.wagonBroken", "n" -> w.position.toString))
+      } yield (tmp.copy(group = tmp.group.copy(convoy = Some(convoy.updated(after)))), Vector(line) ++ broken.toVector)
+    }
+
   /** Моб бьёт союзника: бросок против уклонения союзника, урон с разбросом,
     * защита союзника (холод её обгрызает), броня — потом HP, у каменного —
     * раскол. Сверху — всё то же, что достаётся от удара герою: отравленное
@@ -5737,7 +5787,8 @@ case class BattleState(
         // временном бою (удар по стоящему напротив) — забираем их оттуда.
         val afterSlot = ticked.activeSlot
         val merged = b2.copy(effects = ticked.effects.withMonsterPart(b2.effects),
-                             group = b2.group.copy(allies = ticked.group.allies, alliesGone = ticked.group.alliesGone))
+                             group = b2.group.copy(allies = ticked.group.allies, alliesGone = ticked.group.alliesGone,
+                               convoy = ticked.group.convoy))
         val placed = merged.copy(group = merged.group.copy(others = merged.group.others.updated(idx, afterSlot)))
         if (afterSlot.alive) (h2, placed, log3)
         else (h2, placed.sideFallen(idx), log3 :+ content.format("battle.group.sideFell", "monster" -> afterSlot.name))
@@ -5811,20 +5862,25 @@ case class BattleState(
       if (smoke) None
       else if (tower) BattleState.towerTarget(battle, pos)
       else battle.group.allyAt(pos).filter(_.alive)
+    // Засада на караван: напротив непокрытая повозка — моб бьёт её (ему нужен
+    // товар), а не тянется к герою и союзникам. Ищейки Сноходцев повозок не
+    // трогают (см. GroupState.wagonBait).
+    val wagon       = if (smoke || tower || opposite.isDefined) None else battle.group.wagonBait(pos)
     // Лежащего героя мобы не добивают — его смерть решится исходом боя. Эльф —
     // стрелок: достаёт героя на три места (см. RaceTactics), прочие — соседа.
-    val reachesHero = !smoke && opposite.isEmpty && !battle.group.heroDown &&
+    val reachesHero = !smoke && opposite.isEmpty && wagon.isEmpty && !battle.group.heroDown &&
                         (tower || battle.group.inReachOf(pos, reach))
     // Ни напротив никого, ни героя не достать — бьёт союзника, которого достаёт.
     val facing      =
-      if (smoke || tower || opposite.isDefined || reachesHero) opposite
+      if (smoke || tower || opposite.isDefined || reachesHero || wagon.isDefined) opposite
       else battle.allyWithin(pos, reach)
     for {
       // 1) удар: по союзнику, которого бьёт, либо сбоку по герою, если достаёт
       struck <-
-        facing match {
-          case Some(ally) => mobStrikesAlly(ally, tmp).map { case (t2, lines) => (hero, t2, lines) }
-          case None =>
+        (facing, wagon) match {
+          case (Some(ally), _) => mobStrikesAlly(ally, tmp).map { case (t2, lines) => (hero, t2, lines) }
+          case (None, Some(w)) => mobStrikesWagon(w, tmp).map { case (t2, lines) => (hero, t2, lines) }
+          case (None, None) =>
             if (!reachesHero) ZIO.succeed((hero, tmp, Vector.empty[String]))
             else for {
               hitRoll <- Random.nextIntBetween(1, 101)
@@ -6197,7 +6253,7 @@ case class BattleState(
     if (m.effects.monsterRooted) m.name + content.text("battle.group.pinnedMark") else m.name
 
   private def formationLines(battle: SoloPveBattle): Vector[String] =
-    if (battle.group.allies.isEmpty && battle.group.paired)
+    if (battle.group.allies.isEmpty && battle.group.convoy.isEmpty && battle.group.paired)
       battle.placesInOrder.map {
         case (pos, Some(m)) =>
           val key = if (pos == battle.group.heroPos) "battle.group.lineHero" else "battle.group.lineFree"
@@ -6207,12 +6263,21 @@ case class BattleState(
       }.toVector
     else
       (1 to battle.group.rows).toVector.map { pos =>
-        val left =
-          if (pos == battle.group.heroPos) content.text("battle.group.sideHero")
+        val unit =
+          if (pos == battle.group.heroPos) Some(content.text("battle.group.sideHero"))
           else battle.group.allyAt(pos).map(a => content.format("battle.group.sideAlly",
                  "name" -> a.name, "hp" -> a.hpPct.toString, "armor" -> a.armorPct.toString,
                  "dots" -> allyDots(a)))
-            .getOrElse(content.text("battle.group.sideNone"))
+        // Повозка обоза — «под» тем, кто на ней стоит; никого — она сама на месте.
+        val cart = battle.group.convoy.flatMap(_.wagonAt(pos))
+        def fire(w: Wagon): String = if (w.burn.isDefined) " " + Burn.Icon else ""
+        val left = (unit, cart) match {
+          case (Some(u), Some(w)) => u + content.format("battle.group.underWagon", "hp" -> w.hpPct.toString, "fire" -> fire(w))
+          case (Some(u), None)    => u
+          case (None, Some(w))    => content.format("battle.group.sideWagon", "hp" -> w.hpPct.toString,
+                                       "armor" -> w.armorPct.toString, "fire" -> fire(w))
+          case (None, None)       => content.text("battle.group.sideNone")
+        }
         val right = battle.monsterAt(pos).map(m => content.format("battle.group.sideMonster",
             "monster" -> mobLabel(m), "hp" -> m.hpPct.toString, "armor" -> m.armorPct.toString))
           .getOrElse(content.text("battle.group.sideNone"))
@@ -6404,7 +6469,8 @@ case class BattleState(
         silvers = first.silvers,
         doubloons = first.doubloons,
         returnState = lootReturn,
-        eventData = prev.flatMap(_.eventData),
+        // Засада на караван: повозки, какими вышли из боя, — назад в его сцену.
+        eventData = prev.flatMap(_.eventData).map(e => battle.group.convoy.fold(e)(Convoy.returned(e, _))),
         monsterName = Option.when(fallen.size > 1)(first.monsterName),
         queue = lootByMonster.tail,
         won = true

@@ -37,12 +37,17 @@ import java.util.concurrent.TimeUnit
   * сюда, к следующему переходу. «Персонаж» — обычное меню: по возвращении
   * караван в пути, а кончившийся за это время переход кончается сразу.
   *
-  * Дошли — платит тот, кто принял обоз в городе: серебро и опыт сразу, с его
-  * рассказом, и контракт выполнен — к старосте возвращаться не нужно (так решил
-  * пользователь). Пал в засаде — караван разграблен, контракт сорван (см.
-  * DeathState). «Бросить караван» в пути — тоже сорван, с подтверждением. У
-  * ворот «Уйти» контракт не трогает: обоз подождёт; «Отказаться от контракта» —
-  * как у логова. */
+  * В обозе пять повозок — на первых местах ряда героя, «под» строем (см.
+  * pangea.model.battle.Wagon): кто стоит на повозке, тот принимает удары за неё
+  * и сбивает с неё огонь. Побитые едут дальше побитыми, огонь после боя
+  * тушат. Не осталось ни одной — везти нечего, контракт сорван.
+  *
+  * Дошли — платит тот, кто принял обоз в городе, за то, что дошло: серебро и
+  * опыт сразу, с его рассказом, и контракт выполнен — к старосте возвращаться не
+  * нужно (так решил пользователь). Пал в засаде — караван разграблен, контракт
+  * сорван (см. DeathState). «Бросить караван» в пути — тоже сорван, с
+  * подтверждением. У ворот «Уйти» контракт не трогает: обоз подождёт;
+  * «Отказаться от контракта» — как у логова. */
 case class VillageCaravanState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
@@ -82,7 +87,9 @@ case class VillageCaravanState(
                       clear(user) *> renderer.show(user, Screen(content.text("village.caravan.gone"), List(outChoice)))
                     case Some(c) => trip match {
                       case None                       => renderer.show(user, gatesScreen(c))
-                      case Some(t) if t.arrived       => arrive(user, c, renderer).unit
+                      // Из засады вернулись без единой повозки — везти нечего.
+                      case Some(t) if t.plundered     => lose(user, renderer).unit
+                      case Some(t) if t.arrived       => arrive(user, c, t, renderer).unit
                       case Some(t) if t.nextAt <= 0L  => startLeg(user, c, t, now, renderer).unit
                       case Some(t) =>
                         scheduler.schedule(user.userId, t.nextAt.max(now), TaskKind.VillageCaravan,
@@ -120,7 +127,7 @@ case class VillageCaravanState(
   private def gatesScreen(c: VillageContract): Screen =
     Screen(
       Villages.joined(content.format("village.caravan.intro", Villages.args(content, c): _*), difficulty(c.level),
-        content.text("village.caravan.noEscape")),
+        content.text("village.caravan.noEscape") + "\n" + content.text("village.caravan.wagonsHint")),
       List(
         content.choice("VillageCaravanGo", "village.caravan.goLabel").copy(row = Some(0)),
         content.choice("OpenCharacter", "village.lair.characterLabel").copy(row = Some(1)),
@@ -134,7 +141,10 @@ case class VillageCaravanState(
     val text =
       if (legStart) legText(c, t.leg)
       else content.format("village.caravan.onRoad", "leg" -> t.leg.toString, "legs" -> VillageRates.CaravanLegs.toString)
-    Screen(text, List(
+    // Сколько повозок ещё в обозе — путь без повозок этого не показывает.
+    val carts = t.intact.fold("")(n => "\n" + content.format("village.caravan.wagonsLeft",
+                  "n" -> n.toString, "total" -> VillageRates.CaravanWagons.toString))
+    Screen(text + carts, List(
       content.choice("OpenCharacter", "village.lair.characterLabel").copy(row = Some(0)),
       AppButton.choice(content, row = Some(0)),
       content.choice("VillageCaravanAbandon", "village.caravan.abandonLabel").copy(row = Some(1))))
@@ -167,7 +177,8 @@ case class VillageCaravanState(
   private def depart(user: User, c: VillageContract, renderer: Renderer): Task[StateType] =
     readTrip(user).flatMap {
       case Some(_) => enter(user, renderer).as(StateType.VillageCaravan)
-      case None    => nowMs.flatMap(now => startLeg(user, c, CaravanTrip.start, now, renderer))
+      case None    => nowMs.flatMap(now => startLeg(user, c, CaravanTrip.start.copy(wagons = Some(Villages.caravanWagons(c))),
+                        now, renderer))
     }
 
   /** Начать переход `t.leg`: где идёт караван — и таймер до конца перехода.
@@ -204,7 +215,7 @@ case class VillageCaravanState(
   /** Тихий переход: строка об этом — и следующий переход или город. */
   private def quiet(user: User, c: VillageContract, t: CaravanTrip, now: Long, renderer: Renderer): Task[StateType] = {
     val next = t.copy(leg = t.leg + 1, nextAt = 0L)
-    if (next.arrived) arrive(user, c, renderer, quietLine(t.leg))
+    if (next.arrived) arrive(user, c, next, renderer, quietLine(t.leg))
     else startLeg(user, c, next, now, renderer, quietLine(t.leg))
   }
 
@@ -218,7 +229,11 @@ case class VillageCaravanState(
       seed     <- Random.nextLong
       foes      = Villages.caravanAmbush(c, kind, Rng(seed))
       energies <- ZIO.foreach(foes)(startEnergy)
-      battle    = Villages.withGuards(SoloPveBattle.fromGroup(foes, hero, energies), c, content.list("village.caravan.guards"))
+      plain     = SoloPveBattle.fromGroup(foes, hero, energies)
+      // Повозки — «под» строем героя, со своими повадками засады; караванщики —
+      // на свободные повозки.
+      convoyed  = plain.copy(group = plain.group.copy(convoy = t.wagons.map(Villages.convoy(_, kind))))
+      battle    = Villages.withGuards(convoyed, c, content.list("village.caravan.guards"))
                     .copy(story = Some(Villages.CaravanStory), lootLevel = Some(c.level.max(1).toLong))
       next      = t.copy(leg = t.leg + 1, ambushes = t.ambushes + 1, nextAt = 0L)
       routing   = LootData(Nil, Nil, returnState = Some(StateType.VillageCaravan), eventData = Some(next.asJson))
@@ -228,24 +243,46 @@ case class VillageCaravanState(
                     content.format(s"village.caravan.ambush.${kind.key}", Villages.args(content, c): _*), Nil))
     } yield StateType.Battle
 
-  /** Караван в городе: платит тот, кто принял обоз, — серебро и опыт сразу, с
-    * его рассказом; контракт выполнен. Договор стирается первым (см.
-    * Villages.pay): повторный конец перехода второй платы не даст. */
-  private def arrive(user: User, c: VillageContract, renderer: Renderer, note: String = ""): Task[StateType] =
+  /** Караван в городе: платит тот, кто принял обоз, — за то, что дошло:
+    * каждая потерянная повозка — её доля долой (путь без повозок — целиком).
+    * Серебро и опыт сразу, с его рассказом; контракт выполнен. Договор
+    * стирается первым (см. Villages.pay): повторный конец перехода второй платы
+    * не даст. */
+  private def arrive(user: User, c: VillageContract, t: CaravanTrip, renderer: Renderer,
+                     note: String = ""): Task[StateType] =
+    if (t.plundered) lose(user, renderer)
+    else {
+      val total  = VillageRates.CaravanWagons
+      val intact = t.intact.getOrElse(total).min(total)
+      val due    = c.copy(silver = c.silver * intact / total)
+      for {
+        now  <- nowMs
+        hero <- getHero(user)
+        _    <- scheduler.cancel(user.userId, TaskKind.VillageCaravan)
+        _    <- clear(user)
+        paid <- Villages.pay(heroDao, inventoryRepo, user.userId, hero, due, now)
+        (after, exp) = paid
+        a     = Villages.args(content, due)
+        lvlUp = if (after.lvl > hero.lvl) "\n" + content.format("npcQuests.common.levelUp", "level" -> after.lvl.toString) else ""
+        count = if (intact >= total) content.text("village.caravan.delivered.all")
+                else content.format("village.caravan.delivered.some", "n" -> intact.toString, "total" -> total.toString)
+        _    <- renderer.show(user, Screen(
+                  Villages.joined(note, content.format("village.caravan.arrival", a: _*), count,
+                    content.format("village.pay.reward", ("exp" -> exp.toString) +: a: _*) + lvlUp,
+                    content.text("village.questDone")),
+                  List(outChoice)))
+      } yield StateType.VillageCaravan
+    }
+
+  /** Повозок не осталось: везти нечего — контракт сорван, как если бы караван
+    * бросили. */
+  private def lose(user: User, renderer: Renderer): Task[StateType] =
     for {
-      now  <- nowMs
       hero <- getHero(user)
       _    <- scheduler.cancel(user.userId, TaskKind.VillageCaravan)
+      _    <- Villages.abandon(heroDao, inventoryRepo, user.userId, hero)
       _    <- clear(user)
-      paid <- Villages.pay(heroDao, inventoryRepo, user.userId, hero, c, now)
-      (after, exp) = paid
-      a     = Villages.args(content, c)
-      lvlUp = if (after.lvl > hero.lvl) "\n" + content.format("npcQuests.common.levelUp", "level" -> after.lvl.toString) else ""
-      _    <- renderer.show(user, Screen(
-                Villages.joined(note, content.format("village.caravan.arrival", a: _*),
-                  content.format("village.pay.reward", ("exp" -> exp.toString) +: a: _*) + lvlUp,
-                  content.text("village.questDone")),
-                List(outChoice)))
+      _    <- renderer.show(user, Screen(content.text("village.caravan.lost"), List(outChoice)))
     } yield StateType.VillageCaravan
 
   // ── Уход и отказ ────────────────────────────────────────────────────────────

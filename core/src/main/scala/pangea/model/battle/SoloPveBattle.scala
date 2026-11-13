@@ -502,9 +502,10 @@ case class SoloPveBattle(
       val reach = RaceTactics.reach(race)
       // Кто уже достаёт героя, тот и бьёт оттуда: вставать напротив ему незачем,
       // и место павшего он не занимает. Встал напротив союзника — занят им.
+      // Напротив непокрытая повозка — моб занят ею, как союзником.
       @annotation.tailrec
       def walk(at: Int, left: Int): Int =
-        if (left <= 0 || math.abs(at - group.heroPos) <= reach ||
+        if (left <= 0 || math.abs(at - group.heroPos) <= reach || group.wagonBait(at).isDefined ||
             (at != group.activePos && group.allyAt(at).exists(_.alive))) at
         else copy(group = group.copy(activePos = at)).stepTowardsHero(at) match {
           case None       => at
@@ -530,7 +531,7 @@ case class SoloPveBattle(
         def walk(bb: SoloPveBattle, left: Int): SoloPveBattle = {
           val pos  = bb.group.places(idx)
           val far  = math.abs(pos - bb.group.heroPos) > reach
-          val busy = bb.group.allyAt(pos).exists(_.alive)
+          val busy = bb.group.allyAt(pos).exists(_.alive) || bb.group.wagonBait(pos).isDefined
           if (left <= 0 || !far || busy || !walks(slot)) bb
           else bb.stepTowardsHero(pos) match {
             case None       => bb
@@ -560,7 +561,7 @@ case class SoloPveBattle(
     else {
       def reachOf(slot: MonsterSlot): Int = RaceTactics.reach(Race.withName(slot.race))
       val walkers = ((group.activePos, activeSlot) :: group.entries).filter { case (pos, slot) =>
-        slot.alive && walks(slot) && allyWithin(pos, reachOf(slot)).isEmpty
+        slot.alive && walks(slot) && allyWithin(pos, reachOf(slot)).isEmpty && group.wagonBait(pos).isEmpty
       }
       val order = walkers.sortBy { case (pos, _) => allyNear(pos).fold(Int.MaxValue)(g => math.abs(g - pos)) }
       // Место моба за чужие шаги не меняется: на занятое место никто не встаёт.
@@ -625,7 +626,9 @@ case class SoloPveBattle(
   def squadAdvance: (SoloPveBattle, List[(BattleAlly, Int)]) = {
     // Пригвождённый (арена) с места не сходит, даже когда бить ему некого.
     // Опутанный паутиной — тоже.
-    val idle  = group.allies.filter(a => a.alive && a.rooted <= 0 && a.webbed <= 0 && allyTarget(a).isEmpty)
+    // Караванщик на своей повозке её не бросает: стоит и ждёт, кто к ней сунется.
+    val idle  = group.allies.filter(a => a.alive && a.rooted <= 0 && a.webbed <= 0 && allyTarget(a).isEmpty &&
+                  !(a.kind == pangea.model.squad.AllyKind.CaravanGuard && group.convoy.exists(_.wagonAt(a.position).isDefined)))
     val order = idle.sortBy(a => mobNear(a.position).fold(Int.MaxValue)(p => math.abs(p - a.position)))
     // Позиция союзника за чужие шаги не меняется: на занятую никто не встаёт.
     order.foldLeft((this, List.empty[(BattleAlly, Int)])) { case ((b, moved), a) =>

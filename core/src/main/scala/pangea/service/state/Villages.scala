@@ -3,7 +3,7 @@ package pangea.service.state
 import pangea.dao.hero.HeroDao
 import pangea.domain.Rng
 import pangea.engine.{SceneContent, Screen}
-import pangea.model.battle.{BattleAlly, MonsterSlot, SoloPveBattle}
+import pangea.model.battle.{BattleAlly, Convoy, MonsterSlot, SoloPveBattle, Wagon}
 import pangea.generator.monster.MonsterGenerator
 import pangea.model.hero.Hero
 import pangea.model.item.QuestItemKind
@@ -263,13 +263,29 @@ object Villages {
       stats = stats, lvl = lvl.toLong, undead = Some(UndeadForm(name, lvl.toLong, stats)), home = 0)
   }
 
-  /** Поставить караванщиков в строй — каждого на ближайшее к герою свободное
-    * место. Отряд занял всё — кому места нет, тот бьётся из-за повозок и в строй
-    * не встаёт. */
+  /** Поставить караванщиков в строй: каждого — на свою повозку, которую никто
+    * не занял (первую по порядку), а повозки все прикрыты — на ближайшее к герою
+    * свободное место. Отряд занял всё — кому места нет, тот бьётся из-за повозок
+    * и в строй не встаёт. */
   def withGuards(battle: SoloPveBattle, contract: VillageContract, names: List[String]): SoloPveBattle =
-    names.foldLeft(battle)((b, name) =>
-      b.group.nearestFreeAllyPlace.fold(b)(pos =>
-        b.copy(group = b.group.copy(allies = b.group.allies :+ caravanGuard(contract, name).copy(position = pos)))))
+    names.foldLeft(battle) { (b, name) =>
+      val g       = b.group
+      val onWagon = g.convoy.toList.flatMap(_.wagons.filter(_.alive).map(_.position))
+                      .find(p => p != g.heroPos && g.allyAt(p).isEmpty)
+      onWagon.orElse(g.nearestFreeAllyPlace).fold(b)(pos =>
+        b.copy(group = g.copy(allies = g.allies :+ caravanGuard(contract, name).copy(position = pos))))
+    }
+
+  /** Повозки обоза у ворот: [[VillageRates.CaravanWagons]], на первых местах ряда
+    * героя; прочность каждой — HP и броня редкого моба той же расы, что деревня,
+    * уровня задания (так решил пользователь). */
+  def caravanWagons(contract: VillageContract): List[Wagon] = {
+    val s = MonsterGenerator.generateOfRaceAndRarity(contract.level.max(1), contract.race, VillageRates.CaravanWagonRarity).fightStats
+    (1 to VillageRates.CaravanWagons).toList.map(p => Wagon(p, s.hp, s.armor, s.hp, s.armor))
+  }
+
+  /** Обоз в засаде: повозки, какими дошли, и повадки тех, кто напал. */
+  def convoy(wagons: List[Wagon], ambush: CaravanAmbush): Convoy = Convoy(wagons, ambush.hitsWagons, ambush.ignitePct)
 
   /** Выводок в гнезде: молодые, взрослые и матка — уровня задания; с шансом
     * [[VillageRates.RedSpiderChancePct]]% последним — ещё и красный. */

@@ -5,7 +5,7 @@ import io.circe.syntax.EncoderOps
 import pangea.domain.Rng
 import pangea.engine.SceneContent
 import pangea.generator.monster.MonsterGenerator
-import pangea.model.battle.SoloPveBattle
+import pangea.model.battle.{Convoy, SoloPveBattle}
 import pangea.model.hero.Hero
 import pangea.model.item.{Item, QuestItemKind}
 import pangea.model.monster.{Race, Rarity}
@@ -85,7 +85,7 @@ object VillageCaravanSpec extends ZIOSpecDefault {
                 VillageQuest.openAt(25) == List(VillageQuest.BanditLair, VillageQuest.SpiderNests, VillageQuest.CaravanEscort)) &&
               assertTrue(Villages.goTo(quests()) == Some(StateType.VillageCaravan -> "caravan") &&
                 Villages.goTo(quests(VillageContract.Done)).isEmpty && Villages.toCaravan(quests())) &&
-              assertTrue(Villages.cardLine(c, quests()).contains("отдаст тот, кто примет обоз в городе")) &&
+              assertTrue(Villages.cardLine(c, quests()).contains("отдаст тот, кто примет его в городе")) &&
               assertTrue(Villages.cardLine(c, quests()).contains(s"до города $City") &&
                 Villages.cardLine(c, quests()).contains(s"Плата — $Silver серебра")) &&
               assertTrue(c.choice("x", "village.card.caravanLabel").label == "🐎 Идти к каравану")
@@ -193,7 +193,7 @@ object VillageCaravanSpec extends ZIOSpecDefault {
         after  <- d2.getHeroByUserId(userId).map(_.get)
       } yield assertTrue(sure == StateType.Battle && b.isDefined) &&
               assertTrue(calm == StateType.VillageCaravan && city.text.contains(s"Обоз въезжает в город $City") &&
-                city.text.contains("купчиха") && city.text.contains(s"Получено $Silver серебра") &&
+                city.text.contains("купчиха") && city.text.contains(s"Получено $Silver серебра") && city.text.contains("Дошли все пять повозок") &&
                 city.text.contains("Контракт деревни выполнен") && !city.text.contains("с карточки") &&
                 city.choices.map(_.id) == List("VillageCaravanOut")) &&
               // платят сразу: серебро и опыт у героя, договор закрыт, береста ушла из сумки
@@ -319,6 +319,87 @@ object VillageCaravanSpec extends ZIOSpecDefault {
       assertTrue(g.stats == MonsterGenerator.generateOfRaceAndRarity(QuestLevel, Race.Gnome, Rarity.Rare).fightStats &&
         g.hp == g.stats.hp && g.home == 0) &&
       assertTrue(BattleState.goneKey(g) == "battle.ally.caravanGuardDown")
+    },
+
+    test("выход: пять повозок на местах 1–5, прочность — как у редкого моба расы деревни; у ворот — подсказка; в пути — сколько цело") {
+      for {
+        c     <- content
+        d     <- dao()
+        r     <- TestRenderer.make
+        st    <- caravan(d, TestInventoryRepository.withItems(List(paper)), c).map(_._1)
+        _     <- st.enter(testUser, r)
+        gates <- r.sentScreens.map(_.last)
+        _     <- st.action(testUser, tap("VillageCaravanGo"), r)
+        road  <- r.sentScreens.map(_.last)
+        trip  <- tripOf(d)
+        rare   = MonsterGenerator.generateOfRaceAndRarity(QuestLevel, Race.Gnome, Rarity.Rare).fightStats
+      } yield assertTrue(gates.text.contains("повозки встают на первые пять мест")) &&
+              assertTrue(trip.flatMap(_.wagons).exists(ws => ws.map(_.position) == List(1, 2, 3, 4, 5) &&
+                ws.forall(w => w.hp == rare.hp && w.armor == rare.armor && w.maxHp == rare.hp && w.burn.isEmpty))) &&
+              assertTrue(road.text.contains("Повозок в обозе: 5 из 5"))
+    },
+
+    test("засада с обозом: Чернолом бьёт повозки и жжёт вдвое чаще, ищейки их не трогают; караванщики — на свободные повозки") {
+      val fresh = Villages.caravanWagons(contract())
+      def fight(kind: Int) =
+        for {
+          c  <- content
+          d  <- dao(trip = Some(ended(2, 0).copy(wagons = Some(fresh))))
+          r  <- TestRenderer.make
+          st <- caravan(d, TestInventoryRepository.withItems(List(paper)), c).map(_._1)
+          _  <- TestRandom.feedInts(0, kind)
+          _  <- st.action(testUser, legDone, r)
+          b  <- battleOf(d)
+        } yield b
+      for {
+        _      <- TestClock.adjust(10.minutes)
+        goblin <- fight(1)
+        hound  <- fight(2)
+        guards  = goblin.toList.flatMap(_.group.allies.filter(_.kind == AllyKind.CaravanGuard).map(_.position))
+      } yield assertTrue(goblin.flatMap(_.group.convoy).contains(Convoy(fresh, hitsWagons = true, ignitePct = 50L))) &&
+              assertTrue(hound.flatMap(_.group.convoy).exists(cv => !cv.hitsWagons && cv.wagons == fresh)) &&
+              // герой на первом месте — караванщики встают на повозки 2 и 3
+              assertTrue(guards == List(2, 3))
+    },
+
+    test("вернулись из засады: побитые повозки едут дальше побитыми; не осталось ни одной — контракт сорван") {
+      val fresh  = Villages.caravanWagons(contract())
+      val beaten = fresh.map(w => if (w.position == 2) w.copy(hp = 1L, armor = 0L) else w)
+      val gone   = fresh.map(_.copy(hp = 0L, armor = 0L))
+      for {
+        c     <- content
+        d1    <- dao(trip = Some(CaravanTrip(3, 1, 0L, Some(beaten))))
+        r     <- TestRenderer.make
+        st1   <- caravan(d1, TestInventoryRepository.withItems(List(paper)), c).map(_._1)
+        _     <- st1.enter(testUser, r)
+        trip  <- tripOf(d1)
+        d2    <- dao(trip = Some(CaravanTrip(3, 1, 0L, Some(gone))))
+        inv    = TestInventoryRepository.withItems(List(paper))
+        pair  <- caravan(d2, inv, c)
+        (st2, sched) = pair
+        _     <- st2.enter(testUser, r)
+        lost  <- r.sentScreens.map(_.last)
+        q     <- questOf(d2)
+        off   <- sched.cancelled
+      } yield assertTrue(trip.exists(t => t.leg == 3 && t.nextAt > 0L && t.wagons.contains(beaten))) &&
+              assertTrue(lost.text.contains("Последняя повозка догорает") && lost.choices.map(_.id) == List("VillageCaravanOut")) &&
+              assertTrue(q.village.isEmpty && inv.snapshot.isEmpty && off.contains(userId -> TaskKind.VillageCaravan))
+    },
+
+    test("плата — за дошедшее: три повозки из пяти — три пятых платы, и купчиха говорит, сколько дошло") {
+      val fresh = Villages.caravanWagons(contract())
+      val three = fresh.map(w => if (w.position >= 4) w.copy(hp = 0L, armor = 0L) else w)
+      for {
+        c     <- content
+        d     <- dao(trip = Some(CaravanTrip(VillageRates.CaravanLegs + 1, 2, 0L, Some(three))))
+        r     <- TestRenderer.make
+        st    <- caravan(d, TestInventoryRepository.withItems(List(paper)), c).map(_._1)
+        _     <- st.enter(testUser, r)
+        city  <- r.sentScreens.map(_.last)
+        after <- d.getHeroByUserId(userId).map(_.get)
+        due    = Silver * 3L / 5L
+      } yield assertTrue(city.text.contains("Из 5 повозок до города дошло 3") && city.text.contains(s"Получено $due серебра")) &&
+              assertTrue(after.silver == hero.silver + due)
     },
 
     test("сцена в пути — своими ключами: чужое в scene_data за караван не читается, своё едет туда и обратно") {

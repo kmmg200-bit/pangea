@@ -332,7 +332,9 @@ object SlainMonster {
   *  - `originRace` — раса первого моба: подкрепление приходит той же расы;
   *  - `allies`  — союзники героя по своим позициям (см. [[BattleAlly]]);
   *  - `alliesGone` — кого за этот бой унесло из строя: наёмник после боя
-  *    выбывает из отряда на сутки, поднятый рассыпается совсем.
+  *    выбывает из отряда на сутки, поднятый рассыпается совсем;
+  *  - `convoy` — обоз в засаде на караван деревни: повозки «под» строем героя
+  *    (см. [[Convoy]]); в прочих боях его нет.
   *
   * Обычный бой 1 на 1 — это группа из одного: `others` пуст. */
 final case class GroupState(
@@ -350,9 +352,20 @@ final case class GroupState(
   heroDown:    Boolean            = false,
   queue:       List[MonsterSlot]  = Nil,
   downRounds:  Int                = 0,
-  pendingShift: Option[Int]       = None
+  pendingShift: Option[Int]       = None,
+  convoy:      Option[Convoy]     = None
 ) {
   def isGroup: Boolean = others.nonEmpty
+
+  /** Непокрытая повозка на месте `pos`: на её месте не стоит ни живой союзник,
+    * ни герой на ногах — удары по этому месту достаются ей. Лежащий герой
+    * повозку не прикрывает. */
+  def bareWagon(pos: Int): Option[Wagon] =
+    convoy.flatMap(_.wagonAt(pos)).filter(_ => !allyAt(pos).exists(_.alive) && !(pos == heroPos && !heroDown))
+
+  /** Повозка, на которую идёт моб с места `pos`: непокрытая — и засада бьёт
+    * повозки (ищейки Сноходцев их не трогают). Пока она стоит, моб занят ею. */
+  def wagonBait(pos: Int): Option[Wagon] = convoy.filter(_.hitsWagons).flatMap(_ => bareWagon(pos))
 
   /** Активный моб стоит напротив героя. */
   def paired: Boolean = activePos == heroPos
@@ -424,7 +437,7 @@ final case class GroupState(
   def hasRatAlly: Boolean = allies.exists(_.kind == AllyKind.Rat)
 
   /** Строй для показа — до самого дальнего занятого места по обеим сторонам. */
-  def rows: Int = (size :: allies.map(_.position)).max
+  def rows: Int = (size :: allies.map(_.position) ++ convoy.toList.flatMap(_.wagons.filter(_.alive).map(_.position))).max
 
   /** Тёмный волк своей стороны, если он в строю
     * ([[pangea.model.squad.UndeadForm.unique]]): второму рядом с ним не бывать —
@@ -549,6 +562,7 @@ object GroupState {
       queue       <- c.getOrElse[List[MonsterSlot]]("queue")(Nil)
       downRounds  <- c.getOrElse[Int]("downRounds")(0)
       shift       <- c.getOrElse[Option[Int]]("pendingShift")(None)
+      convoy      <- c.getOrElse[Option[Convoy]]("convoy")(None)
     } yield GroupState(others, slain, round, pendingMove, originRace, heroPos, places, allies, gone, activePos, lastTarget,
-                       heroDown, queue, downRounds, shift)
+                       heroDown, queue, downRounds, shift, convoy)
 }

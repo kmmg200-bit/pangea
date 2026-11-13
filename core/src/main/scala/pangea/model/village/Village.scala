@@ -3,6 +3,7 @@ package pangea.model.village
 import enumeratum._
 import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, DecodingFailure, Encoder, HCursor, Json}
+import pangea.model.battle.{Convoy, Wagon}
 import pangea.model.monster.{Breed, Race, Rarity}
 import pangea.model.quest.BoardRates
 
@@ -296,17 +297,33 @@ object VillageRates {
   /** Караванщики в строю героя: по силе — редкие той же расы, что деревня,
     * уровня задания (так решил пользователь); имена — `village.caravan.guards`. */
   val CaravanGuardRarity: Rarity = Rarity.Rare
+
+  /** Повозок в обозе — столько, на первых местах ряда героя; прочность каждой —
+    * как HP и броня редкого моба той же расы, что деревня, уровня задания. Плата
+    * — за то, что дошло: каждая потерянная повозка — её доля долой (так решил
+    * пользователь). */
+  val CaravanWagons: Int          = 5
+  val CaravanWagonRarity: Rarity  = Rarity.Rare
 }
 
 /** Кто нападает на караван в засаде (так решил пользователь): сборная банда
   * разбойников, гоблины гильдии Чернолом, ищейки Сноходцев. Текст засады —
-  * `village.caravan.ambush.<key>`. В базе не лежит: бросается в конце перехода. */
-sealed abstract class CaravanAmbush(val key: String)
+  * `village.caravan.ambush.<key>`. У каждой свои повадки с повозками: бьёт ли
+  * она их и как часто удар поджигает. В базе не лежит: бросается в конце
+  * перехода.
+  *
+  * @param hitsWagons бьёт ли засада повозки, которые никто не прикрыл
+  * @param ignitePct  шанс, что удар по повозке её подожжёт, в процентах
+  */
+sealed abstract class CaravanAmbush(val key: String, val hitsWagons: Boolean, val ignitePct: Long)
 
 object CaravanAmbush {
-  case object Bandits   extends CaravanAmbush("bandits")
-  case object Chernolom extends CaravanAmbush("chernolom")
-  case object Hounds    extends CaravanAmbush("hounds")
+  /** Разбойникам нужен товар: бьют повозки, удар поджигает с шансом 25%. */
+  case object Bandits   extends CaravanAmbush("bandits", hitsWagons = true, ignitePct = 25L)
+  /** Гоблины Чернолома ходят с факелами: бьют повозки и поджигают вдвое чаще. */
+  case object Chernolom extends CaravanAmbush("chernolom", hitsWagons = true, ignitePct = 50L)
+  /** Ищейкам Сноходцев нужны люди, а не товар: повозок они не трогают. */
+  case object Hounds    extends CaravanAmbush("hounds", hitsWagons = false, ignitePct = 0L)
 
   val all: List[CaravanAmbush] = List(Bandits, Chernolom, Hounds)
 }
@@ -320,9 +337,19 @@ object CaravanAmbush {
   * @param ambushes сколько засад уже было: ни одной — на последнем переходе будет
   * @param nextAt   когда кончится переход (мс); 0 — переход ещё не начат (вернулись
   *                 с добычи после засады — пора начинать следующий)
+  * @param wagons   повозки обоза, какими они вышли из последней засады: побитые
+  *                 едут дальше побитыми, огонь потушен. Ключ — тот же, под которым
+  *                 их возвращает бой ([[Convoy.ReturnKey]]). `None` — путь начат
+  *                 до повозок: засады без них, плата целиком
   */
-final case class CaravanTrip(leg: Int, ambushes: Int, nextAt: Long) {
+final case class CaravanTrip(leg: Int, ambushes: Int, nextAt: Long, wagons: Option[List[Wagon]] = None) {
   def arrived: Boolean = leg > VillageRates.CaravanLegs
+
+  /** Сколько повозок цело; путь без повозок — None. */
+  def intact: Option[Int] = wagons.map(_.count(_.alive))
+
+  /** Повозок не осталось ни одной — везти нечего. */
+  def plundered: Boolean = wagons.exists(ws => ws.nonEmpty && !ws.exists(_.alive))
 }
 
 object CaravanTrip {
@@ -333,12 +360,14 @@ object CaravanTrip {
   implicit val encoder: Encoder[CaravanTrip] = (t: CaravanTrip) => Json.obj(
     "caravanLeg"      -> t.leg.asJson,
     "caravanAmbushes" -> t.ambushes.asJson,
-    "caravanNextAt"   -> t.nextAt.asJson)
+    "caravanNextAt"   -> t.nextAt.asJson,
+    Convoy.ReturnKey  -> t.wagons.asJson)
 
   implicit val decoder: Decoder[CaravanTrip] = (c: HCursor) =>
     for {
       leg      <- c.get[Int]("caravanLeg")
       ambushes <- c.getOrElse[Int]("caravanAmbushes")(0)
       nextAt   <- c.getOrElse[Long]("caravanNextAt")(0L)
-    } yield CaravanTrip(leg, ambushes, nextAt)
+      wagons   <- c.getOrElse[Option[List[Wagon]]](Convoy.ReturnKey)(None)
+    } yield CaravanTrip(leg, ambushes, nextAt, wagons)
 }
