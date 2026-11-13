@@ -337,8 +337,10 @@ object NecroQuestSpec extends ZIOSpecDefault {
                 .forall(n => c.text(s"cave.$n").nonEmpty && c.text(s"necro.$n").nonEmpty)) &&
               assertTrue(c.list("necro.walls").size == c.list("cave.walls").size) &&
               assertTrue(c.list("necro.rooms.empty").size == c.list("cave.rooms.empty").size) &&
-              // слова только выездных мест — и у канализации, и у пещеры некроманта
-              assertTrue(MonsterCaveState.AwayOnly.forall(n => c.text(s"sewer.$n").nonEmpty && c.text(s"necro.$n").nonEmpty)) &&
+              // слова о ярусах — и у канализации, и у пещеры некроманта, и у хозяев пещеры лабиринта
+              assertTrue(MonsterCaveState.FloorSays.forall(n => c.text(s"sewer.$n").nonEmpty && c.text(s"necro.$n").nonEmpty)) &&
+              assertTrue(MonsterCaveState.FloorSays.forall(n =>
+                c.text(s"cave.king.$n").nonEmpty && c.text(s"cave.necro.$n").nonEmpty)) &&
               assertTrue(MonsterCaveState.questOf(smallNecro()) == BoardKind.NecromancerHunt) &&
               assertTrue(MonsterCaveState.questOf(smallNecro().copy(necro = false, sewer = true)) == BoardKind.SewerRats) &&
               assertTrue(MonsterCaveState.questOf(smallNecro().copy(necro = false)) == BoardKind.CaveClear) &&

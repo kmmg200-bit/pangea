@@ -483,7 +483,7 @@ case class MonsterCaveState(
       case RoomKind.Chest => content.text(if (room.done) "cave.room.chestOpen" else "cave.room.chest")
       case RoomKind.Stash => content.text(if (room.done) "cave.room.stashDug" else "cave.room.stash")
       case RoomKind.Treasure => content.text(if (room.done) "cave.room.treasureDug" else "cave.room.treasure")
-      case RoomKind.Stairs   => awayTxt(scene, "room.stairs")
+      case RoomKind.Stairs   => floorTxt(scene, "room.stairs")
       case RoomKind.Lair     =>
         val lair = if (scene.sewer) "sewer" else if (scene.undeadMobs) "cave.necro" else "cave.king"
         content.text(if (room.monsters > 0) s"$lair.room.lair" else s"$lair.room.lairEmpty")
@@ -534,9 +534,15 @@ case class MonsterCaveState(
 
   private def txt(scene: CaveScene, name: String): String = content.text(key(scene, name))
 
-  /** Слово, которое есть только у выездных мест (см. [[MonsterCaveState.AwayOnly]]). */
-  private def awayTxt(scene: CaveScene, name: String): String =
-    content.text(if (scene.necro) s"necro.$name" else s"sewer.$name")
+  /** Слово о ярусах — ход вниз, выбитый верх, спуск (см. [[MonsterCaveState.FloorSays]]):
+    * у выездных мест оно своё, а у пещеры лабиринта — по тому, кто ждёт внизу:
+    * Некромант или Крысиный король. */
+  private def floorTxt(scene: CaveScene, name: String): String =
+    content.text(
+      if (scene.necro) s"necro.$name"
+      else if (scene.sewer) s"sewer.$name"
+      else if (scene.undeadMobs) s"cave.necro.$name"
+      else s"cave.king.$name")
 
   /** Чья добыча в сундуке и схроне: в пещере — хозяев пещеры, в канализации —
     * людей, что прятали там своё. Крысы сундуков не набивают. */
@@ -670,19 +676,22 @@ case class MonsterCaveState(
 
   /** Ход вниз: нижний ярус катается в этот самый момент — до спуска его ещё
     * нет. Дурман и отрава идут вниз вместе с героем: сквозняк общий, а взятый
-    * наверху опыт копится дальше — платят за выездное место один раз. */
+    * наверху опыт копится дальше — платят за место один раз. Внизу у
+    * канализации и пещеры некроманта свой ярус, а у пещеры лабиринта —
+    * короткий ход к логову её хозяина (см. `CaveGenerator.lairDeep`). */
   private def descend(user: User, renderer: Renderer): Task[StateType] =
     withScene(user) { scene =>
-      if (!scene.away || scene.room.kind != RoomKind.Stairs || scene.room.monsters > 0)
+      if (scene.lastFloor || scene.room.kind != RoomKind.Stairs || scene.room.monsters > 0)
         showRoom(user, scene, renderer)
       else
         for {
           seed      <- Random.nextLong
           (deep, _)  = if (scene.necro) CaveGenerator.necroDeep(scene.questLvl, scene.race, Rng(seed))
-                       else CaveGenerator.sewerDeep(scene.questLvl, Rng(seed))
+                       else if (scene.sewer) CaveGenerator.sewerDeep(scene.questLvl, Rng(seed))
+                       else CaveGenerator.lairDeep(scene.race, scene.boss, Rng(seed))
           below      = deep.copy(weakened = scene.weakened, poisoned = scene.poisoned,
                          expEarned = scene.expEarned, restUsed = true)
-          res       <- showRoom(user, below, renderer, awayTxt(scene, "descended"))
+          res       <- showRoom(user, below, renderer, floorTxt(scene, "descended"))
         } yield res
     }
 
@@ -855,9 +864,9 @@ case class MonsterCaveState(
     * необысканные углы остаются на месте, и уходит он сам, когда захочет. */
   private def reward(user: User, scene: CaveScene): Task[(CaveScene, String)] =
     if (!scene.cleared || scene.rewarded || scene.expEarned <= 0L) ZIO.succeed((scene, ""))
-    // Верхний ярус выездного места выбит, а хозяина так и не видели: за
-    // половину дела не платят — надо искать ход вниз.
-    else if (!scene.lastFloor) ZIO.succeed((scene, awayTxt(scene, "upperClear")))
+    // Верхний ярус выбит, а хозяина так и не видели: за половину дела не
+    // платят — он ждёт внизу.
+    else if (!scene.lastFloor) ZIO.succeed((scene, floorTxt(scene, "upperClear")))
     else {
       val bonus = (scene.expEarned * CaveRates.ClearExpPct / 100L).max(1L)
       // Выездные в счёт пещер не идут: за каждое своё объявление.
@@ -990,9 +999,10 @@ object MonsterCaveState {
     * в канализации своё. */
   val NecroSays: Set[String] = SewerSays
 
-  /** Слова, которых у пещеры нет вовсе: ход вниз, верхний ярус, спуск. Они
-    * бывают только у выездных мест — `sewer.<имя>` или `necro.<имя>`. */
-  val AwayOnly: Set[String] = Set("upperClear", "room.stairs", "descended")
+  /** Слова о ярусах: ход вниз, выбитый верх, спуск. У выездных мест они свои —
+    * `sewer.<имя>` или `necro.<имя>`, — а у пещеры лабиринта — у хозяина, что
+    * ждёт внизу: `cave.king.<имя>` или `cave.necro.<имя>`. */
+  val FloorSays: Set[String] = Set("upperClear", "room.stairs", "descended")
 
   /** Какое объявление закрывает это место: канализация и пещера некроманта —
     * свои, всякая прочая пещера — «выбить пещеру». */

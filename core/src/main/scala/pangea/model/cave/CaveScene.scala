@@ -20,8 +20,8 @@ object RoomKind extends Enum[RoomKind] {
   case object Rest  extends RoomKind // сухой угол, где можно перевести дух
   case object Altar extends RoomKind // алтарь тёмных сил: поднимает добычу обратно
   case object Treasure extends RoomKind // клад по карте: она и привела сюда
-  case object Stairs extends RoomKind // ход вниз: только в канализации, и только с первого яруса
-  case object Lair   extends RoomKind // логово Крысиного короля: нижний ярус канализации
+  case object Stairs extends RoomKind // ход вниз, с верхнего яруса: в канализации, в пещере некроманта и в пещере лабиринта, чей хозяин ждёт внизу
+  case object Lair   extends RoomKind // логово хозяина — Крысиного короля или Некроманта: на нижнем ярусе
 
   implicit val encoder: Encoder[RoomKind] = (k: RoomKind) => k.entryName.asJson
   implicit val decoder: Decoder[RoomKind] = (c: HCursor) => c.as[String].map(RoomKind.withName)
@@ -111,7 +111,9 @@ final case class CaveScene(
   questLvl:  Long    = 0L,
   floor:     Int     = 1,
   /** Хозяин пещеры, если она особая: имя варианта минибосса. Он сидит в логове,
-    * и пока он жив, пещера не выбита. В пещере Некроманта вся родня внутри
+    * и пока он жив, пещера не выбита. В пещере лабиринта логово — на нижнем
+    * ярусе, а наверху в самой дальней комнате ход к нему (у пещер, начатых до
+    * этого, логово на том же ярусе). В пещере Некроманта вся родня внутри
     * поднята — мобы те же по расе, но мёртвые (см. [[undeadMobs]]). */
   boss:      Option[String] = None,
   necro:     Boolean = false,
@@ -141,9 +143,14 @@ final case class CaveScene(
   /** Живых мобов в пещере не осталось. */
   def cleared: Boolean = rooms.forall(_.monsters <= 0)
 
-  /** Последний ярус: у пещеры он единственный, у выездных — второй. Только
-    * на нём зачистка что-то значит. */
-  def lastFloor: Boolean = !away || floor >= SewerRates.Floors
+  /** Есть ли на этом ярусе ход вниз. */
+  def hasStairs: Boolean = rooms.exists(_.kind == RoomKind.Stairs)
+
+  /** Последний ярус: у выездных — второй, у пещеры лабиринта — второй или
+    * единственный, если хода вниз нет (обычная пещера и особая, начатая до
+    * нижних ярусов, — с логовом на том же ярусе). Только на нём зачистка
+    * что-то значит. */
+  def lastFloor: Boolean = floor >= SewerRates.Floors || (!away && !hasStairs)
 }
 
 object CaveScene {
@@ -246,9 +253,16 @@ object CaveRates {
     * пещеру не бывает. */
   val AltarChancePct: Int = 50
 
-  /** Шанс (в %), что пещера окажется особой — с хозяином в логове. Кто именно
-    * им будет, решается поровну между [[BossPool]]. */
-  val BossChancePct: Int = 10
+  /** Шанс (в %), что пещера окажется особой — с ходом вниз, к логову хозяина.
+    * Кто именно им будет, решается поровну между [[BossPool]]. Было 10% —
+    * стало 30% (решил пользователь). */
+  val BossChancePct: Int = 30
+
+  /** Нижний ярус особой пещеры — короткий ход без развилок: две-три комнаты без
+    * мобов (место спуска и одна-две с обычными находками), а в конце логово.
+    * Считая логово — три-четыре комнаты. */
+  val LairMinRooms: Int = 3
+  val LairMaxRooms: Int = 4
 
   /** Кто может держать пещеру — имена вариантов `MiniBoss`. Строками, чтобы
     * числа пещеры не тянули за собой весь модуль монстров. */
@@ -315,8 +329,9 @@ object CaveGenerator {
   /** Пещера расы `race`: связный клубок комнат, мобы кучками по 3–5 и ровно
     * один угол, где можно перевести дух. Первая комната — вход: в ней пусто. */
   def generate(race: String, rng: Rng): (CaveScene, Rng) = {
-    // Особая пещера: в ней сидит хозяин. Кто именно — решается поровну, а алтарь
-    // в таком месте стоит всегда: тёмные силы здесь и так на виду.
+    // Особая пещера: у неё есть хозяин, и ждёт он ниже — в самой дальней
+    // комнате ход к нему (см. [[lairDeep]]). Кто именно — решается поровну, а
+    // алтарь в таком месте стоит всегда: тёмные силы здесь и так на виду.
     val (special, r0) = roll(rng, 100)
     val (owner, r1) =
       if (special >= CaveRates.BossChancePct) (Option.empty[String], r0)
@@ -327,7 +342,44 @@ object CaveGenerator {
     val altarPct = if (owner.isDefined) 100 else CaveRates.AltarChancePct
     val (rooms, next) = build(CaveRates.MinRooms, CaveRates.MaxRooms, CaveRates.MinMonsters,
       CaveRates.MaxMonsters, altarPct, withRest = true, withStairs = false, r1)
-    (CaveScene(race, owner.fold(rooms)(_ => withLair(rooms)), boss = owner), next)
+    (CaveScene(race, owner.fold(rooms)(_ => withStairsFar(rooms)), boss = owner), next)
+  }
+
+  /** Нижний ярус особой пещеры лабиринта: короткий ход без развилок — место
+    * спуска, одна-две комнаты с обычными находками, мобов нет — и в конце
+    * логово хозяина `boss`. Ни привала, ни алтаря, ни хода дальше. Мобы и
+    * уровень — пещеры лабиринта: уровня задания у неё нет. Герой оказывается
+    * на ярусе сразу внутри: наверху он уже был. */
+  def lairDeep(race: String, boss: Option[String], rng: Rng): (CaveScene, Rng) = {
+    val (extra, r1) = roll(rng, CaveRates.LairMaxRooms - CaveRates.LairMinRooms + 1)
+    val (cells, r2) = corridor(CaveRates.LairMinRooms + extra, r1)
+    val last        = cells.size - 1
+    val (rooms, r3) = cells.zipWithIndex.foldLeft((List.empty[CaveRoom], r2)) { case ((acc, r), ((x, y), i)) =>
+      if (i == 0) (acc :+ CaveRoom(x, y, 0, RoomKind.Empty), r)
+      else if (i == last) (acc :+ CaveRoom(x, y, SewerRates.KingCount, RoomKind.Lair), r)
+      else {
+        val (k, next) = roll(r, CaveRates.KindPool.size)
+        (acc :+ CaveRoom(x, y, 0, CaveRates.KindPool(k)), next)
+      }
+    }
+    (CaveScene(race, rooms, inside = true, floor = 2, boss = boss), r3)
+  }
+
+  /** Ход без развилок: каждая новая клетка примыкает только к предыдущей —
+    * ни срезать, ни свернуть в сторону, и последняя клетка — в самом конце хода. */
+  private def corridor(count: Int, rng: Rng): (List[(Int, Int)], Rng) = {
+    def around(c: (Int, Int)): List[(Int, Int)] = CaveDir.values.toList.map(d => (c._1 + d.dx, c._2 + d.dy))
+    @annotation.tailrec
+    def loop(cells: Vector[(Int, Int)], at: (Int, Int), r: Rng): (Vector[(Int, Int)], Rng) =
+      if (cells.size >= count) (cells, r)
+      else around(at).filter(c => !cells.contains(c) && around(c).count(n => cells.contains(n)) == 1) match {
+        case Nil     => (cells, r)
+        case options =>
+          val (i, next) = roll(r, options.size)
+          loop(cells :+ options(i), options(i), next)
+      }
+    val (cells, next) = loop(Vector((0, 0)), (0, 0), rng)
+    (cells.toList, next)
   }
 
   /** Верхний ярус канализации: та же пещера теми же комнатами, только алтарь в
@@ -372,18 +424,24 @@ object CaveGenerator {
   }
 
   /** Посадить короля в самую дальнюю от входа клетку: идти к нему через весь
-    * ярус. Крыс из его комнаты не выгоняем — пусть сторожат вместе с ним, но
-    * считается она логовом: там ждёт он. */
-  private def withLair(rooms: List[CaveRoom]): List[CaveRoom] = {
-    // Привал, алтарь, клад и ход вниз логово не занимает: такую комнату оно
-    // перезаписало бы вместе с находкой, и пещера недосчиталась бы своего.
+    * ярус. Крыс, что там стояли, он вытесняет: в логове ждёт он один. */
+  private def withLair(rooms: List[CaveRoom]): List[CaveRoom] =
+    farthest(rooms)(_.copy(kind = RoomKind.Lair, monsters = SewerRates.KingCount))
+
+  /** Ход вниз особой пещеры — в самую дальнюю от входа клетку, как и логово:
+    * к хозяину идут через весь ярус. Кучка, что там стоит, его и сторожит. */
+  private def withStairsFar(rooms: List[CaveRoom]): List[CaveRoom] =
+    farthest(rooms)(_.copy(kind = RoomKind.Stairs))
+
+  /** Самая дальняя от входа комната — переделать её `f`. Привал, алтарь, клад и
+    * ход вниз не трогаем: такую комнату переделка затёрла бы вместе с
+    * находкой, и пещера недосчиталась бы своего. */
+  private def farthest(rooms: List[CaveRoom])(f: CaveRoom => CaveRoom): List[CaveRoom] = {
     def plain(k: RoomKind): Boolean =
       k != RoomKind.Rest && k != RoomKind.Altar && k != RoomKind.Treasure && k != RoomKind.Stairs
     val far = rooms.zipWithIndex.drop(1).filter { case (r, _) => plain(r.kind) }
       .maxByOption { case (r, _) => (math.abs(r.x) + math.abs(r.y), r.x, r.y) }
-    far.fold(rooms) { case (_, idx) =>
-      rooms.updated(idx, rooms(idx).copy(kind = RoomKind.Lair, monsters = SewerRates.KingCount))
-    }
+    far.fold(rooms) { case (_, idx) => rooms.updated(idx, f(rooms(idx))) }
   }
 
   /** Клубок комнат с мобами и находками — то общее, из чего сложены и пещера, и

@@ -4,7 +4,7 @@ import pangea.domain.Rng
 import pangea.generator.loot.LootGenerator
 import pangea.generator.loot.LootGenerator.LootDrop
 import pangea.model.battle.{Aura, Nature, SoloPveBattle}
-import pangea.model.cave.{CaveGenerator, CaveRates, RoomKind}
+import pangea.model.cave.{CaveGenerator, CaveRates, CaveRoom, CaveScene, RoomKind}
 import pangea.model.item.{ItemSet, MaterialKind, Rarity => ItemRarity}
 import pangea.model.monster.{MiniBoss, Monster, Race, Rarity}
 import pangea.model.squad.{Ally, AllyKind, Squad}
@@ -42,31 +42,70 @@ object NecromancerCaveSpec extends ZIOSpecDefault {
 
   override def spec = suite("Пещера Некроманта")(
 
-    test("одна пещера из десяти особая, и хозяин в ней — поровну Некромант или Крысиный король") {
+    test("особая — почти треть пещер (30%), и хозяин в ней — поровну Некромант или Крысиный король") {
       val special = caves.filter(_.boss.isDefined)
       val necros  = special.count(_.boss.contains("Necromancer"))
       val kings   = special.count(_.boss.contains("RatKing"))
-      assertTrue(CaveRates.BossChancePct == 10) &&
-      // десятая часть с поправкой на случайность выборки
-      assertTrue(special.size > caves.size / 20 && special.size < caves.size / 5) &&
+      assertTrue(CaveRates.BossChancePct == 30) &&
+      // 30% с поправкой на случайность выборки
+      assertTrue(special.size > caves.size / 5 && special.size < caves.size * 2 / 5) &&
       // и поровну между двумя
       assertTrue(necros > special.size / 4 && kings > special.size / 4) &&
       assertTrue(necros + kings == special.size) &&
       assertTrue(CaveRates.BossPool == List("Necromancer", "RatKing"))
     },
 
-    test("у особой пещеры есть логово с хозяином и алтарь, а привал и клад логово не съедает") {
+    test("у особой пещеры наверху — ход вниз в самой дальней комнате и алтарь; логова наверху нет, привал не съеден") {
       val special = caves.filter(_.boss.isDefined)
       val plain   = caves.filter(_.boss.isEmpty)
+      def far(r: CaveRoom): Int = math.abs(r.x) + math.abs(r.y)
+      // дальше хода вниз — разве что привал или алтарь: их он не занимает
+      def farthest(c: CaveScene): Boolean = c.rooms.find(_.kind == RoomKind.Stairs).exists { st =>
+        val rivals = c.rooms.drop(1).filter(r => r.kind != RoomKind.Rest && r.kind != RoomKind.Altar)
+        rivals.forall(r => far(r) <= far(st))
+      }
+      val oneStairs = special.forall(c => c.rooms.count(_.kind == RoomKind.Stairs) == 1)
+      val stairsFar = special.forall(c => farthest(c))
+      val noLairUp  = special.forall(c => !c.rooms.exists(_.kind == RoomKind.Lair) && !c.lastFloor)
+      val altars    = special.forall(c => c.rooms.exists(_.kind == RoomKind.Altar))
+      val rests     = special.forall(c => c.rooms.count(_.kind == RoomKind.Rest) == 1)
+      val plainFlat = plain.forall(c => c.lastFloor && !c.rooms.exists(r => r.kind == RoomKind.Lair || r.kind == RoomKind.Stairs))
       assertTrue(special.nonEmpty) &&
-      assertTrue(special.forall(_.rooms.count(_.kind == RoomKind.Lair) == 1)) &&
-      assertTrue(special.forall(_.rooms.filter(_.kind == RoomKind.Lair).forall(_.monsters == 1))) &&
-      // тёмный алтарь в такой пещере стоит всегда
-      assertTrue(special.forall(_.rooms.exists(_.kind == RoomKind.Altar))) &&
-      // привал на месте, и он один
-      assertTrue(special.forall(_.rooms.count(_.kind == RoomKind.Rest) == 1)) &&
-      // в обычной пещере логова нет вовсе
-      assertTrue(plain.forall(c => !c.rooms.exists(_.kind == RoomKind.Lair)))
+      assertTrue(oneStairs && stairsFar && noLairUp) &&
+      // тёмный алтарь в такой пещере стоит всегда, привал на месте, и он один
+      assertTrue(altars && rests) &&
+      // в обычной пещере нет ни логова, ни хода вниз
+      assertTrue(plainFlat)
+    },
+
+    test("нижний ярус особой пещеры: короткий ход без развилок, мобов нет, в конце — логово хозяина") {
+      val deep = (1L to 300L).toList.flatMap { s =>
+        List("Necromancer", "RatKing").map(b => CaveGenerator.lairDeep(Race.Orc.entryName, Some(b), Rng(s))._1)
+      }
+      def touch(a: CaveRoom, b: CaveRoom): Boolean = math.abs(a.x - b.x) + math.abs(a.y - b.y) == 1
+      // ход без развилок: каждая комната примыкает к предыдущей и больше ни к одной из прежних
+      def corridor(c: CaveScene): Boolean = c.rooms.indices.drop(1).forall { i =>
+        val room = c.rooms(i)
+        touch(room, c.rooms(i - 1)) && c.rooms.take(i - 1).forall(r => !touch(room, r))
+      }
+      def entry(c: CaveScene): Boolean = c.rooms.headOption.exists(r => r.kind == RoomKind.Empty && r.monsters == 0)
+      def lairAtEnd(c: CaveScene): Boolean = c.rooms.lastOption.exists(r => r.kind == RoomKind.Lair && r.monsters == 1)
+      def bare(c: CaveScene): Boolean =
+        !c.rooms.exists(r => r.kind == RoomKind.Rest || r.kind == RoomKind.Altar || r.kind == RoomKind.Stairs)
+      def finds(c: CaveScene): Boolean =
+        c.rooms.exists(r => r.kind == RoomKind.Herb || r.kind == RoomKind.Chest || r.kind == RoomKind.Stash)
+      val sizes   = deep.map(_.rooms.size).toSet
+      val shaped  = deep.forall(c => corridor(c) && entry(c) && lairAtEnd(c))
+      // кроме хозяина — никого, и ни привала, ни алтаря, ни хода дальше
+      val onlyHim = deep.forall(c => c.rooms.map(_.monsters).sum == 1 && bare(c))
+      // находки в проходе — обычные: где-то трава, сундук или схрон
+      val found   = deep.exists(c => finds(c))
+      val placed  = deep.forall(c => c.floor == 2 && c.inside && c.lastFloor && !c.away && c.race == Race.Orc.entryName)
+      val necros  = deep.count(_.boss.contains("Necromancer"))
+      val undead  = deep.count(_.undeadMobs)
+      assertTrue(sizes == Set(CaveRates.LairMinRooms, CaveRates.LairMaxRooms)) &&
+      assertTrue(shaped && onlyHim && found && placed) &&
+      assertTrue(necros == 300 && undead == 300)
     },
 
     test("в пещере Некроманта родня поднята, в пещере короля — нет") {

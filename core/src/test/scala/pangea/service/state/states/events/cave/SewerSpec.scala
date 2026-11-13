@@ -144,14 +144,17 @@ object SewerSpec extends ZIOSpecDefault {
       }
     },
 
-    test("пещеру канализация не задела: алтарь в ней по-прежнему в половине случаев") {
+    test("пещеру канализация не задела: алтарь в обычной — по-прежнему в половине случаев, ход вниз — только к хозяину") {
       val caves     = (1L to 300L).toList.map(s => CaveGenerator.generate(Race.Orc.entryName, Rng(s))._1)
-      val withAltar = caves.count(_.rooms.exists(_.kind == RoomKind.Altar))
-      assertTrue(withAltar > 120 && withAltar < 180) &&
+      val plain     = caves.filter(_.boss.isEmpty)
+      val withAltar = plain.count(_.rooms.exists(_.kind == RoomKind.Altar))
+      val flat      = plain.forall(c => c.lastFloor && !c.rooms.exists(_.kind == RoomKind.Stairs))
+      val down      = caves.filter(_.boss.isDefined).forall(c => !c.lastFloor && c.rooms.count(_.kind == RoomKind.Stairs) == 1)
+      assertTrue(withAltar * 100 > plain.size * 35 && withAltar * 100 < plain.size * 65) &&
       assertTrue(caves.forall(_.rooms.count(_.kind == RoomKind.Rest) == 1)) &&
-      assertTrue(caves.forall(c => !c.sewer && c.floor == 1 && c.lastFloor)) &&
-      // хода вниз в пещере не бывает
-      assertTrue(caves.forall(!_.rooms.exists(_.kind == RoomKind.Stairs)))
+      assertTrue(caves.forall(c => !c.sewer && !c.away && c.floor == 1)) &&
+      // ход вниз в пещере лабиринта бывает только там, где внизу ждёт хозяин
+      assertTrue(flat && down)
     },
 
     // ── Крысы ────────────────────────────────────────────────────────────────
