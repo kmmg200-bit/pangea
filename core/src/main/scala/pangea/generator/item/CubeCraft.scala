@@ -2,8 +2,8 @@ package pangea.generator.item
 
 import pangea.domain.Rng
 import pangea.model.home.RecipeNote
-import pangea.model.item.{BrewKind, BrewRates, Gem, GemKind, Grip, Item, ItemDetails, ItemSet, ItemType, MaterialKind, Rarity, DivineKind, RoseKind, TrapNet, TrophyKind}
-import pangea.model.monster.MiniBoss
+import pangea.model.item.{BrewKind, BrewRates, Gem, GemKind, Grip, Item, ItemDetails, ItemSet, ItemType, MaterialKind, Rarity, DivineKind, RaceSign, RoseKind, TrapNet, TrophyKind}
+import pangea.model.monster.{MiniBoss, Race}
 import pangea.model.rune.{Rune, RuneStone, RuneStoneSize}
 
 /** Чистое ядро крафта в кубе Азата. При «Активации» просчитываем рецепты от самого
@@ -204,14 +204,16 @@ object CubeCraft {
   // стихии. Характеристики, уровень и редкость сохраняются полностью — меняются
   // только принадлежность к набору и третье слово названия (титул уступает место
   // имени набора): «Выдающийся Топор Дворянина» → «Выдающийся Топор Дикого пламени».
+  // Знак рода так же переводит вещь в малый набор своей расы (см. RaceSign).
   private object SetInfusion extends Recipe {
     val size = 2
 
     override def takesStoryGear: Boolean = true
 
-    /** Ингредиент → набор, в который он переводит вещь. */
+    /** Ингредиент → набор, в который он переводит вещь: минибосса — его набор,
+      * знак рода — набор своей расы. */
     private def setOf(i: Item): Option[ItemSet] =
-      i.material.flatMap(m => MiniBoss.values.find(_.ingredient == m).flatMap(_.set))
+      i.material.flatMap(m => MiniBoss.values.find(_.ingredient == m).flatMap(_.set).orElse(RaceSign.setOf(m)))
 
     def tryMatch(pool: List[Item], rng: Rng): Option[(List[Item], Item, Rng)] =
       for {
@@ -237,12 +239,13 @@ object CubeCraft {
 
   // 3 вещи одного набора → ингредиент этого набора. Редкость вещей не важна:
   // в переплавку одинаково идут и синие, и фиолетовые. Так добывают и лишний
-  // ингредиент: с самого минибосса его падает не больше одного.
+  // ингредиент: с самого минибосса его падает не больше одного. Малый расовый
+  // набор переплавляется в знак рода своей расы (см. RaceSign).
   private object SetSalvage extends Recipe {
     val size = 3
 
     private def materialOf(set: ItemSet): Option[MaterialKind] =
-      MiniBoss.values.find(_.set.contains(set)).map(_.ingredient)
+      MiniBoss.values.find(_.set.contains(set)).map(_.ingredient).orElse(RaceSign.ofSet(set))
 
     def tryMatch(pool: List[Item], rng: Rng): Option[(List[Item], Item, Rng)] = {
       val bySet = pool
@@ -377,6 +380,28 @@ object CubeCraft {
     }
   }
 
+  // Пять талисманов одной расы → знак рода этой расы (см. RaceSign): так у
+  // трофеев появляется второе дело. Берутся младшие — те, за которые Гильдия
+  // дала бы меньше всего. Талисманы рас без малого набора знака не дают. Так
+  // решил пользователь.
+  private object TalismanSign extends Recipe {
+    val size: Int = RaceSign.Talismans
+
+    private def raceOf(i: Item): Option[Race] = i.details match {
+      case ItemDetails.Trophy(race, TrophyKind.Talisman, _) => Race.withNameOption(race)
+      case _                                                => None
+    }
+
+    def tryMatch(pool: List[Item], rng: Rng): Option[(List[Item], Item, Rng)] = {
+      val byRace = pool.flatMap(i => raceOf(i).map(_ -> i)).groupBy(_._1).view.mapValues(_.map(_._2)).toMap
+      byRace.collect { case (race, its) if its.sizeIs >= size => race }
+        .toList.sortBy(_.entryName)
+        .flatMap(race => RaceSign.of(race).map(race -> _))
+        .headOption
+        .map { case (race, sign) => (byRace(race).sortBy(_.lvl).take(size), MaterialGenerator.item(sign), rng) }
+    }
+  }
+
   // Три мотка паучьего шёлка и моток пеньки → ловчая сеть (см. TrapNet): шёлк
   // идёт на полотно, пенька — на утяжелённые края. Так решил пользователь.
   private object NetWeave extends Recipe {
@@ -394,6 +419,7 @@ object CubeCraft {
     NineHeads,                                             // 9
     MaterialBrew,                                          // 6 (не из трав: гнилой зов)
     RuneFold,                                              // 5
+    TalismanSign,                                          // 5 (талисманы одной расы)
     NetWeave,                                              // 4 (шёлк ×3 + пенька)
     LegendaryReforge(mithril = 2, levelDelta = 1, keepName = true),  // 3
     GemUpgrade,                                            // 3

@@ -409,6 +409,82 @@ object CubeCraftSpec extends ZIOSpecDefault {
       assertTrue(!MaterialKind.SpiderSilk.notYetUsed && !MaterialKind.HempRope.notYetUsed) &&
       // карточка сети не рассказывает, из чего её плетут
       assertTrue(nets.flatMap(_.statsLines).map(_.toLowerCase).forall(l => !l.contains("шёлк") && !l.contains("пеньк")))
+    },
+
+    test("три вещи малого расового набора → знак рода этой расы: у каждой из восьми рас свой") {
+      def salvage(set: ItemSet): List[MaterialKind] = CubeCraft.craft(
+        (1 to 3).map(i => setItem(i.toLong, ItemType.Helmet, Rarity.Blue, set)).toList,
+        charges = 50, rng).items.flatMap(_.material)
+      val raceSets = ItemSet.values.toList.filter(_.race.isDefined)
+      val made     = raceSets.map(set => set -> salvage(set))
+      val ownSign  = made.forall { case (set, kinds) => kinds == set.race.flatMap(RaceSign.of).toList }
+      val races    = RaceSign.byRace.map(_._1).toSet == raceSets.flatMap(_.race).toSet
+      assertTrue(raceSets.size == 8 && races && ownSign) &&
+      assertTrue(made.flatMap(_._2).distinct.size == 8) &&
+      assertTrue(salvage(ItemSet.Pioneer) == List(MaterialKind.RaceSignHuman))
+    },
+
+    test("знак рода + вещь → та же вещь в наборе его расы: характеристики, уровень и редкость прежние") {
+      val helm = Item(1L, "🔵 Прочный Шлем Дворянина", 12L, Rarity.Blue, ItemType.Helmet,
+        attack = 0, accuracy = 0, energy = 0, armor = 30, defence = 3, evasion = 0)
+      val made = RaceSign.byRace.map { case (race, sign) =>
+        race -> CubeCraft.craft(List(helm, MaterialGenerator.item(sign).copy(id = 2L)), charges = 50, rng).items }
+      val intoOwn = made.forall { case (race, items) =>
+        items.size == 1 && items.forall(i => i.set == ItemSet.ofRace(race) && i.set.isDefined &&
+          i.armor == 30 && i.defence == 3 && i.lvl == 12L && i.rarity == Rarity.Blue) }
+      val orc = made.collectFirst { case (pangea.model.monster.Race.Orc, items) => items.flatMap(_.set) }
+      assertTrue(intoOwn) &&
+      assertTrue(orc.contains(List(ItemSet.Horde)))
+    },
+
+    test("пять талисманов одной расы → знак рода: уходят младшие, четырёх мало, у нежити знака нет") {
+      import pangea.model.monster.Race
+      def talisman(id: Long, race: Race, lvl: Long): Item =
+        Item(id, s"Талисман (${race.toString})", lvl, Rarity.Gray, ItemType.Trophy, 0, 0, 0, 0, 0, 0,
+          details = ItemDetails.Trophy(race.entryName, TrophyKind.Talisman))
+      val six    = (1L to 6L).toList.map(i => talisman(i, Race.Orc, 20L - i))
+      val made   = CubeCraft.craft(six, charges = 50, rng)
+      val left   = made.items.filter(_.itemType == ItemType.Trophy).map(_.lvl)
+      val four   = CubeCraft.craft(six.take(4), charges = 50, rng)
+      val mixed  = CubeCraft.craft(six.take(3) ++ (7L to 8L).toList.map(talisman(_, Race.Human, 10L)), charges = 50, rng)
+      val undead = CubeCraft.craft((1L to 5L).toList.map(talisman(_, Race.Undead, 10L)), charges = 50, rng)
+      val relics = CubeCraft.craft((1L to 5L).toList.map(i => talisman(i, Race.Orc, 10L)
+                     .copy(details = ItemDetails.Trophy(Race.Orc.entryName, TrophyKind.Relic))), charges = 50, rng)
+      assertTrue(made.chargesUsed == 1 && made.items.flatMap(_.material) == List(MaterialKind.RaceSignOrc)) &&
+      // в кубе остался старший: за него Гильдия даст больше всех
+      assertTrue(left == List(19L)) &&
+      assertTrue(four.chargesUsed == 0 && mixed.chargesUsed == 0 && undead.chargesUsed == 0 && relics.chargesUsed == 0) &&
+      assertTrue(RaceSign.Talismans == 5)
+    },
+
+    test("книга рецептов: знак рода — из вещей набора и из талисманов, вещь в набор — общим словом") {
+      import pangea.model.monster.Race
+      import pangea.service.cube.AzatCube
+      def lines(items: List[Item]): List[String] =
+        CubeCraft.craft(items, charges = 50, rng).applied.map(AzatCube.note).map(_.line)
+      val helm      = Item(1L, "Шлем Дворянина", 10L, Rarity.Blue, ItemType.Helmet,
+                        attack = 0, accuracy = 0, energy = 0, armor = 10, defence = 0, evasion = 0)
+      val salvage   = lines((1 to 3).map(i => setItem(i.toLong, ItemType.Helmet, Rarity.Blue, ItemSet.Pioneer)).toList)
+      val infused   = lines(List(helm, MaterialGenerator.item(MaterialKind.RaceSignHuman).copy(id = 5L)))
+      val talismans = lines((1L to 5L).toList.map(i => Item(i, "Талисман (Человек)", 10L + i, Rarity.Gray, ItemType.Trophy,
+                        0, 0, 0, 0, 0, 0, details = ItemDetails.Trophy(Race.Human.entryName, TrophyKind.Talisman))))
+      assertTrue(salvage == List("Вещь из набора «Первопроходец» ×3 → Знак рода людей")) &&
+      assertTrue(infused == List("Экипировка + Знак рода людей → Экипировка из набора «Первопроходец»")) &&
+      assertTrue(talismans == List("Талисман (Человек) ×5 → Знак рода людей"))
+    },
+
+    test("знак рода: на карточке описание без рецепта и без пометки; Ришелье платит серебром по общей цене") {
+      import pangea.service.state.states.merchant.MerchantState
+      val signs  = RaceSign.byRace.map(_._2)
+      val cards  = signs.map(k => k -> MaterialGenerator.item(k).statsLines)
+      val plain  = cards.forall { case (k, lines) =>
+        k.description.nonEmpty && lines.contains(k.description) && !lines.contains(MaterialKind.NotYetUsedNote) &&
+          lines.map(_.toLowerCase).forall(l => !l.contains("талисман") && !l.contains("куб") && !l.contains("набор")) }
+      val prices = signs.map(k => MerchantState.sellPrice(MaterialGenerator.item(k))).distinct
+      assertTrue(plain && signs.forall(k => !k.notYetUsed && !k.worthless && k.doubloonPrice == 0L)) &&
+      assertTrue(prices == List(12L)) &&
+      assertTrue(signs.map(_.displayName) == List("Знак рода людей", "Знак рода эльфов", "Знак рода мурлоков",
+        "Знак рода орков", "Знак рода гоблинов", "Знак рода демонов", "Знак рода гномов", "Знак рода каджитов"))
     }
 
   )

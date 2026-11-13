@@ -401,6 +401,53 @@ object MaterialKind extends Enum[MaterialKind] {
     override val doubloonPrice: Long = 5L
   }
 
+  // ── Знаки рода ──────────────────────────────────────────────────────────────
+  // По одному на каждый малый расовый набор (см. RaceSign): куб делает знак из
+  // трёх вещей набора или из пяти талисманов расы, а знак с вещью даёт ту же
+  // вещь в наборе своей расы — как ингредиент минибосса. Так решил пользователь.
+  // Ришелье берёт знак по общей цене, серебром: золото за него превратило бы
+  // талисманы в дублоны.
+
+  case object RaceSignHuman extends MaterialKind("Знак рода людей") {
+    override val description: String =
+      "Медная бляха с дорогой, уходящей за край чеканки. Края стёрты пальцами: её долго носили."
+  }
+
+  case object RaceSignElf extends MaterialKind("Знак рода эльфов") {
+    override val description: String =
+      "Лист из светлого дерева. Прожилки на нём не вырезаны, а выращены."
+  }
+
+  case object RaceSignMurloc extends MaterialKind("Знак рода мурлоков") {
+    override val description: String =
+      "Перламутровая чешуя на жильной нитке. Сколько её ни суши, она остаётся влажной и пахнет глубиной."
+  }
+
+  case object RaceSignOrc extends MaterialKind("Знак рода орков") {
+    override val description: String =
+      "Клык на ремне, весь в зарубках. Зарубки разной руки: знак не раз менял хозяина."
+  }
+
+  case object RaceSignGoblin extends MaterialKind("Знак рода гоблинов") {
+    override val description: String =
+      "Кривая монета с дыркой посередине. На обеих сторонах одна и та же ухмыляющаяся рожа."
+  }
+
+  case object RaceSignDemon extends MaterialKind("Знак рода демонов") {
+    override val description: String =
+      "Чёрный камень с багровой жилой. Тёплый на ощупь и тяжелее, чем выглядит."
+  }
+
+  case object RaceSignGnome extends MaterialKind("Знак рода гномов") {
+    override val description: String =
+      "Железная печать с клеймом мастера. Ровная, тяжёлая, без единой царапины."
+  }
+
+  case object RaceSignKhajiit extends MaterialKind("Знак рода каджитов") {
+    override val description: String =
+      "Бронзовый диск с солнцем над барханами. В руке нагревается быстрее, чем остывает."
+  }
+
   /** Травы данного ранга — из них выбирается находка на поляне. */
   def herbsOfRank(rank: Int): IndexedSeq[MaterialKind] = values.filter(_.herbRank == rank)
 
