@@ -213,12 +213,13 @@ object LootGenerator {
   )
 
   /** Награбленное с обозов — сверх обычной добычи: с каждого павшего одна вещь
-    * с шансом, вид — по весу (в сумме сто). На разбойничьей заставе шанс
-    * [[BanditSpoilsChancePct]]%, в прочих боях со смертных — вдвое меньше,
-    * [[StraySpoilsChancePct]]% (так решил пользователь). Ришелье берёт его по
-    * твёрдой цене (MaterialKind.silverPrice). */
+    * с шансом, вид — по весу (в сумме сто). Это добыча деревни и её контрактов,
+    * в обычных боях его нет (решил пользователь): на разбойничьей заставе —
+    * [[BanditSpoilsChancePct]]%, с разбойников в засаде на караван — вдвое реже,
+    * [[AmbushSpoilsChancePct]]%. Ришелье берёт его по твёрдой цене
+    * (MaterialKind.silverPrice). */
   val BanditSpoilsChancePct: Long = 30L
-  val StraySpoilsChancePct: Long  = 15L
+  val AmbushSpoilsChancePct: Long = 15L
   val BanditSpoils: List[(MaterialKind, Int)] = List(
     MaterialKind.Timber        -> 25,
     MaterialKind.HempRope      -> 18,

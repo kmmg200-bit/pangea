@@ -5,7 +5,7 @@ import io.circe.parser.parse
 import io.circe.syntax.EncoderOps
 import pangea.domain.Rng
 import pangea.engine.SceneContent
-import pangea.model.battle.{SlainMonster, SoloPveBattle}
+import pangea.model.battle.{Convoy, SlainMonster, SoloPveBattle}
 import pangea.model.caravan.CaravanScene
 import pangea.model.hero.{Hero, LoreData}
 import pangea.model.item.{Item, QuestItemKind}
@@ -15,7 +15,7 @@ import pangea.model.quest.{DailyQuests, Difficulty, NpcQuest, NpcQuests}
 import pangea.model.state.StateType
 import pangea.model.stats.FightStats
 import pangea.model.user.{TelegramId, User, UserId, VkId}
-import pangea.model.village.{VillageContract, VillageQuest, VillageRates, VillageScene}
+import pangea.model.village.{CaravanAmbush, VillageContract, VillageQuest, VillageRates, VillageScene}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.battle.BattleState
 import pangea.service.state.states.dungeon.DungeonState
@@ -617,25 +617,35 @@ object VillageSpec extends ZIOSpecDefault {
               assertTrue(bandits.text.endsWith(warn) && spiders.text.endsWith(warn))
     },
 
-    test("награбленное: на заставе — 30% с каждого павшего, в прочих боях со смертных — вдвое реже; со зверей, нежити и в сюжетном бою — нет") {
+    test("награбленное: на заставе — 30% с каждого павшего, с разбойников в засаде на караван — вдвое реже; в обычном бою, при налёте, в гнезде и в прочих засадах — нет") {
       def kinds(drops: List[LootGenerator.LootDrop]): List[MaterialKind] =
         drops.collect { case LootGenerator.LootDrop.Gear(i) => i.material }.flatten
-      def rolls(story: Option[String], race: Race): List[List[LootGenerator.LootDrop]] =
-        (1L to 2000L).toList.map(seed => BattleState.plunder(story, storyFight = false, Some(race), Rng(seed))._1)
-      val lair  = rolls(Some(Villages.BanditsStory), Race.Human)
-      val stray = rolls(None, Race.Orc).count(_.nonEmpty)
-      val raid  = rolls(Some(Villages.RaidStory), Race.Elf).count(_.nonEmpty)
-      val rng   = Rng(7L)
-      def none(story: Option[String], storyFight: Boolean, race: Option[Race]): Boolean =
-        BattleState.plunder(story, storyFight, race, rng) == ((Nil, rng))
+      def rolls(story: Option[String], convoy: Option[Convoy]): List[List[LootGenerator.LootDrop]] =
+        (1L to 2000L).toList.map(seed => BattleState.plunder(story, convoy, Rng(seed))._1)
+      def ambush(a: CaravanAmbush): Option[Convoy] = Some(Villages.convoy(Nil, a))
+      val caravan = Some(Villages.CaravanStory)
+      val lair    = rolls(Some(Villages.BanditsStory), None)
+      val robbers = rolls(caravan, ambush(CaravanAmbush.Bandits))
+      val rng     = Rng(7L)
+      def none(story: Option[String], convoy: Option[Convoy]): Boolean = BattleState.plunder(story, convoy, rng) == ((Nil, rng))
+      // обычный бой лабиринта, налёт на деревню, гнездо сетеплётов, засады Чернолома и ищеек,
+      // засада из пути без повозок, прочие сюжеты
+      val quiet = List(None, Some(Villages.RaidStory), Some(Villages.SpidersStory), caravan, Some("collector"))
+                    .forall(s => none(s, None)) &&
+                  none(caravan, ambush(CaravanAmbush.Chernolom)) && none(caravan, ambush(CaravanAmbush.Hounds))
+      val onlyBandits = CaravanAmbush.all.filter(_.plunders) == List(CaravanAmbush.Bandits)
+      // бой засады, записанный до этого, — без награбленного
+      val oldConvoy = Json.obj("wagons" -> Json.arr(), "hitsWagons" -> Json.True, "ignitePct" -> Json.fromLong(25L))
+        .as[Convoy].toOption
+      val oldQuiet  = oldConvoy.exists(cv => !cv.plunders && cv.ignitePct == 25L)
       // 30% от двух тысяч — шестьсот, 15% — триста
       assertTrue(lair.count(_.nonEmpty) > 480 && lair.count(_.nonEmpty) < 720 && lair.forall(_.size <= 1)) &&
-      assertTrue(stray > 220 && stray < 380 && raid > 220 && raid < 380) &&
-      assertTrue(LootGenerator.BanditSpoilsChancePct == 30L && LootGenerator.StraySpoilsChancePct == 15L) &&
+      assertTrue(robbers.count(_.nonEmpty) > 220 && robbers.count(_.nonEmpty) < 380 && robbers.forall(_.size <= 1)) &&
+      assertTrue(LootGenerator.BanditSpoilsChancePct == 30L && LootGenerator.AmbushSpoilsChancePct == 15L) &&
       assertTrue(lair.flatMap(kinds).toSet == LootGenerator.BanditSpoils.map(_._1).toSet &&
+        robbers.flatMap(kinds).toSet == LootGenerator.BanditSpoils.map(_._1).toSet &&
         LootGenerator.BanditSpoils.map(_._2).sum == 100 && LootGenerator.BanditSpoils.size == 7) &&
-      assertTrue(List(Race.Animal, Race.Undead, Race.Elemental, Race.Construct).forall(r => none(None, storyFight = false, Some(r)))) &&
-      assertTrue(none(Some("collector"), storyFight = true, Some(Race.Human)) && none(None, storyFight = false, None))
+      assertTrue(quiet && onlyBandits && oldQuiet)
     },
 
     test("награбленное: цены у Ришелье — 100, 100, 200, 200, 250, 300, 400; на карточке — «(пока не используется)», как у паучьего; у прочих — нет") {
@@ -652,29 +662,39 @@ object VillageSpec extends ZIOSpecDefault {
         !k.notYetUsed && !MaterialGenerator.item(k).statsLines.contains(MaterialKind.NotYetUsedNote)))
     },
 
-    test("награбленное в настоящем бою: на заставе с банды падает; с нежити в обычном бою — нет") {
+    test("награбленное в настоящем бою: на заставе и с разбойников в засаде на караван падает; с гоблинов и нежити в обычном бою лабиринта и с Чернолома — нет") {
       val strong = hero().copy(fightStats = FightStats(atk = 1000000L, hp = 500000L, armor = 0, defence = 0, evasion = 0,
                      accuracy = 9999, energy = 0))
       def rogue(race: Race) = Monster(0L, QuestLevel.toLong, race, Rarity.Common,
                      FightStats(atk = 1, hp = 1, armor = 0, defence = 0, evasion = 0, accuracy = 1, energy = 0))
-      // пятнадцать уже полегли: хоть с кого-то из шестнадцати да упадёт
-      def gang(race: Race) = List.fill(15)(SlainMonster(QuestLevel.toLong, race.entryName, Rarity.Common.entryName,
+      // `n` уже полегли: на заставе хоть с кого-то из шестнадцати да упадёт, в
+      // засаде на караван (вдвое реже) павших берём больше
+      def gang(race: Race, n: Int) = List.fill(n)(SlainMonster(QuestLevel.toLong, race.entryName, Rarity.Common.entryName,
                      marked = false, name = "Разбойник"))
-      def materials(story: Option[String], race: Race): Task[List[MaterialKind]] =
+      def materials(story: Option[String], race: Race, convoy: Option[Convoy] = None, n: Int = 15): Task[List[MaterialKind]] =
         for {
           c  <- content
           d  <- dao(strong)
           b   = SoloPveBattle.from(rogue(race), strong, squad = false)
-          _  <- d.writeActiveBattle(userId, b.copy(noKin = true, story = story, group = b.group.copy(slain = gang(race))).asJson)
+          _  <- d.writeActiveBattle(userId, b.copy(noKin = true, story = story,
+                  group = b.group.copy(slain = gang(race, n), convoy = convoy)).asJson)
           r  <- TestRenderer.make
           _  <- BattleState(d, TestInventoryRepository.accepting, TestItemRepository.make, c).action(testUser, tap("Attack"), r)
           ld <- d.readSceneData(userId).map(_.flatMap(_.as[LootData].toOption))
         } yield ld.toList.flatMap(l => l.items ++ l.queue.flatMap(_.items)).flatMap(_.material)
       val bandit = LootGenerator.BanditSpoils.map(_._1).toSet
+      val caravan = Some(Villages.CaravanStory)
       for {
-        lair  <- materials(Some(Villages.BanditsStory), Race.Human)
-        plain <- materials(None, Race.Undead)
-      } yield assertTrue(lair.exists(bandit.contains)) && assertTrue(!plain.exists(bandit.contains))
+        lair    <- materials(Some(Villages.BanditsStory), Race.Human)
+        plain   <- materials(None, Race.Undead)
+        // смертные в обычном бою — как гоблины-рабы на 10-м уровне: награбленного с них нет
+        goblins <- materials(None, Race.Goblin)
+        // засада на караван: у разбойников есть, у Чернолома — нет
+        robbers <- materials(caravan, Race.Human, Some(Villages.convoy(Nil, CaravanAmbush.Bandits)), n = 40)
+        torches <- materials(caravan, Race.Goblin, Some(Villages.convoy(Nil, CaravanAmbush.Chernolom)), n = 40)
+      } yield assertTrue(lair.exists(bandit.contains)) && assertTrue(!plain.exists(bandit.contains)) &&
+              assertTrue(!goblins.exists(bandit.contains)) &&
+              assertTrue(robbers.exists(bandit.contains) && !torches.exists(bandit.contains))
     },
 
     test("тексты: у каждой расы — названия, приход и староста; у каждой беды — всё, что ей нужно; первая беда — с порога деревень") {

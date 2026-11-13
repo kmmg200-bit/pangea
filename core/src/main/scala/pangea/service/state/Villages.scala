@@ -285,7 +285,8 @@ object Villages {
   }
 
   /** Обоз в засаде: повозки, какими дошли, и повадки тех, кто напал. */
-  def convoy(wagons: List[Wagon], ambush: CaravanAmbush): Convoy = Convoy(wagons, ambush.hitsWagons, ambush.ignitePct)
+  def convoy(wagons: List[Wagon], ambush: CaravanAmbush): Convoy =
+    Convoy(wagons, ambush.hitsWagons, ambush.ignitePct, ambush.plunders)
 
   /** Выводок в гнезде: молодые, взрослые и матка — уровня задания; с шансом
     * [[VillageRates.RedSpiderChancePct]]% последним — ещё и красный. */

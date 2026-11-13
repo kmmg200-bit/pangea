@@ -339,7 +339,7 @@ object VillageCaravanSpec extends ZIOSpecDefault {
               assertTrue(road.text.contains("Повозок в обозе: 5 из 5"))
     },
 
-    test("засада с обозом: Чернолом бьёт повозки и жжёт вдвое чаще, ищейки их не трогают; караванщики — на свободные повозки") {
+    test("засада с обозом: при разбойниках — награбленное, Чернолом бьёт повозки и жжёт вдвое чаще, ищейки их не трогают; караванщики — на свободные повозки") {
       val fresh = Villages.caravanWagons(contract())
       def fight(kind: Int) =
         for {
@@ -353,11 +353,13 @@ object VillageCaravanSpec extends ZIOSpecDefault {
         } yield b
       for {
         _      <- TestClock.adjust(10.minutes)
+        bandit <- fight(0)
         goblin <- fight(1)
         hound  <- fight(2)
         guards  = goblin.toList.flatMap(_.group.allies.filter(_.kind == AllyKind.CaravanGuard).map(_.position))
-      } yield assertTrue(goblin.flatMap(_.group.convoy).contains(Convoy(fresh, hitsWagons = true, ignitePct = 50L))) &&
-              assertTrue(hound.flatMap(_.group.convoy).exists(cv => !cv.hitsWagons && cv.wagons == fresh)) &&
+      } yield assertTrue(bandit.flatMap(_.group.convoy).contains(Convoy(fresh, hitsWagons = true, ignitePct = 25L, plunders = true))) &&
+              assertTrue(goblin.flatMap(_.group.convoy).contains(Convoy(fresh, hitsWagons = true, ignitePct = 50L))) &&
+              assertTrue(hound.flatMap(_.group.convoy).exists(cv => !cv.hitsWagons && !cv.plunders && cv.wagons == fresh)) &&
               // герой на первом месте — караванщики встают на повозки 2 и 3
               assertTrue(guards == List(2, 3))
     },

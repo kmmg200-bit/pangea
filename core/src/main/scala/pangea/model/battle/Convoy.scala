@@ -54,8 +54,10 @@ object Wagon {
 
 /** Обоз в бою (засада на караван деревни): его повозки и как с ними обходится
   * засада — бьёт ли она повозки вообще и с каким шансом удар поджигает.
-  * Лежит в `GroupState.convoy`; в прочих боях обоза нет. */
-final case class Convoy(wagons: List[Wagon], hitsWagons: Boolean, ignitePct: Long) {
+  * `plunders` — засада разбойничья: с её павших падает награбленное с обозов
+  * (см. `BattleState.plunder`). Лежит в `GroupState.convoy`; в прочих боях обоза
+  * нет. */
+final case class Convoy(wagons: List[Wagon], hitsWagons: Boolean, ignitePct: Long, plunders: Boolean = false) {
 
   /** Целая повозка на месте `pos`. */
   def wagonAt(pos: Int): Option[Wagon] = wagons.find(w => w.alive && w.position == pos)
@@ -84,12 +86,15 @@ object Convoy {
   implicit val encoder: Encoder[Convoy] = (c: Convoy) => Json.obj(
     "wagons"     -> c.wagons.asJson,
     "hitsWagons" -> c.hitsWagons.asJson,
-    "ignitePct"  -> c.ignitePct.asJson)
+    "ignitePct"  -> c.ignitePct.asJson,
+    "plunders"   -> c.plunders.asJson)
 
   implicit val decoder: Decoder[Convoy] = (c: HCursor) =>
     for {
-      wagons <- c.getOrElse[List[Wagon]]("wagons")(Nil)
-      hits   <- c.getOrElse[Boolean]("hitsWagons")(true)
-      ignite <- c.getOrElse[Long]("ignitePct")(0L)
-    } yield Convoy(wagons, hits, ignite)
+      wagons   <- c.getOrElse[List[Wagon]]("wagons")(Nil)
+      hits     <- c.getOrElse[Boolean]("hitsWagons")(true)
+      ignite   <- c.getOrElse[Long]("ignitePct")(0L)
+      // Бой засады, записанный до этого, — без награбленного.
+      plunders <- c.getOrElse[Boolean]("plunders")(false)
+    } yield Convoy(wagons, hits, ignite, plunders)
 }

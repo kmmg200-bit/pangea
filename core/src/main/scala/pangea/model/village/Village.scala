@@ -314,16 +314,20 @@ object VillageRates {
   *
   * @param hitsWagons бьёт ли засада повозки, которые никто не прикрыл
   * @param ignitePct  шанс, что удар по повозке её подожжёт, в процентах
+  * @param plunders   несёт ли засада награбленное с обозов: с павших оно падает
+  *                   вдвое реже, чем на разбойничьей заставе (см.
+  *                   `LootGenerator.AmbushSpoilsChancePct`)
   */
-sealed abstract class CaravanAmbush(val key: String, val hitsWagons: Boolean, val ignitePct: Long)
+sealed abstract class CaravanAmbush(val key: String, val hitsWagons: Boolean, val ignitePct: Long, val plunders: Boolean)
 
 object CaravanAmbush {
-  /** Разбойникам нужен товар: бьют повозки, удар поджигает с шансом 25%. */
-  case object Bandits   extends CaravanAmbush("bandits", hitsWagons = true, ignitePct = 25L)
+  /** Разбойникам нужен товар: бьют повозки, удар поджигает с шансом 25%. При
+    * них — награбленное с прежних обозов (решил пользователь). */
+  case object Bandits   extends CaravanAmbush("bandits", hitsWagons = true, ignitePct = 25L, plunders = true)
   /** Гоблины Чернолома ходят с факелами: бьют повозки и поджигают вдвое чаще. */
-  case object Chernolom extends CaravanAmbush("chernolom", hitsWagons = true, ignitePct = 50L)
+  case object Chernolom extends CaravanAmbush("chernolom", hitsWagons = true, ignitePct = 50L, plunders = false)
   /** Ищейкам Сноходцев нужны люди, а не товар: повозок они не трогают. */
-  case object Hounds    extends CaravanAmbush("hounds", hitsWagons = false, ignitePct = 0L)
+  case object Hounds    extends CaravanAmbush("hounds", hitsWagons = false, ignitePct = 0L, plunders = false)
 
   val all: List[CaravanAmbush] = List(Bandits, Chernolom, Hounds)
 }

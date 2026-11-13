@@ -6480,9 +6480,9 @@ case class BattleState(
             killLevel,
             rng
           )
-          // Награбленное с обозов: на разбойничьей заставе — с каждого павшего,
-          // в прочих боях — со смертных и вдвое реже.
-          val (spoils, r2) = BattleState.plunder(battle.story, storyFight, Race.withNameOption(m.race), r)
+          // Награбленное с обозов — на разбойничьей заставе и с разбойников в
+          // засаде на караван, с каждого павшего.
+          val (spoils, r2) = BattleState.plunder(battle.story, battle.group.convoy, r)
           (acc :+ (name -> (d ++ extra ++ spoils)), r2)
       }
       // Благословение: 5% шанс дополнительной экипировки после боя.
@@ -7202,14 +7202,15 @@ object BattleState {
     if (story.contains(Villages.SpidersStory)) LootGenerator.SpiderSpoils else LootGenerator.RatSpoils
 
   /** Награбленное с обозов (см. LootGenerator.BanditSpoils) — сверх таблицы, с
-    * одного павшего. На разбойничьей заставе — с шансом
-    * LootGenerator.BanditSpoilsChancePct; в прочих боях — вдвое реже и только
-    * со смертных: его носят люди, а не звери, нежить и сооружения. Сюжетный
-    * бой — нет, там добычу кладёт сюжет; тогда и броска нет. */
-  def plunder(story: Option[String], storyFight: Boolean, race: Option[Race], rng: Rng): (List[LootGenerator.LootDrop], Rng) =
+    * одного павшего. Это добыча деревни и её контрактов, в обычных боях
+    * лабиринта его нет (решил пользователь): на разбойничьей заставе — с шансом
+    * LootGenerator.BanditSpoilsChancePct, в засаде разбойников на караван
+    * (`Convoy.plunders`) — вдвое реже, LootGenerator.AmbushSpoilsChancePct. Нет
+    * броска — генератор не тронут. */
+  def plunder(story: Option[String], convoy: Option[Convoy], rng: Rng): (List[LootGenerator.LootDrop], Rng) =
     if (story.contains(Villages.BanditsStory)) LootGenerator.banditLoot(rng, LootGenerator.BanditSpoilsChancePct)
-    else if (storyFight || !race.exists(Race.mortals.contains)) (Nil, rng)
-    else LootGenerator.banditLoot(rng, LootGenerator.StraySpoilsChancePct)
+    else if (convoy.exists(_.plunders)) LootGenerator.banditLoot(rng, LootGenerator.AmbushSpoilsChancePct)
+    else (Nil, rng)
 
   /** Добыча породы сверх таблицы: с красного сетеплёта — его железа, всегда. */
   def breedDrops(breed: Option[pangea.model.monster.Breed]): List[LootGenerator.LootDrop] =
