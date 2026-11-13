@@ -195,29 +195,33 @@ case class SoloPveBattle(
     bossTurn = slot.bossTurn, bossCharges = slot.bossCharges, bossRevives = slot.bossRevives,
     bossFirstSkillSpent = slot.bossFirstSkillSpent, bossTaken = slot.bossTaken, bossArmorTaken = slot.bossArmorTaken)
 
-  /** Кто на чужой стороне держит ауру и сколько у него энергии: минибосс со
-    * своей аурой, где бы он ни стоял — в паре или в строю (см. [[Aura]]). Нет
-    * такого — None, и поле дышит свободно. */
+  /** Кто на чужой стороне держит ауру и сколько у него энергии: живой минибосс
+    * со своей аурой, где бы он ни стоял — в паре или в строю, первым или за
+    * спинами своих (см. [[Aura]]). Нет такого — None, и поле дышит свободно. */
   def auraHolder: Option[(Aura, Long)] =
-    boss.flatMap(_.aura).map(_ -> monsterCurrentEnergy)
-      .orElse(group.entries.collectFirst {
-        case (_, slot) if slot.alive =>
-          slot.boss.flatMap(pangea.model.monster.MiniBoss.byName).flatMap(_.aura)
-            .map(_ -> slot.currentEnergy)
-      }.flatten)
+    if (activeHoldsAura) boss.flatMap(_.aura).map(_ -> monsterCurrentEnergy)
+    else group.others.lift(auraSlotIdx).flatMap(slot =>
+      slot.boss.flatMap(pangea.model.monster.MiniBoss.byName).flatMap(_.aura).map(_ -> slot.currentEnergy))
 
-  /** Списать энергию с того, кто держит ауру, — где бы он ни стоял. */
+  /** Списать энергию с того, кто держит ауру, — где бы он ни стоял. Ищем его
+    * тем же правилом, что и [[auraHolder]]: платит тот, кто держит. */
   def spendAuraEnergy(spent: Long): SoloPveBattle =
-    if (boss.exists(_.aura.isDefined))
-      copy(monsterCurrentEnergy = (monsterCurrentEnergy - spent).max(0L))
-    else
-      group.entries.indexWhere { case (_, slot) =>
-        slot.alive && slot.boss.flatMap(pangea.model.monster.MiniBoss.byName).exists(_.aura.isDefined)
-      } match {
-        case -1  => this
-        case idx => copy(group = group.copy(others = group.others.updated(idx,
-          group.others(idx).copy(currentEnergy = (group.others(idx).currentEnergy - spent).max(0L)))))
-      }
+    if (activeHoldsAura) copy(monsterCurrentEnergy = (monsterCurrentEnergy - spent).max(0L))
+    else group.others.lift(auraSlotIdx).fold(this)(slot =>
+      copy(group = group.copy(others = group.others.updated(auraSlotIdx,
+        slot.copy(currentEnergy = (slot.currentEnergy - spent).max(0L))))))
+
+  /** Держит ли ауру тот, кто в полях боя: живой минибосс со своей аурой.
+    * Павший её не держит, даже пока лежит в полях до конца раунда. */
+  private def activeHoldsAura: Boolean = monsterCurrentHp > 0L && boss.exists(_.aura.isDefined)
+
+  /** Индекс в строю живого минибосса со своей аурой; −1 — такого там нет.
+    * Смотрим весь строй: Некромант часто стоит за спинами своих мертвецов —
+    * герой за отрядом, перемешивание, — и раньше, когда смотрели только первого
+    * живого, его миазмы тогда молча гасли. */
+  private def auraSlotIdx: Int =
+    group.others.indexWhere(slot =>
+      slot.alive && slot.boss.flatMap(pangea.model.monster.MiniBoss.byName).exists(_.aura.isDefined))
 
   /** Стоит ли Некромант за спинами своих: между ним и героем есть хоть один его
     * мертвец. Тогда мистический шаг ему ни к чему — он стоит, где стоял, даже
