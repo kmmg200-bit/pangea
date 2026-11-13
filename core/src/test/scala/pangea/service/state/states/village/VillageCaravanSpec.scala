@@ -404,6 +404,23 @@ object VillageCaravanSpec extends ZIOSpecDefault {
               assertTrue(after.silver == hero.silver + due)
     },
 
+    test("дублоны каравана — тоже долей за дошедшее, с округлением вниз: из четырёх при трёх повозках — два") {
+      val fresh = Villages.caravanWagons(contract())
+      val three = fresh.map(w => if (w.position >= 4) w.copy(hp = 0L, armor = 0L) else w)
+      val deal  = NpcQuests.empty.copy(village = Some(contract().copy(doubloons = 4L)))
+      for {
+        c     <- content
+        d     <- dao(q = Some(deal), trip = Some(CaravanTrip(VillageRates.CaravanLegs + 1, 2, 0L, Some(three))))
+        r     <- TestRenderer.make
+        st    <- caravan(d, TestInventoryRepository.withItems(List(paper)), c).map(_._1)
+        _     <- st.enter(testUser, r)
+        city  <- r.sentScreens.map(_.last)
+        after <- d.getHeroByUserId(userId).map(_.get)
+        due    = Silver * 3L / 5L
+      } yield assertTrue(city.text.contains(s"Получено $due серебра и 2 дублона")) &&
+              assertTrue(after.silver == hero.silver + due && after.doubloons == hero.doubloons + 2L)
+    },
+
     test("сцена в пути — своими ключами: чужое в scene_data за караван не читается, своё едет туда и обратно") {
       val t = CaravanTrip(3, 2, 12345L)
       assertTrue(t.asJson.as[CaravanTrip].contains(t)) &&

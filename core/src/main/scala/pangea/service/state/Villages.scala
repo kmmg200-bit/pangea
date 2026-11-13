@@ -109,17 +109,34 @@ object Villages {
   def leader(name: Option[String]): String =
     name.getOrElse(Monster.namesByRaceRarity.getOrElse((VillageRates.BanditLeaderDefaultRace, VillageRates.BanditLeaderRarity), ""))
 
-  /** Подстановки текстов деревни: название, чья она, соседний город, главарь, плата. */
+  /** Подстановки текстов деревни: название, чья она, соседний город, главарь,
+    * плата — серебро числом (`silver`) и вся плата словами (`pay`, см.
+    * [[payLine]]). */
   def args(content: SceneContent, race: Race, roll: Int, cityRoll: Int, leaderName: Option[String],
-           silver: Long): Seq[(String, String)] =
+           silver: Long, doubloons: Long): Seq[(String, String)] =
     Seq("name" -> name(content, race, roll), "race" -> race.genitivePlural, "city" -> city(content, cityRoll),
-      "leader" -> leader(leaderName), "silver" -> silver.toString)
+      "leader" -> leader(leaderName), "silver" -> silver.toString, "pay" -> payLine(content, silver, doubloons))
 
   def args(content: SceneContent, scene: VillageScene): Seq[(String, String)] =
-    args(content, scene.race, scene.name, scene.city, scene.leader, scene.silver)
+    args(content, scene.race, scene.name, scene.city, scene.leader, scene.silver, scene.doubloons)
 
   def args(content: SceneContent, c: VillageContract): Seq[(String, String)] =
-    args(content, c.race, c.name, c.city, c.leader, c.silver)
+    args(content, c.race, c.name, c.city, c.leader, c.silver, c.doubloons)
+
+  /** Плата словами: «350 серебра», а с дублонами — «500 серебра и 1 дублон»
+    * (см. [[VillageRates.doubloons]]). */
+  def payLine(content: SceneContent, silver: Long, doubloons: Long): String =
+    if (doubloons <= 0L) content.format("village.payLine.silver", "silver" -> silver.toString)
+    else content.format("village.payLine.both",
+      "silver"    -> silver.toString,
+      "doubloons" -> doubloons.toString,
+      "word"      -> content.list("village.doubloonWords").lift(pluralForm(doubloons)).getOrElse(""))
+
+  /** Какое слово из трёх: «1 дублон», «2 дублона», «5 дублонов» (и «11 дублонов», «21 дублон»). */
+  private def pluralForm(n: Long): Int =
+    if (n % 10 == 1 && n % 100 != 11) 0
+    else if ((2L to 4L).contains(n % 10) && !(12L to 14L).contains(n % 100)) 1
+    else 2
 
   /** Абзацы одним сообщением: тексты блоком (`|`) кончаются переводом строки —
     * без обрезки между абзацами выходило бы по две пустые строки. */
@@ -173,17 +190,20 @@ object Villages {
       else NpcQuestLog.save(heroDao, userId, q.copy(village = q.village.map(_.copy(step = VillageContract.Done)))).as(true)
     }
 
-  /** Староста платит: договор закрыт, контракт уходит из сумки, серебро и опыт — герою.
-    * Договор стирается первым — повторный вход второй платы не даст. Возвращает
-    * героя после и сколько опыта начислено. */
+  /** Староста платит: договор закрыт, контракт уходит из сумки, серебро,
+    * дублоны (если обещаны) и опыт — герою. Договор стирается первым —
+    * повторный вход второй платы не даст. Возвращает героя после и сколько
+    * опыта начислено. */
   def pay(heroDao: HeroDao, inventory: InventoryRepository, userId: UserId, hero: Hero,
           contract: VillageContract, nowMs: Long): Task[(Hero, Long)] = {
     val exp     = hero.expFrom(VillageRates.exp(contract.level), nowMs)
-    val leveled = hero.gainExp(exp).copy(silver = hero.silver + contract.silver)
+    val leveled = hero.gainExp(exp).copy(silver = hero.silver + contract.silver,
+                    doubloons = hero.doubloons + contract.doubloons.max(0L))
     for {
       _ <- NpcQuestLog.modify(heroDao, userId)(_.copy(village = None))
       _ <- QuestSupport.removeItems(inventory, hero, Set(QuestItemKind.VillageContract))
       _ <- heroDao.updateSilver(userId, leveled.silver)
+      _ <- ZIO.when(contract.doubloons > 0L)(heroDao.updateDoubloons(userId, leveled.doubloons))
       _ <- heroDao.updateExpAndLevel(userId, leveled.exp, leveled.lvl, leveled.upgradePoints)
     } yield (leveled, exp)
   }

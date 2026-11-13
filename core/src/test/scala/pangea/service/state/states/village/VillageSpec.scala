@@ -162,6 +162,7 @@ object VillageSpec extends ZIOSpecDefault {
               assertTrue(s.exists(x => x.questLevel >= Level + VillageRates.QuestLevelMin && x.questLevel <= Level + VillageRates.QuestLevelMax)) &&
               assertTrue(s.exists(x => x.silver >= VillageRates.silver(x.questLevel, 80L) && x.silver <= VillageRates.silver(x.questLevel, 120L) &&
                 Villages.cities(c).isDefinedAt(x.city))) &&
+              assertTrue(s.exists(x => x.doubloons == VillageRates.doubloons(x.questLevel) && x.doubloons > 0L)) &&
               assertTrue(first.text.contains("Сложность: " + Difficulty.render(Level))) &&
               assertTrue(first.choices.map(_.id) == List("VillageHeadman", "VillageRaid", "OpenCharacter", "VillageLeave")) &&
               assertTrue(again.text == first.text && typed == StateType.Village && third.text == first.text)
@@ -380,6 +381,46 @@ object VillageSpec extends ZIOSpecDefault {
               assertTrue(q.village.isEmpty && inv.snapshot.isEmpty) &&
               assertTrue(bye.text.contains("кивает вам на прощание") && h2.silver == h.silver && h2.exp == h.exp) &&
               assertTrue(out == StateType.Dungeon)
+    },
+
+    test("плата с дублонами: староста называет их и платит — серебро, дублоны и опыт; карточка и журнал — с ними же") {
+      val rich = NpcQuests.empty.copy(village = Some(contract(VillageContract.Done).copy(doubloons = 3L)))
+      for {
+        c    <- content
+        d    <- dao(q = Some(rich))
+        inv   = TestInventoryRepository.withItems(List(paper))
+        r    <- TestRenderer.make
+        card  = Villages.cardLine(c, rich)
+        line  = Villages.journalStep(c, contract(VillageContract.Done).copy(doubloons = 3L))
+        _    <- village(d, inv, c).enter(testUser, r)
+        paid <- r.sentScreens.map(_.last)
+        h    <- d.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(card.contains(s"ждёт вас с платой — $Silver серебра и 3 дублона.") &&
+                line.contains(s"за платой — $Silver серебра и 3 дублона")) &&
+              assertTrue(paid.text.contains(s"💰 Получено $Silver серебра и 3 дублона.")) &&
+              assertTrue(h.silver == 100L + Silver && h.doubloons == hero().doubloons + 3L)
+    },
+
+    test("плата словами: серебро, с дублонами — «и N дублон/дублона/дублонов»") {
+      for {
+        c <- content
+      } yield assertTrue(Villages.payLine(c, 350L, 0L) == "350 серебра") &&
+              assertTrue(List(1L, 2L, 4L, 5L, 11L, 12L, 21L, 22L, 25L).map(n => Villages.payLine(c, 500L, n)) == List(
+                "500 серебра и 1 дублон", "500 серебра и 2 дублона", "500 серебра и 4 дублона", "500 серебра и 5 дублонов",
+                "500 серебра и 11 дублонов", "500 серебра и 12 дублонов", "500 серебра и 21 дублон",
+                "500 серебра и 22 дублона", "500 серебра и 25 дублонов"))
+    },
+
+    test("старые сцена и контракт — без дублонов: обещано было одно серебро; новые пишутся и читаются с ними") {
+      val oldScene = parse("""{"villageRace":"Орк","villageName":1,"villageQuest":"BanditLair","villageLevel":23,""" +
+        """"villageQuestLevel":26,"villageSilver":1950,"villageStep":"headman"}""")
+      val oldDeal  = parse("""{"quest":"BanditLair","race":"Орк","name":1,"level":26,"silver":1950,"step":2}""")
+      val fresh    = scene.copy(doubloons = 3L)
+      assertTrue(oldScene.flatMap(_.as[VillageScene]).exists(x => x.silver == 1950L && x.doubloons == 0L)) &&
+      assertTrue(oldDeal.flatMap(_.as[VillageContract]).exists(x => x.silver == 1950L && x.doubloons == 0L && x.done)) &&
+      assertTrue(fresh.asJson.as[VillageScene].toOption.contains(fresh)) &&
+      assertTrue(VillageContract.of(fresh).doubloons == 3L &&
+        VillageContract.of(fresh).asJson.as[VillageContract].toOption.contains(VillageContract.of(fresh)))
     },
 
     test("отказ от контракта в логове — с подтверждением: контракт и договор уходят") {
@@ -707,7 +748,9 @@ object VillageSpec extends ZIOSpecDefault {
               assertTrue(Race.mortals.forall(r => Villages.lands(c, r).size >= 2)) &&
               assertTrue(Villages.cities(c).size >= 5 && Villages.cities(c).distinct == Villages.cities(c) &&
                 !Villages.cities(c).contains("Кинэт")) &&
-              assertTrue(VillageRates.silver(20) == 1500L && VillageRates.silver(20, 80L) == 1200L && VillageRates.silver(20, 120L) == 1800L) &&
+              assertTrue(VillageRates.silver(20) == 1000L && VillageRates.silver(20, 80L) == 800L && VillageRates.silver(20, 120L) == 1200L) &&
+              // и по дублону за каждые полные семь уровней задания
+              assertTrue(List(1, 6, 7, 13, 14, 26, 150).map(VillageRates.doubloons) == List(0L, 0L, 1L, 1L, 2L, 3L, 21L)) &&
               // уровень задания: от −1 до +4 от уровня деревни, не глубже 150-го
               assertTrue(VillageRates.QuestLevelMin == -1 && VillageRates.QuestLevelMax == 4 &&
                 VillageRates.questLevel(20, -1) == 19 && VillageRates.questLevel(20, 4) == 24 &&

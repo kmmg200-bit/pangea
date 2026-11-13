@@ -74,6 +74,9 @@ private[village] object RaceJson {
   *               куда угодно в Пангее, и деревня живёт своими городами
   * @param land   бросок местности вокруг (`village.lands.<раса>`)
   * @param step   что сейчас: приход, разговор со старостой, развязка налёта, плата
+  * @param doubloons дублоны к серебру — по уровню задания (см.
+  *               [[VillageRates.doubloons]]), выпадают при встрече вместе с
+  *               серебром. В сценах, начатых до дублонов, поля нет — их нет и в плате
   */
 final case class VillageScene(
   race:   Race,
@@ -86,7 +89,8 @@ final case class VillageScene(
   leaderRace: Option[Race] = None,
   city:   Int            = 0,
   land:   Int            = 0,
-  step:   String         = VillageScene.Arrival
+  step:   String         = VillageScene.Arrival,
+  doubloons: Long        = 0L
 )
 
 object VillageScene {
@@ -113,7 +117,8 @@ object VillageScene {
     "villageLeaderRace" -> s.leaderRace.map(_.entryName).asJson,
     "villageCity"   -> s.city.asJson,
     "villageLand"   -> s.land.asJson,
-    "villageStep"   -> s.step.asJson)
+    "villageStep"   -> s.step.asJson,
+    "villageDoubloons" -> s.doubloons.asJson)
 
   implicit val decoder: Decoder[VillageScene] = (c: HCursor) =>
     for {
@@ -128,7 +133,10 @@ object VillageScene {
       city   <- c.getOrElse[Int]("villageCity")(0)
       land   <- c.getOrElse[Int]("villageLand")(0)
       step   <- c.getOrElse[String]("villageStep")(Arrival)
-    } yield VillageScene(race, name, quest, level, qLevel, silver, leader, chief.flatMap(Race.withNameOption), city, land, step)
+      // Сцены, начатые до дублонов: староста называл одно серебро.
+      dbl    <- c.getOrElse[Long]("villageDoubloons")(0L)
+    } yield VillageScene(race, name, quest, level, qLevel, silver, leader, chief.flatMap(Race.withNameOption), city, land,
+      step, dbl)
 }
 
 /** Контракт деревни, который взял герой (`npc_quests`, поле `village`):
@@ -143,6 +151,8 @@ object VillageScene {
   *               сделано, вернуться за платой
   * @param city   бросок соседнего города — как в [[VillageScene.city]]
   * @param leaderRace раса главаря — как в [[VillageScene.leaderRace]]
+  * @param doubloons обещанные дублоны — как в [[VillageScene.doubloons]]; в
+  *               контрактах, взятых до дублонов, их нет
   */
 final case class VillageContract(
   quest:  VillageQuest,
@@ -153,7 +163,8 @@ final case class VillageContract(
   leader: Option[String] = None,
   step:   Int            = VillageContract.Taken,
   city:   Int            = 0,
-  leaderRace: Option[Race] = None
+  leaderRace: Option[Race] = None,
+  doubloons: Long        = 0L
 ) {
   def done: Boolean = step == VillageContract.Done
 }
@@ -169,7 +180,7 @@ object VillageContract {
     * задания, а не деревни. */
   def of(scene: VillageScene): VillageContract =
     VillageContract(scene.quest, scene.race, scene.name, scene.questLevel, scene.silver, scene.leader, Taken, scene.city,
-      scene.leaderRace)
+      scene.leaderRace, scene.doubloons)
 
   implicit val encoder: Encoder[VillageContract] = (v: VillageContract) => Json.obj(
     "quest"  -> v.quest.asJson,
@@ -180,7 +191,8 @@ object VillageContract {
     "leader" -> v.leader.asJson,
     "step"   -> v.step.asJson,
     "city"   -> v.city.asJson,
-    "leaderRace" -> v.leaderRace.map(_.entryName).asJson)
+    "leaderRace" -> v.leaderRace.map(_.entryName).asJson,
+    "doubloons" -> v.doubloons.asJson)
 
   /** Декодер рукописный, с запасными значениями: новое поле не должно ронять
     * разбор уже взятых контрактов. */
@@ -195,7 +207,9 @@ object VillageContract {
       step   <- c.getOrElse[Int]("step")(Taken)
       city   <- c.getOrElse[Int]("city")(0)
       chief  <- c.getOrElse[Option[String]]("leaderRace")(None)
-    } yield VillageContract(quest, race, name, level, silver, leader, step, city, chief.flatMap(Race.withNameOption))
+      // Контракты, взятые до дублонов: обещано было одно серебро.
+      dbl    <- c.getOrElse[Long]("doubloons")(0L)
+    } yield VillageContract(quest, race, name, level, silver, leader, step, city, chief.flatMap(Race.withNameOption), dbl)
 }
 
 /** Числа деревни. Вынесены отдельно: их читают и сцены, и тесты. */
@@ -203,9 +217,17 @@ object VillageRates {
 
   /** Плата старосты — столько серебра за уровень задания (он же сложность), с
     * разбросом ±[[SilverSpreadPct]]%: бросается при встрече с деревней. Так
-    * решил пользователь. */
-  val SilverPerLvl: Long    = 75L
+    * решил пользователь; 2026-11-13 — 50 вместо 75, зато с дублонами (см.
+    * [[doubloons]]). Уже взятые контракты платят, как обещано. */
+  val SilverPerLvl: Long    = 50L
   val SilverSpreadPct: Long = 20L
+
+  /** И по дублону за каждые [[DoubloonEveryLvls]] уровней задания, с
+    * округлением вниз: на 1–6 — ни одного, на 7–13 — один, на 14–20 — два.
+    * Разброса нет. Так решил пользователь (2026-11-13). */
+  val DoubloonEveryLvls: Int = 7
+
+  def doubloons(level: Int): Long = (level.max(0) / DoubloonEveryLvls).toLong
 
   /** Плата без разброса. */
   def silver(level: Int): Long = SilverPerLvl * level.max(1).toLong

@@ -244,8 +244,9 @@ case class VillageCaravanState(
     } yield StateType.Battle
 
   /** Караван в городе: платит тот, кто принял обоз, — за то, что дошло:
-    * каждая потерянная повозка — её доля долой (путь без повозок — целиком).
-    * Серебро и опыт сразу, с его рассказом; контракт выполнен. Договор
+    * каждая потерянная повозка — её доля долой (путь без повозок — целиком),
+    * и у серебра, и у дублонов. Плата и опыт сразу, с его рассказом; контракт
+    * выполнен. Договор
     * стирается первым (см. Villages.pay): повторный конец перехода второй платы
     * не даст. */
   private def arrive(user: User, c: VillageContract, t: CaravanTrip, renderer: Renderer,
@@ -254,7 +255,8 @@ case class VillageCaravanState(
     else {
       val total  = VillageRates.CaravanWagons
       val intact = t.intact.getOrElse(total).min(total)
-      val due    = c.copy(silver = c.silver * intact / total)
+      // Дублоны — тоже долей, с округлением вниз.
+      val due    = c.copy(silver = c.silver * intact / total, doubloons = c.doubloons * intact / total)
       for {
         now  <- nowMs
         hero <- getHero(user)

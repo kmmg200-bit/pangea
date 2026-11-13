@@ -139,8 +139,9 @@ case class VillageState(
       // нему и плата.
       shift  <- Random.nextIntBetween(VillageRates.QuestLevelMin, VillageRates.QuestLevelMax + 1)
       qLevel  = VillageRates.questLevel(level, shift)
+      // К серебру — дублоны по уровню задания, без разброса.
       scene   = VillageScene(race, nameI, quest, level, qLevel, VillageRates.silver(qLevel, pct), leader,
-                  leaderRace = chief, city = cityI, land = landI)
+                  leaderRace = chief, city = cityI, land = landI, doubloons = VillageRates.doubloons(qLevel))
       _      <- writeScene(user, scene)
       _      <- renderer.show(user, arrivalScreen(scene))
     } yield ()
@@ -225,7 +226,8 @@ case class VillageState(
 
   // ── Плата ───────────────────────────────────────────────────────────────────
 
-  /** Дело сделано — староста платит: серебро, опыт, контракт уходит из сумки. Дальше —
+  /** Дело сделано — староста платит: серебро (и дублоны, если обещал), опыт,
+    * контракт уходит из сумки. Дальше —
     * прощание: повторный вход второй платы не даёт. */
   private def pay(user: User, contract: VillageContract, renderer: Renderer): Task[Unit] =
     for {
@@ -234,7 +236,8 @@ case class VillageState(
       paid <- Villages.pay(heroDao, inventoryRepo, user.userId, hero, contract, now)
       (after, exp) = paid
       _    <- writeScene(user, VillageScene(contract.race, contract.name, contract.quest, contract.level, contract.level,
-                contract.silver, contract.leader, contract.leaderRace, contract.city, step = Paid))
+                contract.silver, contract.leader, contract.leaderRace, contract.city, step = Paid,
+                doubloons = contract.doubloons))
       a     = Villages.args(content, contract)
       lvlUp = if (after.lvl > hero.lvl) "\n" + content.format("npcQuests.common.levelUp", "level" -> after.lvl.toString) else ""
       _    <- renderer.show(user, Screen(
