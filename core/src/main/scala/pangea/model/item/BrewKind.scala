@@ -412,6 +412,14 @@ object BrewKind extends Enum[BrewKind] {
     "Тягучая, жжётся на языке, как крапива, а по жилам идёт жаром, будто сидишь у очага. Иней с доспеха сходит, и до конца боя холод не крадёт вашу защиту.",
     BrewEffect.Ward(pangea.model.battle.Ward.Cold))
 
+  /** Не из одних трав — в ней ядовитая железа сетеплёта: варит её только куб
+    * (см. CubeCraft.MaterialBrew). Так решил пользователь. */
+  case object SpiderSerum extends BrewKind(
+    "Паучья сыворотка",
+    List(SpiderBloom, VenomGland, Sage),
+    "Густая, сиреневая, пахнет сладко и вязко, как паучий цвет. Кто её выпил, того сетеплёты не держат: паутина сходит, яд отступает, а новые до конца боя не берут.",
+    BrewEffect.Ward(pangea.model.battle.Ward.Spider))
+
   case object ClotBrew extends BrewKind(
     "Запирающий отвар",
     List(IronFern, Nettle, Calendula),

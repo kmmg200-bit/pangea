@@ -31,6 +31,9 @@ object Breed extends Enum[Breed] with DoobieEnum[Breed] {
   /** Сетеплёты — все пауки гнезда. */
   val spiders: Set[Breed] = Set(YoungSpider, AdultSpider, SpiderMother, RedSpider, NewbornSpider)
 
+  /** Сетеплёт ли это — по породе моба (у обычных мобов её нет). */
+  def isSpider(breed: Option[Breed]): Boolean = breed.exists(spiders.contains)
+
   implicit val encoder: Encoder[Breed] = (b: Breed) => b.entryName.asJson
 
   /** Порода из поля боя — мягко: чужое имя читается как «породы нет», и бой

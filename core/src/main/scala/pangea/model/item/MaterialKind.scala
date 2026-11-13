@@ -265,7 +265,6 @@ object MaterialKind extends Enum[MaterialKind] {
       "Мутный пузырь с кулак величиной, вырезанный из-под жвал сетеплёта. Внутри что-то " +
       "плещется и на свету густеет. Брать лучше в перчатке."
     override val worthless: Boolean = true
-    override val notYetUsed: Boolean = true
   }
 
   /** Кокон из гнезда сетеплётов. Что в нём — пока не открыть (так решил

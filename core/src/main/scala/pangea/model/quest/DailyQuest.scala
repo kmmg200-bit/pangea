@@ -370,7 +370,8 @@ object DailyRates {
     * траву — из тех, что варятся на редких: чем платить, он решает по дню. */
   val plainBrews: IndexedSeq[BrewKind] = BrewKind.rank1
   val rareBrews: IndexedSeq[BrewKind] =
-    BrewKind.values.filter(k => k.base.isEmpty && k.recipe.exists(_.herbRank >= 2))
+    // Только из трав: паучью сыворотку (в ней железа сетеплёта) Густаво не варит.
+    BrewKind.values.filter(k => k.base.isEmpty && k.recipe.forall(_.isHerb) && k.recipe.exists(_.herbRank >= 2))
 
   def brew(rare: Boolean, seed: Long): BrewKind = {
     val pool = if (rare) rareBrews else plainBrews

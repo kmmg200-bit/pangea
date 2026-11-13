@@ -402,6 +402,24 @@ object BeltBrewSpec extends ZIOSpecDefault {
               assertTrue(fight.effects.warded(Ward.Poison))
     },
 
+    test("паучья сыворотка: с пояса снимает паутину, яд и сорванное умение и держит до конца боя") {
+      val h  = hero(BeltSlot.Brew(BrewKind.SpiderSerum))
+      val b0 = battle(h, 100000L)
+      val b  = b0.copy(effects = b0.effects.copy(heroWebTurns = Some(2), heroPoison = Some(Poison(6)),
+                 heroSkillJammed = Some(true)))
+      for {
+        t <- makeState(h, b)
+        (state, dao, r) = t
+        _   <- state.action(testUser, useSlot(0), r)
+        mid <- battleOf(dao)
+        log <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(mid.effects.heroWebTurns.isEmpty && mid.effects.heroPoison.isEmpty && !mid.effects.skillJammed) &&
+              assertTrue(mid.effects.warded(Ward.Spider) && !mid.effects.warded(Ward.Poison)) &&
+              assertTrue(log.contains("паутина и паучий яд сняты, до конца боя сетеплёты их не наложат")) &&
+              assertTrue(BrewKind.SpiderSerum.combat && BrewKind.SpiderSerum.beltable && !BrewKind.SpiderSerum.drinkable &&
+                BrewKind.SpiderSerum.portions == 1)
+    },
+
     test("каждая защита снимает своё: огонь, холод, кровь") {
       val fx = pangea.model.battle.BattleEffects(heroPoison = Some(Poison(6)), heroBurn = Some(Burn(5)),
                  heroColdDefenceCut = 10, heroBleed = Some(Bleed(4)))

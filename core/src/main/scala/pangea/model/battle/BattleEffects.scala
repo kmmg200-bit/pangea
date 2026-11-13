@@ -388,6 +388,8 @@ case class BattleEffects(
       case Ward.Fire   => copy(heroBurn = None)
       case Ward.Cold   => copy(heroColdDefenceCut = 0)
       case Ward.Bleed  => copy(heroBleed = None)
+      // Сыворотка снимает, что оставили сетеплёты: паутину, яд и сорванное умение.
+      case Ward.Spider => copy(heroWebTurns = None, heroPoison = None, heroSkillJammed = None)
     }
     cleared.copy(heroWards = Some(heroWards.getOrElse(Set.empty) + w))
   }

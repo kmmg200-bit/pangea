@@ -16,7 +16,7 @@ import pangea.model.item.QuestItemKind
 import pangea.model.quest.{BoardKind, NpcQuest}
 import pangea.model.item.{BeltSlot, BrewEffect, BrewKind, BrewRates, FlaskEffect, FlaskRates, GripRates, Item, ItemDetails, ItemType, PassiveKind, PotionKind, RefillSource, DivineKind, DivineRates}
 import pangea.model.home.HomeData
-import pangea.model.monster.{BossPercentDamage, MiniBoss, NamedTrophy, Race, Rarity}
+import pangea.model.monster.{BossPercentDamage, Breed, MiniBoss, NamedTrophy, Race, Rarity}
 import pangea.model.stats.FightStats
 import pangea.model.stats.{ParamsBuff, StatBoost}
 import pangea.model.trauma.{Trauma, TraumaRoll}
@@ -3457,8 +3457,13 @@ case class BattleState(
             // и в лог идёт «не взяло», а не «подожгли».
             fireWarded   = ignites && !thawed && battle.effects.warded(Ward.Fire)
             poisonWarded = poisons && battle.effects.warded(Ward.Poison)
+            // Паучья сыворотка: бьёт сетеплёт — ни его яд, ни паутина не берут.
+            spiderWard   = battle.effects.warded(Ward.Spider) && Breed.isSpider(battle.monsterBreed)
+            spiderPoisonWarded = poisons && !poisonWarded && spiderWard
+            webWarded    = webs && spiderWard
+            webbed       = webs && !webWarded
             // Отравил красный — с шансом следующее умение героя сорвётся.
-            jams <- chanceRoll(redPoison && !poisonWarded, RedSpider.JamPct)
+            jams <- chanceRoll(redPoison && !poisonWarded && !spiderWard, RedSpider.JamPct)
             coldWarded   = mobProc && procElement.contains(Element.Cold) && !quenched &&
                              battle.effects.warded(Ward.Cold)
             effectsAfterHit = {
@@ -3469,7 +3474,7 @@ case class BattleState(
                 else battle.effects.copy(heroBurn = Some(
                   battle.effects.heroBurn.map(_.reignited).getOrElse(Burn(burnPct))))
               val poisonedE =
-                if (!poisons || poisonWarded) burned
+                if (!poisons || poisonWarded || spiderPoisonWarded) burned
                 else burned.copy(heroPoison = Some(
                   burned.heroPoison.map(p => Poison(p.pct + Poison.OnHit)).getOrElse(Poison.onHit)))
               // Холод обгрызает защиту героя (накопительно, не затухает), воздух
@@ -3491,7 +3496,7 @@ case class BattleState(
             battleAfterAtk = thorned.battle.copy(
               toughnessUsed    = battle.toughnessUsed || toughTriggered,
               effects          = {
-                val webbedFx = if (webs) effectsAfterHit.copy(heroWebTurns = Some(SpiderWeb.Turns)) else effectsAfterHit
+                val webbedFx = if (webbed) effectsAfterHit.copy(heroWebTurns = Some(SpiderWeb.Turns)) else effectsAfterHit
                 if (jams) webbedFx.copy(heroSkillJammed = Some(true)) else webbedFx
               }
             )
@@ -3510,6 +3515,8 @@ case class BattleState(
               Option.when(thawed)(content.text("battle.elements.thawHero")),
               // Яд от оружия — пометкой в строке самого удара (см. poisonMark).
               Option.when(poisonWarded)(content.text("battle.ward.poison")),
+              Option.when(spiderPoisonWarded)(content.text("battle.ward.spiderPoison")),
+              Option.when(webWarded)(content.text("battle.ward.spiderWeb")),
               Option.when(mobProc && procElement.contains(Element.Cold) && !quenched && !coldWarded)(content.format("battle.mobColdBite",
                 "cut" -> Element.Cold.DefenceReductionCut.toString)),
               Option.when(coldWarded)(content.text("battle.ward.cold")),
@@ -3518,7 +3525,7 @@ case class BattleState(
               Option.when(energyBurnt > 0L)(content.format("battle.mobLightningBurn", "energy" -> energyBurnt.toString))
             ).flatten
           } yield MobStrike(newHp, newArmor + restoredArmor, landed, lines, battleAfterAtk,
-                    poisoned = poisons && !poisonWarded, webbed = webs, energyBurnt = energyBurnt)
+                    poisoned = poisons && !poisonWarded && !spiderPoisonWarded, webbed = webbed, energyBurnt = energyBurnt)
   }
 
   /** Умение моба поверх обычной атаки: самое дорогое по карману, оплачивается

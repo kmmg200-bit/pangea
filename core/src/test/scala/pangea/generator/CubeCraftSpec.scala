@@ -371,6 +371,18 @@ object CubeCraftSpec extends ZIOSpecDefault {
           .exists(_.ingredients == List("Оружие", "Целый камень (3 тир и выше)", "Целый камень (3 тир и выше)"))) &&
         // травы, камни и прочее — по названию, как было
         assertTrue(lines(List.fill(3)(gem(GemKind.Ruby, 1))) == List(s"${gem(GemKind.Ruby, 1).name} ×3 → ${gem(GemKind.Ruby, 2).name}"))
+    },
+
+    test("паучий цвет, ядовитая железа и шалфей → паучья сыворотка, одна склянка; Густаво ею не платит") {
+      val pool   = List(MaterialKind.SpiderBloom, MaterialKind.VenomGland, MaterialKind.Sage).zipWithIndex
+                     .map { case (k, i) => MaterialGenerator.item(k).copy(id = 100L + i) }
+      val result = CubeCraft.craft(pool, charges = 5, Rng(1L))
+      val brews  = result.items.flatMap(_.brew)
+      assertTrue(brews == List(BrewKind.SpiderSerum)) &&
+      assertTrue(!pangea.model.quest.DailyRates.rareBrews.contains(BrewKind.SpiderSerum) &&
+        !BrewKind.rank2.contains(BrewKind.SpiderSerum)) &&
+      // железа теперь в деле — пометки «пока не используется» на ней нет
+      assertTrue(!MaterialKind.VenomGland.notYetUsed)
     }
 
   )

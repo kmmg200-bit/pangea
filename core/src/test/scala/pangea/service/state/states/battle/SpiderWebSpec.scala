@@ -2,7 +2,7 @@ package pangea.service.state.states.battle
 
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.model.battle.{BattleAlly, BattleEffects, SoloPveBattle, SpiderWeb}
+import pangea.model.battle.{BattleAlly, BattleEffects, SoloPveBattle, SpiderWeb, Ward}
 import pangea.model.hero.Hero
 import pangea.model.monster.{Breed, Monster, Race, Rarity}
 import pangea.model.skill.MonsterSkill
@@ -39,9 +39,9 @@ object SpiderWebSpec extends ZIOSpecDefault {
   private def foe(breed: Breed): SoloPveBattle = SoloPveBattle.from(spider(breed), hero).copy(noKin = true)
 
   /** Ход героя: бой после него, сколько снято с брони и с HP и что он увидел. */
-  private def turn(b: SoloPveBattle, rolls: Task[Unit]): Task[(SoloPveBattle, Long, Long, String)] =
+  private def turn(b: SoloPveBattle, rolls: Task[Unit], h: Hero = hero): Task[(SoloPveBattle, Long, Long, String)] =
     for {
-      dao   <- TestHeroDao.withHero(userId, hero)
+      dao   <- TestHeroDao.withHero(userId, h)
       _     <- dao.writeActiveBattle(userId, b.asJson)
       r     <- TestRenderer.make
       c     <- ZIO.attempt(SceneContent.load())
@@ -50,7 +50,7 @@ object SpiderWebSpec extends ZIOSpecDefault {
       after <- dao.getHeroByUserId(userId).map(_.get)
       saved <- dao.readActiveBattle(userId).map(_.flatMap(_.as[SoloPveBattle].toOption).get)
       log   <- r.sentScreens.map(_.map(_.text).mkString("\n"))
-    } yield (saved, hero.fightStats.armor - after.fightStats.armor, hero.fightStats.hp - after.fightStats.hp, log)
+    } yield (saved, h.fightStats.armor - after.fightStats.armor, h.fightStats.hp - after.fightStats.hp, log)
 
   private def ally(pos: Int, webbed: Int = 0): BattleAlly = {
     val stats = FightStats(atk = 10, hp = 500, armor = 500, defence = 0, evasion = 0, accuracy = 10, energy = 0)
@@ -123,6 +123,40 @@ object SpiderWebSpec extends ZIOSpecDefault {
       val twice   = BattleState.webTicked(once)
       assertTrue(once.effects.heroWebTurns.contains(1) && once.group.allies.map(_.webbed) == List(1, 0)) &&
       assertTrue(twice.effects.heroWebTurns.isEmpty && twice.group.allies.map(_.webbed) == List(0, 0))
+    },
+
+    test("паучья сыворотка: паутина взрослого не берёт — и в логе так и сказано") {
+      val warded = foe(Breed.AdultSpider).copy(effects = BattleEffects().withWard(Ward.Spider))
+      for {
+        res <- turn(warded, TestRandom.feedInts(1, 99, 1) *> TestRandom.feedLongs(100L, 100L))
+        (saved, _, _, log) = res
+      } yield assertTrue(log.contains("Паучья сыворотка: паутина не взялась") && !log.contains("вы опутаны")) &&
+              assertTrue(saved.effects.heroWebTurns.isEmpty && !saved.effects.heroRooted)
+    },
+
+    test("паучья сыворотка: яд сетеплёта не берёт, а чужой яд берёт, как обычно") {
+      // Без брони: удар паука доходит до HP, и молодой травит.
+      val bare     = hero.copy(fightStats = hero.fightStats.copy(armor = 0))
+      val venomous = BattleEffects(monsterPoisonsOnHit = true)
+      val young    = foe(Breed.YoungSpider).copy(effects = venomous.withWard(Ward.Spider))
+      val rat      = SoloPveBattle.from(spider(Breed.YoungSpider).copy(customName = Some("Крыса"), breed = None), bare)
+                       .copy(noKin = true, effects = venomous.withWard(Ward.Spider))
+      for {
+        safe  <- turn(young, TestRandom.feedInts(1, 99) *> TestRandom.feedLongs(100L, 100L), bare)
+        bitten <- turn(rat, TestRandom.feedInts(1, 99) *> TestRandom.feedLongs(100L, 100L), bare)
+        plain <- turn(foe(Breed.YoungSpider).copy(effects = venomous), TestRandom.feedInts(1, 99) *>
+                   TestRandom.feedLongs(100L, 100L), bare)
+      } yield assertTrue(safe._3 > 0L && safe._1.effects.heroPoison.isEmpty &&
+                safe._4.contains("Паучья сыворотка: яд сетеплёта не взялся")) &&
+              assertTrue(bitten._3 > 0L && bitten._1.effects.heroPoison.isDefined) &&
+              assertTrue(plain._1.effects.heroPoison.isDefined)
+    },
+
+    test("сыворотка снимает, что оставили сетеплёты: паутину, яд и сорванное умение") {
+      val fx = BattleEffects(heroWebTurns = Some(2), heroPoison = Some(pangea.model.battle.Poison(6)),
+                 heroSkillJammed = Some(true)).withWard(Ward.Spider)
+      assertTrue(fx.heroWebTurns.isEmpty && fx.heroPoison.isEmpty && !fx.skillJammed && fx.warded(Ward.Spider)) &&
+      assertTrue(Breed.isSpider(Some(Breed.NewbornSpider)) && !Breed.isSpider(None))
     },
 
     test("старые записи без паутины читаются: у героя её нет, у союзника — ноль") {
