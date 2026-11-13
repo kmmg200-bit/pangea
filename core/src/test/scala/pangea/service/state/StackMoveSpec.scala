@@ -199,7 +199,7 @@ object StackMoveSpec extends ZIOSpecDefault {
     },
 
     test("Ришелье: у стопки на карточке «Продать все 3 — цена»; продал — серебро за все, одним сообщением") {
-      val price = ((5L + 5) * 1.2 * Rarity.Gray.factorR).toLong.max(1L)
+      val price = MerchantState.sellPrice(trophy(1L))
       for {
         dao  <- TestHeroDao.withHero(userId, TestFixtures.hero(userId).copy(lvl = 10L, silver = 0L))
         inv   = TestInventoryRepository.withItems(List(trophy(1L), trophy(2L), trophy(3L)))

@@ -279,7 +279,7 @@ object MerchantStateSpec extends ZIOSpecDefault {
     },
 
     test("Sell → показывает список предметов; выбор → цена; ConfirmSellItem начисляет серебро и убирает предмет") {
-      // green helmet lvl 5 → sellPrice = (5+5)*1.2*4 = 48
+      // зелёный шлем 5-го уровня → (5 + 4) × 1,2 × 4 = 43,2 → 43
       val helmet = Item(7L, "Шлем", 5L, Rarity.Green, ItemType.Helmet,
         attack = 0, accuracy = 0, energy = 0, armor = 10, defence = 1, evasion = 0)
       val selectHelmet = UserAction("", Some(s"""{"action":"${MerchantState.SellItemPrefix}${helmet.id}"}"""))
@@ -293,9 +293,19 @@ object MerchantStateSpec extends ZIOSpecDefault {
         _        <- state.action(testUser, tap("ConfirmSellItem"), renderer)
         hero     <- heroDao.getHeroByUserId(userId)
       } yield assertTrue(listScr.choices.exists(_.id == s"${MerchantState.SellItemPrefix}${helmet.id}")) &&
-              assertTrue(confScr.text.contains("48")) &&
+              assertTrue(confScr.text.contains("Цена продажи: 43")) &&
               assertTrue(invRepo.snapshot.isEmpty) &&
-              assertTrue(hero.exists(_.silver == 100L + 48L))
+              assertTrue(hero.exists(_.silver == 100L + 43L))
+    },
+
+    test("цена продажи: (уровень + 4) × 1,2 × множитель редкости — 2, 3, 4, 5, 6, 6, 10; остаток отбрасывается") {
+      def at(lvl: Long, rarity: Rarity): Long = MerchantState.sellPrice(gear(1L, rarity).copy(lvl = lvl))
+      // 20-й уровень: 24 × 1,2 = 28,8 на единицу множителя
+      assertTrue(Rarity.values.toList.map(at(20L, _)) == List(57L, 86L, 115L, 144L, 172L, 172L, 288L)) &&
+      assertTrue(at(1L, Rarity.Gray) == 12L && at(100L, Rarity.Blue) == 624L && at(150L, Rarity.Orange) == 1848L) &&
+      assertTrue(Rarity.values.forall(r => MerchantState.sellFactor(r) > 0L)) &&
+      // множитель лавки свой: статы вещей и цены товара растит прежний
+      assertTrue(Rarity.Blue.factorR == 6.0 && Rarity.Purple.factorR == 8.0)
     },
 
     test("фляга продаётся по фиксированной цене редкости: синяя — 400, легендарная — 1000; серая идёт в хлам") {

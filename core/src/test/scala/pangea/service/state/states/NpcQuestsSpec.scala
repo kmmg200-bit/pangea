@@ -149,8 +149,8 @@ object NpcQuestsSpec extends ZIOSpecDefault {
           q   <- quests(dao)
           all <- texts(r)
           data <- dao.readMerchantData(userId).map(_.flatMap(_.as[MerchantState.MerchantData].toOption).get)
-          grayPrice  = ((1L + 5) * 1.2 * Rarity.Gray.factorR).toLong
-          whitePrice = ((1L + 5) * 1.2 * Rarity.White.factorR).toLong
+          grayPrice  = MerchantState.sellPrice(gear(1L, Rarity.Gray))
+          whitePrice = MerchantState.sellPrice(gear(1L, Rarity.White))
         } yield assertTrue(two.contains("2. Я сказал — три")) &&
                 assertTrue(q.isDone(NpcQuest.Richelieu)) &&
                 assertTrue(h.silver == 1000L + 3L * grayPrice + 3L * (whitePrice - grayPrice)) &&

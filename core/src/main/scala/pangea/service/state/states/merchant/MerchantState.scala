@@ -695,17 +695,7 @@ case class MerchantState(
 
   /** Сколько Ришелье платит герою за вещь серебром: «Пустынь» (порог 9) —
     * сверху. Дублоны за материалы набор не трогает. */
-  private def sellPriceFor(hero: Hero, item: Item): Long = withTrade(sellPrice(item), hero.sets.tradePct)
-
-  // (lvl(снаряжения) + 5) × 1.2 × R(редкость) — продажа дешевле покупки.
-  // Фляга к уровню не привязана: у неё своя цена по редкости (см. FlaskKind.priceFor).
-  private def sellPrice(item: Item): Long =
-    if (item.itemType == ItemType.Flask) FlaskKind.priceFor(item.rarity)
-    // Добро с разбойничьих застав — по твёрдой цене (см. MaterialKind.silverPrice);
-    // рунный камень стоит своё по размеру: ни уровня, ни редкости у них нет.
-    else item.material.map(_.silverPrice).filter(_ > 0L)
-      .orElse(item.runeStone.map(_.size.price))
-      .getOrElse(((item.lvl + 5) * 1.2 * item.rarity.factorR).toLong.max(1L))
+  private def sellPriceFor(hero: Hero, item: Item): Long = withTrade(MerchantState.sellPrice(item), hero.sets.tradePct)
 
   /** Сколько дублонов Ришелье платит за предмет; 0 — обычная продажа за серебро.
     * Пока золотом он выкупает только материалы (см. [[MaterialKind.doubloonPrice]]). */
@@ -756,6 +746,33 @@ object MerchantState {
 
   /** Цена с торговой поправкой `pct` (в %, со знаком), но не меньше единицы. */
   def withTrade(price: Long, pct: Long): Long = (price * (100L + pct) / 100L).max(1L)
+
+  /** К уровню вещи в цене продажи (см. [[sellPrice]]). */
+  val SellLevelBase: Long = 4L
+
+  /** Множитель редкости в цене продажи — свой у Ришелье (так решил
+    * пользователь): тот, что у самой редкости (`Rarity.factorR`), растит статы
+    * вещей при генерации и цену товара в лавке, его не трогаем. */
+  def sellFactor(rarity: Rarity): Long = rarity match {
+    case Rarity.Gray                   => 2L
+    case Rarity.White                  => 3L
+    case Rarity.Green                  => 4L
+    case Rarity.Blue                   => 5L
+    case Rarity.Purple | Rarity.Violet => 6L
+    case Rarity.Orange                 => 10L
+  }
+
+  /** Сколько Ришелье платит за вещь серебром, без торговой поправки:
+    * (уровень + [[SellLevelBase]]) × 1,2 × [[sellFactor]]; считаем в целых
+    * (× 12 / 10), остаток отбрасываем. Так — экипировка, трофеи, камни и всё,
+    * у чего нет своей цены. Своя есть у фляги (по редкости, см.
+    * FlaskKind.priceFor), у рунного камня (по размеру) и у награбленного (см.
+    * MaterialKind.silverPrice): ни уровень, ни редкость им не важны. */
+  def sellPrice(item: Item): Long =
+    if (item.itemType == ItemType.Flask) FlaskKind.priceFor(item.rarity)
+    else item.material.map(_.silverPrice).filter(_ > 0L)
+      .orElse(item.runeStone.map(_.size.price))
+      .getOrElse(((item.lvl + SellLevelBase) * 12L * sellFactor(item.rarity) / 10L).max(1L))
   object MerchantItem {
     implicit val encoder: Encoder[MerchantItem] = deriveEncoder
     implicit val decoder: Decoder[MerchantItem] = deriveDecoder

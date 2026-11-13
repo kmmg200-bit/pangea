@@ -403,10 +403,12 @@ object DailyQuestSpec extends ZIOSpecDefault {
     },
 
     test("платят по делу: за лот меньше, за принесённое больше, и уровень тут ни при чём") {
-      // заказ Ришелье мерен его же прилавком: шесть зелёных вещей своего уровня
+      // заказ Ришелье мерен его же прилавком: шесть-семь зелёных вещей своего уровня
       assertTrue((1L to Hero.MaxLevel).forall { l =>
-        val green = ((l + 5L) * 1.2 * Rarity.Green.factorR).toLong
-        DailyRates.silver(l) / green == 6L
+        val green = pangea.service.state.states.merchant.MerchantState.sellPrice(
+          thing(1L, "Кираса", ItemType.ChestPlate, ItemDetails.Plain).copy(lvl = l, rarity = Rarity.Green))
+        val n = DailyRates.silver(l) / green
+        n == 6L || n == 7L
       }) &&
       // опыт — пятидесятая часть порога, то есть два процента уровня на любом уровне
       assertTrue((2L to Hero.MaxLevel).forall { l =>
