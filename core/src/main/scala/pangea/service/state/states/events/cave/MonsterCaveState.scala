@@ -70,6 +70,7 @@ case class MonsterCaveState(
       "CaveRight"     -> Target.Run { (u, _, r) => awake(u, r)(go(u, CaveDir.Right, r)) },
       "CaveSearch"    -> Target.Run { (u, _, r) => awake(u, r)(search(u, r)) },
       "CaveDown"      -> Target.Run { (u, _, r) => awake(u, r)(descend(u, r)) },
+      "CaveUp"        -> Target.Run { (u, _, r) => awake(u, r)(ascend(u, r)) },
       "CaveAltar"     -> Target.Run { (u, _, r) => awake(u, r)(withScene(u)(s => showSupplies(u, s, r).as(StateType.MonsterCave))) },
       "CaveSwap"      -> Target.Run { (u, ua, r) => swap(u, ua, r) },
       "CaveSwapNo"    -> Target.Run { (u, _, r) => withScene(u)(s => cancelSwap(u, s, r)) },
@@ -445,7 +446,8 @@ case class MonsterCaveState(
     * все четыре — зелёные там, где проход, красные там, где камень. */
   private def showRoom(user: User, scene: CaveScene, renderer: Renderer, note: String = ""): Task[StateType] = {
     val room = scene.room
-    val text = roomText(scene)
+    // На месте спуска видно, что наверх можно вернуться тем же ходом.
+    val text = if (scene.canAscend) roomText(scene) + "\n" + content.text("cave.room.up") else roomText(scene)
     def dirChoice(id: String, key: String, dir: CaveDir, row: Int): Choice =
       content.choice(id, key).copy(
         color = if (scene.neighbour(dir).isDefined) ChoiceColor.Positive else ChoiceColor.Negative,
@@ -456,12 +458,13 @@ case class MonsterCaveState(
     val action = actionKey(room.kind)
       .filter(_ => room.monsters <= 0 && !room.done && !spent)
       .map(key => content.choice(actionId(room.kind), key).copy(row = Some(3)))
+    val up = Option.when(scene.canAscend)(content.choice("CaveUp", "cave.act.up").copy(row = Some(3)))
     val choices = List(
       dirChoice("CaveForward", "cave.dir.forward", CaveDir.Forward, 0),
       dirChoice("CaveLeft",    "cave.dir.left",    CaveDir.Left,    1),
       dirChoice("CaveRight",   "cave.dir.right",   CaveDir.Right,   1),
       dirChoice("CaveBack",    "cave.dir.back",    CaveDir.Back,    2)
-    ) ++ action.toList ++ List(
+    ) ++ action.toList ++ up.toList ++ List(
       content.choice("OpenCharacter", "common.character").copy(row = Some(4)),
       content.choice("CaveOut", "cave.gate.leave").copy(color = ChoiceColor.Negative, row = Some(4))
     )
@@ -674,25 +677,43 @@ case class MonsterCaveState(
       group = base.group.copy(originRace = Some(race.entryName)))
   }
 
-  /** Ход вниз: нижний ярус катается в этот самый момент — до спуска его ещё
-    * нет. Дурман и отрава идут вниз вместе с героем: сквозняк общий, а взятый
-    * наверху опыт копится дальше — платят за место один раз. Внизу у
-    * канализации и пещеры некроманта свой ярус, а у пещеры лабиринта —
-    * короткий ход к логову её хозяина (см. `CaveGenerator.lairDeep`). */
+  /** Ход вниз. В первый раз нижний ярус катается в этот самый момент — до
+    * спуска его ещё нет; внизу у канализации и пещеры некроманта свой ярус, а у
+    * пещеры лабиринта — короткий ход к логову её хозяина (см.
+    * `CaveGenerator.lairDeep`). Были уже внизу и поднялись — спускаются на тот
+    * же ярус, каким его оставили. Верхний ярус запоминается: подняться можно с
+    * места спуска (см. [[ascend]]). Дурман и отрава идут вниз вместе с героем:
+    * сквозняк общий, а взятый наверху опыт копится дальше — платят за место
+    * один раз (см. `CaveScene.switchedTo`). */
   private def descend(user: User, renderer: Renderer): Task[StateType] =
     withScene(user) { scene =>
       if (scene.lastFloor || scene.room.kind != RoomKind.Stairs || scene.room.monsters > 0)
         showRoom(user, scene, renderer)
-      else
-        for {
-          seed      <- Random.nextLong
-          (deep, _)  = if (scene.necro) CaveGenerator.necroDeep(scene.questLvl, scene.race, Rng(seed))
-                       else if (scene.sewer) CaveGenerator.sewerDeep(scene.questLvl, Rng(seed))
-                       else CaveGenerator.lairDeep(scene.race, scene.boss, Rng(seed))
-          below      = deep.copy(weakened = scene.weakened, poisoned = scene.poisoned,
-                         expEarned = scene.expEarned, restUsed = true)
-          res       <- showRoom(user, below, renderer, floorTxt(scene, "descended"))
-        } yield res
+      else scene.otherFloor.filter(_.floor > scene.floor) match {
+        case Some(lower) =>
+          showRoom(user, scene.switchedTo(lower.copy(at = 0)), renderer, floorTxt(scene, "descended"))
+        case None =>
+          for {
+            seed      <- Random.nextLong
+            (deep, _)  = if (scene.necro) CaveGenerator.necroDeep(scene.questLvl, scene.race, Rng(seed))
+                         else if (scene.sewer) CaveGenerator.sewerDeep(scene.questLvl, Rng(seed))
+                         else CaveGenerator.lairDeep(scene.race, scene.boss, Rng(seed))
+            res       <- showRoom(user, scene.switchedTo(deep.copy(restUsed = true)), renderer,
+                           floorTxt(scene, "descended"))
+          } yield res
+      }
+    }
+
+  /** Наверх — тем же ходом, с места спуска: верхний ярус таким, каким его
+    * оставили, герой — у хода вниз. Нижний запоминается, и спуститься можно
+    * снова — туда же. Нижний ярус, начатый до этого (без запомненного верха),
+    * наверх не выпускает. */
+  private def ascend(user: User, renderer: Renderer): Task[StateType] =
+    withScene(user) { scene =>
+      scene.otherFloor.filter(_ => scene.canAscend) match {
+        case Some(upper) => showRoom(user, scene.switchedTo(upper), renderer, content.text("cave.ascended"))
+        case None        => showRoom(user, scene, renderer)
+      }
     }
 
   /** Одурманенный моб бьёт слабее и копит энергию медленнее. */

@@ -84,12 +84,18 @@ object CaveDir extends Enum[CaveDir] {
   *                  крысы вместо смертных, свои слова и своя развязка
   * @param questLvl  уровень задания: по нему, а не по этажу лабиринта, считаются
   *                  статы крыс. У пещеры он нулевой
-  * @param floor     ярус выездной пещеры: первый просторный, второй короткий
+  * @param floor     ярус: первый просторный, второй короткий — у выездных мест
+  *                  и у особой пещеры лабиринта, чей хозяин ждёт внизу
   * @param necro     это пещера некроманта по заданию с доски: вся родня одной
   *                  расы поднята, ярусов два, как в канализации, а внизу ждёт
   *                  сам Некромант
   * @param altarBroken алтарь расколот: на него положили проклятые кости, и из
   *                  разлома встал Некромант. Такой камень больше ничего не берёт
+  * @param otherFloor ярус, на котором героя сейчас нет: на нижнем — верхний,
+  *                  каким его оставили (`at` — у хода вниз), на верхнем —
+  *                  нижний, если там уже были. По нему поднимаются и снова
+  *                  спускаются, ничего не теряя (см. [[switchedTo]]). У нижних
+  *                  ярусов, начатых до этого, его нет — подняться оттуда нельзя
   */
 final case class CaveScene(
   race:      String,
@@ -117,7 +123,8 @@ final case class CaveScene(
     * поднята — мобы те же по расе, но мёртвые (см. [[undeadMobs]]). */
   boss:      Option[String] = None,
   necro:     Boolean = false,
-  altarBroken: Boolean = false
+  altarBroken: Boolean = false,
+  otherFloor: Option[CaveScene] = None
 ) {
 
   /** Поднята ли вся живность внутри: так живёт пещера Некроманта — и та, где
@@ -151,6 +158,17 @@ final case class CaveScene(
     * нижних ярусов, — с логовом на том же ярусе). Только на нём зачистка
     * что-то значит. */
   def lastFloor: Boolean = floor >= SewerRates.Floors || (!away && !hasStairs)
+
+  /** Можно ли отсюда подняться: герой на нижнем ярусе, на месте спуска, а
+    * верхний ярус запомнен. */
+  def canAscend: Boolean = floor >= SewerRates.Floors && at == 0 && otherFloor.isDefined
+
+  /** Перейти на ярус `to`. Общее для всего места идёт с героем: взятый опыт,
+    * дурман, отрава и выданная награда. Ярус, с которого ушли, запоминается в
+    * `otherFloor` нового — таким, каким его оставили. */
+  def switchedTo(to: CaveScene): CaveScene =
+    to.copy(expEarned = expEarned, weakened = weakened, poisoned = poisoned, rewarded = rewarded,
+      restUntil = 0L, otherFloor = Some(copy(otherFloor = None)))
 }
 
 object CaveScene {
@@ -176,7 +194,8 @@ object CaveScene {
       "floor"         -> s.floor.asJson,
       "boss"          -> s.boss.asJson,
       "necro"         -> s.necro.asJson,
-      "altarBroken"   -> s.altarBroken.asJson)
+      "altarBroken"   -> s.altarBroken.asJson,
+      "otherFloor"    -> s.otherFloor.asJson)
 
   implicit val decoder: Decoder[CaveScene] = (c: HCursor) =>
     for {
@@ -201,8 +220,9 @@ object CaveScene {
       boss      <- c.getOrElse[Option[String]]("boss")(None)
       necro     <- c.getOrElse[Boolean]("necro")(false)
       broken    <- c.getOrElse[Boolean]("altarBroken")(false)
+      other     <- c.getOrElse[Option[CaveScene]]("otherFloor")(None)
     } yield CaveScene(race, rooms, at, inside, page, weakened, poisoned, expEarned, restUsed, restUntil,
-                      rewarded, spent, pending, trophy, treasure, sewer, questLvl, floor, boss, necro, broken)
+                      rewarded, spent, pending, trophy, treasure, sewer, questLvl, floor, boss, necro, broken, other)
 }
 
 /** Числа пещеры. Вынесены из компаньонов нарочно — их читают и генератор, и
