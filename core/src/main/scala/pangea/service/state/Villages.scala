@@ -3,15 +3,16 @@ package pangea.service.state
 import pangea.dao.hero.HeroDao
 import pangea.domain.Rng
 import pangea.engine.{SceneContent, Screen}
-import pangea.model.battle.{MonsterSlot, SoloPveBattle}
+import pangea.model.battle.{BattleAlly, MonsterSlot, SoloPveBattle}
 import pangea.generator.monster.MonsterGenerator
 import pangea.model.hero.Hero
 import pangea.model.item.QuestItemKind
 import pangea.model.monster.{Breed, Monster, Race, Rarity}
 import pangea.model.quest.NpcQuests
+import pangea.model.squad.{AllyKind, UndeadForm}
 import pangea.model.state.StateType
 import pangea.model.user.UserId
-import pangea.model.village.{VillageContract, VillageQuest, VillageRates, VillageScene}
+import pangea.model.village.{CaravanAmbush, VillageContract, VillageQuest, VillageRates, VillageScene}
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import zio.{Task, ZIO}
@@ -49,8 +50,9 @@ object VillageLair {
   * встречаются (см. DungeonState).
   *
   * Беды открываются по уровням лабиринта ([[VillageQuest.minLevel]]): логово
-  * разбойников, гнездо сетеплётов. Сцены: деревня (VillageState) и логово беды
-  * (VillageLairState — одна на все логова, см. [[VillageLair]]). */
+  * разбойников, гнездо сетеплётов, караван. Сцены: деревня (VillageState),
+  * логово беды (VillageLairState — одна на все логова, см. [[VillageLair]]) и
+  * караван в пути (VillageCaravanState). */
 object Villages {
 
   /** Ключ сюжетного боя — налёта на деревню (см. `SoloPveBattle.story`):
@@ -64,6 +66,10 @@ object Villages {
   /** Ключ сюжетного боя в гнезде сетеплётов: так же — без «Сбежать», награда
     * как за обычный бой уровня задания, а добыча со зверей — паучья. */
   val SpidersStory: String = "villageSpiders"
+
+  /** Ключ сюжетного боя в засаде на караван: без «Сбежать», награда как за
+    * обычный бой уровня задания. Пал — караван разграблен, контракт сорван. */
+  val CaravanStory: String = "villageCaravan"
 
   /** С какого поворота встречаются деревни: порог события (см.
     * `StateType.EventMinLevel`). К их бедам ходят не ближе. */
@@ -135,7 +141,19 @@ object Villages {
   def lairOf(q: NpcQuests): Option[VillageLair] =
     q.village.filter(_.step == VillageContract.Taken).flatMap(c => VillageLair.of(c.quest))
 
-  /** Дело сделано — вернуться к старосте за платой. */
+  /** Караван ещё не дошёл до города — идти к нему. */
+  def toCaravan(q: NpcQuests): Boolean = toLair(q, VillageQuest.CaravanEscort)
+
+  /** Куда ведёт контракт, пока дело не сделано: сцена беды и ключ её текстов
+    * (`village.card.<ключ>Label`) — логово или караван. */
+  def goTo(q: NpcQuests): Option[(StateType, String)] =
+    q.village.filter(_.step == VillageContract.Taken).flatMap { c =>
+      if (c.quest == VillageQuest.CaravanEscort) Some(StateType.VillageCaravan -> c.quest.key)
+      else VillageLair.of(c.quest).map(l => l.scene -> l.texts)
+    }
+
+  /** Дело сделано — вернуться к старосте за платой. У каравана такого шага нет:
+    * за него платят в городе, куда он дошёл. */
   def toPay(q: NpcQuests): Boolean = q.village.exists(_.done)
 
   /** Взять контракт: предмет — в сумку, договор — в журнал. Уже взят
@@ -210,9 +228,48 @@ object Villages {
   /** Обитатели логова беды контракта: банда или выводок. */
   def lairMonsters(contract: VillageContract, rng: Rng): List[Monster] =
     contract.quest match {
-      case VillageQuest.BanditLair  => banditGang(contract, rng)
-      case VillageQuest.SpiderNests => spiderBrood(contract, rng)
+      case VillageQuest.BanditLair    => banditGang(contract, rng)
+      case VillageQuest.SpiderNests   => spiderBrood(contract, rng)
+      // Логова у каравана нет — его бои в засадах (см. caravanAmbush).
+      case VillageQuest.CaravanEscort => caravanAmbush(contract, CaravanAmbush.Bandits, rng)
     }
+
+  /** Засада на караван уровня задания: четверо в строю и трое за ними. Банда —
+    * сборная, из смертных рас лабиринта; Чернолом — гоблины-лесорубы; ищейки
+    * Сноходцев — каджиты (кинжал молнии у них — умение расы). */
+  def caravanAmbush(contract: VillageContract, ambush: CaravanAmbush, rng: Rng): List[Monster] = {
+    val lvl = contract.level.max(1)
+    def rows(race: Option[Race]): List[Monster] = {
+      def row(n: Int, pool: List[Rarity], r: Rng): (List[Monster], Rng) =
+        race.fold(mixed(lvl, n, pool, r))(roll(lvl, _, n, pool, r))
+      val (front, r1) = row(VillageRates.CaravanAmbushFront, VillageRates.CaravanAmbushFrontRarities, rng)
+      val (back, _)   = row(VillageRates.CaravanAmbushBack, VillageRates.CaravanAmbushBackRarities, r1)
+      front ++ back
+    }
+    ambush match {
+      case CaravanAmbush.Bandits   => rows(None)
+      case CaravanAmbush.Chernolom => rows(Some(Race.Goblin))
+      case CaravanAmbush.Hounds    => rows(Some(Race.Khajiit))
+    }
+  }
+
+  /** Караванщик в строю героя: по силе — редкий той же расы, что деревня, уровня
+    * задания. Имя, уровень и статы лежат на самом союзнике (UndeadForm), как у
+    * капитанов каджитов в «Большом деле»; после боя в отряд он не встаёт. */
+  def caravanGuard(contract: VillageContract, name: String): BattleAlly = {
+    val lvl   = contract.level.max(1)
+    val stats = MonsterGenerator.generateOfRaceAndRarity(lvl, contract.race, VillageRates.CaravanGuardRarity).fightStats
+    BattleAlly(AllyKind.CaravanGuard, position = 0, hp = stats.hp, armor = stats.armor, energy = stats.energy,
+      stats = stats, lvl = lvl.toLong, undead = Some(UndeadForm(name, lvl.toLong, stats)), home = 0)
+  }
+
+  /** Поставить караванщиков в строй — каждого на ближайшее к герою свободное
+    * место. Отряд занял всё — кому места нет, тот бьётся из-за повозок и в строй
+    * не встаёт. */
+  def withGuards(battle: SoloPveBattle, contract: VillageContract, names: List[String]): SoloPveBattle =
+    names.foldLeft(battle)((b, name) =>
+      b.group.nearestFreeAllyPlace.fold(b)(pos =>
+        b.copy(group = b.group.copy(allies = b.group.allies :+ caravanGuard(contract, name).copy(position = pos)))))
 
   /** Выводок в гнезде: молодые, взрослые и матка — уровня задания; с шансом
     * [[VillageRates.RedSpiderChancePct]]% последним — ещё и красный. */

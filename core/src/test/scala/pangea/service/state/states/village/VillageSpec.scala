@@ -694,8 +694,11 @@ object VillageSpec extends ZIOSpecDefault {
                 VillageRates.questLevel(148, 4) == 150 && VillageRates.questLevel(150, 4) == 150 && VillageRates.questLevel(1, -1) == 1) &&
               assertTrue(VillageQuest.values.forall(q =>
                 List(s"village.trouble.${q.key}", s"village.plea.${q.key}.text", s"village.plea.${q.key}.accepted",
-                  s"village.waiting.${q.key}", s"village.pay.${q.key}", s"village.card.${q.key}", s"journal.village.${q.key}")
+                  s"village.waiting.${q.key}", s"village.card.${q.key}", s"journal.village.${q.key}")
                   .forall(k => c.text(k).nonEmpty))) &&
+              // платит староста — за логова; за караван платят в городе, куда он дошёл
+              assertTrue(VillageQuest.values.filterNot(_ == VillageQuest.CaravanEscort)
+                .forall(q => c.text(s"village.pay.${q.key}").nonEmpty)) &&
               assertTrue(VillageQuest.BanditLair.minLevel == Villages.MinDungeonLevel && Villages.MinDungeonLevel == 15) &&
               assertTrue(VillageQuest.openAt(15) == List(VillageQuest.BanditLair) && VillageQuest.openAt(19) == List(VillageQuest.BanditLair) &&
                 VillageQuest.openAt(20) == List(VillageQuest.BanditLair, VillageQuest.SpiderNests) &&
@@ -704,8 +707,10 @@ object VillageSpec extends ZIOSpecDefault {
                 List("intro", "fight", "victory", "left", "gone", "death").forall(k => c.text(s"village.${l.texts}.$k").nonEmpty) &&
                 c.choice("x", s"village.${l.texts}.fightLabel").label.nonEmpty &&
                 c.choice("x", s"village.card.${l.texts}Label").label.nonEmpty)) &&
-              // у каждой беды — своё логово, и у логов разные сцены, бои, кнопки и отметки
-              assertTrue(VillageQuest.values.forall(q => VillageLair.of(q).isDefined) &&
+              // у каждой беды, кроме каравана, — своё логово (у каравана — дорога, VillageCaravanSpec),
+              // и у логов разные сцены, бои, кнопки и отметки
+              assertTrue(VillageQuest.values.filterNot(_ == VillageQuest.CaravanEscort).forall(q => VillageLair.of(q).isDefined) &&
+                VillageLair.of(VillageQuest.CaravanEscort).isEmpty &&
                 VillageLair.all.map(_.scene).distinct.size == VillageLair.all.size &&
                 VillageLair.all.map(_.story).distinct.size == VillageLair.all.size &&
                 VillageLair.all.map(_.ids).distinct.size == VillageLair.all.size &&

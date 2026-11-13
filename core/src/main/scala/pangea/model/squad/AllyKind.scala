@@ -197,6 +197,15 @@ object AllyKind extends Enum[AllyKind] {
     hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
     accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
 
+  /** Караванщик обоза деревни (контракт «Сопровождение каравана»): в засаде он
+    * бьётся рядом с героем — по силе редкий той же расы, что деревня, уровня
+    * задания. Имя, уровень и статы лежат на самом союзнике ([[UndeadForm]], см.
+    * Villages.caravanGuard); нанять негде, после боя в отряд не встаёт. Стихии
+    * нет. */
+  case object CaravanGuard extends AllyKind("Караванщик", Race.Human, None, maxLvl = 150L,
+    hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
+    accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
+
   val values: IndexedSeq[AllyKind] = findValues
 
   /** Кого можно нанять за столом таверны. Нежить и крысы туда не садятся. */

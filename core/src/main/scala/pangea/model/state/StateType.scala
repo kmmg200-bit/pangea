@@ -208,6 +208,7 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   case object Village        extends StateType // деревня в лабиринте: приход, налёт или староста; плата за сделанное
   case object VillageBandits extends StateType // логово разбойников у деревни: бой с бандой и её главарём
   case object VillageSpiders extends StateType // гнездо сетеплётов у деревни: бой с выводком и маткой
+  case object VillageCaravan extends StateType // караван деревни: переходы по тракту до города, засады в пути
 
   // Смена расы: купон из лавки Фета — история расы до пробуждения в новом теле.
   case object RaceQuest extends StateType

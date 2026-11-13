@@ -376,6 +376,7 @@ object MercenariesState {
     case AllyKind.MurlocKin  => "murlocKin"
     case AllyKind.HedgeElf   => "hedgeElf"
     case AllyKind.CaravanKhajiit => "caravanKhajiit"
+    case AllyKind.CaravanGuard   => "caravanGuard"
   }
 
   /** Кто сейчас за столом. Пока идёт «Пропавшая дружина» (`bramblCalled`),

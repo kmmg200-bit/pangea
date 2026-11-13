@@ -92,7 +92,7 @@ object BattleAlly {
 
   /** Союзники, которых зовут по виду, а не по имени: имя у них целиком (см.
     * [[BattleAlly.callName]]). */
-  val NamedByKind: Set[AllyKind] = Set(AllyKind.Undead, AllyKind.Rat, AllyKind.MurlocKin)
+  val NamedByKind: Set[AllyKind] = Set(AllyKind.Undead, AllyKind.Rat, AllyKind.MurlocKin, AllyKind.CaravanGuard)
 
   /** Звание перед именем: «Старшина Ульфрик» — это Ульфрик. */
   private val Titles: Set[String] = Set("Старшина")

@@ -86,6 +86,9 @@ case class DeathState(
       // контракт при герое, логово ждёт — тоже в лабиринте, со строкой логова.
       villageRaid   = battle.exists(_.story.contains(Villages.RaidStory))
       villageLair   = battle.flatMap(b => VillageLair.all.find(l => b.story.contains(l.story)))
+      // Смерть в засаде на караван деревни: караван разграблен, контракт
+      // сорван (так решил пользователь) — проснуться в лабиринте со строкой засады.
+      villageCaravan = battle.exists(_.story.contains(Villages.CaravanStory))
       // Смерть на складе у причала: штрафы обычные, украденное всё ещё у банды —
       // по следу можно идти снова; проснуться в порту.
       thieves       = battle.exists(_.story.contains(BarrelThievesQuest.FightStory))
@@ -170,6 +173,9 @@ case class DeathState(
       dealStats    <- if (dealPaid.isDefined) QuestOutcomeLog.recordAndCount(outcomes, content, hero, QuestOutcome.BigDealFell)
                       else ZIO.none
       dealNote      = dealPaid.map(QuestOutcomeLog.withStats(_, dealStats))
+      // Караван разграблен: береста уходит из сумки, договор — из журнала, и
+      // деревни снова встречаются.
+      _            <- ZIO.when(villageCaravan)(Villages.abandon(heroDao, inventoryRepo, user.userId, hero))
       wake          = if (collector) Json.obj(
                         "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
                         "wakeLines" -> List(
@@ -189,6 +195,7 @@ case class DeathState(
                       else if (plukhHunt) Json.obj("wakeLines" -> List("plukhGaff.hunt.death").asJson)
                       else if (faelinRoots) Json.obj("wakeLines" -> List("faelinBow.roots.death").asJson)
                       else if (villageRaid) Json.obj("wakeLines" -> List("village.raid.death").asJson)
+                      else if (villageCaravan) Json.obj("wakeLines" -> List("village.caravan.death").asJson)
                       else if (villageLair.isDefined)
                         Json.obj("wakeLines" -> villageLair.map(l => s"village.${l.texts}.death").toList.asJson)
                       else if (thieves) Json.obj(

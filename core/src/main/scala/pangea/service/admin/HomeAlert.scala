@@ -128,6 +128,7 @@ object HomeAlert {
       Village          -> "деревня в лабиринте",
       VillageBandits   -> "логово разбойников: контракт деревни",
       VillageSpiders   -> "гнездо сетеплётов: контракт деревни",
+      VillageCaravan   -> "караван в пути: контракт деревни",
       RaceQuest        -> "квест смены расы",
       NameChange       -> "смена имени"
     )

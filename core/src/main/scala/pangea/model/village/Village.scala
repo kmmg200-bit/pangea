@@ -9,7 +9,7 @@ import pangea.model.quest.BoardRates
 /** Беда деревни — то, о чём просит староста (см. [[VillageContract]]). Задания
   * открываются по мере того, как герой уходит дальше в лабиринт ([[minLevel]]):
   * логово разбойников — с того же уровня, что и сами деревни (15-го), гнездо
-  * сетеплётов — с 20-го; следующим будет караван (25-й), дальше порядок решит
+  * сетеплётов — с 20-го, караван — с 25-го; дальше порядок решит
   * пользователь. `entryName` лежит в базе — в `scene_data` и в
   * `npc_quests`: не переименовывать и не удалять.
   *
@@ -27,6 +27,10 @@ object VillageQuest extends Enum[VillageQuest] {
   /** Гнездо сетеплётов: пауки из изгороди засели в овраге у деревни и по ночам
     * таскают скотину и людей — выжечь гнездо с маткой. */
   case object SpiderNests extends VillageQuest("spiders", 20)
+
+  /** Сопровождение каравана: деревня отправляет обоз в соседний город, а
+    * дорога неспокойна — проводить его все переходы и отбиться от засад. */
+  case object CaravanEscort extends VillageQuest("caravan", 25)
 
   /** О чём староста может попросить на этом повороте. Мельче порога первого
     * задания деревни не встречаются; если всё же встретилась — просят о первом. */
@@ -272,4 +276,69 @@ object VillageRates {
     Breed.AdultSpider  -> (Race.Khajiit -> Rarity.Rare),
     Breed.SpiderMother -> (Race.Khajiit -> Rarity.Mythical),
     Breed.RedSpider    -> (Race.Elf -> Rarity.Legendary))
+
+  /** Караван: столько переходов до города, каждый — от и до (как цветы на
+    * поляне); в конце перехода — засада с шансом [[CaravanAmbushPct]]%, а если
+    * засад так и не было, на последнем она будет наверняка. Так решил
+    * пользователь. */
+  val CaravanLegs: Int      = 4
+  val CaravanLegMinMs: Long = 3L * 60L * 1000L
+  val CaravanLegMaxMs: Long = 6L * 60L * 1000L
+  val CaravanAmbushPct: Int = 50
+
+  /** Засада: четверо в строю и трое за ними — уровня задания, как передний и
+    * задний ряд банды на заставе, только меньше. */
+  val CaravanAmbushFront: Int                  = 4
+  val CaravanAmbushFrontRarities: List[Rarity] = List(Rarity.Uncommon, Rarity.Rare)
+  val CaravanAmbushBack: Int                   = 3
+  val CaravanAmbushBackRarities: List[Rarity]  = List(Rarity.Rare, Rarity.Mythical)
+
+  /** Караванщики в строю героя: по силе — редкие той же расы, что деревня,
+    * уровня задания (так решил пользователь); имена — `village.caravan.guards`. */
+  val CaravanGuardRarity: Rarity = Rarity.Rare
+}
+
+/** Кто нападает на караван в засаде (так решил пользователь): сборная банда
+  * разбойников, гоблины гильдии Чернолом, ищейки Сноходцев. Текст засады —
+  * `village.caravan.ambush.<key>`. В базе не лежит: бросается в конце перехода. */
+sealed abstract class CaravanAmbush(val key: String)
+
+object CaravanAmbush {
+  case object Bandits   extends CaravanAmbush("bandits")
+  case object Chernolom extends CaravanAmbush("chernolom")
+  case object Hounds    extends CaravanAmbush("hounds")
+
+  val all: List[CaravanAmbush] = List(Bandits, Chernolom, Hounds)
+}
+
+/** Караван в пути — в `scene_data`, пока герой при нём. Ключи свои
+  * (`caravan…`): в `scene_data` лежат и чужие структуры, и чужое поле не
+  * должно читаться как наше.
+  *
+  * @param leg      какой переход идёт (с 1-го); больше [[VillageRates.CaravanLegs]] —
+  *                 все пройдены, караван в городе
+  * @param ambushes сколько засад уже было: ни одной — на последнем переходе будет
+  * @param nextAt   когда кончится переход (мс); 0 — переход ещё не начат (вернулись
+  *                 с добычи после засады — пора начинать следующий)
+  */
+final case class CaravanTrip(leg: Int, ambushes: Int, nextAt: Long) {
+  def arrived: Boolean = leg > VillageRates.CaravanLegs
+}
+
+object CaravanTrip {
+
+  /** У ворот: первый переход, засад не было, таймера нет. */
+  val start: CaravanTrip = CaravanTrip(1, 0, 0L)
+
+  implicit val encoder: Encoder[CaravanTrip] = (t: CaravanTrip) => Json.obj(
+    "caravanLeg"      -> t.leg.asJson,
+    "caravanAmbushes" -> t.ambushes.asJson,
+    "caravanNextAt"   -> t.nextAt.asJson)
+
+  implicit val decoder: Decoder[CaravanTrip] = (c: HCursor) =>
+    for {
+      leg      <- c.get[Int]("caravanLeg")
+      ambushes <- c.getOrElse[Int]("caravanAmbushes")(0)
+      nextAt   <- c.getOrElse[Long]("caravanNextAt")(0L)
+    } yield CaravanTrip(leg, ambushes, nextAt)
 }

@@ -5670,6 +5670,8 @@ case class BattleState(
           case pangea.model.squad.AllyKind.HedgeElf   => s
           // Капитаны каравана бились за собрата только этот бой — и уходят к своим.
           case pangea.model.squad.AllyKind.CaravanKhajiit => s
+          // Караванщики деревни бились за свой обоз — с ним и остаются.
+          case pangea.model.squad.AllyKind.CaravanGuard => s
           case pangea.model.squad.AllyKind.Rat        => s.summonRat(form, a.lvl, nowMs)
           case _                                      => s.admitRisen(form, a.lvl, nowMs)
         }
@@ -7035,7 +7037,7 @@ object BattleState {
       StoryMarkQuest.FightStory, StoryPowderQuest.FightStory, StoryListQuest.FightStory, StoryFaceQuest.FightStory,
       StoryToolQuest.FightStory, HotGoodsQuest.FightStory, BigDealQuest.AmbushStory, JorgenQuest.LairStory,
       BramblQuest.HallStory, PlukhQuest.HuntStory, FaelinQuest.RootsStory, Villages.RaidStory, Villages.BanditsStory,
-      Villages.SpidersStory)
+      Villages.SpidersStory, Villages.CaravanStory)
 
   /** Паутина на герое и союзниках — на раунд меньше (см. SpiderWeb). */
   def webTicked(battle: SoloPveBattle): SoloPveBattle =
@@ -7089,6 +7091,7 @@ object BattleState {
     else if (a.kind == pangea.model.squad.AllyKind.MurlocKin) "battle.ally.kinDown"
     else if (a.kind == pangea.model.squad.AllyKind.HedgeElf) "battle.ally.hedgeElfDown"
     else if (a.kind == pangea.model.squad.AllyKind.CaravanKhajiit) "battle.ally.caravanKhajiitDown"
+    else if (a.kind == pangea.model.squad.AllyKind.CaravanGuard) "battle.ally.caravanGuardDown"
     else if (a.undead.isDefined) "battle.ally.crumbled"
     else "battle.ally.scroll"
 
