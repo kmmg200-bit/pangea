@@ -26,7 +26,7 @@ import zio.{Task, ZIO}
  * вверх, где `n` — порядковый номер следующего улучшения этой характеристики
  * для героя (см. `hero.masterHornBoosts`).
  *
- * Меню — по три кнопки в ряд: характеристики, за ними задания и наказ;
+ * Меню — по две кнопки в ряд: характеристики, за ними задания и наказ;
  * «Назад» и «В город» — нижним рядом (см. `menuRows`).
  */
 case class MasterHornState(
@@ -364,13 +364,14 @@ object MasterHornState {
   private def statOf(action: String): Option[Stat] =
     Stat.values.find(stat => s"Improve${stat.entryName}" == action)
 
-  /** Кнопок в ряду меню: по три подпись с ценой ещё читается, а по пять — так
-    * VkRenderer ужимает столбик длиннее десяти рядов — уже нет. */
-  val ButtonsPerRow: Int = 3
+  /** Кнопок в ряду меню — по две (решил пользователь): подпись с ценой длинная.
+    * Рядов тогда с «Назад» — до семи, в предел ВК (десять, см.
+    * `VkRenderer.MaxRows`) это влезает. */
+  val ButtonsPerRow: Int = 2
 
   /** Раскладка меню: характеристики, а за ними задания и наказ — по
-    * [[ButtonsPerRow]] в ряд (сейчас их от семи до двенадцати — три-четыре
-    * ряда); «Назад» — нижним рядом, «В город» встанет к нему (CityExit.on). */
+    * [[ButtonsPerRow]] в ряд (сейчас их от семи до двенадцати — четыре-шесть
+    * рядов); «Назад» — нижним рядом, «В город» встанет к нему (CityExit.on). */
   private[guild] def menuRows(deeds: List[Choice], back: List[Choice]): List[Choice] = {
     val grid = deeds.zipWithIndex.map { case (c, i) => c.copy(row = Some(i / ButtonsPerRow)) }
     val last = (deeds.size + ButtonsPerRow - 1) / ButtonsPerRow

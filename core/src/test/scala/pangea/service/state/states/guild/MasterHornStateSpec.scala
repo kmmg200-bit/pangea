@@ -146,7 +146,7 @@ object MasterHornStateSpec extends ZIOSpecDefault {
               assertTrue(label(menu, "ImproveAttack").contains("Атака — даром"))
     },
 
-    test("меню: по три кнопки в ряд — характеристики, за ними задание и наказ; нижним рядом «Назад» и «В город»") {
+    test("меню: по две кнопки в ряд — характеристики, за ними задание и наказ; нижним рядом «Назад» и «В город»") {
       for {
         t <- makeState(reputation = 100L, silver = 100L)
         (state, _, renderer) = t
@@ -155,16 +155,19 @@ object MasterHornStateSpec extends ZIOSpecDefault {
         rows  = rowsOf(menu)
       } yield assertTrue(menu.forall(_.row.isDefined)) &&
               assertTrue(rows == List(
-                List("ImproveArmor", "ImproveEvasion", "ImproveAttack"),
-                List("ImproveDefence", "ImproveAccuracy", "ImproveEnergy"),
-                List("ImproveInventory", "HornQuest", "HornDaily"),
+                List("ImproveArmor", "ImproveEvasion"),
+                List("ImproveAttack", "ImproveDefence"),
+                List("ImproveAccuracy", "ImproveEnergy"),
+                List("ImproveInventory", "HornQuest"),
+                List("HornDaily"),
                 List("LeaveMasterHorn", "GoToCity")))
     },
 
-    test("раскладка: двенадцать кнопок — четыре ряда по три, «Назад» — пятым") {
+    test("раскладка: двенадцать кнопок — шесть рядов по две, «Назад» — седьмым; в предел рядов ВК влезает") {
       val deeds = (1 to 12).toList.map(i => Choice(s"Deed$i", s"Кнопка $i"))
       val rows  = rowsOf(MasterHornState.menuRows(deeds, List(Choice("LeaveMasterHorn", "↩ Назад"))))
-      assertTrue(rows.size == 5 && rows.take(4).forall(_.size == 3) && rows.lastOption.contains(List("LeaveMasterHorn")))
+      assertTrue(rows.size == 7 && rows.take(6).forall(_.size == 2) && rows.lastOption.contains(List("LeaveMasterHorn"))) &&
+        assertTrue(rows.size <= pangea.service.sender.vk.VkRenderer.MaxRows)
     },
 
     test("LeaveMasterHorn → переход в TrainingHall") {
