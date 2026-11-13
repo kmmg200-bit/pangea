@@ -2,7 +2,7 @@ package pangea.service.state.states.battle
 
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.model.battle.{BattleAlly, Formation, GroupState, SoloPveBattle}
+import pangea.model.battle.{BattleAlly, Formation, GroupState, Poison, SoloPveBattle}
 import pangea.model.hero.Hero
 import pangea.model.item.{BeltSlot, FlaskKind, Item, ItemDetails, ItemType, Rarity => ItemRarity}
 import pangea.model.monster.{Monster, Race, Rarity}
@@ -108,6 +108,15 @@ object GroupBattleSpec extends ZIOSpecDefault {
     * (99 — сосед бьёт, подкрепление не пришло). Промах — это бросок не выше 5. */
   private def quietRound(extra: Int*) =
     TestRandom.feedInts(60 +: 99 +: extra: _*) *> TestRandom.feedLongs(100L, 100L, 100L)
+
+  /** Отравленный герой против строя: в паре — моб на 10 HP, второй — вдали, на
+    * месте 4: героя он не достаёт, и HP героя за раунд меняет только яд.
+    * Подкрепления нет. */
+  private def poisonedPair(pct: Int): SoloPveBattle = {
+    val b0 = group(10L, 1000L)
+    b0.copy(noKin = true, effects = b0.effects.copy(heroPoison = Some(Poison(pct))),
+      group = b0.group.copy(places = List(4)))
+  }
 
   override def spec = suite("Групповой бой")(
 
@@ -218,6 +227,49 @@ object GroupBattleSpec extends ZIOSpecDefault {
         solo    <- dao2.getHeroByUserId(userId).map(_.get)
       } yield assertTrue(after.fightStats.energy == 15L) &&
               assertTrue(result == StateType.Loot && solo.fightStats.energy == 15L)
+    },
+
+    // Раньше раунд, кончившийся добиванием, обходил раны героя: кто валил по
+    // мобу за раунд, носил яд, не теряя от него ни HP, а сам яд не слабел.
+
+    test("добил моба в паре, а бой идёт — яд на герое тикает в этом же раунде и слабеет") {
+      val h = hero(atk = 100000L)
+      for {
+        t <- makeState(h, poisonedPair(10))
+        (state, dao, r) = t
+        _       <- quietRound()
+        result  <- state.action(testUser, aimed("Attack", 1), r)
+        after   <- battleOf(dao)
+        hAfter  <- dao.getHeroByUserId(userId).map(_.get)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+        dmg      = Poison(10).damageOn(h.effectiveMaxHp(0L))
+      } yield assertTrue(result == StateType.Battle && after.group.slain.size == 1) &&
+              assertTrue(dmg > 0L && hAfter.fightStats.hp == h.fightStats.hp - dmg) &&
+              assertTrue(screens.contains(s"🟢 Яд: −$dmg HP.")) &&
+              assertTrue(after.effects.heroPoison.contains(Poison(10 - Poison.DecayPerRound)))
+    },
+
+    test("яд, сваливший героя в раунде добивания, — это смерть, а не бой на нуле HP") {
+      // яд снимет половину максимума, а HP у героя — тысяча
+      val h = hero(atk = 100000L).copy(fightStats = hero(atk = 100000L).fightStats.copy(hp = 1000L))
+      for {
+        t <- makeState(h, poisonedPair(50))
+        (state, _, r) = t
+        _      <- quietRound()
+        result <- state.action(testUser, aimed("Attack", 1), r)
+      } yield assertTrue(result == StateType.Death)
+    },
+
+    test("добил последнего — победа, и яд на герое после неё уже не тикает") {
+      val h  = hero(atk = 100000L)
+      val b0 = group(10L)
+      for {
+        t <- makeState(h, b0.copy(effects = b0.effects.copy(heroPoison = Some(Poison(10)))))
+        (state, dao, r) = t
+        _      <- quietRound()
+        result <- state.action(testUser, tap("Attack"), r)
+        hAfter <- dao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(result == StateType.Loot && hAfter.fightStats.hp == h.fightStats.hp)
     },
 
     test("глоток фляги раунд не завершает: сосед сбоку не бьёт, подкрепление не идёт, раунд не растёт") {

@@ -236,9 +236,12 @@ case class BattleState(
       // каждый шестой раунд и отложенный Таран. Ход, который не был ходом
       // (навык не готов и т.п.), группу не двигает.
       promoted = promoteAfterKill(risen)
+      // Герой сам добил активного, а бой идёт — его раны тикают и в этом
+      // раунде (см. dueWounds).
+      ached    = dueWounds(promoted, now)
       // Союзники бьют после ответа активного моба; добили активного — снова
       // продвигаем следующего к герою.
-      allied  <- allyPhase(promoted)
+      allied  <- allyPhase(ached)
       // Добил союзник — Джо встаёт так же, как от удара героя.
       promoted2 = promoteAfterKill(joeRises(allied))
       sided   <- sideMobsPhase(promoted2, now)
@@ -255,7 +258,7 @@ case class BattleState(
       allyTicked = tickAllyEffects(promoted3)
       prefs   <- BattleState.prefs(heroDao, user.userId)
       fogged   = auraTick(allyTicked, prefs.miasma)
-      promoted4 = promoteAfterKill(fogged)
+      promoted4 = promoteAfterKill(joeRises(fogged))
       // Охрана вся полегла — стрелкам некого прикрывать: они бросают башни и
       // уходят, бой на этом кончается победой.
       abandoned = towersAlone(promoted4)
@@ -1099,7 +1102,7 @@ case class BattleState(
       // поле. Свою ауру лежачий не держит — держать её нечем; чужая (миазмы
       // Некроманта) работает как всегда.
       allyTicked = tickAllyEffects(promoted2)
-      fogged     = promoteAfterKill(auraTick(allyTicked, on = false))
+      fogged     = promoteAfterKill(joeRises(auraTick(allyTicked, on = false)))
       // Охрану доломали союзники, пока герой лежал, — башням некого
       // прикрывать, и бой кончается так же, как если бы её добил он сам.
       abandoned = towersAlone(fogged)
@@ -3371,9 +3374,31 @@ case class BattleState(
     * отсчитывают раунд, как после хода моба (`tickBuffs`, `skip` — слот только
     * что применённого умения). Без этого в группе следующий моб встаёт в пару,
     * а фляга и умения считают, что раунд не кончился. В бою 1 на 1 тик
-    * безобиден — бой всё равно кончился. */
+    * безобиден — бой всё равно кончился.
+    *
+    * Раны героя здесь не тикают: кончится ли бой, решит промоут. Пойдёт бой
+    * дальше — они тикают там (см. [[dueWounds]]). */
   private def victoryByHero(hero: Hero, battle: SoloPveBattle, log: Vector[String], nowMs: Long, skip: Set[Long]): TurnResult =
-    TurnResult(endOfRoundHero(hero, nowMs), battle.tickBuffs(skip), log, Outcome.Victory)
+    TurnResult(endOfRoundHero(hero, nowMs), battle.tickBuffs(skip), log, Outcome.Victory, woundsDue = true)
+
+  /** Раны героя в раунде, который он сам кончил, добив активного (см.
+    * [[victoryByHero]]): до конца хода, где они тикают, — ответа моба в паре
+    * или тихого конца раунда — дело не дошло. Бой этим кончился — им тикать
+    * незачем, победа уже за героем. А если бой идёт — в группе к герою шагнёт
+    * следующий, Гнилой Джо встал, — это обычный раунд, и яд, кровь, пламя и
+    * реген на герое тикают, как в любом другом.
+    * Раньше герой, добивавший по мобу за раунд, носил яд, не теряя от него ни
+    * HP, а сам яд не слабел. Тик добил героя — это смерть, как от удара: с
+    * «Первопроходцем» и «Каменным стражем». */
+  private def dueWounds(res: TurnResult, nowMs: Long): TurnResult =
+    if (!res.woundsDue || res.outcome != Outcome.Continue) res
+    else {
+      val (hero, battle, line) = tickHeroEffects(res.hero, res.battle, nowMs)
+      val ticked = res.copy(hero = hero, battle = battle, woundsDue = false,
+        log     = res.log ++ Vector(line).filter(_.nonEmpty),
+        outcome = if (hero.fightStats.hp > 0L) Outcome.Continue else Outcome.Death)
+      stoneGuardRescue(res.hero, secondWind(ticked, side = false), nowMs)
+    }
 
   /** Сколько снимет с героя один тик горения. По нему же экран боя пишет
     * прогноз у HP героя (🔥-N): что обещано, то тик и снимет.
@@ -5116,8 +5141,19 @@ case class BattleState(
       // Чужая аура: её держит моб, и платит он своей энергией. Правила те же — и
       // она так же не разбирает, кто на поле свой.
       val byMob = byHero.battle.auraHolder.fold(byHero) { case (aura, _) => mobAura(byHero, aura) }
-      if (byMob.battle.holyWater) holyTick(byMob) else byMob
+      auraFelled(if (byMob.battle.holyWater) holyTick(byMob) else byMob)
     }
+
+  /** Аура добила того, кто в полях боя, — это смерть, как от удара или ран, и
+    * исход хода — победа над ним; дальше её разбирают тем же порядком: Джо
+    * встаёт, в группе место перед героем пустеет. Раньше исход оставался «бой
+    * идёт», и мёртвый так и стоял в паре с нулём HP: бил героя, а в павших не
+    * числился — Некроманту было нечего поднимать. Если та же аура свалила и
+    * стоявшего героя, победы не даём. */
+  private def auraFelled(res: TurnResult): TurnResult =
+    if (res.outcome != Outcome.Continue || !res.endsRound || res.battle.monsterCurrentHp > 0L) res
+    else if (res.hero.fightStats.hp <= 0L && !res.battle.group.heroDown) res
+    else res.copy(outcome = Outcome.Victory)
 
   /** Держатся ли на поле миазмы в этом раунде: герой их не свернул и ему есть
     * чем платить — или их держит моб, у которого хватает энергии. Осевшие
@@ -7116,7 +7152,11 @@ object BattleState {
       endsRound: Boolean = true,
       // Быстрые отдыхи, которые ход положил в запас (бодрящий сбор с пояса).
       // Запас лежит у Азата, а не в герое, — его допишет commit.
-      instantRests: Int = 0
+      instantRests: Int = 0,
+      // Раны героя за этот раунд ещё не тикали: он сам добил активного, и до
+      // конца хода, где они тикают, дело не дошло (см. victoryByHero). Пойдёт
+      // бой дальше — они тикают после промоута (см. dueWounds).
+      woundsDue: Boolean = false
   )
 
   /** Чем на поясе героя ещё можно воспользоваться — их число стоит на кнопке

@@ -3,11 +3,11 @@ package pangea.service.state.states.battle
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
 import pangea.generator.item.MaterialGenerator
-import pangea.model.battle.SoloPveBattle
+import pangea.model.battle.{BattleEffects, GroupState, MonsterSlot, SoloPveBattle}
 import pangea.model.cave.{CaveRoom, CaveScene, RoomKind}
 import pangea.model.hero.{Equipment, Hero, LoreData}
 import pangea.model.item.{BeltSlot, Item, ItemDetails, ItemSet, ItemType, MaterialKind, Rarity => ItemRarity}
-import pangea.model.monster.{Race, Rarity}
+import pangea.model.monster.{MiniBoss, Race, Rarity}
 import pangea.model.state.StateType
 import pangea.model.stats.FightStats
 import pangea.model.user.{TelegramId, User, UserId, VkId}
@@ -233,6 +233,56 @@ object HolyWaterSpec extends ZIOSpecDefault {
               assertTrue(dead._2.contains("💧 Святая вода: каждый мёртвый −5% HP.")) &&
               // живому досталось только от удара, и вода о себе промолчала
               assertTrue(living._1 < 1000L && !living._2.contains("Святая вода жжёт"))
+    },
+
+    // Раньше вода опускала мёртвого до нуля, а исход хода оставался «бой идёт»:
+    // он так и стоял в паре с 0% и в павших не числился.
+
+    test("вода добила мёртвого один на один — это победа, а не враг с нулём HP") {
+      // 5% от тысячи — 50, а у него осталось 30; герой выжидает и не бьёт
+      val dying = foe(undead = true, hp = 1000L).copy(monsterCurrentHp = 30L, holyWater = true)
+      for {
+        t <- makeState(hero(), dying)
+        (state, _, r) = t
+        out  <- state.action(testUser, tap("Wait"), r)
+        said <- texts(r)
+      } yield assertTrue(out == StateType.Loot) &&
+              assertTrue(said.contains("💧 Святая вода: каждый мёртвый −5% HP."))
+    },
+
+    test("в группе добитый водой мёртвый уходит в павшие, и место перед героем пустеет") {
+      val orc = MonsterSlot(10L, Race.Orc.entryName, Rarity.Common.entryName,
+        FightStats(atk = 1, hp = 100000, armor = 0, defence = 0, evasion = 0, accuracy = 1, energy = 0),
+        100000L, 0L, marked = false, 0L, BattleEffects.empty)
+      // живой орк стоит поодаль: вода его не трогает, а до героя ему не дотянуться
+      val pair = foe(undead = true, hp = 1000L).copy(monsterCurrentHp = 30L, holyWater = true, noKin = true,
+        group = GroupState.empty.copy(others = List(orc), places = List(4)))
+      for {
+        t <- makeState(hero(), pair)
+        (state, dao, r) = t
+        out   <- state.action(testUser, tap("Wait"), r)
+        after <- battleOf(dao)
+        said  <- texts(r)
+      } yield assertTrue(out == StateType.Battle) &&
+              // мёртвый — в павших (теперь Некроманту есть кого поднимать), в полях — орк
+              assertTrue(after.group.slain.size == 1 && after.group.slain.forall(_.undead)) &&
+              assertTrue(after.monsterCurrentHp == 100000L && after.group.others.isEmpty) &&
+              assertTrue(said.contains("пал. Место перед вами опустело"))
+    },
+
+    test("Гнилой Джо, добитый водой, встаёт, как от удара") {
+      // минибосса вода жжёт вдвое слабее — 25 из тысячи, а у него 10; энергии на приёмы нет
+      val joe = foe(undead = false, hp = 1000L).copy(monsterRace = Race.Undead.entryName,
+        bossKind = Some(MiniBoss.RottenJoe.entryName), monsterCurrentHp = 10L, holyWater = true)
+      for {
+        t <- makeState(hero(), joe)
+        (state, dao, r) = t
+        out   <- state.action(testUser, tap("Wait"), r)
+        after <- battleOf(dao)
+        said  <- texts(r)
+      } yield assertTrue(out == StateType.Battle) &&
+              assertTrue(after.bossRevives == 1 && after.monsterCurrentHp == 750L) &&
+              assertTrue(said.contains("Гнилой Джо отказывается умирать"))
     },
 
     test("миазмы героя гасят воду; свернул их — вода жжёт мёртвых и самого героя-нежить") {
