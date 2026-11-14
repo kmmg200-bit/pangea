@@ -162,6 +162,8 @@ object VillageArtifactSpec extends ZIOSpecDefault {
           r    <- TestRenderer.make
           st   <- trail(d, TestInventoryRepository.withItems(List(paper)), c).map(_._1)
           _    <- TestClock.adjust(10.minutes)
+          // у стана: при сделке воров не застали (покупатели — VillageBuyersSpec)
+          _    <- TestRandom.feedInts(99)
           _    <- st.action(testUser, legDone, r)
           shown <- r.sentScreens.map(_.last)
           next <- trailOf(d)
@@ -262,6 +264,8 @@ object VillageArtifactSpec extends ZIOSpecDefault {
         d     <- dao(data = Some(VillageTrailState.wonMark))
         r     <- TestRenderer.make
         st    <- trail(d, TestInventoryRepository.withItems(List(paper)), c).map(_._1)
+        // маг Сноходцев не вышел (он — VillageBuyersSpec)
+        _     <- TestRandom.feedInts(99)
         _     <- st.enter(testUser, r)
         won   <- r.sentScreens.map(_.last)
         q     <- questOf(d)

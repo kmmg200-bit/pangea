@@ -7,7 +7,7 @@ import pangea.model.battle.{BattleAlly, Convoy, MonsterSlot, SoloPveBattle, Wago
 import pangea.generator.monster.MonsterGenerator
 import pangea.model.hero.Hero
 import pangea.model.item.QuestItemKind
-import pangea.model.monster.{Breed, Monster, Race, Rarity}
+import pangea.model.monster.{Breed, MiniBoss, Monster, Race, Rarity}
 import pangea.model.quest.NpcQuests
 import pangea.model.squad.{AllyKind, UndeadForm}
 import pangea.model.state.StateType
@@ -149,6 +149,12 @@ object Villages {
       "doubloons" -> doubloons.toString,
       "word"      -> content.list("village.doubloonWords").lift(pluralForm(doubloons)).getOrElse(""))
 
+  /** Одни дублоны словами: «1 дублон», «3 дублона», «14 дублонов» — столько
+    * даёт маг Сноходцев за артефакт. */
+  def doubloonsLine(content: SceneContent, n: Long): String =
+    content.format("village.payLine.doubloons", "doubloons" -> n.toString,
+      "word" -> content.list("village.doubloonWords").lift(pluralForm(n)).getOrElse(""))
+
   /** Какое слово из трёх: «1 дублон», «2 дублона», «5 дублонов» (и «11 дублонов», «21 дублон»). */
   private def pluralForm(n: Long): Int =
     if (n % 10 == 1 && n % 100 != 11) 0
@@ -236,6 +242,14 @@ object Villages {
     NpcQuestLog.modify(heroDao, userId)(_.copy(village = None)) *>
       QuestSupport.removeItems(inventory, hero, Set(QuestItemKind.VillageContract))
 
+  /** Продать артефакт магу Сноходцев: контракт сорван, как при отказе, а
+    * дублоны — герою. Договор стирается первым: старая кнопка второй платы не
+    * даст. Возвращает героя после. */
+  def sell(heroDao: HeroDao, inventory: InventoryRepository, userId: UserId, hero: Hero, doubloons: Long): Task[Hero] = {
+    val after = hero.copy(doubloons = hero.doubloons + doubloons.max(0L))
+    abandon(heroDao, inventory, userId, hero) *> heroDao.updateDoubloons(userId, after.doubloons).as(after)
+  }
+
   // ── Бои ─────────────────────────────────────────────────────────────────────
 
   private def roll(lvl: Int, race: Race, n: Int, pool: List[Rarity], rng: Rng): (List[Monster], Rng) =
@@ -292,6 +306,15 @@ object Villages {
     val (front, r3) = mixed(lvl, VillageRates.ThiefFront, VillageRates.ThiefFrontRarities, r2)
     val (back, _)   = mixed(lvl, VillageRates.ThiefBack, VillageRates.ThiefBackRarities, r3)
     MonsterGenerator.generateOfRaceAndRarity(lvl, race, VillageRates.ThiefRarity, named) :: (front ++ back)
+  }
+
+  /** Некромант, с которым воров застали при сделке, — минибосс: растёт по своему
+    * делителю от уровня задания, как в пещере от уровня героя, и выходит под
+    * своим именем. В стане он стоит первым, вор — за ним. */
+  def dealer(contract: VillageContract): Monster = {
+    val lord = MiniBoss.Necromancer
+    val lvl  = lord.bossLvl(contract.level.max(1).toLong)
+    Monster(0L, lvl, lord.race, Rarity.Legendary, lord.stats(lvl), customName = Some(lord.monsterName))
   }
 
   /** Загнанный вор уровня задания: он сам — той же расы и под тем же именем,

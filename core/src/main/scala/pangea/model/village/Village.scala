@@ -367,6 +367,32 @@ object VillageRates {
   /** Загнанный вор: с ним столько подручных, что ушли вместе с ним, — покрепче,
     * как задний ряд стана. */
   val CorneredHenchmen: Int = 2
+
+  /** Покупатель в стане: с таким шансом воров застают при сделке — у костра с
+    * ними Некромант, минибосс (так решил пользователь; шанс — Claude). Бросок —
+    * когда герой выходит к стану. */
+  val NecromancerPct: Int = 25
+
+  /** Маг Сноходцев — тот, кто заказал кражу: с таким шансом выходит после боя и
+    * предлагает за артефакт дублоны (шанс решил Claude). Если покупателем был
+    * Некромант, не выходит: сделка и так сорвана. */
+  val MageOfferPct: Int = 30
+
+  /** Маг платит золотом: примерно по дублону за каждые столько серебра платы
+    * деревни, с округлением, и её дублоны — сверху (так решил пользователь). */
+  val MageSilverPerDoubloon: Long = 400L
+
+  def mageDoubloons(silver: Long, doubloons: Long): Long =
+    (doubloons.max(0L) + (silver.max(0L) + MageSilverPerDoubloon / 2L) / MageSilverPerDoubloon).max(1L)
+}
+
+/** Предложение мага Сноходцев после боя в стане — в `scene_data`, пока герой не
+  * ответил: продать артефакт за столько дублонов или отказать. Ключ свой. */
+final case class ArtifactOffer(doubloons: Long)
+
+object ArtifactOffer {
+  implicit val encoder: Encoder[ArtifactOffer] = (o: ArtifactOffer) => Json.obj("artifactOffer" -> o.doubloons.asJson)
+  implicit val decoder: Decoder[ArtifactOffer] = (c: HCursor) => c.get[Long]("artifactOffer").map(ArtifactOffer(_))
 }
 
 /** Погоня за ворами артефакта — в `scene_data`, пока герой идёт по следу. Ключи
@@ -382,9 +408,13 @@ object VillageRates {
   *                переход по его следу, потом он, загнанный, с подручными
   * @param thief   имя вора — бросок в начале боя в стане: за ним и гонятся
   * @param thiefRace его раса
+  * @param necromancer воров застали при сделке: в стане с ними Некромант — бросок,
+  *                когда герой вышел к стану (см. [[VillageRates.NecromancerPct]]).
+  *                Едет и в погоню за беглецом: мага Сноходцев после неё не будет
   */
 final case class ArtifactTrail(legs: Int, leg: Int, nextAt: Long, escaped: Boolean = false,
-                               thief: Option[String] = None, thiefRace: Option[Race] = None) {
+                               thief: Option[String] = None, thiefRace: Option[Race] = None,
+                               necromancer: Boolean = false) {
   /** Все переходы пройдены: впереди стан воров (или загнанный вор). */
   def atCamp: Boolean = leg > legs
 
@@ -398,20 +428,22 @@ object ArtifactTrail {
   def start(legs: Int, nextAt: Long): ArtifactTrail = ArtifactTrail(legs, 1, nextAt)
 
   /** Вор ушёл из боя: один переход по его следу — он кончится в `nextAt`. Кто
-    * вор, погоня помнит. */
-  def after(thief: Option[String], thiefRace: Option[Race], nextAt: Long): ArtifactTrail =
-    ArtifactTrail(1, 1, nextAt, escaped = true, thief = thief, thiefRace = thiefRace)
+    * вор и был ли в стане Некромант, погоня помнит. */
+  def after(thief: Option[String], thiefRace: Option[Race], nextAt: Long, necromancer: Boolean = false): ArtifactTrail =
+    ArtifactTrail(1, 1, nextAt, escaped = true, thief = thief, thiefRace = thiefRace, necromancer = necromancer)
 
   implicit val encoder: Encoder[ArtifactTrail] = (t: ArtifactTrail) => Json.obj(
-    "trailLegs"      -> t.legs.asJson,
-    "trailLeg"       -> t.leg.asJson,
-    "trailNextAt"    -> t.nextAt.asJson,
-    "trailEscaped"   -> t.escaped.asJson,
-    "trailThief"     -> t.thief.asJson,
-    "trailThiefRace" -> t.thiefRace.map(_.entryName).asJson)
+    "trailLegs"        -> t.legs.asJson,
+    "trailLeg"         -> t.leg.asJson,
+    "trailNextAt"      -> t.nextAt.asJson,
+    "trailEscaped"     -> t.escaped.asJson,
+    "trailThief"       -> t.thief.asJson,
+    "trailThiefRace"   -> t.thiefRace.map(_.entryName).asJson,
+    "trailNecromancer" -> t.necromancer.asJson)
 
   /** Погоня, начатая до того, как вор научился уходить, — без этих полей:
-    * читается как погоня за всеми ворами, вор бросается в начале боя. */
+    * читается как погоня за всеми ворами, вор бросается в начале боя,
+    * Некроманта в стане нет. */
   implicit val decoder: Decoder[ArtifactTrail] = (c: HCursor) =>
     for {
       legs    <- c.get[Int]("trailLegs")
@@ -420,7 +452,8 @@ object ArtifactTrail {
       escaped <- c.getOrElse[Boolean]("trailEscaped")(false)
       thief   <- c.getOrElse[Option[String]]("trailThief")(None)
       race    <- c.getOrElse[Option[String]]("trailThiefRace")(None)
-    } yield ArtifactTrail(legs, leg, nextAt, escaped, thief, race.flatMap(Race.withNameOption))
+      necro   <- c.getOrElse[Boolean]("trailNecromancer")(false)
+    } yield ArtifactTrail(legs, leg, nextAt, escaped, thief, race.flatMap(Race.withNameOption), necro)
 }
 
 /** Кто нападает на караван в засаде (так решил пользователь): сборная банда

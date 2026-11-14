@@ -7,13 +7,13 @@ import pangea.domain.Rng
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.model.battle.SoloPveBattle
 import pangea.model.hero.Hero
-import pangea.model.monster.Monster
+import pangea.model.monster.{MiniBoss, Monster}
 import pangea.model.quest.Difficulty
 import pangea.model.schedule.TaskKind
 import pangea.model.skill.MonsterEnergy
 import pangea.model.state.StateType
 import pangea.model.user.User
-import pangea.model.village.{ArtifactTrail, VillageContract, VillageQuest, VillageRates}
+import pangea.model.village.{ArtifactOffer, ArtifactTrail, VillageContract, VillageQuest, VillageRates}
 import pangea.repository.inventory.InventoryRepository
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.LootState.LootData
@@ -45,6 +45,14 @@ import java.util.concurrent.TimeUnit
   * дальше. Победа над ней — и сразу переход по его следу, а за ним он сам,
   * загнанный, с двумя подручными: второй раз бежать ему некуда.
   *
+  * Покупатели (вариант Battle Brothers). С шансом [[VillageRates.NecromancerPct]]%
+  * воров застают при сделке: у костра с ними Некромант — минибосс, он стоит
+  * первым, вор — за ним. После победы с шансом [[VillageRates.MageOfferPct]]%
+  * из кустов выходит маг Сноходцев — тот, кто заказал кражу, — и предлагает за
+  * артефакт дублоны ([[VillageRates.mageDoubloons]]). Продал — контракт сорван,
+  * дублоны у героя; отказал — к старосте. Был Некромант — мага нет: сделка и
+  * так сорвана.
+  *
   * Сойти со следа (в пути или у стана, с подтверждением) или пасть в стане —
   * след остыл: контракт при герое, но погоню начинать заново, от ворот.
   * «Отказаться от контракта» — как у логова. */
@@ -67,6 +75,8 @@ case class VillageTrailState(
       "VillageTrailQuitYes"    -> Target.Run { (u, _, r) => atTrail(u, r)(_ => quit(u, r)) },
       "VillageTrailAbandon"    -> Target.Run { (u, _, r) => atTrail(u, r)(c => askAbandon(u, c, r)) },
       "VillageTrailAbandonYes" -> Target.Run { (u, _, r) => atTrail(u, r)(_ => abandon(u, r)) },
+      "VillageTrailSell"       -> Target.Run { (u, _, r) => atTrail(u, r)(c => sell(u, c, r)) },
+      "VillageTrailRefuse"     -> Target.Run { (u, _, r) => atTrail(u, r)(_ => refuse(u, r)) },
       "VillageTrailBack"       -> Target.Run { (u, _, r) => enter(u, r).as(StateType.VillageTrail) },
       "VillageTrailOut"        -> Target.Run { (u, _, r) => out(u, r) },
       "OpenCharacter"          -> Target.Run { (u, _, _) => CharacterMenu.open(heroDao, u.userId, StateType.VillageTrail) }
@@ -77,19 +87,22 @@ case class VillageTrailState(
   override def targetStates: Set[StateType] =
     Set(StateType.Dungeon, StateType.Battle, StateType.HeroStats, StateType.VillageTrail)
 
-  /** Вход: контракта на артефакт нет — здесь пусто; бой в стане выигран (добыча
-    * положила отметку) — артефакт у героя, а если вор ушёл из боя — погоня за
-    * ним; погоня не начата — у ворот; все переходы пройдены — у стана; переход
-    * идёт — по следу (кончился, пока герой был в меню, — кончится сразу). */
+  /** Вход: контракта на артефакт нет — здесь пусто; маг Сноходцев ждёт ответа —
+    * его предложение; бой в стане выигран (добыча положила отметку) — артефакт у
+    * героя, а если вор ушёл из боя — погоня за ним; погоня не начата — у ворот;
+    * все переходы пройдены — у стана; переход идёт — по следу (кончился, пока
+    * герой был в меню, — кончится сразу). */
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     for {
       now      <- nowMs
       contract <- standing(user)
       data     <- heroDao.readSceneData(user.userId)
       trail     = data.flatMap(_.as[ArtifactTrail].toOption)
+      offer     = data.flatMap(_.as[ArtifactOffer].toOption)
       _        <- contract match {
                     case None =>
                       clear(user) *> renderer.show(user, Screen(text("gone"), List(outChoice)))
+                    case Some(c) if offer.isDefined => ZIO.foreachDiscard(offer)(o => renderer.show(user, offerScreen(c, o)))
                     case Some(c) if data.exists(won) =>
                       trail match {
                         case Some(t) if !t.escaped && data.exists(SoloPveBattle.preyLeftIn) => thiefGone(user, c, t, now, renderer)
@@ -128,6 +141,14 @@ case class VillageTrailState(
   private def writeTrail(user: User, trail: ArtifactTrail): Task[Unit] =
     heroDao.writeSceneData(user.userId, trail.asJson)
 
+  private def readOffer(user: User): Task[Option[ArtifactOffer]] =
+    heroDao.readSceneData(user.userId).map(_.flatMap(_.as[ArtifactOffer].toOption))
+
+  /** Погоня идёт или маг ждёт ответа: «Идти по следу», «Уйти» и «В лабиринт»
+    * тогда — старые кнопки. */
+  private def busy(user: User): Task[Boolean] =
+    heroDao.readSceneData(user.userId).map(_.exists(d => d.as[ArtifactTrail].isRight || d.as[ArtifactOffer].isRight))
+
   // ── Тексты и экраны ─────────────────────────────────────────────────────────
 
   /** Текст погони: `village.artifact.<key>`. */
@@ -155,12 +176,13 @@ case class VillageTrailState(
       content.choice("VillageTrailQuit", key("quitLabel")).copy(row = Some(1))))
 
   /** У стана: кто там, сложность, что вор со свёртком в бою не задержится и что
-    * из этого боя не сбежать. Загнанный вор — свой текст, и бежать ему уже
-    * некуда. */
+    * из этого боя не сбежать. Застали при сделке — у костра Некромант; загнанный
+    * вор — свой текст, и бежать ему уже некуда. */
   private def campScreen(c: VillageContract, t: ArtifactTrail): Screen =
     Screen(
       Villages.joined(
-        content.format(key(if (t.escaped) "cornered" else "camp"), args(c, t): _*), difficulty(c.level),
+        content.format(key(if (t.escaped) "cornered" else if (t.necromancer) "campNecromancer" else "camp"), args(c, t): _*),
+        difficulty(c.level),
         (if (t.escaped) "" else content.format(key("thiefHint"), "rounds" -> VillageRates.ThiefEscapeRounds.toString) + "\n") +
           content.text("village.lair.noEscape")),
       List(
@@ -195,14 +217,23 @@ case class VillageTrailState(
 
   private def outChoice = content.choice("VillageTrailOut", "village.toDungeonLabel")
 
+  /** Маг Сноходцев: кто он и сколько даёт за артефакт — продать или отказать. */
+  private def offerScreen(c: VillageContract, o: ArtifactOffer): Screen = {
+    val price = Villages.doubloonsLine(content, o.doubloons)
+    Screen(content.format(key("mageOffer"), Villages.args(content, c) :+ ("offer" -> price): _*), List(
+      content.choice("VillageTrailSell", key("sellLabel"), "offer" -> price).copy(row = Some(0)),
+      content.choice("VillageTrailRefuse", key("refuseLabel")).copy(row = Some(0)),
+      content.choice("OpenCharacter", "village.lair.characterLabel").copy(row = Some(1))))
+  }
+
   // ── Погоня ──────────────────────────────────────────────────────────────────
 
   /** «Идти по следу»: сколько переходов до стана — бросок, и первый из них. Уже
-    * в пути — показать, что сейчас. */
+    * в пути или маг ждёт ответа — показать, что сейчас. */
   private def depart(user: User, c: VillageContract, renderer: Renderer): Task[StateType] =
-    readTrail(user).flatMap {
-      case Some(_) => enter(user, renderer).as(StateType.VillageTrail)
-      case None =>
+    busy(user).flatMap {
+      case true => enter(user, renderer).as(StateType.VillageTrail)
+      case false =>
         for {
           now  <- nowMs
           legs <- Random.nextIntBetween(VillageRates.TrailLegsMin, VillageRates.TrailLegsMax + 1)
@@ -231,29 +262,43 @@ case class VillageTrailState(
       res   <- trail match {
                  case Some(t) if !t.atCamp && t.nextAt > 0L && t.nextAt <= now =>
                    val next = t.copy(leg = t.leg + 1, nextAt = 0L)
-                   if (next.atCamp) writeTrail(user, next) *> renderer.show(user, campScreen(c, next)).as(StateType.VillageTrail)
+                   if (next.atCamp)
+                     dealRoll(next).flatMap(camp =>
+                       writeTrail(user, camp) *> renderer.show(user, campScreen(c, camp)).as(StateType.VillageTrail))
                    else startLeg(user, c, next, now, renderer)
                  case _ => enter(user, renderer).as(StateType.VillageTrail)
                }
     } yield res
 
+  /** Вышли к стану: застанут ли воров при сделке с Некромантом — бросок сейчас,
+    * чтобы стан и бой сошлись. Загнанного вора это не касается. */
+  private def dealRoll(t: ArtifactTrail): Task[ArtifactTrail] =
+    if (t.escaped) ZIO.succeed(t)
+    else Random.nextIntBetween(0, 100).map(roll => t.copy(necromancer = roll < VillageRates.NecromancerPct))
+
   // ── Стан воров ──────────────────────────────────────────────────────────────
 
   /** Бой в стане: вор с артефактом и банда — уровня задания. Вор стоит первым и
     * уходит, если не свалить его за [[VillageRates.ThiefEscapeRounds]] раунда;
-    * загнанному — с двумя подручными — бежать некуда. Добыча вернёт сюда с
-    * отметкой победы, а кто вор — в погоне: ушёл — за ним и пойдём. Не у стана
-    * (старая кнопка) — показать, что сейчас. */
+    * застали при сделке — первым стоит Некромант, вор за ним. Загнанному вору —
+    * с двумя подручными — бежать некуда. Добыча вернёт сюда с отметкой победы, а
+    * кто вор — в погоне: ушёл — за ним и пойдём. Не у стана (старая кнопка) —
+    * показать, что сейчас. */
   private def fight(user: User, c: VillageContract, renderer: Renderer): Task[StateType] =
     readTrail(user).flatMap {
       case Some(t) if t.atCamp =>
         for {
           hero     <- getHero(user)
           seed     <- Random.nextLong
-          foes      = if (t.escaped) Villages.cornered(c, t.thief, t.thiefRace, Rng(seed)) else Villages.thiefGang(c, Rng(seed))
-          thief     = foes.headOption
-          energies <- ZIO.foreach(foes)(startEnergy)
-          plain     = SoloPveBattle.fromGroup(foes, hero, energies)
+          gang      = if (t.escaped) Villages.cornered(c, t.thief, t.thiefRace, Rng(seed)) else Villages.thiefGang(c, Rng(seed))
+          thief     = gang.headOption
+          dealer    = Option.when(t.necromancer && !t.escaped)(Villages.dealer(c))
+          foes      = dealer.toList ++ gang
+          // Некромант выходит с полной силой, как в пещере: без энергии первый
+          // его круг прошёл бы впустую.
+          energies <- ZIO.foreach(foes)(startEnergy).map(es => dealer.fold(es)(d => d.fightStats.energy :: es.drop(1)))
+          plain     = dealer.fold(SoloPveBattle.fromGroup(foes, hero, energies))(_ =>
+                        withDealer(SoloPveBattle.fromGroup(foes, hero, energies, headBoss = Some(MiniBoss.Necromancer)), c, thief))
                         .copy(story = Some(Villages.ArtifactStory), lootLevel = Some(c.level.max(1).toLong))
           // Уходит только вор с именем: по имени его и узнают в строю.
           battle    = thief.flatMap(_.customName).filterNot(_ => t.escaped).fold(plain)(name =>
@@ -263,41 +308,85 @@ case class VillageTrailState(
                         eventData = Some(marked.asJson.deepMerge(wonMark)))
           _        <- heroDao.writeActiveBattle(user.userId, battle.asJson)
           _        <- heroDao.writeSceneData(user.userId, routing.asJson)
-          _        <- renderer.show(user, Screen(content.format(key(if (t.escaped) "fightCornered" else "fight"),
+          _        <- renderer.show(user, Screen(content.format(key(
+                        if (t.escaped) "fightCornered" else if (dealer.isDefined) "fightNecromancer" else "fight"),
                         args(c, marked): _*), Nil))
         } yield StateType.Battle
       case _ => enter(user, renderer).as(StateType.VillageTrail)
     }
 
+  /** Некромант в стане — как в пещере: подручных себе поднимает уровнем задания
+    * и расы вора (сам он нежить, и мобов его расы не бывает), сородичей со
+    * стороны не ждёт. */
+  private def withDealer(b: SoloPveBattle, c: VillageContract, thief: Option[Monster]): SoloPveBattle =
+    b.copy(minionLvl = c.level.max(1).toLong, noKin = true,
+      group = b.group.copy(originRace = thief.map(_.race.entryName).orElse(b.group.originRace)))
+
   /** Бой выигран, но вор со свёртком ушёл: сразу — переход по его следу, а кто
-    * он, погоня помнит. */
+    * он и был ли в стане Некромант, погоня помнит. */
   private def thiefGone(user: User, c: VillageContract, t: ArtifactTrail, now: Long, renderer: Renderer): Task[Unit] = {
-    val next = ArtifactTrail.after(t.thief, t.thiefRace, 0L)
+    val next = ArtifactTrail.after(t.thief, t.thiefRace, 0L, t.necromancer)
     startLeg(user, c, next, now, renderer, note = content.format(key("thiefGone"), args(c, next): _*)).unit
   }
 
-  /** Воры перебиты — в стане или загнанный вор: артефакт у героя, к старосте за
-    * платой. */
+  /** Воры перебиты — в стане или загнанный вор: свёрток у героя. С шансом
+    * [[VillageRates.MageOfferPct]]% из кустов выходит маг Сноходцев и ждёт
+    * ответа; был при сделке Некромант — мага нет. Иначе — к старосте за платой. */
   private def victory(user: User, c: VillageContract, trail: Option[ArtifactTrail], renderer: Renderer): Task[Unit] = {
-    val t = trail.getOrElse(ArtifactTrail(0, 1, 0L))
+    val t     = trail.getOrElse(ArtifactTrail(0, 1, 0L))
+    val found = content.format(key(if (t.escaped) "victoryCornered" else "victory"), args(c, t): _*)
     for {
-      _ <- clear(user)
-      _ <- Villages.lairCleared(heroDao, user.userId, VillageQuest.StolenArtifact)
-      _ <- renderer.show(user, Screen(
-             Villages.joined(content.format(key(if (t.escaped) "victoryCornered" else "victory"), args(c, t): _*),
-               content.text("village.lair.returnHint")),
-             List(outChoice)))
+      mage <- if (t.necromancer) ZIO.succeed(false) else Random.nextIntBetween(0, 100).map(_ < VillageRates.MageOfferPct)
+      _    <- if (mage) {
+                val o = ArtifactOffer(VillageRates.mageDoubloons(c.silver, c.doubloons))
+                heroDao.writeSceneData(user.userId, o.asJson) *>
+                  renderer.show(user, Screen(found, Nil)) *> renderer.show(user, offerScreen(c, o))
+              }
+              else
+                clear(user) *> Villages.lairCleared(heroDao, user.userId, VillageQuest.StolenArtifact) *>
+                  renderer.show(user, Screen(Villages.joined(found, content.text("village.lair.returnHint")), List(outChoice)))
     } yield ()
   }
+
+  // ── Маг Сноходцев ───────────────────────────────────────────────────────────
+
+  /** Продал магу: контракт сорван — береста и договор уходят, деревни снова
+    * встречаются; дублоны — герою. Предложения нет (старая кнопка) — показать,
+    * что сейчас. */
+  private def sell(user: User, c: VillageContract, renderer: Renderer): Task[StateType] =
+    readOffer(user).flatMap {
+      case None => enter(user, renderer).as(StateType.VillageTrail)
+      case Some(o) =>
+        val price = Villages.doubloonsLine(content, o.doubloons)
+        for {
+          hero <- getHero(user)
+          _    <- Villages.sell(heroDao, inventoryRepo, user.userId, hero, o.doubloons)
+          _    <- clear(user)
+          _    <- renderer.show(user, Screen(
+                    Villages.joined(content.format(key("sold"), Villages.args(content, c): _*),
+                      content.format(key("soldReward"), "offer" -> price)),
+                    List(outChoice)))
+        } yield StateType.VillageTrail
+    }
+
+  /** Отказал магу: свёрток у героя — к старосте за платой. */
+  private def refuse(user: User, renderer: Renderer): Task[StateType] =
+    readOffer(user).flatMap {
+      case None => enter(user, renderer).as(StateType.VillageTrail)
+      case Some(_) =>
+        clear(user) *> Villages.lairCleared(heroDao, user.userId, VillageQuest.StolenArtifact) *>
+          renderer.show(user, Screen(Villages.joined(text("refused"), content.text("village.lair.returnHint")),
+            List(outChoice))).as(StateType.VillageTrail)
+    }
 
   // ── Уход и отказ ────────────────────────────────────────────────────────────
 
   /** «Уйти» — только у ворот, пока погоня не начата: след подождёт, контракт при
-    * герое. В пути и у стана — только сойти со следа. */
+    * герое. В пути и у стана — только сойти со следа; маг ждёт ответа. */
   private def leave(user: User, renderer: Renderer): Task[StateType] =
-    readTrail(user).flatMap {
-      case Some(_) => enter(user, renderer).as(StateType.VillageTrail)
-      case None    => clear(user) *> renderer.show(user, Screen(text("left"), Nil)).as(StateType.Dungeon)
+    busy(user).flatMap {
+      case true  => enter(user, renderer).as(StateType.VillageTrail)
+      case false => clear(user) *> renderer.show(user, Screen(text("left"), Nil)).as(StateType.Dungeon)
     }
 
   /** Сойти со следа — с подтверждением: погоню потом начинать заново. */
@@ -335,12 +424,12 @@ case class VillageTrailState(
       _    <- renderer.show(user, Screen(content.text("village.lair.abandon.done"), Nil))
     } yield StateType.Dungeon
 
-  /** «В лабиринт» — после победы или с пустого следа. Посреди погони эта кнопка
-    * старая: показать, что сейчас. */
+  /** «В лабиринт» — после победы или с пустого следа. Посреди погони или пока
+    * маг ждёт ответа эта кнопка старая: показать, что сейчас. */
   private def out(user: User, renderer: Renderer): Task[StateType] =
-    readTrail(user).flatMap {
-      case Some(_) => enter(user, renderer).as(StateType.VillageTrail)
-      case None    => clear(user).as(StateType.Dungeon)
+    busy(user).flatMap {
+      case true  => enter(user, renderer).as(StateType.VillageTrail)
+      case false => clear(user).as(StateType.Dungeon)
     }
 
   // ── Вспомогательное ─────────────────────────────────────────────────────────

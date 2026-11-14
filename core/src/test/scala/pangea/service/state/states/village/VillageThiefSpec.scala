@@ -217,6 +217,8 @@ object VillageThiefSpec extends ZIOSpecDefault {
         d   <- dao(data = Some(chasing.copy(leg = 2, nextAt = 0L).asJson.deepMerge(VillageTrailState.wonMark)))
         r   <- TestRenderer.make
         st  <- trail(d, c).map(_._1)
+        // маг Сноходцев не вышел
+        _   <- TestRandom.feedInts(99)
         _   <- st.enter(testUser, r)
         won <- r.sentScreens.map(_.last)
         q   <- NpcQuestLog.load(d, userId)
