@@ -722,7 +722,7 @@
       "id": 12,
       "type": "table",
       "title": "По полосам уровней",
-      "description": "Герои, прошедшие регистрацию: сколько их в полосе, сколько заходили за 24 часа и за 7 дней, какая это доля и сколько дошло до этой полосы и выше.",
+      "description": "Герои, прошедшие регистрацию: сколько их в полосе, сколько заходили за 24 часа и за 7 дней, какая это доля за сутки и за неделю и сколько дошло до этой полосы и выше.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "pangea-db"
@@ -740,6 +740,39 @@
           }
         },
         "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Доля за 24 часа, %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-RdYlGr"
+                }
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              }
+            ]
+          },
           {
             "matcher": {
               "id": "byName",
@@ -800,7 +833,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "WITH x AS (\n  SELECT h.lvl, u.last_seen_at AS seen\n  FROM heroes h\n  JOIN users u ON u.id = h.user_id\n  WHERE h.state <> 'Registration'\n)\nSELECT CASE WHEN g = 0 THEN '1–4' ELSE (g * 5) || '–' || (g * 5 + 4) END AS \"Уровни\",\n       count(x.lvl) AS \"Героев\",\n       count(x.lvl) FILTER (WHERE x.seen > now() - interval '24 hours') AS \"Заходили за 24 часа\",\n       count(x.lvl) FILTER (WHERE x.seen > now() - interval '7 days') AS \"Заходили за 7 дней\",\n       coalesce(round(100.0 * count(x.lvl) FILTER (WHERE x.seen > now() - interval '7 days')\n                      / nullif(count(x.lvl), 0)), 0) AS \"Доля за 7 дней, %\",\n       (SELECT count(*) FROM x x2 WHERE x2.lvl >= greatest(g * 5, 1)) AS \"Дошли сюда и выше\"\nFROM generate_series(0, (SELECT coalesce(max(lvl), 0) FROM x) / 5) g\nLEFT JOIN x ON x.lvl / 5 = g\nGROUP BY g\nORDER BY g"
+          "rawSql": "WITH x AS (\n  SELECT h.lvl, u.last_seen_at AS seen\n  FROM heroes h\n  JOIN users u ON u.id = h.user_id\n  WHERE h.state <> 'Registration'\n)\nSELECT CASE WHEN g = 0 THEN '1–4' ELSE (g * 5) || '–' || (g * 5 + 4) END AS \"Уровни\",\n       count(x.lvl) AS \"Героев\",\n       count(x.lvl) FILTER (WHERE x.seen > now() - interval '24 hours') AS \"Заходили за 24 часа\",\n       count(x.lvl) FILTER (WHERE x.seen > now() - interval '7 days') AS \"Заходили за 7 дней\",\n       coalesce(round(100.0 * count(x.lvl) FILTER (WHERE x.seen > now() - interval '24 hours')\n                      / nullif(count(x.lvl), 0)), 0) AS \"Доля за 24 часа, %\",\n       coalesce(round(100.0 * count(x.lvl) FILTER (WHERE x.seen > now() - interval '7 days')\n                      / nullif(count(x.lvl), 0)), 0) AS \"Доля за 7 дней, %\",\n       (SELECT count(*) FROM x x2 WHERE x2.lvl >= greatest(g * 5, 1)) AS \"Дошли сюда и выше\"\nFROM generate_series(0, (SELECT coalesce(max(lvl), 0) FROM x) / 5) g\nLEFT JOIN x ON x.lvl / 5 = g\nGROUP BY g\nORDER BY g"
         }
       ]
     }
