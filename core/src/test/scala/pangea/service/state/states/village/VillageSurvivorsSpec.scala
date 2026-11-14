@@ -64,8 +64,8 @@ object VillageSurvivorsSpec extends ZIOSpecDefault {
         c     <- content
         d     <- dao(Some(quests()), Some(VillageLairState.wonMark(VillageLair.Bandits)))
         r     <- TestRenderer.make
-        // сдаются (0), трое — первые по списку смертных рас, охотников нет (99)
-        _     <- TestRandom.feedInts(0, 0, 0, 0, 99)
+        // сдаются (0), трое — первые по списку смертных рас, пленника нет и охотников нет (99, 99)
+        _     <- TestRandom.feedInts(0, 0, 0, 0, 99, 99)
         _     <- lair(d, c).enter(testUser, r)
         shown <- r.sentScreens.map(_.last)
         sd    <- d.readSceneData(userId)

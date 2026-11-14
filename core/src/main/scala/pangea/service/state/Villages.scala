@@ -305,6 +305,15 @@ object Villages {
       Some(leader(contract.leader)))
   }
 
+  /** Бывший пленник с заставы — союзник отряда: имя с его расой
+    * (`village.bandits.captive.allyName`), уровень — задания, сила — как моб его
+    * расы редкости [[VillageRates.CaptiveRarity]] того же уровня. */
+  def freedCaptive(content: SceneContent, contract: VillageContract, race: Race): UndeadForm = {
+    val lvl = contract.level.max(1)
+    UndeadForm(content.format("village.bandits.captive.allyName", "race" -> race.toString.toLowerCase), lvl.toLong,
+      MonsterGenerator.generateOfRaceAndRarity(lvl, race, VillageRates.CaptiveRarity).fightStats)
+  }
+
   /** Охотники за головами на выходе с заставы — уровня задания: четверо
     * покрепче, сброд всех кровей, и вожак — именной, тоже любой из смертных рас
     * лабиринта. Вожак — последним. */

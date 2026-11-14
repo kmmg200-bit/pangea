@@ -6460,6 +6460,8 @@ case class BattleState(
           case pangea.model.squad.AllyKind.CaravanKhajiit => s
           // Караванщики деревни бились за свой обоз — с ним и остаются.
           case pangea.model.squad.AllyKind.CaravanGuard => s
+          // Бывший пленник с заставы и так стоит в отряде, восставшим он не станет.
+          case pangea.model.squad.AllyKind.FreedCaptive => s
           case pangea.model.squad.AllyKind.Rat        => s.summonRat(form, a.lvl, nowMs, near = a.position + toSquad)
           case _                                      => s.admitRisen(form, a.lvl, nowMs)
         }
@@ -7929,6 +7931,7 @@ object BattleState {
     else if (a.kind == pangea.model.squad.AllyKind.HedgeElf) "battle.ally.hedgeElfDown"
     else if (a.kind == pangea.model.squad.AllyKind.CaravanKhajiit) "battle.ally.caravanKhajiitDown"
     else if (a.kind == pangea.model.squad.AllyKind.CaravanGuard) "battle.ally.caravanGuardDown"
+    else if (a.kind == pangea.model.squad.AllyKind.FreedCaptive) "battle.ally.captiveDown"
     else if (a.undead.isDefined) "battle.ally.crumbled"
     else "battle.ally.scroll"
 

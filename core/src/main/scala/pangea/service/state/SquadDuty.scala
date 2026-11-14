@@ -29,10 +29,11 @@ object SquadDuty {
         ZIO.succeed(hero.copy(squad = squad))
   }
 
-  /** Чем прощаются: наёмник отработал день, кости поднятого рассыпались, а крыса
-    * просто утекла в щель. */
+  /** Чем прощаются: наёмник отработал день, кости поднятого рассыпались, крыса
+    * просто утекла в щель, а бывший пленник отслужил своё и ушёл домой. */
   private def leaveKey(a: pangea.model.squad.Ally): String = a.kind match {
-    case pangea.model.squad.AllyKind.Rat => "squad.ratFled"
+    case pangea.model.squad.AllyKind.Rat          => "squad.ratFled"
+    case pangea.model.squad.AllyKind.FreedCaptive => "squad.captiveLeft"
     case _ if a.undead.isDefined         => "squad.undeadCrumbled"
     case _                               => "squad.dayOver"
   }

@@ -12,6 +12,7 @@ import pangea.model.item.{Item, ItemDetails}
 import pangea.model.monster.{Monster, Race}
 import pangea.model.quest.Difficulty
 import pangea.model.skill.MonsterEnergy
+import pangea.model.squad.Placed
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.model.village.{BanditAftermath, NestPrep, VillageContract, VillageQuest, VillageRates}
@@ -81,6 +82,8 @@ case class VillageLairState(
       s"${ids}HuntersFight" -> Target.Run { (u, _, r) => afterFight(u, r)((c, a) => huntersFight(u, c, a, r)) },
       s"${ids}SurvivorsKill"  -> Target.Run { (u, _, r) => afterFight(u, r)((c, a) => killSurvivors(u, c, a, r)) },
       s"${ids}SurvivorsSpare" -> Target.Run { (u, _, r) => afterFight(u, r)((c, a) => spareSurvivors(u, c, a, r)) },
+      s"${ids}CaptiveTake"    -> Target.Run { (u, _, r) => afterFight(u, r)((c, a) => takeCaptive(u, c, a, r)) },
+      s"${ids}CaptiveSend"    -> Target.Run { (u, _, r) => afterFight(u, r)((c, a) => sendCaptive(u, c, a, r)) },
       "OpenCharacter"     -> Target.Run { (u, _, _) => CharacterMenu.open(heroDao, u.userId, lair.scene) }
     ),
     fallback = Target.Run { (u, ua, r) => handleFallback(u, ua, r) }
@@ -324,12 +327,21 @@ case class VillageLairState(
              hero      <- getHero(user)
              _         <- Villages.giveHead(inventoryRepo, itemRepo, hero)
              survivors <- rollSurvivors
+             captive   <- rollCaptive
              roll      <- Random.nextIntBetween(0, 100)
-             _         <- next(user, contract, BanditAftermath(hunters = roll < VillageRates.HuntersPct, survivors = survivors),
+             _         <- next(user, contract,
+                            BanditAftermath(hunters = roll < VillageRates.HuntersPct, survivors = survivors, captive = captive),
                             renderer, found)
            } yield ()
     } yield ()
   }
+
+  /** Найдётся ли на заставе связанный пленник и какой он расы — или никого. */
+  private def rollCaptive: Task[Option[Race]] =
+    Random.nextIntBetween(0, 100).flatMap { roll =>
+      if (roll >= VillageRates.CaptivePct) ZIO.none
+      else Random.nextIntBounded(Race.mortals.size.max(1)).map(i => Race.mortals.lift(i))
+    }
 
   /** Сдадутся ли после боя и кто: столько разных смертных рас — или никого. */
   private def rollSurvivors: Task[List[Race]] =
@@ -363,8 +375,9 @@ case class VillageLairState(
   private def finalScreen(note: String): Screen =
     Screen(Villages.joined(note, content.text("village.lair.returnHint")), List(outChoice))
 
-  /** Что ждёт на заставе сейчас: сдавшиеся — перерезать или отпустить; на
-    * выходе — охотники за головами: отдать голову или драться. */
+  /** Что ждёт на заставе сейчас: сдавшиеся — перерезать или отпустить; пленник —
+    * взять с собой или отпустить домой; на выходе — охотники за головами:
+    * отдать голову или драться. */
   private def stepScreen(c: VillageContract, a: BanditAftermath): Screen =
     if (a.survivors.nonEmpty)
       Screen(
@@ -372,6 +385,13 @@ case class VillageLairState(
         List(
           content.choice(s"${ids}SurvivorsKill", key("survivors.killLabel")).copy(row = Some(0)),
           content.choice(s"${ids}SurvivorsSpare", key("survivors.spareLabel")).copy(row = Some(0)),
+          content.choice("OpenCharacter", "village.lair.characterLabel").copy(row = Some(1))))
+    else if (a.captive.isDefined)
+      Screen(
+        content.format(key("captive.intro"), captiveArgs(c, a): _*),
+        List(
+          content.choice(s"${ids}CaptiveTake", key("captive.takeLabel")).copy(row = Some(0)),
+          content.choice(s"${ids}CaptiveSend", key("captive.sendLabel")).copy(row = Some(0)),
           content.choice("OpenCharacter", "village.lair.characterLabel").copy(row = Some(1))))
     else
       Screen(
@@ -414,6 +434,40 @@ case class VillageLairState(
                     Villages.args(content, c) :+ ("informer" -> informer.toString): _*), Nil))
         } yield StateType.Loot
     }
+
+  /** Подстановки пленника: тексты деревни, его раса (`{captive}` — «гном») и
+    * имя в отряде (`{ally}` — «Освобождённый гном»). */
+  private def captiveArgs(c: VillageContract, a: BanditAftermath): Seq[(String, String)] = {
+    val race = a.captive.fold("")(_.toString.toLowerCase)
+    Villages.args(content, c) ++ Seq("captive" -> race,
+      "ally" -> content.format("village.bandits.captive.allyName", "race" -> race))
+  }
+
+  /** Взяли пленника с собой: встаёт в отряд на 48 часов — в строй, мест нет — в
+    * резерв; нет мест и там — уходит домой. */
+  private def takeCaptive(user: User, c: VillageContract, a: BanditAftermath, renderer: Renderer): Task[StateType] =
+    a.captive match {
+      case None => enter(user, renderer).as(lair.scene)
+      case Some(race) =>
+        for {
+          now   <- ZIO.clockWith(_.currentTime(java.util.concurrent.TimeUnit.MILLISECONDS))
+          hero  <- getHero(user)
+          placed = hero.squad.admitCaptive(Villages.freedCaptive(content, c, race), hero.lvl, now)
+          (squad, where) = placed
+          _     <- ZIO.when(where != Placed.Nowhere)(heroDao.updateSquad(user.userId, squad))
+          line   = where match {
+                     case Placed.Line    => "captive.joined"
+                     case Placed.Reserve => "captive.joinedReserve"
+                     case Placed.Nowhere => "captive.noRoom"
+                   }
+          _     <- next(user, c, a.copy(captive = None), renderer, content.format(key(line), captiveArgs(c, a): _*))
+        } yield lair.scene
+    }
+
+  /** Отпустили пленника домой: он уходит по тракту. */
+  private def sendCaptive(user: User, c: VillageContract, a: BanditAftermath, renderer: Renderer): Task[StateType] =
+    if (a.captive.isEmpty) enter(user, renderer).as(lair.scene)
+    else next(user, c, a.copy(captive = None), renderer, content.format(key("captive.sent"), captiveArgs(c, a): _*)).as(lair.scene)
 
   /** Отдал голову охотникам: они уходят, доплаты за голову не будет, а за
     * логово староста всё равно заплатит. */

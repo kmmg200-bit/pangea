@@ -314,6 +314,12 @@ final case class Squad(
       Ally(AllyKind.Rat, p, 0L, 0L, 0L,
         hiredUntil = nowMs + AllyRates.RatMs, undead = Some(form)).restored(lvl)))
 
+  /** Бывший пленник с заставы разбойников идёт с героем на 48 часов
+    * ([[AllyRates.CaptiveMs]]): в строй, мест нет — в резерв, нет и там — не
+    * встаёт (Placed.Nowhere: он уходит домой). */
+  def admitCaptive(form: UndeadForm, lvl: Long, nowMs: Long): (Squad, Placed) =
+    place(Ally(AllyKind.FreedCaptive, 0, 0L, 0L, 0L, hiredUntil = nowMs + AllyRates.CaptiveMs, undead = Some(form)).restored(lvl))
+
   /** Свободное место, ближайшее к `near`: оно само, а занято — по одному в обе
     * стороны; поровну — то, что дальше от первого места. Мест нет — None. */
   def freePositionNear(near: Int): Option[Int] =

@@ -302,6 +302,13 @@ object VillageRates {
   val CacheMin: Int               = 2
   val CacheMax: Int               = 3
 
+  /** Пленник: с таким шансом на заставе находится связанный пленник любой из
+    * смертных рас (шанс решил Claude) — его держали ради выкупа. Возьмёте с
+    * собой — встанет в отряд на 48 часов (AllyRates.CaptiveMs, решил
+    * пользователь), по силе — как моб его расы такой редкости уровня задания. */
+  val CaptivePct: Int        = 25
+  val CaptiveRarity: Rarity  = Rarity.Rare
+
   /** Гнездо сетеплётов: пауки — звери своих пород ([[Breed]]): восемь
     * молодых, шестеро взрослых и матка; с шансом [[RedSpiderChancePct]]% к ним
     * выползает ещё и красный — шестнадцатым, ждёт места в строю. С пауков —
@@ -414,17 +421,19 @@ object VillageRates {
   * он оттуда не ушёл, — в `scene_data`. Контракт к этому времени уже на шаге
   * «сделано», голова главаря — в сумке.
   *
-  * Ждёт оно по порядку: сдавшиеся, потом — на выходе — охотники.
+  * Ждёт оно по порядку: сдавшиеся, пленник, потом — на выходе — охотники.
   *
   * @param hunters   на выходе ждут охотники за головами — отдать им голову или
   *                  драться (см. [[VillageRates.HuntersPct]])
   * @param survivors из избы вышли сдаваться разбойники этих рас — перерезать
   *                  или отпустить (см. [[VillageRates.SurvivorsPct]]); пусто — их
   *                  нет или уже решено
+  * @param captive   на заставе нашёлся связанный пленник этой расы — взять в
+  *                  отряд или отпустить домой (см. [[VillageRates.CaptivePct]])
   */
-final case class BanditAftermath(hunters: Boolean = false, survivors: List[Race] = Nil) {
+final case class BanditAftermath(hunters: Boolean = false, survivors: List[Race] = Nil, captive: Option[Race] = None) {
   /** Ждать больше нечего — к старосте. */
-  def done: Boolean = !hunters && survivors.isEmpty
+  def done: Boolean = !hunters && survivors.isEmpty && captive.isEmpty
 }
 
 object BanditAftermath {
@@ -435,15 +444,17 @@ object BanditAftermath {
   implicit val encoder: Encoder[BanditAftermath] = (a: BanditAftermath) => Json.obj(
     Key                -> Json.True,
     "banditsHunters"   -> a.hunters.asJson,
-    "banditsSurvivors" -> a.survivors.map(_.entryName).asJson)
+    "banditsSurvivors" -> a.survivors.map(_.entryName).asJson,
+    "banditsCaptive"   -> a.captive.map(_.entryName).asJson)
 
-  /** Запись, сделанная до сдавшихся, — без них: ждут только охотники. */
+  /** Запись, сделанная до сдавшихся или до пленника, — без них: их и нет. */
   implicit val decoder: Decoder[BanditAftermath] = (c: HCursor) =>
     for {
       _         <- c.get[Boolean](Key)
       hunters   <- c.getOrElse[Boolean]("banditsHunters")(false)
       survivors <- c.getOrElse[List[String]]("banditsSurvivors")(Nil)
-    } yield BanditAftermath(hunters, survivors.flatMap(Race.withNameOption))
+      captive   <- c.getOrElse[Option[String]]("banditsCaptive")(None)
+    } yield BanditAftermath(hunters, survivors.flatMap(Race.withNameOption), captive.flatMap(Race.withNameOption))
 }
 
 /** Предложение мага Сноходцев после боя в стане — в `scene_data`, пока герой не

@@ -347,8 +347,8 @@ object VillageSpec extends ZIOSpecDefault {
         inv    = TestInventoryRepository.withItems(List(paper))
         r     <- TestRenderer.make
         st     = lair(d, inv, c)
-        // сдавшихся и охотников за головами нет (они — VillageBanditsSpec, VillageSurvivorsSpec)
-        _     <- TestRandom.feedInts(99, 99)
+        // ни сдавшихся, ни пленника, ни охотников (они — VillageBanditsSpec, VillageSurvivorsSpec, VillageCaptiveSpec)
+        _     <- TestRandom.feedInts(99, 99, 99)
         _     <- st.enter(testUser, r)
         last  <- r.sentScreens.map(_.last)
         q     <- questOf(d)

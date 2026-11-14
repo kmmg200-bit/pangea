@@ -84,8 +84,8 @@ object VillageBanditsSpec extends ZIOSpecDefault {
         d     <- dao(Some(quests()), Some(VillageLairState.wonMark(VillageLair.Bandits)))
         inv    = TestInventoryRepository.withItems(List(paper))
         r     <- TestRenderer.make
-        // сдавшихся нет, охотников нет
-        _     <- TestRandom.feedInts(99, 99)
+        // сдавшихся нет, пленника нет, охотников нет
+        _     <- TestRandom.feedInts(99, 99, 99)
         _     <- lair(d, inv, c).enter(testUser, r)
         shown <- r.sentScreens.map(_.last)
         q     <- NpcQuestLog.load(d, userId)
@@ -111,8 +111,8 @@ object VillageBanditsSpec extends ZIOSpecDefault {
         d     <- dao(Some(quests()), Some(VillageLairState.wonMark(VillageLair.Bandits)))
         inv    = TestInventoryRepository.withItems(List(paper))
         r     <- TestRenderer.make
-        // сдавшихся нет, охотники — да
-        _     <- TestRandom.feedInts(99, 0)
+        // сдавшихся нет, пленника нет, охотники — да
+        _     <- TestRandom.feedInts(99, 99, 0)
         _     <- lair(d, inv, c).enter(testUser, r)
         shown <- r.sentScreens.map(_.last)
         sd    <- d.readSceneData(userId)

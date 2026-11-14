@@ -106,6 +106,10 @@ object AllyRates {
    *  поднятого с алтаря. Порог 6 этот срок уже не удлиняет: он про алтарь. */
   val RisenLasts: Long = 2L
 
+  /** Сколько бывший пленник с заставы разбойников держится при герое: 48 часов
+   *  (так решил пользователь), потом уходит домой. */
+  val CaptiveMs: Long = 48L * 60L * 60L * 1000L
+
   /** Мест в строю вместе с героем: герой и до десяти союзников. Число берём из
     * единой схемы строя — у врагов мест больше, и за одиннадцатым начинается
     * хвост, куда отряду не дотянуться (см. [[pangea.model.battle.Formation]]). */
@@ -203,6 +207,15 @@ object AllyKind extends Enum[AllyKind] {
     * Villages.caravanGuard); нанять негде, после боя в отряд не встаёт. Стихии
     * нет. */
   case object CaravanGuard extends AllyKind("Караванщик", Race.Human, None, maxLvl = 150L,
+    hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
+    accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
+  /** Бывший пленник с заставы разбойников (контракт «Логово разбойников»): его
+    * освободили, и он попросился в отряд. По силе — редкий своей расы уровня
+    * задания; раса в имени, а имя, уровень и статы лежат на самом союзнике
+    * ([[UndeadForm]], см. Villages.freedCaptive). Нанять негде; держится при
+    * герое двое суток ([[AllyRates.CaptiveMs]], так решил пользователь) и
+    * уходит домой. Стихии нет. */
+  case object FreedCaptive extends AllyKind("Бывший пленник", Race.Human, None, maxLvl = 150L,
     hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
     accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
 
