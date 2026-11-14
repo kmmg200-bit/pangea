@@ -13,6 +13,8 @@ import type {
   SquadView,
   TopKind,
   TopView,
+  TradeActionView,
+  TradeView,
 } from './types'
 
 /** Где бот. Пусто — тот же адрес, что у приложения (на бою и в разработке через
@@ -49,7 +51,23 @@ async function call<T>(path: string, method: 'GET' | 'POST'): Promise<T> {
   throw new ApiError(body.error ?? (res.status === 404 ? 'off' : 'server'))
 }
 
+/** Своя сторона обмена — в строку запроса. */
+function tradeQuery(d: { items: number[]; silver: number; doubloons: number; note: string }): string {
+  return (
+    `items=${d.items.join(',')}&silver=${d.silver}&doubloons=${d.doubloons}` +
+    (d.note ? `&note=${encodeURIComponent(d.note)}` : '')
+  )
+}
+
+type TradeDraft = { items: number[]; silver: number; doubloons: number; note: string }
+
 export const api = {
+  trade: () => get<TradeView>('trade'),
+  tradePropose: (partner: string, d: TradeDraft) =>
+    post<TradeActionView>(`trade/propose?partner=${encodeURIComponent(partner)}&${tradeQuery(d)}`),
+  tradeAnswer: (id: number, d: TradeDraft) => post<TradeActionView>(`trade/answer?id=${id}&${tradeQuery(d)}`),
+  tradeAccept: (id: number) => post<TradeActionView>(`trade/accept?id=${id}`),
+  tradeCancel: (id: number) => post<TradeActionView>(`trade/cancel?id=${id}`),
   character: () => get<CharacterView>('character'),
   quests: () => get<QuestsView>('quests'),
   squad: () => get<SquadView>('squad'),

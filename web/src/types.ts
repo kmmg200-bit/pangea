@@ -423,3 +423,49 @@ export interface CraftActionView {
   note: string | null
   made: number[]
 }
+
+/** Вещь в обмене и номера всех таких же: стопку кладут по одной. */
+export interface TradeItemView {
+  item: ItemView
+  ids: number[]
+}
+
+/** Сторона обмена: вещи, деньги, записка и всё одной строкой. */
+export interface TradeSideView {
+  items: TradeItemView[]
+  silver: number
+  doubloons: number
+  note: string | null
+  summary: string
+}
+
+/** Предложение глазами игрока: `mine` — что он отдаёт, `theirs` — что получает;
+  * `proposed` — его предложение (отзывают), а не ему (отклоняют). */
+export interface TradeOfferView {
+  id: number
+  partner: string
+  mine: TradeSideView
+  theirs: TradeSideView
+  yourTurn: boolean
+  proposed: boolean
+  leftMs: number
+}
+
+/** Обмен: предложения, что при герое можно положить, правила. `away` — почему
+  * сейчас можно только отозвать и отклонить. */
+export interface TradeView {
+  hero: HeroView
+  offers: TradeOfferView[]
+  stock: TradeItemView[]
+  feePct: number
+  minMoney: number
+  maxNote: number
+  away: string | null
+}
+
+/** Ответ на действие с обменом: `done` — сделано, иначе `note` — почему нет. */
+export interface TradeActionView {
+  trade: TradeView
+  note: string | null
+  done: boolean
+}

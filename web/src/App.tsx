@@ -10,6 +10,7 @@ import { onReturn } from './platform'
 import { QuestsTab } from './QuestsTab'
 import { SquadTab } from './SquadTab'
 import { TopTab } from './TopTab'
+import { TradeTab } from './TradeTab'
 import type { HeroView, TopKind, TopView } from './types'
 import type { GameIcon } from './gameIcons'
 import { ErrorView, Icon, Segment, Spinner } from './ui'
@@ -35,12 +36,21 @@ const heroParts: { id: HeroPart; label: string }[] = [
   { id: 'squad', label: 'Отряд' },
 ]
 
-/** Раздел из адреса (`#top`, `#equipment`, `#squad`): так приложение можно открыть сразу на нужном. */
+/** Части «Аукциона» — как в Торговом доме бота: витрина и обмен с другими героями. */
+type AuctionPart = 'lots' | 'trade'
+
+const auctionParts: { id: AuctionPart; label: string }[] = [
+  { id: 'lots', label: 'Аукцион' },
+  { id: 'trade', label: 'Обмен' },
+]
+
+/** Раздел из адреса (`#top`, `#equipment`, `#squad`, `#trade`): так приложение можно открыть сразу на нужном. */
 const hash = window.location.hash.replace(/^#/, '')
 const hashPart = heroParts.find((p) => p.id === hash)?.id
 
 function initialTab(): Tab {
   if (hashPart) return 'character'
+  if (hash === 'trade') return 'auction'
   if (hash === 'top') return 'top'
   return tabs.find((t) => t.id === hash)?.id ?? 'character'
 }
@@ -56,7 +66,7 @@ const topLoaders: Record<TopKind, () => Promise<TopView>> = {
 }
 
 /** Что уже открывали: вкладку, часть «Персонажа» или топ (`top-level`). */
-type Seen = Tab | HeroPart | `top-${TopKind}`
+type Seen = Tab | HeroPart | AuctionPart | `top-${TopKind}`
 
 function HeroBar(props: {
   hero: HeroView | undefined
@@ -127,17 +137,19 @@ export function App() {
   // грузится, когда вкладку впервые открыли: витрина аукциона — самый тяжёлый ответ.
   const [tab, setTab] = useState<Tab>(initialTab)
   const [heroPart, setHeroPart] = useState<HeroPart>(hashPart ?? 'hero')
+  const [auctionPart, setAuctionPart] = useState<AuctionPart>(hash === 'trade' ? 'trade' : 'lots')
   const [topKind, setTopKind] = useState<TopKind>('level')
   const [seen, setSeen] = useState<Set<Seen>>(() => {
     const first = initialTab()
-    return new Set<Seen>([first, first === 'top' ? 'top-level' : (hashPart ?? 'hero')])
+    return new Set<Seen>([first, first === 'top' ? 'top-level' : (hashPart ?? 'hero'), hash === 'trade' ? 'trade' : 'lots'])
   })
   const character = useLoad(api.character, seen.has('hero'))
   const quests = useLoad(api.quests, seen.has('quests'))
   const squad = useLoad(api.squad, seen.has('squad'))
   // Снаряжение берёт данные у «Вещей»: надетое, сумка и что из неё встанет в слот.
   const inventory = useLoad(api.inventory, seen.has('items') || seen.has('equipment'))
-  const auction = useLoad(api.auction, seen.has('auction'))
+  const auction = useLoad(api.auction, seen.has('auction') && seen.has('lots'))
+  const trade = useLoad(api.trade, seen.has('trade'))
   const craft = useLoad(api.craft, seen.has('craft'))
   const tops: Record<TopKind, Loaded<TopView>> = {
     level: useLoad(topLoaders.level, seen.has('top-level')),
@@ -150,7 +162,13 @@ export function App() {
 
   const heroLoads = { hero: character, equipment: inventory, squad }
   const current: Omit<Loaded<{ hero: HeroView }>, 'set'> =
-    tab === 'character' ? heroLoads[heroPart] : tab === 'top' ? tops[topKind] : { quests, items: inventory, craft, auction }[tab]
+    tab === 'character'
+      ? heroLoads[heroPart]
+      : tab === 'top'
+        ? tops[topKind]
+        : tab === 'auction' && auctionPart === 'trade'
+          ? trade
+          : { quests, items: inventory, craft, auction }[tab]
   // В шапке — самые свежие уровень и деньги: с открытой вкладки, а пока она
   // грузится — с любой уже загруженной.
   const hero =
@@ -160,7 +178,8 @@ export function App() {
     squad.data?.hero ??
     inventory.data?.hero ??
     craft.data?.hero ??
-    auction.data?.hero
+    auction.data?.hero ??
+    trade.data?.hero
 
   // Герой ходит в чате, пока приложение свёрнуто: открытый раздел перечитываем
   // при возврате, а прочитанный раньше — когда его снова откроют. Иначе экран
@@ -250,6 +269,32 @@ export function App() {
           />
         )}
         {tab === 'auction' && (
+          <Segment
+            options={auctionParts}
+            value={auctionPart}
+            onChange={(part) => {
+              setAuctionPart(part)
+              markSeen(part)
+            }}
+          />
+        )}
+        {tab === 'auction' && auctionPart === 'trade' && (
+          <Body loaded={trade}>
+            {(d) => (
+              <TradeTab
+                data={d}
+                onChange={(v) => {
+                  // Положенное ушло из сумки, а вернувшееся легло в неё — «Вещи»
+                  // и «Крафт», если их уже открывали, перечитают её.
+                  trade.set(v)
+                  if (inventory.data) inventory.reload()
+                  if (craft.data) craft.reload()
+                }}
+              />
+            )}
+          </Body>
+        )}
+        {tab === 'auction' && auctionPart === 'lots' && (
           <Body loaded={auction}>
             {(d) => (
               <AuctionTab

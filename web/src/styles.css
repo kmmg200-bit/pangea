@@ -1741,3 +1741,150 @@ button.row:active {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* ── Обмен ── */
+
+.sheet-title {
+  margin: 0 40px 4px 0;
+  font-size: 17px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.trade-new {
+  width: 100%;
+  margin: 4px 0 12px;
+  padding: 11px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.trade-new:disabled {
+  opacity: 0.45;
+}
+
+.trade-offer {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+
+.trade-yours {
+  border-color: var(--accent);
+}
+
+.trade-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.badge-on {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.trade-side {
+  margin-top: 14px;
+}
+
+.trade-money {
+  display: flex;
+  gap: 14px;
+  margin: 8px 0 0;
+  font-weight: 600;
+}
+
+.trade-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
+/* Обычным блоком, а не flex: кнопка закрытия окна плавает справа, и flex-
+   контейнер сузился бы на её ширину целиком, а блок её только обтекает. */
+.trade-editor > * + * {
+  margin-top: 10px;
+}
+
+.trade-editor > .sub-title {
+  margin-top: 16px;
+}
+
+.trade-editor > .search {
+  display: block;
+  width: 100%;
+}
+
+.trade-fields {
+  display: flex;
+  gap: 8px;
+}
+
+.trade-fields .level-field {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.trade-fields .level-field input {
+  flex: 1 1 0;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+}
+
+.trade-text {
+  display: block;
+  width: 100%;
+  min-height: 64px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.trade-mark {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 28px;
+  text-align: center;
+}
+
+.trade-refusal {
+  margin: 0;
+  font-size: 14px;
+}
+
+.trade-acts {
+  margin-top: 12px;
+}
+
+.trade-accept {
+  border-color: var(--accent);
+}
+
+.trade-cancel {
+  color: var(--danger, #c0392b);
+}
