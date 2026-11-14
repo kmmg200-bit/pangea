@@ -229,9 +229,12 @@ case class TradeState(heroDao: HeroDao, trades: Trades, transfers: Transfers, us
       adding = !scene.picking.contains(Removing)
       list  <- if (adding) transfers.carried(hero).map(_.filter(i => transfers.sendable(i) && !scene.items.contains(i.id)))
                else ZIO.succeed(scene.items.flatMap(id => pool.find(_.id == id)))
+      // Список опустел: только что положили (убрали) последнее — так и сказать,
+      // а «нечего положить» — когда класть было нечего с самого начала.
       next  <- if (list.isEmpty)
                  update(user)(_.copy(picking = None)) *>
-                   showDraft(user, renderer, content.text(if (adding) "trade.pick.none" else "trade.pick.empty"))
+                   showDraft(user, renderer,
+                     if (note.nonEmpty) note else content.text(if (adding) "trade.pick.none" else "trade.pick.empty"))
                else {
                  val (pageItems, pages, p) = ItemMenu.page(ItemStack.grouped(list), scene.page)
                  val prefix  = if (adding) AddPrefix else DelPrefix

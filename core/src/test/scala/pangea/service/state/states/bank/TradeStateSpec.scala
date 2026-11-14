@@ -102,13 +102,18 @@ object TradeStateSpec extends ZIOSpecDefault {
         _     <- s.action(bob, tap("TradeOpen", TradeState.IdKey -> offer.id.toString), r)
         card  <- last(r)
         _     <- act(s, bob, r, tap("TradeEdit", TradeState.IdKey -> offer.id.toString), tap("TradeAdd"),
-                   tap(s"${TradeState.AddPrefix}${shield.id}"), tap("TradeDraft"), tap("TradeSend"))
+                   tap(s"${TradeState.AddPrefix}${shield.id}"))
+        lastIn <- last(r)
+        _     <- act(s, bob, r, tap("TradeSend"))
         after <- last(r)
         now    = f.dao.snapshot.headOption
       } yield assertTrue(
         list.choices.exists(c => c.id == "TradeOpen" && c.label == f.content.format("trade.menu.openYours", "n" -> "1", "name" -> "Иван Иванов")),
         ids(card).contains("TradeAccept"), ids(card).contains("TradeEdit"),
         labelOf(card, "TradeCancel").contains(f.content.text("trade.card.decline")),
+        // Положил последнее, что было, — сказано, что легло, а не «положить нечего».
+        lastIn.text.startsWith(f.content.format("trade.pick.added", "name" -> shield.displayTitle)),
+        !lastIn.text.contains(f.content.text("trade.pick.none")), ids(lastIn).contains("TradeSend"),
         after.text.startsWith(f.content.text("trade.done.answered")),
         now.exists(o => o.turn == alice.userId && o.toSide.items == List(shield)), f.bags.of(bHero).isEmpty
       )
