@@ -28,6 +28,19 @@ object RuneSpec extends ZIOSpecDefault {
       assertTrue(math.abs(Rune.strengthPct(12L) - 10.954) < 0.01) &&
       assertTrue(Rune.mult(1000L) == 2.0 && Rune.strengthText(12L) == "+11,0%" && Rune.strengthText(300L) == "+54,8%")
     },
+    test("название руны в карточке камня — один раз: и у пассивок, где описание само начинается с названия, и у умений") {
+      val all  = PassiveKind.values.toList.map(Rune.Passive(_)) ++ Skill.values.toList.map(Rune.Active(_))
+      val last = all.map(r => r -> RuneStone.describe(r, RuneStoneSize.Small).lastOption.getOrElse(""))
+      assertTrue(
+        RuneStone.describe(Rune.Passive(PassiveKind.Marauder), RuneStoneSize.Small).lastOption
+          .contains(PassiveKind.Marauder.describe),
+        // «Размашистый удар: Размашистый удар по дуге…» — у умения так начинается
+        // само предложение; повтор — это «Мародёр: Мародёр: …».
+        last.collect { case (r, line) if !line.startsWith(s"${r.label}: ") || line.startsWith(s"${r.label}: ${r.label}:") => line } == Nil,
+        all.filter(r => r.description.startsWith(s"${r.label}:")).map(_.description) == Nil
+      )
+    },
+
     test("очки за вещь по редкости: серые/белые/зелёные 1, синие 2, обе фиолетовые 3, оранжевые 5") {
       assertTrue(List(Rarity.Gray, Rarity.White, Rarity.Green).map(Rune.points) == List(1L, 1L, 1L)) &&
       assertTrue(Rune.points(Rarity.Blue) == 2L && Rune.points(Rarity.Purple) == 3L && Rune.points(Rarity.Violet) == 3L && Rune.points(Rarity.Orange) == 5L)

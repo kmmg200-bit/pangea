@@ -28,7 +28,10 @@ object Rune {
   final case class Passive(kind: PassiveKind) extends Rune {
     def key: String         = PassivePrefix + kind.entryName
     def label: String       = kind.label
-    def description: String = kind.describe
+    // Описание пассивки само начинается с названия («Мародёр: раскопанная…»),
+    // а руна ставит название рядом сама — в карточке камня, у Казимира. Повтор
+    // срезаем здесь, описания пассивок не трогаем.
+    def description: String = kind.describe.stripPrefix(s"${kind.label}: ")
     def isActive: Boolean   = false
   }
 
