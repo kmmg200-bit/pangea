@@ -88,7 +88,7 @@ object TradeHouseSpec extends ZIOSpecDefault {
           menu     = screens.last
         } yield assertTrue(screens.head.text.contains("Рахадим")) &&
                 assertTrue(menu.choices.map(_.id) ==
-                  List("BuyCell", "BuyDoubloons", "DepositInterest", "FetShop", "Auction", "RakhadimDaily",
+                  List("BuyCell", "BuyDoubloons", "DepositInterest", "FetShop", "Auction", "TradeMenu", "RakhadimDaily",
                        "RakhQuest", "LeaveTradeHouse", "GoToCity")) &&
                 assertTrue(menu.choices.head.label.contains(BankVault.FirstCellPrice.toString)) &&
                 assertTrue(menu.choices.forall(_.label.length <= pangea.engine.Choice.MaxLabelLength))
@@ -117,7 +117,7 @@ object TradeHouseSpec extends ZIOSpecDefault {
           auction <- state.action(testUser, tap("Auction"), renderer)
         } yield assertTrue(screens.last.choices.map(_.id) ==
                   List("BuyCell", "MyVault", "BuyDoubloons", "DepositInterest", "FetShop", "Auction",
-                       "RakhadimDaily", "RakhQuest", "LeaveTradeHouse", "GoToCity")) &&
+                       "TradeMenu", "RakhadimDaily", "RakhQuest", "LeaveTradeHouse", "GoToCity")) &&
                 assertTrue(next == StateType.BankVault && auction == StateType.Auction)
       },
 

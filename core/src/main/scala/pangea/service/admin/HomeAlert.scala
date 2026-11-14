@@ -51,6 +51,7 @@ object HomeAlert {
       FetShop          -> "лавка Фета",
       Mail             -> "почта",
       Transfer         -> "передача вещей",
+      Trade            -> "обмен в Торговом доме",
       TempleAzat       -> "Храм Азата",
       HallAzat         -> "Зал Азата",
       Cube             -> "куб Азата",

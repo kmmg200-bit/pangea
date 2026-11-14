@@ -60,6 +60,7 @@ case class TradeHouseState(
       "DepositInterest" -> Target.Run { (u, _, r) => showPage(u, r, "bank.tradeHouse.interest").as(StateType.TradeHouse) },
       "MyVault"         -> Target.Goto(StateType.BankVault),
       "Auction"         -> Target.Goto(StateType.Auction),
+      "TradeMenu"       -> Target.Goto(StateType.Trade),
       "FetShop"         -> Target.Goto(StateType.FetShop),
       "Mail"            -> Target.Goto(StateType.Mail),
       "LeaveTradeHouse" -> Target.Goto(StateType.MarketSquare),
@@ -213,11 +214,13 @@ case class TradeHouseState(
     // Аукцион открыт всем, и без ячейки: купленное и снятое идёт в сумку, а
     // выручка, которую ячейка не приняла, ждёт хозяина в городе.
     val auction = Choice("Auction", content.text("bank.tradeHouse.auctionLabel"), row = Some(2))
+    // Обмен с другими героями — тоже всем, и без ячейки: принятое приходит посылкой.
+    val trade   = Choice("TradeMenu", content.text("bank.tradeHouse.tradeLabel"), row = Some(2))
     val rest = List(
       Choice("BuyDoubloons",    content.text("bank.tradeHouse.doubloonsLabel"), row = Some(1)),
       Choice("DepositInterest", content.text("bank.tradeHouse.interestLabel"),  row = Some(1)),
       Choice("FetShop",         content.text("bank.tradeHouse.fetLabel"),       row = Some(2))
-    ) ++ List(auction) ++
+    ) ++ List(auction, trade) ++
       Option.when(mail > 0L)(Choice("Mail",
         content.format("bank.tradeHouse.mailLabel", "count" -> mail.toString),
         color = ChoiceColor.Positive, row = Some(3))) ++

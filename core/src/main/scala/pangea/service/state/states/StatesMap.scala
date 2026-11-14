@@ -112,6 +112,7 @@ import pangea.model.state.StateType.{
   LivingBag,
   Wardrobe,
   Transfer,
+  Trade,
   Mail
 }
 import pangea.dao.quest.QuestOutcomeDao
@@ -208,6 +209,7 @@ object StatesMap {
       with Payouts
       with Parcels
       with Transfers
+      with pangea.service.trade.Trades
       with ItemRepository
       with UserRepository
       with Donations
@@ -232,6 +234,7 @@ object StatesMap {
         payouts       <- ZIO.service[Payouts]
         parcels       <- ZIO.service[Parcels]
         transfers     <- ZIO.service[Transfers]
+        trades        <- ZIO.service[pangea.service.trade.Trades]
         itemRepo      <- ZIO.service[ItemRepository]
         userRepo      <- ZIO.service[UserRepository]
         donations     <- ZIO.service[Donations]
@@ -302,6 +305,7 @@ object StatesMap {
           CityCenter -> CityCenterState(content),
           TradeHouse -> TradeHouseState(heroDao, userRepo, bankRepo, parcels, inventoryRepo, donations, content, artifacts),
           Transfer   -> TransferState(heroDao, transfers, content, background),
+          Trade      -> pangea.service.state.states.bank.TradeState(heroDao, trades, transfers, userRepo, players, content),
           Mail       -> MailState(heroDao, inventoryRepo, parcels, content),
           BankVault  -> BankVaultState(heroDao, inventoryRepo, bankRepo, content, artifacts),
           Auction    -> AuctionState(heroDao, inventoryRepo, auctionRepo, userRepo, bankRepo, payouts, players, content),
