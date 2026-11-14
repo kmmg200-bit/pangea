@@ -230,7 +230,7 @@ object VillageSpec extends ZIOSpecDefault {
                 shown(1).text.contains(s"Последний обоз из города $City") && !shown(1).text.contains("Кинэт") &&
                 shown(1).text.contains(s"Плата — $Silver серебра") &&
                 shown(1).text.contains("Сложность: " + Difficulty.render(QuestLevel))) &&
-              assertTrue(shown(1).choices.map(_.id) == List("VillageAccept", "VillageDecline")) &&
+              assertTrue(shown(1).choices.map(_.id) == List("VillageAccept", "VillageDecline", "VillageHaggle")) &&
               assertTrue(s1.exists(_.step == VillageScene.Headman)) &&
               assertTrue(res == StateType.Dungeon && sd.contains(Json.Null)) &&
               assertTrue(q.village.contains(contract()) && contract().silver == Silver && contract().city == 2 &&

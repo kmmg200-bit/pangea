@@ -82,6 +82,9 @@ private[village] object RaceJson {
   * @param doubloons дублоны к серебру — по уровню задания (см.
   *               [[VillageRates.doubloons]]), выпадают при встрече вместе с
   *               серебром. В сценах, начатых до дублонов, поля нет — их нет и в плате
+  * @param haggled со старостой уже торговались (см. [[VillageRates.HagglePct]]):
+  *               второй раз он и слушать не станет. В сценах, начатых до торга, —
+  *               не торговались
   */
 final case class VillageScene(
   race:   Race,
@@ -95,7 +98,8 @@ final case class VillageScene(
   city:   Int            = 0,
   land:   Int            = 0,
   step:   String         = VillageScene.Arrival,
-  doubloons: Long        = 0L
+  doubloons: Long        = 0L,
+  haggled: Boolean       = false
 )
 
 object VillageScene {
@@ -123,7 +127,8 @@ object VillageScene {
     "villageCity"   -> s.city.asJson,
     "villageLand"   -> s.land.asJson,
     "villageStep"   -> s.step.asJson,
-    "villageDoubloons" -> s.doubloons.asJson)
+    "villageDoubloons" -> s.doubloons.asJson,
+    "villageHaggled" -> s.haggled.asJson)
 
   implicit val decoder: Decoder[VillageScene] = (c: HCursor) =>
     for {
@@ -140,8 +145,10 @@ object VillageScene {
       step   <- c.getOrElse[String]("villageStep")(Arrival)
       // Сцены, начатые до дублонов: староста называл одно серебро.
       dbl    <- c.getOrElse[Long]("villageDoubloons")(0L)
+      // Сцены, начатые до торга: со старостой не торговались.
+      haggle <- c.getOrElse[Boolean]("villageHaggled")(false)
     } yield VillageScene(race, name, quest, level, qLevel, silver, leader, chief.flatMap(Race.withNameOption), city, land,
-      step, dbl)
+      step, dbl, haggle)
 }
 
 /** Контракт деревни, который взял герой (`npc_quests`, поле `village`):
@@ -233,6 +240,14 @@ object VillageRates {
   val DoubloonEveryLvls: Int = 7
 
   def doubloons(level: Int): Long = (level.max(0) / DoubloonEveryLvls).toLong
+
+  /** Торг: у старосты можно поторговаться один раз — с таким шансом он прибавит
+    * к серебру столько процентов, иначе стоит на своём (так предложил Claude,
+    * пользователь одобрил; у всех заданий деревни). Дублоны торг не трогает. */
+  val HagglePct: Int       = 50
+  val HaggleBonusPct: Long = 15L
+
+  def haggled(silver: Long): Long = silver * (100L + HaggleBonusPct) / 100L
 
   /** Плата без разброса. */
   def silver(level: Int): Long = SilverPerLvl * level.max(1).toLong

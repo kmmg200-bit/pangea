@@ -4,7 +4,7 @@ import io.circe.Json
 import io.circe.syntax.EncoderOps
 import pangea.dao.hero.HeroDao
 import pangea.domain.Rng
-import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
+import pangea.engine.{Branch, Choice, Renderer, SceneContent, Screen, Target}
 import pangea.generator.monster.MonsterGenerator
 import pangea.model.battle.SoloPveBattle
 import pangea.model.hero.Hero
@@ -53,6 +53,7 @@ case class VillageState(
       "VillageHeadman" -> Target.Run { (u, _, r) => atVillage(u, r, Arrival)(s => headman(u, s, r)) },
       "VillageAccept"  -> Target.Run { (u, _, r) => atVillage(u, r, Headman)(s => accept(u, s, r)) },
       "VillageDecline" -> Target.Run { (u, _, r) => atVillage(u, r, Headman)(_ => leave(u, r, content.text("village.plea.declined"))) },
+      "VillageHaggle"  -> Target.Run { (u, _, r) => atVillage(u, r, Headman)(s => haggle(u, s, r)) },
       "VillageLeave"   -> Target.Run { (u, _, r) => atVillage(u, r, Arrival)(s =>
                             leave(u, r, content.format("village.left", Villages.args(content, s): _*))) },
       "VillageOut"     -> Target.Run { (u, _, r) => out(u, r) },
@@ -201,16 +202,36 @@ case class VillageState(
       _ <- renderer.show(user, pleaScreen(scene))
     } yield StateType.Village
 
-  private def pleaScreen(s: VillageScene): Screen = {
-    val a = Villages.args(content, s)
+  private def pleaScreen(s: VillageScene): Screen =
     Screen(
-      Villages.joined(
-        content.format(s"village.plea.${s.quest.key}.text", a: _*),
-        difficulty(s.questLevel) + "\n" + content.format("village.plea.pay", a: _*)),
-      List(
-        content.choice("VillageAccept", "village.plea.acceptLabel").copy(row = Some(0)),
-        content.choice("VillageDecline", "village.plea.declineLabel").copy(row = Some(0))))
-  }
+      Villages.joined(content.format(s"village.plea.${s.quest.key}.text", Villages.args(content, s): _*), payLines(s)),
+      pleaChoices(s))
+
+  /** Под просьбой: сложность и плата — уже с тем, о чём сторговались. */
+  private def payLines(s: VillageScene): String =
+    difficulty(s.questLevel) + "\n" + content.format("village.plea.pay", Villages.args(content, s): _*)
+
+  /** Взяться или отказаться; пока не торговались — ещё и поторговаться. */
+  private def pleaChoices(s: VillageScene): List[Choice] =
+    List(
+      Some(content.choice("VillageAccept", "village.plea.acceptLabel").copy(row = Some(0))),
+      Some(content.choice("VillageDecline", "village.plea.declineLabel").copy(row = Some(0))),
+      Option.unless(s.haggled)(content.choice("VillageHaggle", "village.plea.haggleLabel").copy(row = Some(1)))).flatten
+
+  /** Поторговаться — один раз: с шансом [[VillageRates.HagglePct]]% староста
+    * прибавляет к серебру [[VillageRates.HaggleBonusPct]]%, иначе стоит на своём.
+    * Дальше — взяться или отказаться, уже без торга. */
+  private def haggle(user: User, scene: VillageScene, renderer: Renderer): Task[StateType] =
+    if (scene.haggled) renderer.show(user, pleaScreen(scene)).as(StateType.Village)
+    else
+      for {
+        roll <- Random.nextIntBetween(0, 100)
+        up    = roll < VillageRates.HagglePct
+        next  = scene.copy(haggled = true, silver = if (up) VillageRates.haggled(scene.silver) else scene.silver)
+        _    <- writeScene(user, next)
+        line  = content.format(if (up) "village.plea.haggled.up" else "village.plea.haggled.no", Villages.args(content, next): _*)
+        _    <- renderer.show(user, Screen(Villages.joined(line, payLines(next)), pleaChoices(next)))
+      } yield StateType.Village
 
   /** Взялся: контракт — в сумку, договор — в журнал, и в лабиринт: дальше ведёт
     * карточка. Уже взят другой контракт — показать, что сейчас. */
