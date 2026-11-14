@@ -89,6 +89,9 @@ case class DeathState(
       // Смерть в засаде на караван деревни: караван разграблен, контракт
       // сорван (так решил пользователь) — проснуться в лабиринте со строкой засады.
       villageCaravan = battle.exists(_.story.contains(Villages.CaravanStory))
+      // Смерть в стане воров артефакта: контракт при герое, но след остыл —
+      // погоню начинать заново; проснуться в лабиринте со строкой стана.
+      villageArtifact = battle.exists(_.story.contains(Villages.ArtifactStory))
       // Смерть на складе у причала: штрафы обычные, украденное всё ещё у банды —
       // по следу можно идти снова; проснуться в порту.
       thieves       = battle.exists(_.story.contains(BarrelThievesQuest.FightStory))
@@ -196,6 +199,7 @@ case class DeathState(
                       else if (faelinRoots) Json.obj("wakeLines" -> List("faelinBow.roots.death").asJson)
                       else if (villageRaid) Json.obj("wakeLines" -> List("village.raid.death").asJson)
                       else if (villageCaravan) Json.obj("wakeLines" -> List("village.caravan.death").asJson)
+                      else if (villageArtifact) Json.obj("wakeLines" -> List("village.artifact.death").asJson)
                       else if (villageLair.isDefined)
                         Json.obj("wakeLines" -> villageLair.map(l => s"village.${l.texts}.death").toList.asJson)
                       else if (thieves) Json.obj(

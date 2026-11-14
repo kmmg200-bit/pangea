@@ -775,10 +775,12 @@ object VillageSpec extends ZIOSpecDefault {
                 List("intro", "fight", "victory", "left", "gone", "death").forall(k => c.text(s"village.${l.texts}.$k").nonEmpty) &&
                 c.choice("x", s"village.${l.texts}.fightLabel").label.nonEmpty &&
                 c.choice("x", s"village.card.${l.texts}Label").label.nonEmpty)) &&
-              // у каждой беды, кроме каравана, — своё логово (у каравана — дорога, VillageCaravanSpec),
-              // и у логов разные сцены, бои, кнопки и отметки
-              assertTrue(VillageQuest.values.filterNot(_ == VillageQuest.CaravanEscort).forall(q => VillageLair.of(q).isDefined) &&
-                VillageLair.of(VillageQuest.CaravanEscort).isEmpty &&
+              // у каждой беды, кроме каравана и артефакта, — своё логово (у каравана — дорога,
+              // VillageCaravanSpec; у артефакта — след воров, VillageArtifactSpec), и у логов
+              // разные сцены, бои, кнопки и отметки
+              assertTrue(VillageQuest.values.filterNot(q => q == VillageQuest.CaravanEscort || q == VillageQuest.StolenArtifact)
+                .forall(q => VillageLair.of(q).isDefined) &&
+                VillageLair.of(VillageQuest.CaravanEscort).isEmpty && VillageLair.of(VillageQuest.StolenArtifact).isEmpty &&
                 VillageLair.all.map(_.scene).distinct.size == VillageLair.all.size &&
                 VillageLair.all.map(_.story).distinct.size == VillageLair.all.size &&
                 VillageLair.all.map(_.ids).distinct.size == VillageLair.all.size &&

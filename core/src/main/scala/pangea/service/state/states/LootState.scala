@@ -95,7 +95,8 @@ case class LootState(
         StateType.HedgeSong, StateType.BarrelReturn, StateType.StoryCache, StateType.StoryWarehouse, StateType.StoryBridge,
         StateType.StoryBindery, StateType.StoryGraveyard, StateType.BartiMeet, StateType.BartiCaravan, StateType.Construction,
         StateType.JorgenLair, StateType.BramblHall, StateType.PlukhHunt, StateType.FaelinRoots,
-        StateType.Village, StateType.VillageBandits, StateType.VillageSpiders, StateType.VillageCaravan, StateType.Inventory)
+        StateType.Village, StateType.VillageBandits, StateType.VillageSpiders, StateType.VillageCaravan,
+        StateType.VillageTrail, StateType.Inventory)
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     for {

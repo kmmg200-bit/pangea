@@ -50,9 +50,10 @@ object VillageLair {
   * встречаются (см. DungeonState).
   *
   * Беды открываются по уровням лабиринта ([[VillageQuest.minLevel]]): логово
-  * разбойников, гнездо сетеплётов, караван. Сцены: деревня (VillageState),
-  * логово беды (VillageLairState — одна на все логова, см. [[VillageLair]]) и
-  * караван в пути (VillageCaravanState). */
+  * разбойников, гнездо сетеплётов, караван, украденный артефакт. Сцены:
+  * деревня (VillageState), логово беды (VillageLairState — одна на все логова,
+  * см. [[VillageLair]]), караван в пути (VillageCaravanState) и погоня за
+  * ворами артефакта (VillageTrailState). */
 object Villages {
 
   /** Ключ сюжетного боя — налёта на деревню (см. `SoloPveBattle.story`):
@@ -70,6 +71,10 @@ object Villages {
   /** Ключ сюжетного боя в засаде на караван: без «Сбежать», награда как за
     * обычный бой уровня задания. Пал — караван разграблен, контракт сорван. */
   val CaravanStory: String = "villageCaravan"
+
+  /** Ключ сюжетного боя в стане воров артефакта: без «Сбежать», награда как за
+    * обычный бой уровня задания. Пал — след остыл, контракт при герое. */
+  val ArtifactStory: String = "villageArtifact"
 
   /** С какого поворота встречаются деревни: порог события (см.
     * `StateType.EventMinLevel`). К их бедам ходят не ближе. */
@@ -109,13 +114,25 @@ object Villages {
   def leader(name: Option[String]): String =
     name.getOrElse(Monster.namesByRaceRarity.getOrElse((VillageRates.BanditLeaderDefaultRace, VillageRates.BanditLeaderRarity), ""))
 
+  /** Святыня деревни этой расы (`village.artifacts.<раса>`) — её крадут воры в
+    * беде «Украденный артефакт»: как она зовётся, она же в винительном падеже
+    * («вынесли Жемчужину Прилива») и что это за вещь — словами старосты. */
+  def artifact(content: SceneContent, race: Race): String = content.text(s"village.artifacts.${race.entryName}.name")
+
+  def artifactAcc(content: SceneContent, race: Race): String = content.text(s"village.artifacts.${race.entryName}.acc")
+
+  def artifactAbout(content: SceneContent, race: Race): String = content.text(s"village.artifacts.${race.entryName}.about")
+
   /** Подстановки текстов деревни: название, чья она, соседний город, главарь,
     * плата — серебро числом (`silver`) и вся плата словами (`pay`, см.
-    * [[payLine]]). */
+    * [[payLine]]), святыня деревни — как зовётся, в винительном падеже и что это
+    * за вещь (см. [[artifact]]). */
   def args(content: SceneContent, race: Race, roll: Int, cityRoll: Int, leaderName: Option[String],
            silver: Long, doubloons: Long): Seq[(String, String)] =
     Seq("name" -> name(content, race, roll), "race" -> race.genitivePlural, "city" -> city(content, cityRoll),
-      "leader" -> leader(leaderName), "silver" -> silver.toString, "pay" -> payLine(content, silver, doubloons))
+      "leader" -> leader(leaderName), "silver" -> silver.toString, "pay" -> payLine(content, silver, doubloons),
+      "artifact" -> artifact(content, race), "artifactAcc" -> artifactAcc(content, race),
+      "artifactAbout" -> artifactAbout(content, race))
 
   def args(content: SceneContent, scene: VillageScene): Seq[(String, String)] =
     args(content, scene.race, scene.name, scene.city, scene.leader, scene.silver, scene.doubloons)
@@ -161,12 +178,18 @@ object Villages {
   /** Караван ещё не дошёл до города — идти к нему. */
   def toCaravan(q: NpcQuests): Boolean = toLair(q, VillageQuest.CaravanEscort)
 
+  /** Артефакт ещё у воров — идти по их следу. */
+  def toTrail(q: NpcQuests): Boolean = toLair(q, VillageQuest.StolenArtifact)
+
   /** Куда ведёт контракт, пока дело не сделано: сцена беды и ключ её текстов
-    * (`village.card.<ключ>Label`) — логово или караван. */
+    * (`village.card.<ключ>Label`) — логово, караван или след воров. */
   def goTo(q: NpcQuests): Option[(StateType, String)] =
     q.village.filter(_.step == VillageContract.Taken).flatMap { c =>
-      if (c.quest == VillageQuest.CaravanEscort) Some(StateType.VillageCaravan -> c.quest.key)
-      else VillageLair.of(c.quest).map(l => l.scene -> l.texts)
+      c.quest match {
+        case VillageQuest.CaravanEscort  => Some(StateType.VillageCaravan -> c.quest.key)
+        case VillageQuest.StolenArtifact => Some(StateType.VillageTrail -> c.quest.key)
+        case _                           => VillageLair.of(c.quest).map(l => l.scene -> l.texts)
+      }
     }
 
   /** Дело сделано — вернуться к старосте за платой. У каравана такого шага нет:
@@ -248,11 +271,26 @@ object Villages {
   /** Обитатели логова беды контракта: банда или выводок. */
   def lairMonsters(contract: VillageContract, rng: Rng): List[Monster] =
     contract.quest match {
-      case VillageQuest.BanditLair    => banditGang(contract, rng)
-      case VillageQuest.SpiderNests   => spiderBrood(contract, rng)
+      case VillageQuest.BanditLair     => banditGang(contract, rng)
+      case VillageQuest.SpiderNests    => spiderBrood(contract, rng)
       // Логова у каравана нет — его бои в засадах (см. caravanAmbush).
-      case VillageQuest.CaravanEscort => caravanAmbush(contract, CaravanAmbush.Bandits, rng)
+      case VillageQuest.CaravanEscort  => caravanAmbush(contract, CaravanAmbush.Bandits, rng)
+      // И у артефакта логова нет — бой в стане воров, в конце погони.
+      case VillageQuest.StolenArtifact => thiefGang(contract, rng)
     }
+
+  /** Стан воров уровня задания: сброд всех кровей — у каждого своя раса из
+    * смертных рас лабиринта, а последним — вор с артефактом: именной, тоже любой
+    * из них, имя — из списка его расы. Староста воров не видел, так что вор
+    * бросается в начале боя, а не при встрече с деревней. */
+  def thiefGang(contract: VillageContract, rng: Rng): List[Monster] = {
+    val lvl         = contract.level.max(1)
+    val (front, r1) = mixed(lvl, VillageRates.ThiefFront, VillageRates.ThiefFrontRarities, rng)
+    val (back, r2)  = mixed(lvl, VillageRates.ThiefBack, VillageRates.ThiefBackRarities, r1)
+    val (race, r3)  = r2.pick(VillageRates.BanditRaces)
+    val (named, _)  = MonsterGenerator.legendaryName(race, r3)
+    front ++ back :+ MonsterGenerator.generateOfRaceAndRarity(lvl, race, VillageRates.ThiefRarity, named)
+  }
 
   /** Засада на караван уровня задания: четверо в строю и трое за ними. Банда —
     * сборная, из смертных рас лабиринта; Чернолом — гоблины-лесорубы; ищейки
@@ -377,10 +415,15 @@ object Villages {
     * идти — или что пора за платой. Контракта нет — ничего. */
   def cardLine(content: SceneContent, q: NpcQuests): String =
     q.village.fold("") { c =>
-      content.format(if (c.done) "village.card.return" else s"village.card.${c.quest.key}", args(content, c): _*)
+      content.format(if (c.done) s"village.card.${doneKey(c)}" else s"village.card.${c.quest.key}", args(content, c): _*)
     }
 
   /** Строка журнала: что делать по контракту сейчас. */
   def journalStep(content: SceneContent, c: VillageContract): String =
-    content.format(if (c.done) "journal.village.return" else s"journal.village.${c.quest.key}", args(content, c): _*)
+    content.format(if (c.done) s"journal.village.${doneKey(c)}" else s"journal.village.${c.quest.key}", args(content, c): _*)
+
+  /** Ключ текста «пора за платой»: у артефакта свой — вещь при герое, её и
+    * несут старосте; у прочих бед — общий. */
+  private def doneKey(c: VillageContract): String =
+    if (c.quest == VillageQuest.StolenArtifact) "artifactReturn" else "return"
 }

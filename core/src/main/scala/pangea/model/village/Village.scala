@@ -10,9 +10,9 @@ import pangea.model.quest.BoardRates
 /** Беда деревни — то, о чём просит староста (см. [[VillageContract]]). Задания
   * открываются по мере того, как герой уходит дальше в лабиринт ([[minLevel]]):
   * логово разбойников — с того же уровня, что и сами деревни (15-го), гнездо
-  * сетеплётов — с 20-го, караван — с 25-го; дальше порядок решит
-  * пользователь. `entryName` лежит в базе — в `scene_data` и в
-  * `npc_quests`: не переименовывать и не удалять.
+  * сетеплётов — с 20-го, караван — с 25-го, украденный артефакт — с 35-го;
+  * дальше порядок решит пользователь. `entryName` лежит в базе — в
+  * `scene_data` и в `npc_quests`: не переименовывать и не удалять.
   *
   * @param key      ключ текстов задания в `scenes.yaml` (`village.trouble.<key>` и соседи)
   * @param minLevel с какого поворота лабиринта староста может о нём попросить
@@ -32,6 +32,11 @@ object VillageQuest extends Enum[VillageQuest] {
   /** Сопровождение каравана: деревня отправляет обоз в соседний город, а
     * дорога неспокойна — проводить его все переходы и отбиться от засад. */
   case object CaravanEscort extends VillageQuest("caravan", 25)
+
+  /** Украденный артефакт: воры вынесли из деревни её святыню (у каждой расы
+    * своя, `village.artifacts.<раса>`) и ушли в изгородь — пройти по следу до
+    * их стана и вернуть вещь старосте. С 35-го (так решил пользователь). */
+  case object StolenArtifact extends VillageQuest("artifact", 35)
 
   /** О чём староста может попросить на этом повороте. Мельче порога первого
     * задания деревни не встречаются; если всё же встретилась — просят о первом. */
@@ -334,6 +339,59 @@ object VillageRates {
     * пользователь). */
   val CaravanWagons: Int          = 5
   val CaravanWagonRarity: Rarity  = Rarity.Rare
+
+  /** Погоня за ворами артефакта: переходов по следу — от и до, бросок в начале
+    * погони. Сколько их, игроку не говорим: что воры близко, видно по тексту
+    * (так решил пользователь). Каждый переход — от и до, как у каравана. */
+  val TrailLegsMin: Int    = 2
+  val TrailLegsMax: Int    = 4
+  val TrailLegMinMs: Long  = 3L * 60L * 1000L
+  val TrailLegMaxMs: Long  = 6L * 60L * 1000L
+
+  /** Стан воров: сброд всех кровей, как засада на караван, — четверо попроще и
+    * трое покрепче, а восьмым — вор с артефактом: именной, любой из смертных
+    * рас лабиринта. Все восемь стоят в строю с начала боя. */
+  val ThiefFront: Int                  = 4
+  val ThiefFrontRarities: List[Rarity] = List(Rarity.Uncommon, Rarity.Rare)
+  val ThiefBack: Int                   = 3
+  val ThiefBackRarities: List[Rarity]  = List(Rarity.Rare, Rarity.Mythical)
+  val ThiefRarity: Rarity              = Rarity.Legendary
+}
+
+/** Погоня за ворами артефакта — в `scene_data`, пока герой идёт по следу. Ключи
+  * свои (`trail…`): в `scene_data` лежат и чужие структуры, и чужое поле не
+  * должно читаться как наше.
+  *
+  * @param legs   сколько переходов до стана воров — бросок в начале погони
+  *               ([[VillageRates.TrailLegsMin]]…[[VillageRates.TrailLegsMax]]);
+  *               игроку не называется
+  * @param leg    какой переход идёт (с 1-го); больше `legs` — герой у стана
+  * @param nextAt когда кончится переход (мс); у стана — 0
+  */
+final case class ArtifactTrail(legs: Int, leg: Int, nextAt: Long) {
+  /** Все переходы пройдены: впереди стан воров. */
+  def atCamp: Boolean = leg > legs
+
+  /** Идёт последний переход: за ним — стан. */
+  def lastLeg: Boolean = leg >= legs
+}
+
+object ArtifactTrail {
+
+  /** Начало погони: первый из `legs` переходов кончится в `nextAt`. */
+  def start(legs: Int, nextAt: Long): ArtifactTrail = ArtifactTrail(legs, 1, nextAt)
+
+  implicit val encoder: Encoder[ArtifactTrail] = (t: ArtifactTrail) => Json.obj(
+    "trailLegs"   -> t.legs.asJson,
+    "trailLeg"    -> t.leg.asJson,
+    "trailNextAt" -> t.nextAt.asJson)
+
+  implicit val decoder: Decoder[ArtifactTrail] = (c: HCursor) =>
+    for {
+      legs   <- c.get[Int]("trailLegs")
+      leg    <- c.getOrElse[Int]("trailLeg")(1)
+      nextAt <- c.getOrElse[Long]("trailNextAt")(0L)
+    } yield ArtifactTrail(legs, leg, nextAt)
 }
 
 /** Кто нападает на караван в засаде (так решил пользователь): сборная банда

@@ -63,6 +63,8 @@ object TaskKind extends Enum[TaskKind] with DoobieEnum[TaskKind] {
   case object QuestRoad extends TaskKind
   // Переход каравана деревни (3–6 минут) — конец перехода: засада или тихо.
   case object VillageCaravan extends TaskKind
+  // Переход по следу воров артефакта деревни (3–6 минут) — следующий переход или их стан.
+  case object VillageTrail extends TaskKind
 
   /** Соперник сходил — зовём другого к экрану боя. */
   case object ArenaPoke extends TaskKind
