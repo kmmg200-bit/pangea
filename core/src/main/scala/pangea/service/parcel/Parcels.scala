@@ -6,7 +6,7 @@ import pangea.dao.parcel.ParcelDao
 import pangea.engine.{Renderer, SceneContent, Screen}
 import pangea.model.hero.{Hero, HeroId}
 import pangea.model.home.{HomeData, HomeIntake, HomePlace}
-import pangea.model.item.Item
+import pangea.model.item.{Item, ItemStack}
 import pangea.model.parcel.Parcel
 import pangea.model.user.{User, UserId}
 import pangea.repository.bank.BankRepository
@@ -149,10 +149,16 @@ final case class Parcels(dao: ParcelDao, bank: BankRepository, content: SceneCon
       } yield claimed
     }
 
-  /** «Меч (Иван), Щит (Пётр)». Сгореть может и больше, чем умещается в
-    * сообщение, — лишнее сворачиваем в «и ещё N». */
+  /** «Меч (Иван), Череп ×2 (Пётр)»: одинаковое от одного отправителя — одной
+    * строкой. Сгореть может и больше, чем умещается в сообщение, — лишнее
+    * сворачиваем в «и ещё N». */
   private def titles(parcels: List[Parcel]): String = {
-    val names = parcels.sortBy(_.id).map(p => s"${p.item.displayTitle} (${p.fromName})")
+    val sorted = parcels.sortBy(_.id)
+    val names  = sorted.map(_.fromName).distinct.flatMap { from =>
+      ItemStack.grouped(sorted.filter(_.fromName == from).map(_.item)).map { case (item, n) =>
+        if (n > 1) s"${item.displayTitle} ×$n ($from)" else s"${item.displayTitle} ($from)"
+      }
+    }
     val shown = names.take(DeliveryBatch.toInt).mkString(", ")
     val rest  = names.size - DeliveryBatch.toInt
     if (rest > 0) shown + content.format("parcel.andMore", "count" -> rest.toString) else shown

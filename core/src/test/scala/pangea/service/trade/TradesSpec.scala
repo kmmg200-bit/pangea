@@ -168,6 +168,7 @@ object TradesSpec extends ZIOSpecDefault {
         done.status == TradeStatus.Cancelled,
         f.bags.of(aHero).toSet == Set(sword, axe, ring, fang),
         f.payouts.snapshot.get(aHero).contains((110L, 0L)), a2.doubloons == 200L,
+        // Борис ничего не клал — и «возвращается» ему не пишем.
         f.letters(bob).lastOption.contains(f.content.format("trade.cancelled", "name" -> "Иван Иванов"))
       )
     },
@@ -182,7 +183,8 @@ object TradesSpec extends ZIOSpecDefault {
       } yield assertTrue(
         done.status == TradeStatus.Declined,
         f.sentTo(aHero) == List("Меч"), f.payouts.snapshot.get(aHero).contains((110L, 0L)),
-        mail.headOption.exists(_.startsWith(f.content.format("trade.declined", "name" -> "Иван Иванов")))
+        mail.headOption.exists(_.startsWith(
+          s"${f.content.format("trade.declined", "name" -> "Иван Иванов")} ${f.content.text("trade.returns")}"))
       )
     },
 
@@ -203,8 +205,23 @@ object TradesSpec extends ZIOSpecDefault {
         all.find(_.id == old.id).exists(_.status == TradeStatus.Expired),
         all.find(_.id == fresh.id).exists(_.status == TradeStatus.Open),
         f.sentTo(aHero) == List("Меч"), f.sentTo(bHero) == List("Щит"),
-        toA.exists(_.startsWith(f.content.format("trade.expired", "name" -> "Иван Иванов"))),
-        toB.exists(_.startsWith(f.content.format("trade.expired", "name" -> "Иван Иванов")))
+        toA.exists(_.startsWith(s"${f.content.format("trade.expired", "name" -> "Иван Иванов")} ${f.content.text("trade.returns")}")),
+        toB.exists(_.startsWith(s"${f.content.format("trade.expired", "name" -> "Иван Иванов")} ${f.content.text("trade.returns")}"))
+      )
+    },
+
+    test("срок вышел, а партнёр ничего не клал: ему — без «возвращается», предложившему — с ним") {
+      for {
+        f      <- fx()
+        a      <- f.hero(alice)
+        _      <- f.trades.propose(alice, a, "Борис", draft(List(sword)), now)
+        _      <- f.trades.expire(now + Trades.LifetimeMs + 1L)
+        expired = f.content.format("trade.expired", "name" -> "Иван Иванов")
+        toA    <- eventually(f.letters(alice))(_.nonEmpty)
+        toB    <- eventually(f.letters(bob))(_.contains(expired))
+      } yield assertTrue(
+        toA.exists(_.startsWith(s"$expired ${f.content.text("trade.returns")}")),
+        toB.contains(expired), !toB.exists(_.contains(f.content.text("trade.returns")))
       )
     },
 

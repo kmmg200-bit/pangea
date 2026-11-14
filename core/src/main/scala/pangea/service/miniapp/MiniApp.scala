@@ -18,7 +18,6 @@ import pangea.model.monster.Race
 import pangea.model.quest.NpcQuests
 import pangea.model.state.StateType
 import pangea.model.top.{TopBoard, TopKind}
-import pangea.model.trade.TradeStatus
 import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.auction.AuctionRepository
@@ -494,8 +493,7 @@ final class MiniAppLive(
                      trades.accept(user, fresh, id, ms).map(_.map(o => content.format("trade.done.accepted",
                        "got" -> trades.describe(o.sideOf(o.partnerOf(user.userId))))))
                    case TradeAct.Cancel(id) =>
-                     trades.cancel(user, id, ms).map(_.map(o => content.text(
-                       if (o.status == TradeStatus.Cancelled) "trade.done.cancelled" else "trade.done.declined")))
+                     trades.cancel(user, id, ms).map(_.map(trades.closedNote(user.userId, _)))
                  }
       } yield fresh -> said
     }.flatMap { case (fresh, said) =>

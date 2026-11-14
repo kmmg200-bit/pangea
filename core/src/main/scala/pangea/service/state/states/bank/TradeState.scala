@@ -158,7 +158,7 @@ case class TradeState(heroDao: HeroDao, trades: Trades, transfers: Transfers, us
   private def cancel(user: User, id: Long, renderer: Renderer): Task[StateType] =
     nowMs.flatMap(trades.cancel(user, id, _)).flatMap {
       case Right(o) =>
-        showList(user, renderer, content.text(if (o.status == TradeStatus.Cancelled) "trade.done.cancelled" else "trade.done.declined"))
+        showList(user, renderer, trades.closedNote(user.userId, o))
       case Left(why) => showCard(user, id, renderer, why)
     }
 

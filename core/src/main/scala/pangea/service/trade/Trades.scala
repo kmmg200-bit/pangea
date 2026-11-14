@@ -130,7 +130,8 @@ final class Trades(dao: TradeDao, transfers: Transfers, parcels: Parcels, bank: 
           for {
             name <- nameOf(user.userId)
             _    <- giveBack(offer.sideOf(user.userId), user.userId, Some(user.userId), now, None)
-            _    <- giveBack(offer.sideOf(other), other, Some(user.userId), now, Some(content.format(key, "name" -> name)))
+            _    <- giveBack(offer.sideOf(other), other, Some(user.userId), now,
+                      Some(closed(content.format(key, "name" -> name), offer.sideOf(other))))
           } yield Right(done.copy(version = done.version + 1))
       }
     }
@@ -143,11 +144,22 @@ final class Trades(dao: TradeDao, transfers: Transfers, parcels: Parcels, bank: 
         for {
           fromName <- nameOf(offer.from)
           toName   <- nameOf(offer.to)
-          _        <- giveBack(offer.fromSide, offer.from, None, now, Some(content.format("trade.expired", "name" -> toName)))
-          _        <- giveBack(offer.toSide, offer.to, None, now, Some(content.format("trade.expired", "name" -> fromName)))
+          _        <- giveBack(offer.fromSide, offer.from, None, now,
+                        Some(closed(content.format("trade.expired", "name" -> toName), offer.fromSide)))
+          _        <- giveBack(offer.toSide, offer.to, None, now,
+                        Some(closed(content.format("trade.expired", "name" -> fromName), offer.toSide)))
         } yield ()
       }).unit.catchAllCause(cause => ZIO.logErrorCause(s"Обмен ${offer.id}: срок вышел, а закрыть не вышло", cause))
     })
+
+  /** Что сказать тому, кто отозвал или отклонил. */
+  def closedNote(user: UserId, offer: TradeOffer): String =
+    closed(content.text(if (offer.status == TradeStatus.Cancelled) "trade.done.cancelled" else "trade.done.declined"),
+      offer.sideOf(user))
+
+  /** О закрытом обмене: «всё возвращается» — только тому, кто что-то клал. */
+  private def closed(text: String, side: TradeSide): String =
+    if (side.isEmpty) text else s"$text ${content.text("trade.returns")}"
 
   /** Что лежит на стороне, одной строкой: «⚔️ Меч, Кольцо ×2, 🪙 500»; пусто —
     * «ничего». */
