@@ -1,0 +1,808 @@
+{
+  "uid": "pangea-funnel",
+  "title": "Воронка",
+  "description": "Сколько героев дошло до какого уровня и кто из них заходит: прямо из базы, снимок «как сейчас». Заходил — писал боту или жал кнопки (users.last_seen_at); действия в приложении не в счёт.",
+  "tags": [
+    "pangea"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "5m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {
+    "hidden": true
+  },
+  "templating": {
+    "list": [
+      {
+        "type": "custom",
+        "name": "minlvl",
+        "label": "Активные — с уровня",
+        "query": "5,10,15,20,25,30,40,50",
+        "hide": 0,
+        "multi": false,
+        "includeAll": false,
+        "current": {
+          "selected": true,
+          "text": "10",
+          "value": "10"
+        },
+        "options": [
+          {
+            "selected": false,
+            "text": "5",
+            "value": "5"
+          },
+          {
+            "selected": true,
+            "text": "10",
+            "value": "10"
+          },
+          {
+            "selected": false,
+            "text": "15",
+            "value": "15"
+          },
+          {
+            "selected": false,
+            "text": "20",
+            "value": "20"
+          },
+          {
+            "selected": false,
+            "text": "25",
+            "value": "25"
+          },
+          {
+            "selected": false,
+            "text": "30",
+            "value": "30"
+          },
+          {
+            "selected": false,
+            "text": "40",
+            "value": "40"
+          },
+          {
+            "selected": false,
+            "text": "50",
+            "value": "50"
+          }
+        ]
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Сводка — как в админ-панели",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Героев всего",
+      "description": "Сколько героев заведено, вместе с теми, кто не дошёл дальше регистрации.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT count(*) AS \"героев\" FROM heroes"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Заходили сегодня",
+      "description": "Сколько игроков писали боту или жали кнопки с полуночи по Москве — как «сегодня» в админ-панели. Действия в приложении не в счёт.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT count(*) AS \"игроков\" FROM users WHERE last_seen_at >= ((date_trunc('day', now() AT TIME ZONE 'Europe/Moscow') AT TIME ZONE 'Europe/Moscow') AT TIME ZONE current_setting('TimeZone'))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Заходили за неделю",
+      "description": "Сколько игроков писали боту или жали кнопки за последние 7 дней.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT count(*) AS \"игроков\" FROM users WHERE last_seen_at > now() - interval '7 days'"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Серебро на руках",
+      "description": "Серебро у всех героев при себе.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT coalesce(sum(silver), 0) AS \"серебро\" FROM heroes"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Серебро в ячейках",
+      "description": "Серебро в банковских ячейках.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT coalesce(sum(silver), 0) AS \"серебро\" FROM bank_vaults"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Дублоны на руках",
+      "description": "Дублоны у всех героев.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "yellow"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT coalesce(sum(doubloons), 0) AS \"дублоны\" FROM heroes"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Лотерея Фета",
+      "description": "Сколько раз сыграли в беспроигрышную лотерею Фета: всего и за последние 7 дней.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 12,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT count(*) AS \"всего\",\n       count(*) FILTER (WHERE occurred_at > now() - interval '7 days') AS \"за неделю\"\nFROM event_log\nWHERE event_type = 'fet_rune_lottery'"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "С $minlvl уровня: дошли и заходят",
+      "description": "Герои, прошедшие регистрацию, с уровнем не ниже выбранного сверху: сколько их всего и сколько из них писали боту или жали кнопки за 24 часа и за 7 дней.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 12,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT count(*) AS \"дошли\",\n       count(*) FILTER (WHERE u.last_seen_at > now() - interval '24 hours') AS \"заходили за 24 часа\",\n       count(*) FILTER (WHERE u.last_seen_at > now() - interval '7 days') AS \"за 7 дней\"\nFROM heroes h\nJOIN users u ON u.id = h.user_id\nWHERE h.state <> 'Registration' AND h.lvl >= $minlvl"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "bargauge",
+      "title": "Уровни тех, кто заходил за неделю",
+      "description": "Как в админ-панели: полосы по 25 уровней, только те, кто писал боту или жал кнопки за 7 дней.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "valueMode": "color",
+        "showUnfilled": true,
+        "namePlacement": "left",
+        "sizing": "auto",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "maxVizHeight": 300,
+        "reduceOptions": {
+          "values": true,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT (g * 25 + 1) || '–' || ((g + 1) * 25) AS \"Уровни\",\n       count(x.lvl) AS \"Героев\"\nFROM generate_series(0, 5) g\nLEFT JOIN (SELECT h.lvl FROM heroes h\n           JOIN users u ON u.id = h.user_id\n           WHERE u.last_seen_at > now() - interval '7 days') x\n  ON x.lvl BETWEEN g * 25 + 1 AND (g + 1) * 25\nGROUP BY g\nORDER BY g"
+        }
+      ]
+    },
+    {
+      "id": 101,
+      "type": "row",
+      "title": "Воронка",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 10,
+      "type": "bargauge",
+      "title": "Сколько дошло",
+      "description": "Все герои → прошедшие регистрацию → дошедшие до 5, 10, 15… уровня (уровень сейчас не ниже). Процент — от прошедших регистрацию.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 12,
+        "h": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "valueMode": "color",
+        "showUnfilled": true,
+        "namePlacement": "left",
+        "sizing": "auto",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "maxVizHeight": 300,
+        "reduceOptions": {
+          "values": true,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "WITH reg AS (SELECT h.lvl FROM heroes h WHERE h.state <> 'Registration'),\n     total AS (SELECT count(*) AS n FROM reg)\nSELECT \"Шаг\", \"Героев\" FROM (\n  SELECT 0 AS ord, 'Завели героя' AS \"Шаг\", (SELECT count(*) FROM heroes) AS \"Героев\"\n  UNION ALL\n  SELECT 1, 'Прошли регистрацию', (SELECT n FROM total)\n  UNION ALL\n  SELECT 1 + g, 'Дошли до ' || g * 5 || ' · '\n                  || coalesce(round(100.0 * count(r.lvl) / nullif((SELECT n FROM total), 0)), 0) || '%',\n         count(r.lvl)\n  FROM generate_series(1, (SELECT coalesce(max(lvl), 0) FROM reg) / 5) g\n  LEFT JOIN reg r ON r.lvl >= g * 5\n  GROUP BY g\n) steps\nORDER BY ord"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "barchart",
+      "title": "Кто заходит — по уровням",
+      "description": "Герои, прошедшие регистрацию, по полосам уровней: сколько писали боту или жали кнопки за 24 часа и за 7 дней.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 14,
+        "w": 12,
+        "h": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "gradientMode": "none"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "vertical",
+        "xField": "Уровни",
+        "showValue": "auto",
+        "groupWidth": 0.7,
+        "barWidth": 0.9,
+        "stacking": "none",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "WITH x AS (\n  SELECT h.lvl, u.last_seen_at AS seen\n  FROM heroes h\n  JOIN users u ON u.id = h.user_id\n  WHERE h.state <> 'Registration'\n)\nSELECT CASE WHEN g = 0 THEN '1–4' ELSE (g * 5) || '–' || (g * 5 + 4) END AS \"Уровни\",\n       count(x.lvl) FILTER (WHERE x.seen > now() - interval '24 hours') AS \"Заходили за 24 часа\",\n       count(x.lvl) FILTER (WHERE x.seen > now() - interval '7 days') AS \"Заходили за 7 дней\"\nFROM generate_series(0, (SELECT coalesce(max(lvl), 0) FROM x) / 5) g\nLEFT JOIN x ON x.lvl / 5 = g\nGROUP BY g\nORDER BY g"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "По полосам уровней",
+      "description": "Герои, прошедшие регистрацию: сколько их в полосе, сколько заходили за 24 часа и за 7 дней, какая это доля и сколько дошло до этой полосы и выше.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 24,
+        "h": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Доля за 7 дней, %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-RdYlGr"
+                }
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": true,
+          "reducer": [
+            "sum"
+          ],
+          "fields": [
+            "Героев",
+            "Заходили за 24 часа",
+            "Заходили за 7 дней"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "WITH x AS (\n  SELECT h.lvl, u.last_seen_at AS seen\n  FROM heroes h\n  JOIN users u ON u.id = h.user_id\n  WHERE h.state <> 'Registration'\n)\nSELECT CASE WHEN g = 0 THEN '1–4' ELSE (g * 5) || '–' || (g * 5 + 4) END AS \"Уровни\",\n       count(x.lvl) AS \"Героев\",\n       count(x.lvl) FILTER (WHERE x.seen > now() - interval '24 hours') AS \"Заходили за 24 часа\",\n       count(x.lvl) FILTER (WHERE x.seen > now() - interval '7 days') AS \"Заходили за 7 дней\",\n       coalesce(round(100.0 * count(x.lvl) FILTER (WHERE x.seen > now() - interval '7 days')\n                      / nullif(count(x.lvl), 0)), 0) AS \"Доля за 7 дней, %\",\n       (SELECT count(*) FROM x x2 WHERE x2.lvl >= greatest(g * 5, 1)) AS \"Дошли сюда и выше\"\nFROM generate_series(0, (SELECT coalesce(max(lvl), 0) FROM x) / 5) g\nLEFT JOIN x ON x.lvl / 5 = g\nGROUP BY g\nORDER BY g"
+        }
+      ]
+    }
+  ]
+}
