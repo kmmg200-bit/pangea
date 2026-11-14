@@ -39,6 +39,12 @@ import java.util.concurrent.TimeUnit
   * вернёт сюда с отметкой победы: артефакт у героя, дальше — к старосте за
   * платой, как после логова.
   *
+  * Вор в стане стоит первым и в бою не задерживается: не свалили его за
+  * [[VillageRates.ThiefEscapeRounds]] раунда — уходит живым со свёртком (так
+  * уходит и приговорённый, см. `SoloPveBattle.escapesAfter`), а банда дерётся
+  * дальше. Победа над ней — и сразу переход по его следу, а за ним он сам,
+  * загнанный, с двумя подручными: второй раз бежать ему некуда.
+  *
   * Сойти со следа (в пути или у стана, с подтверждением) или пасть в стане —
   * след остыл: контракт при герое, но погоню начинать заново, от ворот.
   * «Отказаться от контракта» — как у логова. */
@@ -71,10 +77,10 @@ case class VillageTrailState(
   override def targetStates: Set[StateType] =
     Set(StateType.Dungeon, StateType.Battle, StateType.HeroStats, StateType.VillageTrail)
 
-  /** Вход: контракта на артефакт нет — здесь пусто; воры перебиты (добыча
-    * положила отметку) — артефакт у героя; погоня не начата — у ворот; все
-    * переходы пройдены — у стана; переход идёт — по следу (кончился, пока герой
-    * был в меню, — кончится сразу). */
+  /** Вход: контракта на артефакт нет — здесь пусто; бой в стане выигран (добыча
+    * положила отметку) — артефакт у героя, а если вор ушёл из боя — погоня за
+    * ним; погоня не начата — у ворот; все переходы пройдены — у стана; переход
+    * идёт — по следу (кончился, пока герой был в меню, — кончится сразу). */
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     for {
       now      <- nowMs
@@ -84,10 +90,14 @@ case class VillageTrailState(
       _        <- contract match {
                     case None =>
                       clear(user) *> renderer.show(user, Screen(text("gone"), List(outChoice)))
-                    case Some(c) if data.exists(won) => victory(user, c, renderer)
+                    case Some(c) if data.exists(won) =>
+                      trail match {
+                        case Some(t) if !t.escaped && data.exists(SoloPveBattle.preyLeftIn) => thiefGone(user, c, t, now, renderer)
+                        case _                                                             => victory(user, c, trail, renderer)
+                      }
                     case Some(c) => trail match {
                       case None                => renderer.show(user, gatesScreen(c))
-                      case Some(t) if t.atCamp => renderer.show(user, campScreen(c))
+                      case Some(t) if t.atCamp => renderer.show(user, campScreen(c, t))
                       case Some(t) =>
                         scheduler.schedule(user.userId, t.nextAt.max(now), TaskKind.VillageTrail,
                           StateType.VillageTrail, LegAction) *>
@@ -144,11 +154,15 @@ case class VillageTrailState(
       AppButton.choice(content, row = Some(0)),
       content.choice("VillageTrailQuit", key("quitLabel")).copy(row = Some(1))))
 
-  /** У стана: кто там, сложность и что из этого боя не сбежать. */
-  private def campScreen(c: VillageContract): Screen =
+  /** У стана: кто там, сложность, что вор со свёртком в бою не задержится и что
+    * из этого боя не сбежать. Загнанный вор — свой текст, и бежать ему уже
+    * некуда. */
+  private def campScreen(c: VillageContract, t: ArtifactTrail): Screen =
     Screen(
-      Villages.joined(content.format(key("camp"), Villages.args(content, c): _*), difficulty(c.level),
-        content.text("village.lair.noEscape")),
+      Villages.joined(
+        content.format(key(if (t.escaped) "cornered" else "camp"), args(c, t): _*), difficulty(c.level),
+        (if (t.escaped) "" else content.format(key("thiefHint"), "rounds" -> VillageRates.ThiefEscapeRounds.toString) + "\n") +
+          content.text("village.lair.noEscape")),
       List(
         content.choice("VillageTrailFight", key("fightLabel")).copy(row = Some(0)),
         content.choice("OpenCharacter", "village.lair.characterLabel").copy(row = Some(1)),
@@ -156,18 +170,25 @@ case class VillageTrailState(
         content.choice("VillageTrailAbandon", "village.lair.abandonLabel").copy(row = Some(2))))
 
   /** Что видно на этом переходе: первый уводит от ворот в изгородь, последний
-    * выводит к стану, средние — по очереди из `village.artifact.legs.middle`. */
+    * выводит к стану, средние — по очереди из `village.artifact.legs.middle`;
+    * за ушедшим вором — его след. */
   private def legText(c: VillageContract, t: ArtifactTrail): String =
-    if (t.leg <= 1) content.format(key("legs.first"), Villages.args(content, c): _*)
-    else if (t.lastLeg) content.format(key("legs.last"), Villages.args(content, c): _*)
+    if (t.escaped) content.format(key("escapedLeg"), args(c, t): _*)
+    else if (t.leg <= 1) content.format(key("legs.first"), args(c, t): _*)
+    else if (t.lastLeg) content.format(key("legs.last"), args(c, t): _*)
     else {
       val middle = content.list(key("legs.middle"))
-      middle.lift(Math.floorMod(t.leg - 2, middle.size.max(1))).fold("")(line => format(line, c))
+      middle.lift(Math.floorMod(t.leg - 2, middle.size.max(1))).fold("")(line => format(line, c, t))
     }
 
-  /** Подставить в строку из списка то же, что и в прочие тексты деревни. */
-  private def format(line: String, c: VillageContract): String =
-    Villages.args(content, c).foldLeft(line) { case (s, (k, v)) => s.replace(s"{$k}", v) }
+  /** Подстановки погони: то же, что в прочих текстах деревни, и имя вора (не
+    * запомнили — просто «Вор»). Вор в текстах — в начале фразы. */
+  private def args(c: VillageContract, t: ArtifactTrail): Seq[(String, String)] =
+    Villages.args(content, c) :+ ("thief" -> t.thief.getOrElse(text("thiefNameless")))
+
+  /** Подставить в строку из списка то же, что и в прочие тексты погони. */
+  private def format(line: String, c: VillageContract, t: ArtifactTrail): String =
+    args(c, t).foldLeft(line) { case (s, (k, v)) => s.replace(s"{$k}", v) }
 
   private def difficulty(level: Int): String =
     content.format("marisa.difficulty", "difficulty" -> Difficulty.render(level.max(1)))
@@ -190,14 +211,15 @@ case class VillageTrailState(
     }
 
   /** Начать переход `t.leg`: что видно на следу — и таймер до конца перехода.
-    * Момент — в сцене, чтобы пережить уход в меню. */
-  private def startLeg(user: User, c: VillageContract, t: ArtifactTrail, now: Long, renderer: Renderer): Task[StateType] =
+    * Момент — в сцене, чтобы пережить уход в меню. `note` — что было перед ним. */
+  private def startLeg(user: User, c: VillageContract, t: ArtifactTrail, now: Long, renderer: Renderer,
+                       note: String = ""): Task[StateType] =
     for {
       delta <- Random.nextLongBetween(VillageRates.TrailLegMinMs, VillageRates.TrailLegMaxMs + 1L)
       trail  = t.copy(nextAt = now + delta)
       _     <- writeTrail(user, trail)
       _     <- scheduler.schedule(user.userId, trail.nextAt, TaskKind.VillageTrail, StateType.VillageTrail, LegAction)
-      _     <- renderer.show(user, trailScreen(legText(c, trail)))
+      _     <- renderer.show(user, trailScreen(legText(c, trail)).noted(note))
     } yield StateType.VillageTrail
 
   /** Переход кончился: следующий — или, если он был последним, стан воров.
@@ -209,7 +231,7 @@ case class VillageTrailState(
       res   <- trail match {
                  case Some(t) if !t.atCamp && t.nextAt > 0L && t.nextAt <= now =>
                    val next = t.copy(leg = t.leg + 1, nextAt = 0L)
-                   if (next.atCamp) writeTrail(user, next) *> renderer.show(user, campScreen(c)).as(StateType.VillageTrail)
+                   if (next.atCamp) writeTrail(user, next) *> renderer.show(user, campScreen(c, next)).as(StateType.VillageTrail)
                    else startLeg(user, c, next, now, renderer)
                  case _ => enter(user, renderer).as(StateType.VillageTrail)
                }
@@ -217,36 +239,56 @@ case class VillageTrailState(
 
   // ── Стан воров ──────────────────────────────────────────────────────────────
 
-  /** Бой в стане: банда и вор с артефактом — уровня задания. Добыча вернёт сюда
-    * с отметкой победы. Не у стана (старая кнопка) — показать, что сейчас. */
+  /** Бой в стане: вор с артефактом и банда — уровня задания. Вор стоит первым и
+    * уходит, если не свалить его за [[VillageRates.ThiefEscapeRounds]] раунда;
+    * загнанному — с двумя подручными — бежать некуда. Добыча вернёт сюда с
+    * отметкой победы, а кто вор — в погоне: ушёл — за ним и пойдём. Не у стана
+    * (старая кнопка) — показать, что сейчас. */
   private def fight(user: User, c: VillageContract, renderer: Renderer): Task[StateType] =
     readTrail(user).flatMap {
       case Some(t) if t.atCamp =>
         for {
           hero     <- getHero(user)
           seed     <- Random.nextLong
-          foes      = Villages.thiefGang(c, Rng(seed))
+          foes      = if (t.escaped) Villages.cornered(c, t.thief, t.thiefRace, Rng(seed)) else Villages.thiefGang(c, Rng(seed))
+          thief     = foes.headOption
           energies <- ZIO.foreach(foes)(startEnergy)
-          battle    = SoloPveBattle.fromGroup(foes, hero, energies)
+          plain     = SoloPveBattle.fromGroup(foes, hero, energies)
                         .copy(story = Some(Villages.ArtifactStory), lootLevel = Some(c.level.max(1).toLong))
-          routing   = LootData(Nil, Nil, returnState = Some(StateType.VillageTrail), eventData = Some(wonMark))
+          // Уходит только вор с именем: по имени его и узнают в строю.
+          battle    = thief.flatMap(_.customName).filterNot(_ => t.escaped).fold(plain)(name =>
+                        plain.copy(escapesAfter = VillageRates.ThiefEscapeRounds, preyName = Some(name)))
+          marked    = t.copy(thief = thief.flatMap(_.customName), thiefRace = thief.map(_.race))
+          routing   = LootData(Nil, Nil, returnState = Some(StateType.VillageTrail),
+                        eventData = Some(marked.asJson.deepMerge(wonMark)))
           _        <- heroDao.writeActiveBattle(user.userId, battle.asJson)
           _        <- heroDao.writeSceneData(user.userId, routing.asJson)
-          _        <- renderer.show(user, Screen(content.format(key("fight"), Villages.args(content, c): _*), Nil))
+          _        <- renderer.show(user, Screen(content.format(key(if (t.escaped) "fightCornered" else "fight"),
+                        args(c, marked): _*), Nil))
         } yield StateType.Battle
       case _ => enter(user, renderer).as(StateType.VillageTrail)
     }
 
-  /** Воры перебиты: артефакт у героя — к старосте за платой. */
-  private def victory(user: User, c: VillageContract, renderer: Renderer): Task[Unit] =
+  /** Бой выигран, но вор со свёртком ушёл: сразу — переход по его следу, а кто
+    * он, погоня помнит. */
+  private def thiefGone(user: User, c: VillageContract, t: ArtifactTrail, now: Long, renderer: Renderer): Task[Unit] = {
+    val next = ArtifactTrail.after(t.thief, t.thiefRace, 0L)
+    startLeg(user, c, next, now, renderer, note = content.format(key("thiefGone"), args(c, next): _*)).unit
+  }
+
+  /** Воры перебиты — в стане или загнанный вор: артефакт у героя, к старосте за
+    * платой. */
+  private def victory(user: User, c: VillageContract, trail: Option[ArtifactTrail], renderer: Renderer): Task[Unit] = {
+    val t = trail.getOrElse(ArtifactTrail(0, 1, 0L))
     for {
       _ <- clear(user)
       _ <- Villages.lairCleared(heroDao, user.userId, VillageQuest.StolenArtifact)
       _ <- renderer.show(user, Screen(
-             Villages.joined(content.format(key("victory"), Villages.args(content, c): _*),
+             Villages.joined(content.format(key(if (t.escaped) "victoryCornered" else "victory"), args(c, t): _*),
                content.text("village.lair.returnHint")),
              List(outChoice)))
     } yield ()
+  }
 
   // ── Уход и отказ ────────────────────────────────────────────────────────────
 

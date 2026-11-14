@@ -1,6 +1,6 @@
 package pangea.model.battle
 
-import io.circe.{Decoder, Encoder, HCursor}
+import io.circe.{Decoder, Encoder, HCursor, Json}
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import pangea.model.hero.Hero
 import pangea.model.monster.{Monster, Race, Rarity}
@@ -162,7 +162,12 @@ case class SoloPveBattle(
   monsterBreed: Option[pangea.model.monster.Breed] = None,
   // Цепная молния «Грозы» (порог 12) в этом раунде уже перескакивала: она — не
   // чаще раза за раунд. В записях до этого поля его нет — читается как false.
-  chainUsedThisRound: Boolean = false
+  chainUsedThisRound: Boolean = false,
+  // Приговорённый (`preyName`) ушёл из боя живым — откуда бы ни ушёл: из пары
+  // или из строя. Победа переносит это в данные сцены (см. `markPreyLeft`): вор
+  // с артефактом деревни ушёл — погоня продолжается. В записях до этого поля
+  // его нет — читается как false.
+  preyLeft: Boolean = false
 ) {
 
   /** Множитель Стены трофеев к урону героя по тому, кто сейчас в полях. */
@@ -1100,6 +1105,7 @@ object SoloPveBattle {
       squadTaken          <- c.getOrElse[Boolean]("squadTaken")(false)
       monsterBreed        <- pangea.model.monster.Breed.read(c, "monsterBreed")
       chainUsed           <- c.getOrElse[Boolean]("chainUsedThisRound")(false)
+      preyLeft            <- c.getOrElse[Boolean]("preyLeft")(false)
     } yield SoloPveBattle(monsterLvl, monsterRace, monsterRarity, monsterStats,
                          monsterCurrentHp, monsterCurrentArmor, heroBattleState, consumableUsed, monsterMarked,
                          monsterUndead,
@@ -1109,11 +1115,20 @@ object SoloPveBattle {
                          heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall,
                          monsterLastAllyHit, heroStruck, roundsFought, secondWindUsed, preyName, preyGone,
                          monsterDodgeBonus, comboUsed, bossArmorTaken, squadTaken, monsterBreed,
-                         chainUsed).cycleToBossSlot
+                         chainUsed, preyLeft).cycleToBossSlot
       // ↑ Бой, сохранённый до того, как круг минибосса переехал на слот: круг
       // того, кто стоит в строю, забираем с боя на его слот.
 
   /** Номер самого соперника среди «мобов» зеркала арены; его союзники — от
     * единицы (см. `ArenaSide.allies`). */
   val ArenaHeroUnit: Int = 0
+
+  /** Отметка в данных события сцены (`LootData.eventData`), что приговорённый
+    * ушёл из боя живым (см. `preyLeft`): её кладёт победа, читает сцена, куда
+    * вернёт добыча. */
+  val PreyLeftKey: String = "preyLeft"
+
+  def markPreyLeft(eventData: Json): Json = eventData.deepMerge(Json.obj(PreyLeftKey -> Json.True))
+
+  def preyLeftIn(sceneData: Json): Boolean = sceneData.hcursor.get[Boolean](PreyLeftKey).toOption.contains(true)
 }

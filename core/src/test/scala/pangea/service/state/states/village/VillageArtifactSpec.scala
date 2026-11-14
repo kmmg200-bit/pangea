@@ -213,7 +213,7 @@ object VillageArtifactSpec extends ZIOSpecDefault {
               assertTrue(camp.text.contains("Стан воров — на прогалине"))
     },
 
-    test("стан: сюжетный бой без «Сбежать» — восемь воров уровня задания, вор с артефактом — последним; добыча вернёт сюда с отметкой") {
+    test("стан: сюжетный бой без «Сбежать» — восемь воров уровня задания; добыча вернёт сюда с отметкой") {
       for {
         c     <- content
         d     <- dao(data = onTrail(ArtifactTrail(2, 3, 0L)))
@@ -228,7 +228,7 @@ object VillageArtifactSpec extends ZIOSpecDefault {
               assertTrue(b.exists(x => x.story.contains(Villages.ArtifactStory) && x.lootLevel.contains(QuestLevel.toLong) && x.cantFlee)) &&
               assertTrue(foes.size == VillageRates.ThiefFront + VillageRates.ThiefBack + 1) &&
               assertTrue(loot.exists(l => l.returnState.contains(StateType.VillageTrail) &&
-                l.eventData.contains(VillageTrailState.wonMark))) &&
+                l.eventData.exists(VillageTrailState.won))) &&
               assertTrue(BattleState.RaidStories.contains(Villages.ArtifactStory))
     },
 
@@ -244,14 +244,14 @@ object VillageArtifactSpec extends ZIOSpecDefault {
       } yield assertTrue(res == StateType.VillageTrail && b.isEmpty && shown.text.contains("След начинается у ворот"))
     },
 
-    test("воры: сборная из смертных рас уровня задания — четверо, трое и вор-именной последним") {
+    test("воры: сборная из смертных рас уровня задания — вор-именной первым, за ним четверо и трое") {
       val gangs = (1L to 50L).toList.map(s => Villages.thiefGang(contract(), Rng(s)))
       val size  = VillageRates.ThiefFront + VillageRates.ThiefBack + 1
       assertTrue(gangs.forall(g => g.size == size && g.forall(_.lvl == QuestLevel.toLong))) &&
       assertTrue(gangs.flatten.forall(m => Race.mortals.contains(m.race)) && gangs.flatten.map(_.race).distinct.size > 3) &&
-      assertTrue(gangs.forall(g => g.take(VillageRates.ThiefFront).forall(m => VillageRates.ThiefFrontRarities.contains(m.rarity)) &&
-        g.slice(VillageRates.ThiefFront, size - 1).forall(m => VillageRates.ThiefBackRarities.contains(m.rarity)))) &&
-      assertTrue(gangs.flatMap(_.lastOption).forall(m => m.rarity == Rarity.Legendary && m.customName.exists(_.nonEmpty))) &&
+      assertTrue(gangs.forall(g => g.slice(1, 1 + VillageRates.ThiefFront).forall(m => VillageRates.ThiefFrontRarities.contains(m.rarity)) &&
+        g.drop(1 + VillageRates.ThiefFront).forall(m => VillageRates.ThiefBackRarities.contains(m.rarity)))) &&
+      assertTrue(gangs.flatMap(_.headOption).forall(m => m.rarity == Rarity.Legendary && m.customName.exists(_.nonEmpty))) &&
       // через lairMonsters — те же воры
       assertTrue(Villages.lairMonsters(contract(), Rng(7L)) == Villages.thiefGang(contract(), Rng(7L)))
     },

@@ -349,27 +349,43 @@ object VillageRates {
   val TrailLegMaxMs: Long  = 6L * 60L * 1000L
 
   /** Стан воров: сброд всех кровей, как засада на караван, — четверо попроще и
-    * трое покрепче, а восьмым — вор с артефактом: именной, любой из смертных
-    * рас лабиринта. Все восемь стоят в строю с начала боя. */
+    * трое покрепче, а с ними вор с артефактом: именной, любой из смертных рас
+    * лабиринта. Вор стоит в строю первым, за ним — остальные; все восемь — с
+    * начала боя. */
   val ThiefFront: Int                  = 4
   val ThiefFrontRarities: List[Rarity] = List(Rarity.Uncommon, Rarity.Rare)
   val ThiefBack: Int                   = 3
   val ThiefBackRarities: List[Rarity]  = List(Rarity.Rare, Rarity.Mythical)
   val ThiefRarity: Rarity              = Rarity.Legendary
+
+  /** Вор с артефактом в бою не задерживается: не свалили его за столько
+    * раундов — уходит живым, и погоня продолжается (так решил пользователь).
+    * Загнанному второй раз бежать некуда. Число — в подсказке у стана
+    * (`village.artifact.thiefHint`, «{rounds} раунда» — слово для 2–4). */
+  val ThiefEscapeRounds: Int = 4
+
+  /** Загнанный вор: с ним столько подручных, что ушли вместе с ним, — покрепче,
+    * как задний ряд стана. */
+  val CorneredHenchmen: Int = 2
 }
 
 /** Погоня за ворами артефакта — в `scene_data`, пока герой идёт по следу. Ключи
   * свои (`trail…`): в `scene_data` лежат и чужие структуры, и чужое поле не
   * должно читаться как наше.
   *
-  * @param legs   сколько переходов до стана воров — бросок в начале погони
-  *               ([[VillageRates.TrailLegsMin]]…[[VillageRates.TrailLegsMax]]);
-  *               игроку не называется
-  * @param leg    какой переход идёт (с 1-го); больше `legs` — герой у стана
-  * @param nextAt когда кончится переход (мс); у стана — 0
+  * @param legs    сколько переходов до стана воров — бросок в начале погони
+  *                ([[VillageRates.TrailLegsMin]]…[[VillageRates.TrailLegsMax]]);
+  *                игроку не называется
+  * @param leg     какой переход идёт (с 1-го); больше `legs` — герой у стана
+  * @param nextAt  когда кончится переход (мс); у стана — 0
+  * @param escaped вор с артефактом ушёл из боя в стане — погоня за ним одним:
+  *                переход по его следу, потом он, загнанный, с подручными
+  * @param thief   имя вора — бросок в начале боя в стане: за ним и гонятся
+  * @param thiefRace его раса
   */
-final case class ArtifactTrail(legs: Int, leg: Int, nextAt: Long) {
-  /** Все переходы пройдены: впереди стан воров. */
+final case class ArtifactTrail(legs: Int, leg: Int, nextAt: Long, escaped: Boolean = false,
+                               thief: Option[String] = None, thiefRace: Option[Race] = None) {
+  /** Все переходы пройдены: впереди стан воров (или загнанный вор). */
   def atCamp: Boolean = leg > legs
 
   /** Идёт последний переход: за ним — стан. */
@@ -381,17 +397,30 @@ object ArtifactTrail {
   /** Начало погони: первый из `legs` переходов кончится в `nextAt`. */
   def start(legs: Int, nextAt: Long): ArtifactTrail = ArtifactTrail(legs, 1, nextAt)
 
-  implicit val encoder: Encoder[ArtifactTrail] = (t: ArtifactTrail) => Json.obj(
-    "trailLegs"   -> t.legs.asJson,
-    "trailLeg"    -> t.leg.asJson,
-    "trailNextAt" -> t.nextAt.asJson)
+  /** Вор ушёл из боя: один переход по его следу — он кончится в `nextAt`. Кто
+    * вор, погоня помнит. */
+  def after(thief: Option[String], thiefRace: Option[Race], nextAt: Long): ArtifactTrail =
+    ArtifactTrail(1, 1, nextAt, escaped = true, thief = thief, thiefRace = thiefRace)
 
+  implicit val encoder: Encoder[ArtifactTrail] = (t: ArtifactTrail) => Json.obj(
+    "trailLegs"      -> t.legs.asJson,
+    "trailLeg"       -> t.leg.asJson,
+    "trailNextAt"    -> t.nextAt.asJson,
+    "trailEscaped"   -> t.escaped.asJson,
+    "trailThief"     -> t.thief.asJson,
+    "trailThiefRace" -> t.thiefRace.map(_.entryName).asJson)
+
+  /** Погоня, начатая до того, как вор научился уходить, — без этих полей:
+    * читается как погоня за всеми ворами, вор бросается в начале боя. */
   implicit val decoder: Decoder[ArtifactTrail] = (c: HCursor) =>
     for {
-      legs   <- c.get[Int]("trailLegs")
-      leg    <- c.getOrElse[Int]("trailLeg")(1)
-      nextAt <- c.getOrElse[Long]("trailNextAt")(0L)
-    } yield ArtifactTrail(legs, leg, nextAt)
+      legs    <- c.get[Int]("trailLegs")
+      leg     <- c.getOrElse[Int]("trailLeg")(1)
+      nextAt  <- c.getOrElse[Long]("trailNextAt")(0L)
+      escaped <- c.getOrElse[Boolean]("trailEscaped")(false)
+      thief   <- c.getOrElse[Option[String]]("trailThief")(None)
+      race    <- c.getOrElse[Option[String]]("trailThiefRace")(None)
+    } yield ArtifactTrail(legs, leg, nextAt, escaped, thief, race.flatMap(Race.withNameOption))
 }
 
 /** Кто нападает на караван в засаде (так решил пользователь): сборная банда

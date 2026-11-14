@@ -377,20 +377,24 @@ case class BattleState(
     if (res.outcome != Outcome.Continue || b.escapesAfter <= 0 || b.group.round < b.escapesAfter || b.preyName.isEmpty) res
     else {
       val calm  = b.copy(escapesAfter = 0)
-      val left  = (name: String) => res.log :+ content.format("battle.preyEscapedKin", "monster" -> name)
+      // Вор с артефактом деревни уходит по-своему: не шатаясь, а со свёртком.
+      val (kinKey, lastKey) =
+        if (b.story.contains(Villages.ArtifactStory)) ("battle.thiefEscapedKin", "battle.thiefEscaped")
+        else ("battle.preyEscapedKin", "battle.preyEscaped")
+      val left  = (name: String) => res.log :+ content.format(kinKey, "monster" -> name)
       if (b.monsterCurrentHp > 0L && b.customName == b.preyName)
         calm.promoteAfterEscape match {
-          case Some(next)                     => res.copy(battle = next, log = left(b.monsterName))
+          case Some(next)                     => res.copy(battle = next.copy(preyLeft = true), log = left(b.monsterName))
           case None if b.group.slain.nonEmpty =>
-            res.copy(battle = calm.copy(preyGone = true), outcome = Outcome.Victory,
-                     log = res.log :+ content.format("battle.preyEscaped", "monster" -> b.monsterName))
+            res.copy(battle = calm.copy(preyGone = true, preyLeft = true), outcome = Outcome.Victory,
+                     log = res.log :+ content.format(lastKey, "monster" -> b.monsterName))
           case None                           => res
         }
       else b.group.others.indexWhere(s => s.alive && s.customName == b.preyName) match {
         case -1  => res.copy(battle = calm)
         case idx =>
           val prey = b.group.others(idx)
-          res.copy(battle = calm.copy(group = calm.group.copy(
+          res.copy(battle = calm.copy(preyLeft = true, group = calm.group.copy(
                      others = calm.group.others.patch(idx, Nil, 1), places = calm.group.places.patch(idx, Nil, 1))),
                    log = left(prey.name))
       }
@@ -7208,7 +7212,10 @@ case class BattleState(
         doubloons = first.doubloons,
         returnState = lootReturn,
         // Засада на караван: повозки, какими вышли из боя, — назад в его сцену.
-        eventData = prev.flatMap(_.eventData).map(e => battle.group.convoy.fold(e)(Convoy.returned(e, _))),
+        // Ушёл живым тот, за кем пришли (вор с артефактом деревни), — сцена
+        // узнает и это (см. SoloPveBattle.preyLeft).
+        eventData = prev.flatMap(_.eventData).map(e => battle.group.convoy.fold(e)(Convoy.returned(e, _)))
+                      .map(e => if (battle.preyLeft) SoloPveBattle.markPreyLeft(e) else e),
         monsterName = Option.when(fallen.size > 1)(first.monsterName),
         queue = lootByMonster.tail,
         won = true

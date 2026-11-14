@@ -279,17 +279,31 @@ object Villages {
       case VillageQuest.StolenArtifact => thiefGang(contract, rng)
     }
 
-  /** Стан воров уровня задания: сброд всех кровей — у каждого своя раса из
-    * смертных рас лабиринта, а последним — вор с артефактом: именной, тоже любой
-    * из них, имя — из списка его расы. Староста воров не видел, так что вор
-    * бросается в начале боя, а не при встрече с деревней. */
+  /** Стан воров уровня задания: первым — вор с артефактом, именной, любой из
+    * смертных рас лабиринта, имя — из списка его расы; за ним — сброд всех
+    * кровей, у каждого своя раса из тех же. Староста воров не видел, так что вор
+    * бросается в начале боя, а не при встрече с деревней. Первым он стоит,
+    * чтобы его можно было достать, пока он не ушёл (см.
+    * [[VillageRates.ThiefEscapeRounds]]). */
   def thiefGang(contract: VillageContract, rng: Rng): List[Monster] = {
     val lvl         = contract.level.max(1)
-    val (front, r1) = mixed(lvl, VillageRates.ThiefFront, VillageRates.ThiefFrontRarities, rng)
-    val (back, r2)  = mixed(lvl, VillageRates.ThiefBack, VillageRates.ThiefBackRarities, r1)
-    val (race, r3)  = r2.pick(VillageRates.BanditRaces)
-    val (named, _)  = MonsterGenerator.legendaryName(race, r3)
-    front ++ back :+ MonsterGenerator.generateOfRaceAndRarity(lvl, race, VillageRates.ThiefRarity, named)
+    val (race, r1)  = rng.pick(VillageRates.BanditRaces)
+    val (named, r2) = MonsterGenerator.legendaryName(race, r1)
+    val (front, r3) = mixed(lvl, VillageRates.ThiefFront, VillageRates.ThiefFrontRarities, r2)
+    val (back, _)   = mixed(lvl, VillageRates.ThiefBack, VillageRates.ThiefBackRarities, r3)
+    MonsterGenerator.generateOfRaceAndRarity(lvl, race, VillageRates.ThiefRarity, named) :: (front ++ back)
+  }
+
+  /** Загнанный вор уровня задания: он сам — той же расы и под тем же именем,
+    * что ушёл из стана (не запомнили — бросок заново), первым, и
+    * [[VillageRates.CorneredHenchmen]] подручных покрепче, сброд тех же рас. */
+  def cornered(contract: VillageContract, thief: Option[String], thiefRace: Option[Race], rng: Rng): List[Monster] = {
+    val lvl          = contract.level.max(1)
+    val (rolled, r1) = rng.pick(VillageRates.BanditRaces)
+    val race         = thiefRace.getOrElse(rolled)
+    val (named, r2)  = thief.fold(MonsterGenerator.legendaryName(race, r1))(n => (Some(n), r1))
+    val (crew, _)    = mixed(lvl, VillageRates.CorneredHenchmen, VillageRates.ThiefBackRarities, r2)
+    MonsterGenerator.generateOfRaceAndRarity(lvl, race, VillageRates.ThiefRarity, named) :: crew
   }
 
   /** Засада на караван уровня задания: четверо в строю и трое за ними. Банда —
