@@ -72,10 +72,10 @@ object VillageSpec extends ZIOSpecDefault {
     VillageState(d, inv, TestItemRepository.make, c)
 
   private def lair(d: TestHeroDao, inv: TestInventoryRepository, c: SceneContent) =
-    VillageLairState(d, inv, c, VillageLair.Bandits)
+    VillageLairState(d, inv, TestItemRepository.make, c, VillageLair.Bandits)
 
   private def spiderLair(d: TestHeroDao, inv: TestInventoryRepository, c: SceneContent) =
-    VillageLairState(d, inv, c, VillageLair.Spiders)
+    VillageLairState(d, inv, TestItemRepository.make, c, VillageLair.Spiders)
 
   // Та же деревня, только беда другая — гнездо сетеплётов, главаря нет.
   private val spiderScene = scene.copy(quest = VillageQuest.SpiderNests, leader = None, leaderRace = None)
@@ -340,21 +340,26 @@ object VillageSpec extends ZIOSpecDefault {
               assertTrue(loot.exists(_.returnState.contains(StateType.VillageBandits)))
     },
 
-    test("банда перебита: логово разбито — дальше к старосте; в логове больше пусто") {
+    test("банда перебита: логово разбито — голова главаря в сумке, дальше к старосте; в логове больше пусто") {
       for {
         c     <- content
         d     <- dao(q = Some(withContract()), sc = Some(VillageLairState.wonMark(VillageLair.Bandits)))
+        inv    = TestInventoryRepository.withItems(List(paper))
         r     <- TestRenderer.make
-        st     = lair(d, TestInventoryRepository.withItems(List(paper)), c)
+        st     = lair(d, inv, c)
+        // охотников за головами на выходе нет (они — VillageBanditsSpec)
+        _     <- TestRandom.feedInts(99)
         _     <- st.enter(testUser, r)
         last  <- r.sentScreens.map(_.last)
         q     <- questOf(d)
         sd    <- d.readSceneData(userId)
         _     <- st.enter(testUser, r)
         again <- r.sentScreens.map(_.last)
-      } yield assertTrue(last.text.contains("Чёрный Виктор падает в костёр") && last.text.contains(s"тюки с клеймом города $City") &&
+      } yield assertTrue(last.text.contains("Чёрный Виктор падает у самого костра") && last.text.contains(s"тюки с клеймом города $City") &&
+                last.text.contains("Голову главаря вы заворачиваете в мешковину") &&
                 last.text.contains(s"Дорога у деревни «$VillageName» снова свободна") && last.choices.map(_.id) == List("BanditsOut")) &&
               assertTrue(Villages.toPay(q) && sd.contains(Json.Null)) &&
+              assertTrue(inv.snapshot.exists(_.questItem.contains(QuestItemKind.BanditHead))) &&
               assertTrue(again.text == c.text("village.bandits.gone"))
     },
 

@@ -227,13 +227,16 @@ case class VillageState(
   // ── Плата ───────────────────────────────────────────────────────────────────
 
   /** Дело сделано — староста платит: серебро (и дублоны, если обещал), опыт,
-    * контракт уходит из сумки. Дальше —
+    * контракт уходит из сумки. Принесли голову главаря разбойников — за неё
+    * ещё [[VillageRates.HeadDoubloons]] дублонов, и она тоже уходит. Дальше —
     * прощание: повторный вход второй платы не даёт. */
   private def pay(user: User, contract: VillageContract, renderer: Renderer): Task[Unit] =
     for {
       now  <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
       hero <- getHero(user)
-      paid <- Villages.pay(heroDao, inventoryRepo, user.userId, hero, contract, now)
+      head <- if (contract.quest == VillageQuest.BanditLair) Villages.headCarried(inventoryRepo, hero) else ZIO.succeed(false)
+      due   = if (head) contract.copy(doubloons = contract.doubloons + VillageRates.HeadDoubloons) else contract
+      paid <- Villages.pay(heroDao, inventoryRepo, user.userId, hero, due, now)
       (after, exp) = paid
       _    <- writeScene(user, VillageScene(contract.race, contract.name, contract.quest, contract.level, contract.level,
                 contract.silver, contract.leader, contract.leaderRace, contract.city, step = Paid,
@@ -243,7 +246,8 @@ case class VillageState(
       _    <- renderer.show(user, Screen(
                 Villages.joined(
                   content.format(s"village.pay.${contract.quest.key}", a: _*),
-                  content.format("village.pay.reward", ("exp" -> exp.toString) +: a: _*) + lvlUp,
+                  if (head) content.format("village.pay.head", a: _*) else "",
+                  content.format("village.pay.reward", ("exp" -> exp.toString) +: Villages.args(content, due): _*) + lvlUp,
                   content.text("village.questDone")),
                 List(outChoice)))
     } yield ()

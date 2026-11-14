@@ -1427,6 +1427,10 @@ object InventoryState {
         val now = Villages.cardLine(content, quests)
         s"${item.displayTitle}" + quests.village.fold("")(c => "\n" + difficulty(c.level.max(1))) +
           s"\n\n${QuestItemKind.VillageContract.description}" + (if (now.isEmpty) "" else "\n\n" + now)
+      // Голова главаря разбойников: чья она и сколько за неё доплатит староста.
+      case Some(QuestItemKind.BanditHead) =>
+        val now = Villages.headLine(content, quests)
+        s"${item.displayTitle}\n\n${QuestItemKind.BanditHead.description}" + (if (now.isEmpty) "" else "\n\n" + now)
       case Some(kind @ (QuestItemKind.KelvinMap | QuestItemKind.RaceCoupon | QuestItemKind.NameCoupon)) =>
         s"${item.displayTitle}\n\n${kind.description}"
       case Some(kind) if QuestItemKind.rackOf(kind).isDefined || HerbLore.isTreatise(kind) =>

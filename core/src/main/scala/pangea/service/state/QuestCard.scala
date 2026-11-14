@@ -250,6 +250,9 @@ object QuestCard {
         Villages.goTo(quests).map { case (_, texts) => plain("VillageGo", s"village.card.${texts}Label") }
       case Some(QuestItemKind.VillageContract) if Villages.toPay(quests) =>
         Some(positive("VillageReturn", "village.card.returnLabel"))
+      // Голова главаря: логово разбито — с ней тоже назад к старосте.
+      case Some(QuestItemKind.BanditHead) if Villages.toPay(quests) =>
+        Some(positive("VillageReturn", "village.card.returnLabel"))
       case _ => None
     }
   }

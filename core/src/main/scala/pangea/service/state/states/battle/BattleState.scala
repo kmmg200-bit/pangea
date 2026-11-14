@@ -7869,7 +7869,7 @@ object BattleState {
       StoryMarkQuest.FightStory, StoryPowderQuest.FightStory, StoryListQuest.FightStory, StoryFaceQuest.FightStory,
       StoryToolQuest.FightStory, HotGoodsQuest.FightStory, BigDealQuest.AmbushStory, JorgenQuest.LairStory,
       BramblQuest.HallStory, PlukhQuest.HuntStory, FaelinQuest.RootsStory, Villages.RaidStory, Villages.BanditsStory,
-      Villages.SpidersStory, Villages.CaravanStory, Villages.ArtifactStory)
+      Villages.SpidersStory, Villages.CaravanStory, Villages.ArtifactStory, Villages.HuntersStory)
 
   /** Паутина, проклятие Некроманта и лёд Ледяного элементаля на герое и
     * союзниках — на раунд меньше (см. SpiderWeb, HealCurse,

@@ -76,6 +76,11 @@ object Villages {
     * обычный бой уровня задания. Пал — след остыл, контракт при герое. */
   val ArtifactStory: String = "villageArtifact"
 
+  /** Ключ сюжетного боя с охотниками за головами на выходе с заставы: без
+    * «Сбежать», награда как за обычный бой уровня задания. Пал — голову главаря
+    * охотники забрали, а логово всё равно разбито. */
+  val HuntersStory: String = "villageHunters"
+
   /** С какого поворота встречаются деревни: порог события (см.
     * `StateType.EventMinLevel`). К их бедам ходят не ближе. */
   val MinDungeonLevel: Int = StateType.EventMinLevel.getOrElse(StateType.Village, 1)
@@ -132,7 +137,8 @@ object Villages {
     Seq("name" -> name(content, race, roll), "race" -> race.genitivePlural, "city" -> city(content, cityRoll),
       "leader" -> leader(leaderName), "silver" -> silver.toString, "pay" -> payLine(content, silver, doubloons),
       "artifact" -> artifact(content, race), "artifactAcc" -> artifactAcc(content, race),
-      "artifactAbout" -> artifactAbout(content, race))
+      "artifactAbout" -> artifactAbout(content, race),
+      "headPay" -> doubloonsLine(content, VillageRates.HeadDoubloons))
 
   def args(content: SceneContent, scene: VillageScene): Seq[(String, String)] =
     args(content, scene.race, scene.name, scene.city, scene.leader, scene.silver, scene.doubloons)
@@ -230,7 +236,7 @@ object Villages {
                     doubloons = hero.doubloons + contract.doubloons.max(0L))
     for {
       _ <- NpcQuestLog.modify(heroDao, userId)(_.copy(village = None))
-      _ <- QuestSupport.removeItems(inventory, hero, Set(QuestItemKind.VillageContract))
+      _ <- QuestSupport.removeItems(inventory, hero, ContractItems)
       _ <- heroDao.updateSilver(userId, leveled.silver)
       _ <- ZIO.when(contract.doubloons > 0L)(heroDao.updateDoubloons(userId, leveled.doubloons))
       _ <- heroDao.updateExpAndLevel(userId, leveled.exp, leveled.lvl, leveled.upgradePoints)
@@ -240,7 +246,24 @@ object Villages {
   /** Отказаться от контракта: он уходит из сумки, договор — из журнала, деревни снова встречаются. */
   def abandon(heroDao: HeroDao, inventory: InventoryRepository, userId: UserId, hero: Hero): Task[Unit] =
     NpcQuestLog.modify(heroDao, userId)(_.copy(village = None)) *>
-      QuestSupport.removeItems(inventory, hero, Set(QuestItemKind.VillageContract))
+      QuestSupport.removeItems(inventory, hero, ContractItems)
+
+  /** Что уходит из сумки вместе с договором: сам контракт и голова главаря, если
+    * её несли старосте. */
+  val ContractItems: Set[QuestItemKind] = Set(QuestItemKind.VillageContract, QuestItemKind.BanditHead)
+
+  /** Голова главаря в сумке — староста за неё доплатит (см. [[VillageRates.HeadDoubloons]]). */
+  def headCarried(inventory: InventoryRepository, hero: Hero): Task[Boolean] =
+    inventory.get(hero.id).mapError(e => new Throwable(e.toString))
+      .map(inv => QuestSupport.hasItem(inv.items.data, QuestItemKind.BanditHead))
+
+  /** Положить голову главаря в сумку — после боя на заставе. */
+  def giveHead(inventory: InventoryRepository, items: ItemRepository, hero: Hero): Task[Boolean] =
+    QuestSupport.giveItem(inventory, items, hero, QuestItemKind.BanditHead)
+
+  /** Отдать голову главаря охотникам (или потерять в бою с ними): доплаты не будет. */
+  def dropHead(inventory: InventoryRepository, hero: Hero): Task[Unit] =
+    QuestSupport.removeItems(inventory, hero, Set(QuestItemKind.BanditHead))
 
   /** Продать артефакт магу Сноходцев: контракт сорван, как при отказе, а
     * дублоны — герою. Договор стирается первым: старая кнопка второй платы не
@@ -280,6 +303,17 @@ object Villages {
     val chief       = contract.leaderRace.getOrElse(VillageRates.BanditLeaderDefaultRace)
     front ++ back :+ MonsterGenerator.generateOfRaceAndRarity(lvl, chief, VillageRates.BanditLeaderRarity,
       Some(leader(contract.leader)))
+  }
+
+  /** Охотники за головами на выходе с заставы — уровня задания: четверо
+    * покрепче, сброд всех кровей, и вожак — именной, тоже любой из смертных рас
+    * лабиринта. Вожак — последним. */
+  def bountyHunters(contract: VillageContract, rng: Rng): List[Monster] = {
+    val lvl          = contract.level.max(1)
+    val (crew, r1)   = mixed(lvl, VillageRates.HuntersCount, VillageRates.HuntersRarities, rng)
+    val (race, r2)   = r1.pick(VillageRates.BanditRaces)
+    val (named, _)   = MonsterGenerator.legendaryName(race, r2)
+    crew :+ MonsterGenerator.generateOfRaceAndRarity(lvl, race, VillageRates.HuntersLeaderRarity, named)
   }
 
   /** Обитатели логова беды контракта: банда или выводок. */
@@ -454,6 +488,11 @@ object Villages {
     q.village.fold("") { c =>
       content.format(if (c.done) s"village.card.${doneKey(c)}" else s"village.card.${c.quest.key}", args(content, c): _*)
     }
+
+  /** Что говорит карточка головы главаря: чья она и сколько за неё доплатит
+    * староста. Контракта на логово нет — ничего. */
+  def headLine(content: SceneContent, q: NpcQuests): String =
+    q.village.filter(_.quest == VillageQuest.BanditLair).fold("")(c => content.format("village.card.head", args(content, c): _*))
 
   /** Строка журнала: что делать по контракту сейчас. */
   def journalStep(content: SceneContent, c: VillageContract): String =

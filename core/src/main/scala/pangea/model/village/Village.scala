@@ -278,6 +278,19 @@ object VillageRates {
   val BanditBackRarities: List[Rarity]  = List(Rarity.Rare, Rarity.Mythical)
   val BanditLeaderRarity: Rarity        = Rarity.Legendary
 
+  /** Голова главаря: после боя её забирают с заставы, и староста доплачивает за
+    * неё столько дублонов — в городе за голову обещана награда (так решил
+    * пользователь). */
+  val HeadDoubloons: Long = 5L
+
+  /** Охотники за головами: с таким шансом ждут на выходе с заставы и требуют
+    * голову главаря (шанс решил Claude). Их четверо покрепче и вожак-именной —
+    * сброд всех кровей, уровня задания. */
+  val HuntersPct: Int                  = 35
+  val HuntersCount: Int                = 4
+  val HuntersRarities: List[Rarity]    = List(Rarity.Rare, Rarity.Mythical)
+  val HuntersLeaderRarity: Rarity      = Rarity.Legendary
+
   /** Гнездо сетеплётов: пауки — звери своих пород ([[Breed]]): восемь
     * молодых, шестеро взрослых и матка; с шансом [[RedSpiderChancePct]]% к ним
     * выползает ещё и красный — шестнадцатым, ждёт места в строю. С пауков —
@@ -384,6 +397,34 @@ object VillageRates {
 
   def mageDoubloons(silver: Long, doubloons: Long): Long =
     (doubloons.max(0L) + (silver.max(0L) + MageSilverPerDoubloon / 2L) / MageSilverPerDoubloon).max(1L)
+}
+
+/** Что ещё ждёт героя на заставе после боя с бандой (логово разбойников), пока
+  * он оттуда не ушёл, — в `scene_data`. Контракт к этому времени уже на шаге
+  * «сделано», голова главаря — в сумке.
+  *
+  * @param hunters на выходе ждут охотники за головами — отдать им голову или
+  *                драться (см. [[VillageRates.HuntersPct]])
+  */
+final case class BanditAftermath(hunters: Boolean = false) {
+  /** Ждать больше нечего — к старосте. */
+  def done: Boolean = !hunters
+}
+
+object BanditAftermath {
+
+  /** Ключ-метка: в `scene_data` лежат и чужие структуры, и наша узнаётся по нему. */
+  val Key: String = "banditsAfter"
+
+  implicit val encoder: Encoder[BanditAftermath] = (a: BanditAftermath) => Json.obj(
+    Key              -> Json.True,
+    "banditsHunters" -> a.hunters.asJson)
+
+  implicit val decoder: Decoder[BanditAftermath] = (c: HCursor) =>
+    for {
+      _       <- c.get[Boolean](Key)
+      hunters <- c.getOrElse[Boolean]("banditsHunters")(false)
+    } yield BanditAftermath(hunters)
 }
 
 /** Предложение мага Сноходцев после боя в стане — в `scene_data`, пока герой не

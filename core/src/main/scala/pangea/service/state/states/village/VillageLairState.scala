@@ -14,8 +14,9 @@ import pangea.model.quest.Difficulty
 import pangea.model.skill.MonsterEnergy
 import pangea.model.state.StateType
 import pangea.model.user.User
-import pangea.model.village.{NestPrep, VillageContract, VillageQuest, VillageRates}
+import pangea.model.village.{BanditAftermath, NestPrep, VillageContract, VillageQuest, VillageRates}
 import pangea.repository.inventory.InventoryRepository
+import pangea.repository.item.ItemRepository
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.events.cave.{CaveSupply, NestBoon, Supply}
 import pangea.service.state.{CharacterMenu, ItemMenu, NpcQuestLog, State, UserAction, VillageLair, Villages}
@@ -37,10 +38,18 @@ import zio.{Random, Task, ZIO}
   *
   * «Уйти», смерть или ничья контракт не двигают: он при герое, логово ждёт.
   * «Отказаться от контракта» — с подтверждением: контракт и договор уходят, и
-  * деревни снова встречаются. */
+  * деревни снова встречаются.
+  *
+  * На заставе разбойников после боя голову главаря забирают с собой — староста
+  * за неё доплачивает ([[VillageRates.HeadDoubloons]] дублонов). С шансом
+  * [[VillageRates.HuntersPct]]% на выходе ждут охотники за головами: отдать им
+  * голову или драться — сюжетный бой уровня задания. Пал в нём — голову
+  * забрали, а логово всё равно разбито. Что ещё ждёт на заставе, лежит в
+  * scene_data ([[BanditAftermath]]); контракт к этому времени уже «сделано». */
 case class VillageLairState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
+  itemRepo:      ItemRepository,
   content:       SceneContent,
   lair:          VillageLair
 ) extends State {
@@ -49,6 +58,10 @@ case class VillageLairState(
 
   /** Пускают ли здесь вещь в дело у входа: пока только у гнезда сетеплётов. */
   private val stocked: Boolean = lair.quest == VillageQuest.SpiderNests
+
+  /** Ждёт ли что-то после боя: голова главаря и всё, что с ней связано, — на
+    * заставе разбойников. */
+  private val hunted: Boolean = lair.quest == VillageQuest.BanditLair
 
   private val usePrefix  = s"${ids}Use_"
   private val beltPrefix = s"${ids}Belt_"
@@ -63,7 +76,9 @@ case class VillageLairState(
       s"${ids}Abandon"    -> Target.Run { (u, _, r) => atLair(u, r)(c => askAbandon(u, c, r)) },
       s"${ids}AbandonYes" -> Target.Run { (u, _, r) => atLair(u, r)(_ => abandon(u, r)) },
       s"${ids}Back"       -> Target.Run { (u, _, r) => enter(u, r).as(lair.scene) },
-      s"${ids}Out"        -> Target.Run { (u, _, _) => clear(u).as(StateType.Dungeon) },
+      s"${ids}Out"        -> Target.Run { (u, _, r) => out(u, r) },
+      s"${ids}HuntersGive"  -> Target.Run { (u, _, r) => afterFight(u, r)((c, a) => giveHead(u, c, a, r)) },
+      s"${ids}HuntersFight" -> Target.Run { (u, _, r) => afterFight(u, r)((c, a) => huntersFight(u, c, a, r)) },
       "OpenCharacter"     -> Target.Run { (u, _, _) => CharacterMenu.open(heroDao, u.userId, lair.scene) }
     ),
     fallback = Target.Run { (u, ua, r) => handleFallback(u, ua, r) }
@@ -73,15 +88,21 @@ case class VillageLairState(
     branch.gotoTargets ++ Set(StateType.Dungeon, StateType.Battle, StateType.HeroStats, lair.scene)
 
   /** Вход: обитатели перебиты (добыча положила отметку) — логово разбито;
-    * логово ещё стоит — вход в него; иначе здесь пусто. */
+    * логово ещё стоит — вход в него. На заставе разбойников после боя: охотники
+    * перебиты — голова ваша; ещё что-то ждёт — оно. Иначе здесь пусто. */
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     for {
       contract <- standing(user)
-      won      <- heroDao.readSceneData(user.userId).map(_.exists(VillageLairState.won(lair, _)))
-      _        <- contract match {
-                    case Some(c) if won => victory(user, c, renderer)
-                    case Some(c)        => renderer.show(user, introScreen(c))
-                    case None           =>
+      data     <- heroDao.readSceneData(user.userId)
+      won       = data.exists(VillageLairState.won(lair, _))
+      cleared  <- clearedContract(user)
+      after     = data.flatMap(_.as[BanditAftermath].toOption).filterNot(_.done)
+      _        <- (contract, cleared) match {
+                    case (Some(c), _) if won                                   => victory(user, c, renderer)
+                    case (Some(c), _)                                          => renderer.show(user, introScreen(c))
+                    case (None, Some(c)) if data.exists(VillageLairState.huntersBeaten) => afterHunters(user, c, renderer)
+                    case (None, Some(c)) if after.isDefined                    => renderer.show(user, stepScreen(c))
+                    case _ =>
                       clear(user) *> renderer.show(user, Screen(text("gone"), List(outChoice)))
                   }
     } yield ()
@@ -99,6 +120,27 @@ case class VillageLairState(
       case Some(c) => f(c)
       case None    => enter(user, renderer).as(lair.scene)
     }
+
+  /** Контракт на заставу, которую уже разбили: после боя на ней ещё что-то
+    * ждёт. У прочих логов — ничего. */
+  private def clearedContract(user: User): Task[Option[VillageContract]] =
+    if (!hunted) ZIO.none
+    else NpcQuestLog.load(heroDao, user.userId).map(_.village.filter(c => c.quest == lair.quest && c.done))
+
+  private def readAftermath(user: User): Task[Option[BanditAftermath]] =
+    heroDao.readSceneData(user.userId).map(_.flatMap(_.as[BanditAftermath].toOption).filterNot(_.done))
+
+  /** Кнопка «после боя» — пока на заставе ещё что-то ждёт; иначе показать, что
+    * сейчас. */
+  private def afterFight(user: User, renderer: Renderer)(f: (VillageContract, BanditAftermath) => Task[StateType]): Task[StateType] =
+    for {
+      cleared <- clearedContract(user)
+      after   <- readAftermath(user)
+      res     <- (cleared, after) match {
+                   case (Some(c), Some(a)) => f(c, a)
+                   case _                  => enter(user, renderer).as(lair.scene)
+                 }
+    } yield res
 
   // ── Тексты и экраны ─────────────────────────────────────────────────────────
 
@@ -261,24 +303,97 @@ case class VillageLairState(
                       if (red) content.text(key("redSpider")) else ""), Nil))
     } yield StateType.Battle
 
-  /** Обитатели перебиты: логово разбито — к старосте за платой. */
-  private def victory(user: User, contract: VillageContract, renderer: Renderer): Task[Unit] =
+  /** Обитатели перебиты: логово разбито — к старосте за платой. На заставе
+    * разбойников голову главаря забирают с собой, а на выходе с шансом ждут
+    * охотники за головами. */
+  private def victory(user: User, contract: VillageContract, renderer: Renderer): Task[Unit] = {
+    val found = content.format(key("victory"), Villages.args(content, contract): _*)
     for {
       _ <- clear(user)
       _ <- Villages.lairCleared(heroDao, user.userId, lair.quest)
-      _ <- renderer.show(user, Screen(
-             Villages.joined(
-               content.format(key("victory"), Villages.args(content, contract): _*),
-               content.text("village.lair.returnHint")),
-             List(outChoice)))
+      _ <- if (!hunted) renderer.show(user, finalScreen(found))
+           else for {
+             hero <- getHero(user)
+             _    <- Villages.giveHead(inventoryRepo, itemRepo, hero)
+             roll <- Random.nextIntBetween(0, 100)
+             _    <- next(user, contract, BanditAftermath(hunters = roll < VillageRates.HuntersPct), renderer, found)
+           } yield ()
+    } yield ()
+  }
+
+  // ── После боя на заставе ────────────────────────────────────────────────────
+
+  /** Что дальше на заставе: ждёт ещё что-то — оно, с `note` над ним; нет —
+    * к старосте. */
+  private def next(user: User, c: VillageContract, after: BanditAftermath, renderer: Renderer, note: String): Task[Unit] =
+    if (after.done) clear(user) *> renderer.show(user, finalScreen(note))
+    else heroDao.writeSceneData(user.userId, after.asJson) *> renderer.show(user, stepScreen(c).noted(note))
+
+  /** Логово разбито: что было — и как вернуться за платой. */
+  private def finalScreen(note: String): Screen =
+    Screen(Villages.joined(note, content.text("village.lair.returnHint")), List(outChoice))
+
+  /** На выходе с заставы — охотники за головами: отдать голову или драться. */
+  private def stepScreen(c: VillageContract): Screen =
+    Screen(
+      Villages.joined(content.format(key("hunters.intro"), Villages.args(content, c): _*), content.text("village.lair.noEscape")),
+      List(
+        content.choice(s"${ids}HuntersGive", key("hunters.giveLabel")).copy(row = Some(0)),
+        content.choice(s"${ids}HuntersFight", key("hunters.fightLabel")).copy(row = Some(0)),
+        content.choice("OpenCharacter", "village.lair.characterLabel").copy(row = Some(1))))
+
+  /** Отдал голову охотникам: они уходят, доплаты за голову не будет, а за
+    * логово староста всё равно заплатит. */
+  private def giveHead(user: User, c: VillageContract, a: BanditAftermath, renderer: Renderer): Task[StateType] =
+    for {
+      hero <- getHero(user)
+      _    <- Villages.dropHead(inventoryRepo, hero)
+      _    <- next(user, c, a.copy(hunters = false), renderer, content.format(key("hunters.given"), Villages.args(content, c): _*))
+    } yield lair.scene
+
+  /** Драться с охотниками: сюжетный бой уровня задания. Добыча вернёт сюда с
+    * отметкой, что охотники перебиты. */
+  private def huntersFight(user: User, c: VillageContract, a: BanditAftermath, renderer: Renderer): Task[StateType] =
+    for {
+      hero     <- getHero(user)
+      seed     <- Random.nextLong
+      foes      = Villages.bountyHunters(c, Rng(seed))
+      energies <- ZIO.foreach(foes)(startEnergy)
+      battle    = SoloPveBattle.fromGroup(foes, hero, energies)
+                    .copy(story = Some(Villages.HuntersStory), lootLevel = Some(c.level.max(1).toLong))
+      routing   = LootData(Nil, Nil, returnState = Some(lair.scene),
+                    eventData = Some(a.copy(hunters = false).asJson.deepMerge(VillageLairState.huntersBeatenMark)))
+      _        <- heroDao.writeActiveBattle(user.userId, battle.asJson)
+      _        <- heroDao.writeSceneData(user.userId, routing.asJson)
+      _        <- renderer.show(user, Screen(content.format(key("hunters.fight"), Villages.args(content, c): _*), Nil))
+    } yield StateType.Battle
+
+  /** Охотники перебиты: голова ваша — дальше что ещё ждёт на заставе или к
+    * старосте. */
+  private def afterHunters(user: User, c: VillageContract, renderer: Renderer): Task[Unit] =
+    for {
+      data <- heroDao.readSceneData(user.userId)
+      after = data.flatMap(_.as[BanditAftermath].toOption).getOrElse(BanditAftermath())
+      _    <- next(user, c, after, renderer, content.format(key("hunters.victory"), Villages.args(content, c): _*))
     } yield ()
 
   // ── Уход и отказ ────────────────────────────────────────────────────────────
 
   /** «Уйти»: логово ждёт, контракт при герое. Подготовка входа пропадает: дым
-    * развеется, огонь прогорит, выводок вернётся. */
+    * развеется, огонь прогорит, выводок вернётся. На заставе после боя это
+    * старая кнопка: показать, что там ждёт. */
   private def leave(user: User, renderer: Renderer): Task[StateType] =
-    clear(user) *> renderer.show(user, Screen(text("left"), Nil)).as(StateType.Dungeon)
+    readAftermath(user).flatMap {
+      case Some(_) => enter(user, renderer).as(lair.scene)
+      case None    => clear(user) *> renderer.show(user, Screen(text("left"), Nil)).as(StateType.Dungeon)
+    }
+
+  /** «В лабиринт»: на заставе после боя ещё что-то ждёт — старая кнопка. */
+  private def out(user: User, renderer: Renderer): Task[StateType] =
+    readAftermath(user).flatMap {
+      case Some(_) => enter(user, renderer).as(lair.scene)
+      case None    => clear(user).as(StateType.Dungeon)
+    }
 
   private def askAbandon(user: User, contract: VillageContract, renderer: Renderer): Task[StateType] =
     renderer.show(user, Screen(content.format("village.lair.abandon.text", Villages.args(content, contract): _*), List(
@@ -339,4 +454,12 @@ object VillageLairState {
 
   def won(lair: VillageLair, sceneData: Json): Boolean =
     sceneData.hcursor.get[Boolean](lair.wonKey).toOption.contains(true)
+
+  /** Отметка в scene_data, что охотники за головами на выходе с заставы
+    * перебиты: её пишет добыча, читает вход. */
+  val HuntersBeatenKey: String = "villageHuntersBeaten"
+
+  val huntersBeatenMark: Json = Json.fromJsonObject(JsonObject(HuntersBeatenKey -> true.asJson))
+
+  def huntersBeaten(sceneData: Json): Boolean = sceneData.hcursor.get[Boolean](HuntersBeatenKey).toOption.contains(true)
 }

@@ -55,7 +55,7 @@ object VillageNestSupplySpec extends ZIOSpecDefault {
       _ <- NpcQuestLog.save(d, userId, NpcQuests.empty.copy(village = Some(contract)))
       inv = TestInventoryRepository.withItems(paper :: items)
       r <- TestRenderer.make
-    } yield Fix(VillageLairState(d, inv, c, VillageLair.Spiders), d, inv, r)
+    } yield Fix(VillageLairState(d, inv, TestItemRepository.make, c, VillageLair.Spiders), d, inv, r)
 
   private def battleOf(d: TestHeroDao): Task[Option[SoloPveBattle]] =
     d.readActiveBattle(userId).map(_.flatMap(_.as[SoloPveBattle].toOption))

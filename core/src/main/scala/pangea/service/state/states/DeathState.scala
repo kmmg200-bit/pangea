@@ -92,6 +92,10 @@ case class DeathState(
       // Смерть в стане воров артефакта: контракт при герое, но след остыл —
       // погоню начинать заново; проснуться в лабиринте со строкой стана.
       villageArtifact = battle.exists(_.story.contains(Villages.ArtifactStory))
+      // Смерть в бою с охотниками за головами на выходе с заставы: голову главаря
+      // они забрали, а логово всё равно разбито — к старосте за платой без
+      // доплаты; проснуться в лабиринте со строкой охотников.
+      villageHunters = battle.exists(_.story.contains(Villages.HuntersStory))
       // Смерть на складе у причала: штрафы обычные, украденное всё ещё у банды —
       // по следу можно идти снова; проснуться в порту.
       thieves       = battle.exists(_.story.contains(BarrelThievesQuest.FightStory))
@@ -179,6 +183,7 @@ case class DeathState(
       // Караван разграблен: береста уходит из сумки, договор — из журнала, и
       // деревни снова встречаются.
       _            <- ZIO.when(villageCaravan)(Villages.abandon(heroDao, inventoryRepo, user.userId, hero))
+      _            <- ZIO.when(villageHunters)(Villages.dropHead(inventoryRepo, hero))
       wake          = if (collector) Json.obj(
                         "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
                         "wakeLines" -> List(
@@ -200,6 +205,7 @@ case class DeathState(
                       else if (villageRaid) Json.obj("wakeLines" -> List("village.raid.death").asJson)
                       else if (villageCaravan) Json.obj("wakeLines" -> List("village.caravan.death").asJson)
                       else if (villageArtifact) Json.obj("wakeLines" -> List("village.artifact.death").asJson)
+                      else if (villageHunters) Json.obj("wakeLines" -> List("village.bandits.hunters.death").asJson)
                       else if (villageLair.isDefined)
                         Json.obj("wakeLines" -> villageLair.map(l => s"village.${l.texts}.death").toList.asJson)
                       else if (thieves) Json.obj(
