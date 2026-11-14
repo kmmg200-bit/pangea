@@ -429,8 +429,7 @@ object MiniBoss extends Enum[MiniBoss] {
     override def lairMinHeroLvl: Long           = MinHeroLvl
 
     def ingredient: MaterialKind = MaterialKind.StormHeart
-    /** Набора у него пока нет: сердце грозы копится под будущие рецепты. */
-    def set: Option[ItemSet] = None
+    def set: Option[ItemSet]     = Some(ItemSet.Storm)
   }
 
   // ── Ледяной элементаль ───────────────────────────────────────────────────────
@@ -535,8 +534,7 @@ object MiniBoss extends Enum[MiniBoss] {
     override def lairMinHeroLvl: Long           = MinHeroLvl
 
     def ingredient: MaterialKind = MaterialKind.EternalIce
-    /** Набора у него пока нет: вечный лёд копится под будущие рецепты. */
-    def set: Option[ItemSet] = None
+    def set: Option[ItemSet]     = Some(ItemSet.Frost)
   }
 
   // ── Гнилой Джо ──────────────────────────────────────────────────────────────

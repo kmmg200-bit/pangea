@@ -1540,9 +1540,11 @@ case class BattleState(
             effectsFed = if (!flaskBite) effectsWeak else effectsWeak.copy(heroVampiricHits = effectsWeak.heroVampiricHits - 1)
             hitBattle = hurt.battle.copy(heroStruck = true).withEffects(effectsFed)
             // Проки стихий оружия (30% каждый) — только если моб жив после удара.
-            elemResult <- if (newHp > 0) resolveElementProcs(hero, hitBattle)
-                          else ZIO.succeed((hitBattle, Vector.empty[String]))
-            (procced, elemLog) = elemResult
+            elemResult <- if (newHp > 0) resolveElementProcs(hero, hitBattle, hurt.hp, skill = false, hurt.dealt)
+                          else ZIO.succeed((hitBattle, Vector.empty[String], Set.empty[Element]))
+            (procced, elemLog, fired) = elemResult
+            // «Стужа» (порог 6): прок холода возвращает герою часть брони.
+            (icedHero, iceLog) = frostArmor(healedHero, fired, nowMs)
             // «Пройдоха» (порог 6): грязный приём — удар по HP с шансом выжигает
             // врагу энергию, как Молния. Бросок без набора не тратится.
             tricked <- chanceRoll(hero.sets.energyBurnOnHitChancePct > 0 && hpDmg > 0 && newHp > 0,
@@ -1556,7 +1558,7 @@ case class BattleState(
               }
             // Шипы огненного элементаля: пока цела броня, он возвращает часть
             // урона и поджигает бьющего. Скованный холодом молчит.
-            thornsResult = bossThorns(healedHero, updated, battle.monsterCurrentArmor, resisted, nowMs)
+            thornsResult = bossThorns(icedHero, updated, battle.monsterCurrentArmor, resisted, nowMs)
             (thornedHero, thornedBattle, thornsLine) = thornsResult
             log1 = (log ++ Option.when(ambush)(content.text("battle.groveAmbush")).toVector) :+ attackLine
             log2 =
@@ -1568,7 +1570,7 @@ case class BattleState(
             // Сам вампиризм о себе не говорит: его число уезжает в конец раунда и
             // там складывается с чужой кровью в одну строку (см. vampLine). Если
             // раунд кончился раньше хода моба, строку дописываем здесь же.
-            log4 = (log2 ++ elemLog ++ trickLog) ++ Vector(thornsLine).filter(_.nonEmpty)
+            log4 = (log2 ++ elemLog ++ iceLog ++ trickLog) ++ Vector(thornsLine).filter(_.nonEmpty)
             fed  = log4 ++ vampLine(vampGained)
             r <-
               if (!retaliate) ZIO.succeed(TurnResult(thornedHero, thornedBattle, fed, Outcome.Continue))
@@ -3387,8 +3389,9 @@ case class BattleState(
     val rawHpPart    = damage - rawArmorPart
     val armorDmg     = math.min(curArmor, (rawArmorPart * (g.armorDamageMult + fireBonus)).toLong).max(0L)
     val hpFromHp     = (rawHpPart * (g.hpDamageMult + fireBonus)).toLong
-    // Молния: часть урона по броне дополнительно бьёт по HP.
-    val hpFromArmor  = (armorDmg * g.lightningArmorToHpFrac).toLong
+    // Молния: часть урона по броне дополнительно бьёт по HP; «Гроза» (порог 4)
+    // прошивает броню вдвое сильнее.
+    val hpFromArmor  = (armorDmg * g.lightningArmorToHpFrac * hero.sets.lightningPierceMult).toLong
     (armorDmg, (hpFromHp + hpFromArmor).max(0L))
   }
 
@@ -3396,9 +3399,10 @@ case class BattleState(
     * сперва комбо (Огонь+Воздух, Молния+Холод), затем оставшиеся одиночные эффекты.
     * Возвращает обновлённый бой и строки лога. Урон комбо снимается сразу (может
     * добить моба — исход перепроверяется вызывающим по `monsterCurrentHp`). */
-  private def resolveElementProcs(hero: Hero, battle: SoloPveBattle): Task[(SoloPveBattle, Vector[String])] = {
+  private def resolveElementProcs(hero: Hero, battle: SoloPveBattle, hpDealt: Long, skill: Boolean,
+                                  chainFrom: Long = 0L): Task[(SoloPveBattle, Vector[String], Set[Element])] = {
     val elems = hero.gems.weaponElements
-    if (elems.isEmpty) ZIO.succeed((battle, Vector.empty))
+    if (elems.isEmpty) ZIO.succeed((battle, Vector.empty, Set.empty))
     else
       // Роллим в фиксированном порядке Element.values для детерминизма тестов.
       ZIO.foreach(Element.values.filter(elems.contains).toList) { e =>
@@ -3408,19 +3412,76 @@ case class BattleState(
           if (e == Element.Fire) Element.ProcChancePct + hero.sets.igniteChanceBonusPct
           else if (e == Element.Cold) Element.ProcChancePct + hero.sets.coldChanceBonusPct
           else if (e == Element.Air) Element.ProcChancePct + hero.sets.airChanceBonusPct
+          // «Гроза» (порог 10) — шанс прока молнии.
+          else if (e == Element.Lightning) Element.ProcChancePct + hero.sets.lightningChanceBonusPct
           else Element.ProcChancePct
         Random.nextIntBetween(1, 101).map(roll => e -> (roll <= chance))
       }.map { rolls =>
-        val fired          = rolls.collect { case (e, true) => e }.toSet
-        applyProcs(battle, fired, heroAirTurns(hero))
+        val fired              = rolls.collect { case (e, true) => e }.toSet
+        // Молния выжигает с обычной атаки половину урона по HP, с умения — 20%
+        // (см. Element); соседям цепная молния — по тому же правилу.
+        val burnOf: Long => Long =
+          if (skill) (hp: Long) => Element.skillLightningBurn(hp) else (hp: Long) => Element.lightningBurn(hp)
+        val (procced, log)     = applyProcs(battle, fired, heroAirTurns(hero), heroProcMods(hero, burnOf(hpDealt)))
+        val (chained, chainLog) = chainLightning(hero, procced, fired, chainFrom, burnOf)
+        (chained, log ++ chainLog, fired)
       }
   }
+
+  private def heroProcMods(hero: Hero, burn: Long): BattleState.ProcMods =
+    BattleState.ProcMods(burn, hero.sets.burnHurts, hero.sets.coldCutPct, hero.sets.coldRoots)
+
+  /** «Гроза» (порог 12): прок молнии перескакивает на врагов рядом с целью — им
+    * по `ChainPct`% урона удара `struck` (сперва броня, остаток в HP; Громовому
+    * молния почти не вредит), и энергию им молния выжигает по тем же правилам.
+    * Не чаще раза за раунд. `struck` = 0 — перескока нет (отголосок по строю). */
+  private def chainLightning(hero: Hero, battle: SoloPveBattle, fired: Set[Element],
+                             struck: Long, burnOf: Long => Long): (SoloPveBattle, Vector[String]) =
+    if (!fired(Element.Lightning) || !hero.sets.chainLightning || battle.chainUsedThisRound || struck <= 0L)
+      (battle, Vector.empty)
+    else {
+      val pos = battle.group.activePos
+      val (swept, lines) = strikeOthers(battle, List(pos - 1, pos + 1)) { tmp =>
+        val resist   = tmp.boss.map(_.damageTakenMult(Element.Lightning)).getOrElse(1.0)
+        val amount   = (struck * ItemSet.Storm.ChainPct / 100L * resist).toLong.max(1L)
+        val hpBefore = tmp.monsterCurrentHp
+        val (cut, line) = plainHit(tmp, amount)(d =>
+          content.format("battle.storm.chain", "monster" -> tmp.monsterName, "damage" -> d.toString))
+        if (cut.monsterCurrentHp <= 0L) (cut, line)
+        else {
+          val (zapped, zapLog) = applyProcs(cut, Set(Element.Lightning), heroAirTurns(hero),
+            heroProcMods(hero, burnOf(hpBefore - cut.monsterCurrentHp)))
+          (zapped, (line +: zapLog).mkString("\n"))
+        }
+      }
+      if (lines.isEmpty) (battle, lines) else (swept.copy(chainUsedThisRound = true), lines)
+    }
+
+  /** «Стужа» (порог 6): каждый прок холода возвращает герою часть брони — не
+    * выше потолка. Без набора или без холода герой как был. */
+  private def frostArmor(hero: Hero, fired: Set[Element], nowMs: Long): (Hero, Vector[String]) =
+    if (!fired(Element.Cold) || hero.sets.coldArmorRestorePct <= 0L) (hero, Vector.empty)
+    else {
+      val max    = hero.effectiveMaxArmor(nowMs)
+      val gained = (max * hero.sets.coldArmorRestorePct / 100L).max(1L).min((max - hero.fightStats.armor).max(0L))
+      if (gained <= 0L) (hero, Vector.empty)
+      else (hero.copy(fightStats = hero.fightStats.copy(armor = hero.fightStats.armor + gained)),
+            Vector(content.format("battle.frost.armor", "armor" -> gained.toString)))
+    }
+
+  /** Строка прока холода героя: обычная — как всегда; со «Стужей» — с её срезом
+    * защиты и обездвиживанием. */
+  private def coldLine(mods: BattleState.ProcMods): String =
+    if (mods.coldRoots) content.format("battle.frost.coldRoots", "cut" -> mods.coldCut.toString)
+    else if (mods.coldCut != Element.Cold.DefenceReductionCut) content.format("battle.frost.cold", "cut" -> mods.coldCut.toString)
+    else Element.Cold.procText
 
   /** Применяет сработавшие проки стихий `fired` к мобу: сперва комбо, затем
     * одиночные. Чистая функция — ею же пользуется стихийная фляга, у которой прок
     * гарантирован. Иммунитеты цели соблюдает сама (итог — через `withEffects`):
     * кого огонь не берёт, того прок Огня не поджигает. */
-  private def applyProcs(battle: SoloPveBattle, fired: Set[Element], airTurns: Int): (SoloPveBattle, Vector[String]) = {
+  private def applyProcs(battle: SoloPveBattle, fired: Set[Element], airTurns: Int,
+                         mods: BattleState.ProcMods): (SoloPveBattle, Vector[String]) = {
     val maxHp      = battle.monsterStats.hp
     val maxArmor   = MonsterSkill.monsterMaxArmor(battle)
     // Огонь и холод гасят друг друга. Сработали оба в одном ударе — ни пламя, ни
@@ -3511,8 +3572,10 @@ case class BattleState(
     }
     else if (fired(Element.Cold) && !steam) {
       b = b.copy(effects = b.effects.copy(
-        monsterColdDefenceCut = b.effects.monsterColdDefenceCut + Element.Cold.DefenceReductionCut))
-      log = log :+ Element.Cold.procText
+        monsterColdDefenceCut = b.effects.monsterColdDefenceCut + mods.coldCut))
+      // «Стужа» (порог 12): каждый прок холода обездвиживает цель на раунд.
+      if (mods.coldRoots) b = rooted(b, ItemSet.Frost.RootRounds)
+      log = log :+ coldLine(mods)
       // Огненного элементаля прок Холода вдобавок сковывает: шипы молчат,
       // его атаки перестают поджигать, точность срезана, и одна собранная
       // сфера гаснет. Каменному холод ничего сверх обычного не делает.
@@ -3588,13 +3651,24 @@ case class BattleState(
       log = log :+ content.format("battle.thunder.absorbs", "monster" -> b.monsterName, "energy" -> gained.toString)
     }
     else if (fired(Element.Lightning)) {
-      // Выжиг энергии: снимаем долю от ПОТОЛКА, поэтому эффект не зависит от
-      // того, сколько моб успел накопить, и одинаково чувствуется на любом
-      // уровне. Умение, на которое он копил, откладывается. Строка одна: и
-      // про сам разряд, и про сожжённую энергию.
-      val (burnt, lost) = BattleState.burnEnergy(b, Element.LightningEnergyBurnPct)
+      // Выжиг энергии: половина урона удара по HP (см. Element.LightningBurnOfHpPct),
+      // но не больше, чем у цели есть. Умение, на которое моб копил,
+      // откладывается. Строка — всегда, как и прежде: прок был, даже если
+      // выжигать оказалось нечего.
+      val (burnt, lost) = BattleState.burnEnergyBy(b, mods.burn)
       b = burnt
-      log = log :+ content.format("battle.lightningBurn", "monster" -> b.monsterName, "energy" -> lost.toString)
+      // «Гроза» (порог 6): выжженная энергия бьёт и по HP — столько же урона;
+      // минибосс теряет не больше остатка своего предела за раунд.
+      if (mods.burnHurts && lost > 0L && b.monsterCurrentHp > 0L) {
+        val hurt = b.hurtActive(0L, lost)
+        b = hurt.battle
+        log = log :+ (
+          if (hurt.absorbed) capText(b)
+          else content.format("battle.storm.burnHurts", "monster" -> b.monsterName, "energy" -> lost.toString,
+                 "damage" -> hurt.hp.toString) + capLine(hurt).map("\n" + _).getOrElse(""))
+      }
+      else
+        log = log :+ content.format("battle.lightningBurn", "monster" -> b.monsterName, "energy" -> lost.toString)
     }
     if (fireAir || lightCold) b = b.copy(comboUsed = true)
     (b.withEffects(b.effects), log)
@@ -3723,8 +3797,9 @@ case class BattleState(
             // молния: она выжигает герою энергию, как прок Молнии в оружии — мобу.
             procElement = powderElement(battle).filter(e => e == Element.Cold || e == Element.Air || e == Element.Lightning)
             mobProc <- chanceRoll(procElement.isDefined, Element.ProcChancePct)
+            // Молния выжигает половину урона, что удар снял с HP героя.
             energyBurnt = if (mobProc && procElement.contains(Element.Lightning))
-                            BattleState.energyBurnOf(hero.maxEnergy(nowMs), hero.fightStats.energy, Element.LightningEnergyBurnPct)
+                            Element.lightningBurn(hero.fightStats.hp - newHp).min(hero.fightStats.energy.max(0L))
                           else 0L
             // Отравленное оружие: удар, дошедший до HP, травит. Мурлок и эльф
             // ходят с ним всегда (Race.weaponPoison), но травят через раз
@@ -4952,10 +5027,15 @@ case class BattleState(
         next(hero, swept, Vector(skillLine) ++ splashLog)
       }
     else
-      resolveElementProcs(hero, hit).flatMap { case (afterProcs, elemLog) =>
-        splash(afterProcs, struck).flatMap { case (swept, splashLog) =>
-          next(hero, swept, Vector(skillLine) ++ elemLog ++ splashLog)
-        }
+      resolveElementProcs(hero, hit, hurt.hp, skill = true, hurt.dealt).flatMap {
+        case (afterProcs, elemLog, fired) =>
+          ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS)).flatMap { now =>
+            // «Стужа» (порог 6): прок холода возвращает герою часть брони.
+            val (iced, iceLog) = frostArmor(hero, fired, now)
+            splash(afterProcs, struck).flatMap { case (swept, splashLog) =>
+              next(iced, swept, Vector(skillLine) ++ elemLog ++ iceLog ++ splashLog)
+            }
+          }
       }
   }
 
@@ -5002,8 +5082,13 @@ case class BattleState(
         case None => ZIO.succeed((b, log))
         case Some(slot) =>
           val (struck, line) = hit(b.withActive(slot))
+          // Отголосок — урон умения: молния выжигает задетому 20% того, что
+          // по нему прошло в HP. Цепная молния с отголоска не перескакивает, и
+          // броню «Стужа» с него не возвращает — это дело удара по самой цели.
           val procs =
-            if (struck.monsterCurrentHp > 0L) resolveElementProcs(hero, struck)
+            if (struck.monsterCurrentHp > 0L)
+              resolveElementProcs(hero, struck, slot.currentHp - struck.monsterCurrentHp, skill = true)
+                .map { case (t, l, _) => (t, l) }
             else ZIO.succeed((struck, Vector.empty[String]))
           procs.map { case (tmp, procLog) =>
             // Задетым мог оказаться минибосс, стоящий в строю: его счёт предела
@@ -5144,7 +5229,10 @@ case class BattleState(
         // цели в силе: огненного элементаля пламя не берёт, элементалю и
         // нежити прок ложится как обычный (см. withEffects).
         case FlaskEffect.Splash(element) =>
-          val (procced, procLog) = applyProcs(battle, Set(element), heroAirTurns(hero))
+          // Урона фляга не наносит — молния выжигает долю потолка энергии, как
+          // прежде (см. Element.LightningEnergyBurnPct).
+          val flaskBurn          = (battle.monsterStats.energy * Element.LightningEnergyBurnPct / 100L).max(1L)
+          val (procced, procLog) = applyProcs(battle, Set(element), heroAirTurns(hero), heroProcMods(hero, flaskBurn))
           val guarded = procced.withEffects(procced.effects)
           val head = content.format("battle.flaskSplash", "flask" -> flaskName, "monster" -> battle.monsterName)
           val lines =
@@ -6168,7 +6256,9 @@ case class BattleState(
           dealt    = hurt.dealt
           // Прок стихии считается молча — строки его в лог союзника не идут.
           procRoll <- if (newHp > 0L) Random.nextIntBetween(1, 101) else ZIO.succeed(100)
-          procced  = if (newHp > 0L && procRoll <= Element.ProcChancePct) applyProcs(hit, elem.toSet, Element.Air.ProcTurns)._1 else hit
+          procced  = if (newHp > 0L && procRoll <= Element.ProcChancePct)
+                       applyProcs(hit, elem.toSet, Element.Air.ProcTurns, BattleState.ProcMods(Element.lightningBurn(hurt.hp)))._1
+                     else hit
           // Яд на наконечниках (Фаэлин): удар, дошедший до HP, травит через раз.
           // Бросок — только у того, кто травит, и только если есть кого.
           venomRoll <- if (a.kind.poisonPct > 0L && hurt.hp > 0L && newHp > 0L) Random.nextIntBetween(1, 101)
@@ -6242,7 +6332,7 @@ case class BattleState(
           mobProc <- chanceRoll(procElement.isDefined, Element.ProcChancePct)
           // Молния выжигает энергию и союзнику — так же, как герою.
           zapped   = if (mobProc && procElement.contains(Element.Lightning))
-                       BattleState.energyBurnOf(a.stats.energy, a.energy, Element.LightningEnergyBurnPct)
+                       Element.lightningBurn(hpDmg).min(a.energy.max(0L))
                      else 0L
           bladeHits <- chanceRoll(hpDmg > 0L && !tmp.effects.monsterPoisonsOnHit &&
                          Race.withNameOption(tmp.monsterRace).exists(_.weaponPoison), Poison.WeaponChancePct)
@@ -7385,7 +7475,9 @@ case class BattleState(
       val hit      = hurt.battle
       // Стихия и яд ложатся молча: строки проков только засорили бы экран.
       val alive   = hit.monsterCurrentHp > 0L
-      val procced = if (alive) element.map(e => applyProcs(hit, Set(e), Element.Air.ProcTurns)._1).getOrElse(hit) else hit
+      val procced = if (!alive) hit
+                    else element.map(e => applyProcs(hit, Set(e), Element.Air.ProcTurns,
+                           BattleState.ProcMods(Element.lightningBurn(hurt.hp)))._1).getOrElse(hit)
       val venomed =
         if (poisons && alive)
           procced.withEffects(procced.effects.copy(
@@ -7848,6 +7940,25 @@ object BattleState {
   def burnEnergy(b: SoloPveBattle, pct: Long): (SoloPveBattle, Long) = {
     val burned = (b.monsterStats.energy * pct / 100L).max(1L)
     val left   = (b.monsterCurrentEnergy - burned).max(0L)
+    (b.copy(monsterCurrentEnergy = left), b.monsterCurrentEnergy - left)
+  }
+
+  /** Что прок стихии делает сверх обычного. `burn` — сколько энергии выжигает
+    * прок Молнии (половина урона удара по HP, у грозовой фляги — доля потолка);
+    * прочее — наборы героя: «Гроза» (порог 6) — выжженное бьёт и по HP,
+    * «Стужа» (4 и 12) — холод режет защиту сильнее и обездвиживает. Союзники и
+    * удары по всему полю ходят без наборов. */
+  final case class ProcMods(
+    burn:      Long,
+    burnHurts: Boolean = false,
+    coldCut:   Int     = Element.Cold.DefenceReductionCut,
+    coldRoots: Boolean = false
+  )
+
+  /** Выжечь врагу `amount` энергии, но не больше того, что у него есть.
+    * Возвращает бой и сколько сгорело на деле. */
+  def burnEnergyBy(b: SoloPveBattle, amount: Long): (SoloPveBattle, Long) = {
+    val left = (b.monsterCurrentEnergy - amount.max(0L)).max(0L)
     (b.copy(monsterCurrentEnergy = left), b.monsterCurrentEnergy - left)
   }
 

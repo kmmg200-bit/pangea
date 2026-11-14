@@ -270,8 +270,10 @@ case class Hero(
     val p    = combinedPenalties(nowMs)
     val b    = effectiveBaseStats(nowMs)
     val base = 5L * b.int + 2L * b.agi + equipment.allEnergy + masterHornBoosts.energy
-    // Бриллианты в снаряжении и «Охотник» (порог 4) дают +% к макс. Энергии.
-    (base * (1.0 - p.energyPct) * (100L + gems.energyBonusPct + sets.energyBonusPct) / 100L).toLong.max(1L)
+    // Бриллианты в снаряжении, «Охотник» (порог 4), «Гроза» (порог 2) и «Ловец
+    // молний» дают +% к макс. Энергии.
+    (base * (1.0 - p.energyPct) * (100L + gems.energyBonusPct + sets.energyBonusPct + Achievement.energyPct(this)) /
+      100L).toLong.max(1L)
   }
 
   def effectiveMaxHp(nowMs: Long): Long = {

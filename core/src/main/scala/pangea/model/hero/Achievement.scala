@@ -136,6 +136,12 @@ object Achievement extends Enum[Achievement] {
   case object NecromancerSet extends Achievement("Повелитель мёртвых",
     s"+${AchievementRates.SetStatPct}% к интеллекту")
 
+  case object StormSet extends Achievement("Ловец молний",
+    s"+${AchievementRates.SetStatPct}% к энергии")
+
+  case object FrostSet extends Achievement("Холодная кровь",
+    s"+${AchievementRates.SetStatPct}% к броне")
+
   // Малые расовые наборы: +1 к одной из четырёх характеристик, по два набора
   // на каждую. Набор надет целиком — достижение, какой бы расы ни был герой:
   // скрытый шаг набора от расы зависит, достижение — нет.
@@ -353,6 +359,8 @@ object Achievement extends Enum[Achievement] {
     case ItemSet.Hunter         => Some(HunterSet)
     case ItemSet.Rat            => Some(RatSet)
     case ItemSet.Necromancer    => Some(NecromancerSet)
+    case ItemSet.Storm          => Some(StormSet)
+    case ItemSet.Frost          => Some(FrostSet)
     case ItemSet.Pioneer        => Some(PioneerSet)
     case ItemSet.QuietGrove     => Some(QuietGroveSet)
     case ItemSet.DeepMother     => Some(DeepMotherSet)
@@ -392,9 +400,13 @@ object Achievement extends Enum[Achievement] {
   def evasionPct(hero: Hero): Long  = setPct(hero, GhoulSet) + pathPct(hero, ShadowPath) + goldPct(hero)
   def accuracyPct(hero: Hero): Long = setPct(hero, HunterSet) + goldPct(hero)
 
-  /** +% к потолку брони от «Своего среди крыс» и «Всего в золоте» — как и у
-    * двойки «Крысы», в потолок, иначе прибавку срезала бы первая же починка. */
-  def armorPct(hero: Hero): Long = setPct(hero, RatSet) + goldPct(hero)
+  /** +% к потолку брони от «Своего среди крыс», «Холодной крови» и «Всего в
+    * золоте» — как и у двойки «Крысы», в потолок, иначе прибавку срезала бы
+    * первая же починка. */
+  def armorPct(hero: Hero): Long = setPct(hero, RatSet) + setPct(hero, FrostSet) + goldPct(hero)
+
+  /** +% к потолку энергии от «Ловца молний». */
+  def energyPct(hero: Hero): Long = setPct(hero, StormSet)
 
   /** +% к интеллекту от «Повелителя мёртвых». */
   def intPct(hero: Hero): Long = setPct(hero, NecromancerSet)

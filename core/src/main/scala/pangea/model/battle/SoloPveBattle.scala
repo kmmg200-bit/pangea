@@ -159,7 +159,10 @@ case class SoloPveBattle(
   // начат по старым правилам, и резерв из него не уходит.
   squadTaken: Boolean = false,
   // Порода того, кто в полях (сетеплёты у деревни): ездит со слотом, как имя.
-  monsterBreed: Option[pangea.model.monster.Breed] = None
+  monsterBreed: Option[pangea.model.monster.Breed] = None,
+  // Цепная молния «Грозы» (порог 12) в этом раунде уже перескакивала: она — не
+  // чаще раза за раунд. В записях до этого поля его нет — читается как false.
+  chainUsedThisRound: Boolean = false
 ) {
 
   /** Множитель Стены трофеев к урону героя по тому, кто сейчас в полях. */
@@ -902,6 +905,7 @@ case class SoloPveBattle(
     // Божественное оружие живёт своим счётчиком: «быстрые руки» его не ускоряют,
     // а расходник в руках её не блокирует.
     divineUsedThisRound      = false,
+    chainUsedThisRound       = false,
     skillSlots              = skillSlots.map(s =>
       if (skipSlots.contains(s.itemId) || bonusSlots.contains(s.itemId)) s
       else s.copy(cooldown = (s.cooldown - 1).max(0))
@@ -1095,6 +1099,7 @@ object SoloPveBattle {
       // Бой, начатый до этого поля, — без отряда: резерв из него не уходит.
       squadTaken          <- c.getOrElse[Boolean]("squadTaken")(false)
       monsterBreed        <- pangea.model.monster.Breed.read(c, "monsterBreed")
+      chainUsed           <- c.getOrElse[Boolean]("chainUsedThisRound")(false)
     } yield SoloPveBattle(monsterLvl, monsterRace, monsterRarity, monsterStats,
                          monsterCurrentHp, monsterCurrentArmor, heroBattleState, consumableUsed, monsterMarked,
                          monsterUndead,
@@ -1103,7 +1108,8 @@ object SoloPveBattle {
                          noFlee, lootLevel, holyWater, heroBlockPct, monsterBlockPct,
                          heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall,
                          monsterLastAllyHit, heroStruck, roundsFought, secondWindUsed, preyName, preyGone,
-                         monsterDodgeBonus, comboUsed, bossArmorTaken, squadTaken, monsterBreed).cycleToBossSlot
+                         monsterDodgeBonus, comboUsed, bossArmorTaken, squadTaken, monsterBreed,
+                         chainUsed).cycleToBossSlot
       // ↑ Бой, сохранённый до того, как круг минибосса переехал на слот: круг
       // того, кто стоит в строю, забираем с боя на его слот.
 

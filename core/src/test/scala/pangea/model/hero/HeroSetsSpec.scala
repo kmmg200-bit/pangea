@@ -48,7 +48,9 @@ object HeroSetsSpec extends ZIOSpecDefault {
 
     test("наборы независимы: 12 предметов из шести наборов дают шесть двойных бонусов") {
       // Большие наборы по два предмета: у малых расовых первый порог — три.
-      val big    = ItemSet.values.filter(_.race.isEmpty)
+      // Двенадцать мест — шесть пар: больших наборов теперь восемь, берём первые
+      // шесть («Гроза» и «Стужа» — в ElementalSetsSpec).
+      val big    = ItemSet.values.filter(_.race.isEmpty).take(6)
       val counts = big.map(_ -> 2).toMap
       val sets   = HeroSets(counts)
       assertTrue(sets.activeBonuses.size == big.size && big.size == 6) &&

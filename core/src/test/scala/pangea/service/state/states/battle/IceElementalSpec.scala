@@ -7,7 +7,7 @@ import pangea.generator.loot.LootGenerator
 import pangea.generator.loot.LootGenerator.LootDrop
 import pangea.model.battle.{BattleAlly, BattleEffects, Burn, Element, SoloPveBattle, Ward}
 import pangea.model.hero.Hero
-import pangea.model.item.{Gem, GemKind, Grip, Item, ItemType, MaterialKind, Rarity => ItemRarity}
+import pangea.model.item.{Gem, GemKind, Grip, Item, ItemSet, ItemType, MaterialKind, Rarity => ItemRarity}
 import pangea.model.monster.{MiniBoss, Monster, Race, Rarity => MobRarity}
 import pangea.model.squad.{Ally, AllyKind}
 import pangea.model.state.StateType
@@ -120,10 +120,10 @@ object IceElementalSpec extends ZIOSpecDefault {
       assertTrue(ice.plainDamageTakenMult == 1.0)
     },
 
-    test("вечный лёд: его ингредиент, набора пока нет — «пока не используется», Ришелье платит дублонами") {
-      assertTrue(ice.ingredient == MaterialKind.EternalIce && ice.set.isEmpty) &&
+    test("вечный лёд: его ингредиент, переводит вещь в его набор «Стужа»; Ришелье платит дублонами") {
+      assertTrue(ice.ingredient == MaterialKind.EternalIce && ice.set.contains(ItemSet.Frost)) &&
       assertTrue(MaterialKind.EternalIce.displayName == "Вечный лёд") &&
-      assertTrue(MaterialKind.EternalIce.notYetUsed && MaterialKind.EternalIce.doubloonPrice == 5L)
+      assertTrue(!MaterialKind.EternalIce.notYetUsed && MaterialKind.EternalIce.doubloonPrice == 5L)
     },
 
     test("бой в логове: Ледяной встаёт на четвёртом месте, герой — на первом") {
@@ -255,12 +255,12 @@ object IceElementalSpec extends ZIOSpecDefault {
               assertTrue(after.effects.monsterBurn.isDefined)
     },
 
-    test("добыча: вечный лёд — не больше одного с боя, вещи — без набора") {
+    test("добыча: вечный лёд — не больше одного с боя, вещи — из «Стужи»") {
       val rolls = (1L to 200L).map(s => LootGenerator.rollMiniBoss(ice, bossLvl, heroLvl, Rng(s))._1)
       def pieces(d: List[LootDrop]) = d.count(LootGenerator.isIngredient(ice, _))
       val gear  = rolls.flatten.collect { case LootDrop.Gear(item) if item.material.isEmpty => item }
       assertTrue(rolls.forall(d => pieces(d) <= 1) && rolls.exists(d => pieces(d) == 1)) &&
-      assertTrue(gear.nonEmpty && gear.forall(_.set.isEmpty))
+      assertTrue(gear.exists(_.set.contains(ItemSet.Frost)) && gear.forall(_.set.forall(_ == ItemSet.Frost)))
     },
 
     test("лёд — не «пригвождён» с арены: свои поля, переживают смену пары, старые записи без них читаются") {

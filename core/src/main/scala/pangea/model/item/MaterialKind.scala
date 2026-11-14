@@ -75,8 +75,7 @@ object MaterialKind extends Enum[MaterialKind] {
     override val doubloonPrice: Long = 5L
   }
 
-  /** Падает с Громового элементаля. Набора у него пока нет — ни во что не
-    * идёт, на карточке пометка «пока не используется». */
+  /** Падает с Громового элементаля; в кубе переводит вещь в набор «Гроза». */
   case object StormHeart extends MaterialKind("Сердце грозы") {
     override val description: String =
       "Сгусток грозы, застывший в ладони: тяжёлый, тёплый и покалывает пальцы. Если " +
@@ -84,12 +83,9 @@ object MaterialKind extends Enum[MaterialKind] {
 
     /** Ришелье платит за него золотом, как и за добычу других элементалей. */
     override val doubloonPrice: Long = 5L
-
-    override val notYetUsed: Boolean = true
   }
 
-  /** Падает с Ледяного элементаля. Набора у него пока нет — ни во что не идёт,
-    * на карточке пометка «пока не используется». */
+  /** Падает с Ледяного элементаля; в кубе переводит вещь в набор «Стужа». */
   case object EternalIce extends MaterialKind("Вечный лёд") {
     override val description: String =
       "Кусок льда, который не тает ни у костра, ни за пазухой. Холодит ладонь даже " +
@@ -97,8 +93,6 @@ object MaterialKind extends Enum[MaterialKind] {
 
     /** Ришелье платит за него золотом, как и за добычу других элементалей. */
     override val doubloonPrice: Long = 5L
-
-    override val notYetUsed: Boolean = true
   }
 
   /** Падает с Гнилого Джо; в кубе переводит вещь в набор «Упырь». */

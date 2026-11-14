@@ -76,9 +76,9 @@ object SetAchievementSpec extends ZIOSpecDefault {
       val all = ItemSet.values.toList.filter(_.race.isEmpty).flatMap(Achievement.forSet)
       assertTrue(ItemSet.values.toList.flatMap(Achievement.forSet).distinct.size == ItemSet.values.size) &&
       assertTrue(all.map(_.title) == List("Живая крепость", "Укротитель пламени", "Кровопийца",
-        "Зоркий глаз", "Свой среди крыс", "Повелитель мёртвых")) &&
+        "Зоркий глаз", "Свой среди крыс", "Повелитель мёртвых", "Ловец молний", "Холодная кровь")) &&
       assertTrue(all.map(_.bonusLine) == List("+3% к защите", "+3% к атаке", "+3% к уклонению",
-        "+3% к точности", "+3% к броне", "+3% к интеллекту")) &&
+        "+3% к точности", "+3% к броне", "+3% к интеллекту", "+3% к энергии", "+3% к броне")) &&
       assertTrue(AchievementRates.SetStatPct == 3L && Achievement.FullSetPieces == 12)
     },
 
@@ -97,7 +97,11 @@ object SetAchievementSpec extends ZIOSpecDefault {
       assertTrue(was.defence == 1000L && now.defence == 1030L) &&
       assertTrue(was.evasion == 1000L && now.evasion == 1030L) &&
       assertTrue(was.accuracy == 1000L && now.accuracy == 1030L) &&
-      assertTrue(bare.maxArmor == 1000L && all.maxArmor == 1030L) &&
+      // «Свой среди крыс» и «Холодная кровь» — по +3% к потолку брони
+      assertTrue(bare.maxArmor == 1000L && all.maxArmor == 1060L) &&
+      // «Ловец молний» — +3% к потолку энергии
+      assertTrue(bare.copy(achievements = List(Achievement.StormSet.entryName)).maxEnergy(0L) ==
+        bare.maxEnergy(0L) * 103L / 100L) &&
       assertTrue(bare.effectiveBaseStats(0L).int == 100L && all.effectiveBaseStats(0L).int == 103L) &&
       // одно достижение — один стат: защиту «Живая крепость» не трогает атака
       assertTrue(bare.copy(achievements = List(Achievement.StoneGuardSet.entryName))

@@ -74,7 +74,8 @@ final case class HeroSets(counts: Map[ItemSet, Int], race: Option[Race] = None) 
    *  прочих прибавок поднимает не итоговый боевой стат, а ПОТОЛОК брони
    *  (`Hero.maxArmor`): иначе прибавка срезалась бы при первой же починке. */
   def armorBonusPct: Long =
-    pct(ItemSet.Rat, 2, ItemSet.Rat.ArmorPct) + pct(ItemSet.MountainMaster, 3, ItemSet.MountainMaster.ArmorPct)
+    pct(ItemSet.Rat, 2, ItemSet.Rat.ArmorPct) + pct(ItemSet.MountainMaster, 3, ItemSet.MountainMaster.ArmorPct) +
+      pct(ItemSet.Frost, 2, ItemSet.Frost.ArmorPct)
 
   /** Плоская прибавка к макс. HP: +300 за каждый набор, добравший до порога 8. */
   def flatHp: Long = ItemSet.values.count(has(_, 8)) * ItemSet.HpFlatBonus
@@ -89,7 +90,8 @@ final case class HeroSets(counts: Map[ItemSet, Int], race: Option[Race] = None) 
    *  и прочие проценты набора. */
   def energyBonusPct: Long =
     (if (has(ItemSet.Hunter, 4)) ItemSet.Hunter.EnergyPct else 0L) -
-      (if (has(ItemSet.Necromancer, 4)) ItemSet.Necromancer.EnergyCutPct else 0L)
+      (if (has(ItemSet.Necromancer, 4)) ItemSet.Necromancer.EnergyCutPct else 0L) +
+      pct(ItemSet.Storm, 2, ItemSet.Storm.EnergyPct)
 
   /** +% к интеллекту: «Некромант» (порог 2) — единственная двойка, которая
    *  поднимает не боевой стат, а базовый, — «Преисподняя» и «Первопроходец»
@@ -231,7 +233,35 @@ final case class HeroSets(counts: Map[ItemSet, Int], race: Option[Race] = None) 
   def killEnergyPct: Long = pct(ItemSet.Underworld, 12, ItemSet.Underworld.KillEnergyPct)
 
   /** Прибавка к шансу прока Холода, в п.п. («Подгорный мастер», порог 9). */
-  def coldChanceBonusPct: Long = pct(ItemSet.MountainMaster, 9, ItemSet.MountainMaster.ColdChanceBonusPct)
+  def coldChanceBonusPct: Long =
+    pct(ItemSet.MountainMaster, 9, ItemSet.MountainMaster.ColdChanceBonusPct) +
+      pct(ItemSet.Frost, 10, ItemSet.Frost.ColdChanceBonusPct)
+
+  // ── Гроза ──
+
+  /** Во сколько раз молния в оружии прошивает броню сильнее (порог 4). */
+  def lightningPierceMult: Long = if (has(ItemSet.Storm, 4)) ItemSet.Storm.PierceMult else 1L
+
+  /** Энергия, выжженная молнией героя, бьёт и по HP (порог 6). */
+  def burnHurts: Boolean = has(ItemSet.Storm, 6)
+
+  /** +п.п. к шансу прока молнии (порог 10). */
+  def lightningChanceBonusPct: Long = pct(ItemSet.Storm, 10, ItemSet.Storm.LightningChanceBonusPct)
+
+  /** Цепная молния (порог 12). */
+  def chainLightning: Boolean = has(ItemSet.Storm, 12)
+
+  // ── Стужа ──
+
+  /** Сколько защиты срезает прок холода героя (порог 4). */
+  def coldCutPct: Int =
+    if (has(ItemSet.Frost, 4)) ItemSet.Frost.ColdCutPct else pangea.model.battle.Element.Cold.DefenceReductionCut
+
+  /** Сколько % потолка брони возвращает герою его прок холода (порог 6). */
+  def coldArmorRestorePct: Long = pct(ItemSet.Frost, 6, ItemSet.Frost.ArmorRestorePct)
+
+  /** Прок холода героя обездвиживает врага (порог 12). */
+  def coldRoots: Boolean = has(ItemSet.Frost, 12)
 
   /** Множитель вклада ловкости в реген энергии за раунд («Охотник», порог 4). */
   def agiEnergyRegenMult: Long =

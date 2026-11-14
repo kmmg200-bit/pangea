@@ -90,8 +90,9 @@ object ElementComboSpec extends ZIOSpecDefault {
         (after, log) = r
       } yield // Холод: накопительный срез снижения урона цели
               assertTrue(after.effects.monsterColdDefenceCut > 0) &&
-              // Молния: выжженная энергия — и ровно одной строкой
-              assertTrue(after.monsterCurrentEnergy < MonsterEnergy.maxEnergy(lvl)) &&
+              // Молния: выжигает половину урона, что удар снял с HP (2026-11-14), — и
+              // ровно одной строкой
+              assertTrue(log.contains(s"−${(after.monsterStats.hp - after.monsterCurrentHp) / 2} энергии.")) &&
               assertTrue(log.contains("⚡ Молния → ")) &&
               // о выжиге сообщает ровно одна строка, а не две подряд
               assertTrue(log.linesIterator.count(_.contains("⚡ Молния → ")) == 1)

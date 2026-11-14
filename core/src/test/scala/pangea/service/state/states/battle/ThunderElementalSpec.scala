@@ -7,7 +7,7 @@ import pangea.generator.loot.LootGenerator
 import pangea.generator.loot.LootGenerator.LootDrop
 import pangea.model.battle.{BattleAlly, BattleEffects, Element, SoloPveBattle}
 import pangea.model.hero.Hero
-import pangea.model.item.{Gem, GemKind, Grip, Item, ItemType, MaterialKind, Rarity => ItemRarity}
+import pangea.model.item.{Gem, GemKind, Grip, Item, ItemSet, ItemType, MaterialKind, Rarity => ItemRarity}
 import pangea.model.monster.{MiniBoss, Monster, Race, Rarity => MobRarity}
 import pangea.model.squad.{Ally, AllyKind}
 import pangea.model.state.StateType
@@ -114,9 +114,9 @@ object ThunderElementalSpec extends ZIOSpecDefault {
       assertTrue(thunder.plainDamageTakenMult == 1.0)
     },
 
-    test("сердце грозы: его ингредиент, набора пока нет — «пока не используется», Ришелье платит дублонами") {
-      assertTrue(thunder.ingredient == MaterialKind.StormHeart && thunder.set.isEmpty) &&
-      assertTrue(MaterialKind.StormHeart.notYetUsed && MaterialKind.StormHeart.doubloonPrice == 5L) &&
+    test("сердце грозы: его ингредиент, переводит вещь в его набор «Гроза»; Ришелье платит дублонами") {
+      assertTrue(thunder.ingredient == MaterialKind.StormHeart && thunder.set.contains(ItemSet.Storm)) &&
+      assertTrue(!MaterialKind.StormHeart.notYetUsed && MaterialKind.StormHeart.doubloonPrice == 5L) &&
       assertTrue(MaterialKind.StormHeart.displayName == "Сердце грозы")
     },
 
@@ -210,8 +210,10 @@ object ThunderElementalSpec extends ZIOSpecDefault {
         // удар по союзнику — в цель, прок молнии — да (1); разряд — без бросков
         r <- turn(h, b, "Wait", ints = List(Hit, 1), longs = List(100L))
         (u, after, log) = r
-        burnt = ally.stats.energy * 30L / 100L
-      } yield assertTrue(log.contains(s"⚡ ${ally.name}: молния, энергия −$burnt.")) &&
+        // молния выжигает половину урона, что удар снял с HP (брони у него нет)
+        hit   = """бьёт .+? на (\d+) урона""".r.findFirstMatchIn(log).map(_.group(1).toLong).getOrElse(-1L)
+        burnt = Element.lightningBurn(hit).min(ally.energy)
+      } yield assertTrue(hit > 0L && log.contains(s"⚡ ${ally.name}: молния, энергия −$burnt.")) &&
               assertTrue(log.contains(s"бьёт в союзника: ${ally.name} получает")) &&
               // в конце раунда бить ему некого — он шагнул к врагу, поэтому ищем по отряду
               assertTrue(after.group.allies.headOption.exists(a => a.hp < ally.hp && a.energy < ally.energy)) &&
@@ -239,26 +241,30 @@ object ThunderElementalSpec extends ZIOSpecDefault {
               assertTrue(after.effects.mobDispersedTurns.contains(thunder.DispersedTurns - 1))
     },
 
-    test("молния в ударе человека выжигает герою треть энергии, а броню — не пробивает") {
-      val h   = hero(armor = 10000L)
-      val man = SoloPveBattle.from(Monster(0L, 10L, Race.Human, MobRarity.Common,
-                  FightStats(atk = 100, hp = 100000, armor = 0, defence = 0, evasion = 0, accuracy = 10000, energy = 0)), h)
-                  .copy(noKin = true)
+    test("молния в ударе человека выжигает герою половину урона по HP; ушёл в броню — энергия цела, броню она не пробивает") {
+      def man(h: Hero) = SoloPveBattle.from(Monster(0L, 10L, Race.Human, MobRarity.Common,
+                           FightStats(atk = 100, hp = 100000, armor = 0, defence = 0, evasion = 0, accuracy = 10000, energy = 0)), h)
+                           .copy(noKin = true)
+      val bare    = hero()
+      val armored = hero(armor = 10000L)
       for {
         // удар человека — в цель, прок молнии — да
-        r <- turn(h, man, "Wait", ints = List(Hit, 1), longs = List(100L))
-        (u, _, log) = r
-        burnt = h.maxEnergy(0L) * Element.LightningEnergyBurnPct / 100L
-      } yield assertTrue(log.contains("молнией ⚡") && log.contains(s"⚡ Молния: ваша энергия −$burnt.")) &&
-              assertTrue(u.fightStats.armor < h.fightStats.armor && u.fightStats.hp == h.fightStats.hp)
+        r1 <- turn(bare, man(bare), "Wait", ints = List(Hit, 1), longs = List(100L))
+        (u1, _, log1) = r1
+        lost = bare.fightStats.hp - u1.fightStats.hp
+        r2 <- turn(armored, man(armored), "Wait", ints = List(Hit, 1), longs = List(100L))
+        (u2, _, log2) = r2
+      } yield assertTrue(lost > 0L && log1.contains(s"⚡ Молния: ваша энергия −${Element.lightningBurn(lost)}.")) &&
+              assertTrue(log2.contains("молнией ⚡") && !log2.contains("⚡ Молния: ваша энергия")) &&
+              assertTrue(u2.fightStats.armor < armored.fightStats.armor && u2.fightStats.hp == armored.fightStats.hp)
     },
 
-    test("добыча: сердце грозы — не больше одного с боя, вещи — без набора") {
+    test("добыча: сердце грозы — не больше одного с боя, вещи — из «Грозы»") {
       val rolls = (1L to 200L).map(s => LootGenerator.rollMiniBoss(thunder, bossLvl, heroLvl, Rng(s))._1)
       def hearts(d: List[LootDrop]) = d.count(LootGenerator.isIngredient(thunder, _))
       val gear  = rolls.flatten.collect { case LootDrop.Gear(item) if item.material.isEmpty => item }
       assertTrue(rolls.forall(d => hearts(d) <= 1) && rolls.exists(d => hearts(d) == 1)) &&
-      assertTrue(gear.nonEmpty && gear.forall(_.set.isEmpty))
+      assertTrue(gear.exists(_.set.contains(ItemSet.Storm)) && gear.forall(_.set.forall(_ == ItemSet.Storm)))
     },
 
     test("бои, записанные раньше, читаются: тучи без поля нет") {

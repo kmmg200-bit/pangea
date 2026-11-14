@@ -588,8 +588,8 @@ object LootGenerator {
     val lvl         = (heroLvl + delta).max(1L).min(Hero.MaxLevel)
     val (item, r3)  = ItemGenerator.createItemAtLevel(lvl, rarity, r2)
     boss.set match {
-      // Набора у него ещё нет (Громовой элементаль, пока его набор не сделан) —
-      // выпадает вещь его уровня той же редкости, только без набора.
+      // Набора у минибосса нет — выпадает вещь его уровня той же редкости,
+      // только без набора.
       case None => (LootDrop.Gear(item), r3)
       case Some(set) =>
         val (name, r4) = ItemNameGenerator.setName(item.itemType, item.rarity, set, r3, item.grip)
