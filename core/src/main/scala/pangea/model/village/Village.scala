@@ -291,6 +291,17 @@ object VillageRates {
   val HuntersRarities: List[Rarity]    = List(Rarity.Rare, Rarity.Mythical)
   val HuntersLeaderRarity: Rarity      = Rarity.Legendary
 
+  /** Сдавшиеся: с таким шансом после боя из избы выходят столько разбойников
+    * разных рас и бросают оружие (шанс и число решил Claude). Перерезать — в
+    * кошелях у каждого столько серебра за уровень задания; отпустить — один
+    * показывает тайник с награбленным с обозов, от и до вещей (решил
+    * пользователь: «как предложил Claude»). */
+  val SurvivorsPct: Int           = 40
+  val SurvivorsCount: Int         = 3
+  val SurvivorPursePerLvl: Long   = 5L
+  val CacheMin: Int               = 2
+  val CacheMax: Int               = 3
+
   /** Гнездо сетеплётов: пауки — звери своих пород ([[Breed]]): восемь
     * молодых, шестеро взрослых и матка; с шансом [[RedSpiderChancePct]]% к ним
     * выползает ещё и красный — шестнадцатым, ждёт места в строю. С пауков —
@@ -403,12 +414,17 @@ object VillageRates {
   * он оттуда не ушёл, — в `scene_data`. Контракт к этому времени уже на шаге
   * «сделано», голова главаря — в сумке.
   *
-  * @param hunters на выходе ждут охотники за головами — отдать им голову или
-  *                драться (см. [[VillageRates.HuntersPct]])
+  * Ждёт оно по порядку: сдавшиеся, потом — на выходе — охотники.
+  *
+  * @param hunters   на выходе ждут охотники за головами — отдать им голову или
+  *                  драться (см. [[VillageRates.HuntersPct]])
+  * @param survivors из избы вышли сдаваться разбойники этих рас — перерезать
+  *                  или отпустить (см. [[VillageRates.SurvivorsPct]]); пусто — их
+  *                  нет или уже решено
   */
-final case class BanditAftermath(hunters: Boolean = false) {
+final case class BanditAftermath(hunters: Boolean = false, survivors: List[Race] = Nil) {
   /** Ждать больше нечего — к старосте. */
-  def done: Boolean = !hunters
+  def done: Boolean = !hunters && survivors.isEmpty
 }
 
 object BanditAftermath {
@@ -417,14 +433,17 @@ object BanditAftermath {
   val Key: String = "banditsAfter"
 
   implicit val encoder: Encoder[BanditAftermath] = (a: BanditAftermath) => Json.obj(
-    Key              -> Json.True,
-    "banditsHunters" -> a.hunters.asJson)
+    Key                -> Json.True,
+    "banditsHunters"   -> a.hunters.asJson,
+    "banditsSurvivors" -> a.survivors.map(_.entryName).asJson)
 
+  /** Запись, сделанная до сдавшихся, — без них: ждут только охотники. */
   implicit val decoder: Decoder[BanditAftermath] = (c: HCursor) =>
     for {
-      _       <- c.get[Boolean](Key)
-      hunters <- c.getOrElse[Boolean]("banditsHunters")(false)
-    } yield BanditAftermath(hunters)
+      _         <- c.get[Boolean](Key)
+      hunters   <- c.getOrElse[Boolean]("banditsHunters")(false)
+      survivors <- c.getOrElse[List[String]]("banditsSurvivors")(Nil)
+    } yield BanditAftermath(hunters, survivors.flatMap(Race.withNameOption))
 }
 
 /** Предложение мага Сноходцев после боя в стане — в `scene_data`, пока герой не

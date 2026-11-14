@@ -9,7 +9,7 @@ import pangea.model.battle.SoloPveBattle
 import pangea.model.cave.CaveRates
 import pangea.model.hero.Hero
 import pangea.model.item.{Item, ItemDetails}
-import pangea.model.monster.Monster
+import pangea.model.monster.{Monster, Race}
 import pangea.model.quest.Difficulty
 import pangea.model.skill.MonsterEnergy
 import pangea.model.state.StateType
@@ -79,13 +79,15 @@ case class VillageLairState(
       s"${ids}Out"        -> Target.Run { (u, _, r) => out(u, r) },
       s"${ids}HuntersGive"  -> Target.Run { (u, _, r) => afterFight(u, r)((c, a) => giveHead(u, c, a, r)) },
       s"${ids}HuntersFight" -> Target.Run { (u, _, r) => afterFight(u, r)((c, a) => huntersFight(u, c, a, r)) },
+      s"${ids}SurvivorsKill"  -> Target.Run { (u, _, r) => afterFight(u, r)((c, a) => killSurvivors(u, c, a, r)) },
+      s"${ids}SurvivorsSpare" -> Target.Run { (u, _, r) => afterFight(u, r)((c, a) => spareSurvivors(u, c, a, r)) },
       "OpenCharacter"     -> Target.Run { (u, _, _) => CharacterMenu.open(heroDao, u.userId, lair.scene) }
     ),
     fallback = Target.Run { (u, ua, r) => handleFallback(u, ua, r) }
   )
 
   override def targetStates: Set[StateType] =
-    branch.gotoTargets ++ Set(StateType.Dungeon, StateType.Battle, StateType.HeroStats, lair.scene)
+    branch.gotoTargets ++ Set(StateType.Dungeon, StateType.Battle, StateType.HeroStats, StateType.Loot, lair.scene)
 
   /** Вход: обитатели перебиты (добыча положила отметку) — логово разбито;
     * логово ещё стоит — вход в него. На заставе разбойников после боя: охотники
@@ -96,12 +98,18 @@ case class VillageLairState(
       data     <- heroDao.readSceneData(user.userId)
       won       = data.exists(VillageLairState.won(lair, _))
       cleared  <- clearedContract(user)
-      after     = data.flatMap(_.as[BanditAftermath].toOption).filterNot(_.done)
+      after     = data.flatMap(_.as[BanditAftermath].toOption)
       _        <- (contract, cleared) match {
                     case (Some(c), _) if won                                   => victory(user, c, renderer)
                     case (Some(c), _)                                          => renderer.show(user, introScreen(c))
                     case (None, Some(c)) if data.exists(VillageLairState.huntersBeaten) => afterHunters(user, c, renderer)
-                    case (None, Some(c)) if after.isDefined                    => renderer.show(user, stepScreen(c))
+                    case (None, Some(c)) => after match {
+                      case Some(a) if !a.done => renderer.show(user, stepScreen(c, a))
+                      // Вернулись с добычи (тайник сдавшихся), а ждать больше нечего.
+                      case Some(_) => clear(user) *> renderer.show(user,
+                                        finalScreen(content.format(key("leftOutpost"), Villages.args(content, c): _*)))
+                      case None    => clear(user) *> renderer.show(user, Screen(text("gone"), List(outChoice)))
+                    }
                     case _ =>
                       clear(user) *> renderer.show(user, Screen(text("gone"), List(outChoice)))
                   }
@@ -313,12 +321,34 @@ case class VillageLairState(
       _ <- Villages.lairCleared(heroDao, user.userId, lair.quest)
       _ <- if (!hunted) renderer.show(user, finalScreen(found))
            else for {
-             hero <- getHero(user)
-             _    <- Villages.giveHead(inventoryRepo, itemRepo, hero)
-             roll <- Random.nextIntBetween(0, 100)
-             _    <- next(user, contract, BanditAftermath(hunters = roll < VillageRates.HuntersPct), renderer, found)
+             hero      <- getHero(user)
+             _         <- Villages.giveHead(inventoryRepo, itemRepo, hero)
+             survivors <- rollSurvivors
+             roll      <- Random.nextIntBetween(0, 100)
+             _         <- next(user, contract, BanditAftermath(hunters = roll < VillageRates.HuntersPct, survivors = survivors),
+                            renderer, found)
            } yield ()
     } yield ()
+  }
+
+  /** Сдадутся ли после боя и кто: столько разных смертных рас — или никого. */
+  private def rollSurvivors: Task[List[Race]] =
+    Random.nextIntBetween(0, 100).flatMap { roll =>
+      if (roll >= VillageRates.SurvivorsPct) ZIO.succeed(List.empty[Race])
+      else ZIO.foldLeft(1 to VillageRates.SurvivorsCount)((List.empty[Race], Race.mortals.toList)) {
+        case ((picked, left), _) =>
+          Random.nextIntBounded(left.size.max(1)).map(i =>
+            left.lift(i).fold((picked, left))(r => (picked :+ r, left.filterNot(_ == r))))
+      }.map(_._1)
+    }
+
+  /** Расы словами, через запятую и «и»: «человек, эльф и мурлок». */
+  private def raceList(races: List[Race]): String = {
+    val names = races.map(_.toString.toLowerCase)
+    names.lastOption.fold("") { last =>
+      val rest = names.dropRight(1)
+      if (rest.isEmpty) last else rest.mkString(", ") + " и " + last
+    }
   }
 
   // ── После боя на заставе ────────────────────────────────────────────────────
@@ -327,20 +357,63 @@ case class VillageLairState(
     * к старосте. */
   private def next(user: User, c: VillageContract, after: BanditAftermath, renderer: Renderer, note: String): Task[Unit] =
     if (after.done) clear(user) *> renderer.show(user, finalScreen(note))
-    else heroDao.writeSceneData(user.userId, after.asJson) *> renderer.show(user, stepScreen(c).noted(note))
+    else heroDao.writeSceneData(user.userId, after.asJson) *> renderer.show(user, stepScreen(c, after).noted(note))
 
   /** Логово разбито: что было — и как вернуться за платой. */
   private def finalScreen(note: String): Screen =
     Screen(Villages.joined(note, content.text("village.lair.returnHint")), List(outChoice))
 
-  /** На выходе с заставы — охотники за головами: отдать голову или драться. */
-  private def stepScreen(c: VillageContract): Screen =
-    Screen(
-      Villages.joined(content.format(key("hunters.intro"), Villages.args(content, c): _*), content.text("village.lair.noEscape")),
-      List(
-        content.choice(s"${ids}HuntersGive", key("hunters.giveLabel")).copy(row = Some(0)),
-        content.choice(s"${ids}HuntersFight", key("hunters.fightLabel")).copy(row = Some(0)),
-        content.choice("OpenCharacter", "village.lair.characterLabel").copy(row = Some(1))))
+  /** Что ждёт на заставе сейчас: сдавшиеся — перерезать или отпустить; на
+    * выходе — охотники за головами: отдать голову или драться. */
+  private def stepScreen(c: VillageContract, a: BanditAftermath): Screen =
+    if (a.survivors.nonEmpty)
+      Screen(
+        content.format(key("survivors.intro"), Villages.args(content, c) :+ ("survivors" -> raceList(a.survivors)): _*),
+        List(
+          content.choice(s"${ids}SurvivorsKill", key("survivors.killLabel")).copy(row = Some(0)),
+          content.choice(s"${ids}SurvivorsSpare", key("survivors.spareLabel")).copy(row = Some(0)),
+          content.choice("OpenCharacter", "village.lair.characterLabel").copy(row = Some(1))))
+    else
+      Screen(
+        Villages.joined(content.format(key("hunters.intro"), Villages.args(content, c): _*), content.text("village.lair.noEscape")),
+        List(
+          content.choice(s"${ids}HuntersGive", key("hunters.giveLabel")).copy(row = Some(0)),
+          content.choice(s"${ids}HuntersFight", key("hunters.fightLabel")).copy(row = Some(0)),
+          content.choice("OpenCharacter", "village.lair.characterLabel").copy(row = Some(1))))
+
+  /** Перерезали сдавшихся: в кошелях у каждого — немного серебра
+    * ([[VillageRates.SurvivorPursePerLvl]] за уровень задания), оно — герою. */
+  private def killSurvivors(user: User, c: VillageContract, a: BanditAftermath, renderer: Renderer): Task[StateType] =
+    if (a.survivors.isEmpty) enter(user, renderer).as(lair.scene)
+    else {
+      val purse = VillageRates.SurvivorPursePerLvl * c.level.max(1).toLong * a.survivors.size.toLong
+      for {
+        hero <- getHero(user)
+        _    <- heroDao.updateSilver(user.userId, hero.silver + purse)
+        _    <- next(user, c, a.copy(survivors = Nil), renderer, Villages.joined(
+                  content.format(key("survivors.killed"), Villages.args(content, c): _*),
+                  content.format(key("survivors.purse"), "silver" -> purse.toString)))
+      } yield lair.scene
+    }
+
+  /** Отпустили сдавшихся: один из них показывает тайник — награбленное с обозов
+    * ([[VillageRates.CacheMin]]…[[VillageRates.CacheMax]] вещей). Вещи — через
+    * экран добычи: он и вернёт сюда, к тому, что ещё ждёт на заставе. */
+  private def spareSurvivors(user: User, c: VillageContract, a: BanditAftermath, renderer: Renderer): Task[StateType] =
+    a.survivors.headOption match {
+      case None => enter(user, renderer).as(lair.scene)
+      case Some(informer) =>
+        for {
+          n    <- Random.nextIntBetween(VillageRates.CacheMin, VillageRates.CacheMax + 1)
+          seed <- Random.nextLong
+          (cache, _) = pangea.generator.loot.LootGenerator.banditCache(n, Rng(seed))
+          rest  = a.copy(survivors = Nil)
+          _    <- heroDao.writeSceneData(user.userId, LootData(cache, Nil, returnState = Some(lair.scene),
+                    eventData = Some(rest.asJson)).asJson)
+          _    <- renderer.show(user, Screen(content.format(key("survivors.spared"),
+                    Villages.args(content, c) :+ ("informer" -> informer.toString): _*), Nil))
+        } yield StateType.Loot
+    }
 
   /** Отдал голову охотникам: они уходят, доплаты за голову не будет, а за
     * логово староста всё равно заплатит. */

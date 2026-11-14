@@ -241,6 +241,15 @@ object LootGenerator {
     }
   }
 
+  /** Тайник разбойников с заставы, который показал отпущенный: `n` вещей
+    * награбленного с обозов — каждая своим броском по той же таблице
+    * ([[BanditSpoils]]). Добыча деревни и её контрактов. */
+  def banditCache(n: Int, rng: Rng): (List[Item], Rng) =
+    (1 to n.max(0)).foldLeft((List.empty[Item], rng)) { case ((acc, r), _) =>
+      val (kind, next) = pickWeighted(BanditSpoils, r)
+      (acc :+ MaterialGenerator.item(kind), next)
+    }
+
   /** Сколько бросков добычи со зверя: с обычного один, с чумного два — второй
     * пожиже. Легендарных и мифических зверей пока не водится, но если заведутся
     * — считаются как чумные. */
