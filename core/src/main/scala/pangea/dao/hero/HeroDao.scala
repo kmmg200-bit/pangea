@@ -53,6 +53,9 @@ trait HeroDao {
   /** Герои без имени, уже вышедшие из пролога: прошли его до имён (см.
     * [[pangea.service.admin.NameBackfill]]). */
   def unnamedUserIds: Task[List[UserId]]
+  /** Все герои с именем — хозяин, имя и уровень, по алфавиту: подсказки, кому
+    * предложить обмен (Mini App). */
+  def namedHeroes: Task[List[(UserId, String, Long)]]
   /** Достижения героя — ключи [[pangea.model.hero.Achievement]]. */
   def updateAchievements(userId: UserId, achievements: List[String]): Task[Unit]
   /** Дописать одно достижение, если его нет; `true` — дописали. */

@@ -469,3 +469,14 @@ export interface TradeActionView {
   note: string | null
   done: boolean
 }
+
+/** Герой в подсказках, кому предложить обмен. */
+export interface HeroNameView {
+  name: string
+  lvl: number
+}
+
+/** Все герои с именем, кроме себя, — приложение подсказывает по ним само. */
+export interface HeroNamesView {
+  heroes: HeroNameView[]
+}

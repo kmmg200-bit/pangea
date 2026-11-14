@@ -53,6 +53,10 @@ final class MiniAppRoutes(app: MiniApp) {
     case req @ GET -> Root / "api" / "app" / "trade" =>
       asPlayer(req)(hero => app.trade(hero).flatMap(view => Ok(view.asJson)))
 
+    // Имена героев — подсказки, кому предложить обмен.
+    case req @ GET -> Root / "api" / "app" / "heroes" =>
+      asPlayer(req)(hero => app.heroNames(hero).flatMap(view => Ok(view.asJson)))
+
     case req @ POST -> Root / "api" / "app" / "trade" / "propose" :? PartnerParam(partner) +& ItemsParam(items)
         +& SilverParam(silver) +& DoubloonsParam(doubloons) +& NoteParam(note) =>
       tradeAct(req, TradeAct.Propose(partner, draft(items, silver, doubloons, note)))

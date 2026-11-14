@@ -1830,6 +1830,32 @@ button.row:active {
   width: 100%;
 }
 
+.trade-hints {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.trade-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+  text-align: left;
+}
+
+.trade-hint:last-child {
+  border-bottom: 0;
+}
+
 .trade-fields {
   display: flex;
   gap: 8px;

@@ -129,6 +129,9 @@ class HeroDaoLive(xa: Transactor[Task]) extends HeroDao {
   override def unnamedUserIds: Task[List[UserId]] =
     Queries.unnamedUserIds.query[UserId].to[List].transact(xa)
 
+  override def namedHeroes: Task[List[(UserId, String, Long)]] =
+    Queries.namedHeroes.query[(UserId, String, Long)].to[List].transact(xa)
+
   override def updateName(userId: UserId, name: String): Task[Boolean] =
     Queries.updateName(userId, name).update.run
       .attemptSomeSqlState { case sqlstate.class23.UNIQUE_VIOLATION => () }

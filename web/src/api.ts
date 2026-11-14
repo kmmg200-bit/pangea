@@ -13,6 +13,7 @@ import type {
   SquadView,
   TopKind,
   TopView,
+  HeroNamesView,
   TradeActionView,
   TradeView,
 } from './types'
@@ -63,6 +64,7 @@ type TradeDraft = { items: number[]; silver: number; doubloons: number; note: st
 
 export const api = {
   trade: () => get<TradeView>('trade'),
+  heroNames: () => get<HeroNamesView>('heroes'),
   tradePropose: (partner: string, d: TradeDraft) =>
     post<TradeActionView>(`trade/propose?partner=${encodeURIComponent(partner)}&${tradeQuery(d)}`),
   tradeAnswer: (id: number, d: TradeDraft) => post<TradeActionView>(`trade/answer?id=${id}&${tradeQuery(d)}`),

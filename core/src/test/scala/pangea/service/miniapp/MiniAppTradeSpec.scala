@@ -52,6 +52,18 @@ object MiniAppTradeSpec extends ZIOSpecDefault {
       )
     },
 
+    test("подсказки имён: все герои с именем по алфавиту, без самого игрока и без безымянных") {
+      for {
+        f     <- fx()
+        _     <- f.heroes.insertHero(pangea.test.TestFixtures.hero(pangea.model.user.UserId(3L))
+                   .copy(id = pangea.model.hero.HeroId(3L), name = None))
+        _     <- f.heroes.insertHero(pangea.test.TestFixtures.hero(pangea.model.user.UserId(4L))
+                   .copy(id = pangea.model.hero.HeroId(4L), name = Some("Ардаэль"), lvl = 12L))
+        all   <- f.heroes.namedHeroes
+        view   = MiniAppView.heroNames(alice.userId, all)
+      } yield assertTrue(view.heroes.map(_.name) == List("Ардаэль", "Борис"), view.heroes.headOption.exists(_.lvl == 12L))
+    },
+
     test("номера вещей из запроса: через запятую, мусор отбрасывается") {
       assertTrue(
         MiniApp.TradeAct.items(Some("11, 12,x,,15")) == List(11L, 12L, 15L),

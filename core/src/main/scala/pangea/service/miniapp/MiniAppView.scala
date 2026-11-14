@@ -16,6 +16,7 @@ import pangea.model.quest.NpcQuests
 import pangea.model.squad.AllyRates
 import pangea.model.top.{TopBoard, TopKind}
 import pangea.model.trade.{TradeOffer, TradeSide}
+import pangea.model.user.UserId
 import pangea.service.chat.Links
 import pangea.service.cube.AzatCube
 import pangea.service.equipment.{BeltWork, BrewWork}
@@ -212,6 +213,13 @@ object MiniAppView {
     * можно только отозвать и отклонить: герой не в городе. */
   final case class TradeView(hero: HeroView, offers: List[TradeOfferView], stock: List[TradeItemView], feePct: Long,
                              minMoney: Long, maxNote: Int, away: Option[String])
+
+  /** Герой в подсказках, кому предложить обмен. */
+  final case class HeroNameView(name: String, lvl: Long)
+
+  /** Все герои с именем, по алфавиту, кроме того, кто спрашивает: приложение
+    * подсказывает по ним само, по мере ввода. */
+  final case class HeroNamesView(heroes: List[HeroNameView])
 
   /** Ответ на действие с обменом: обмен после него и что сказать; `done` —
     * сделано (нет — `note` объясняет отказ). */
@@ -435,6 +443,8 @@ object MiniAppView {
   implicit val tradeOfferEncoder:  Encoder[TradeOfferView]  = deriveEncoder
   implicit val tradeEncoder:       Encoder[TradeView]       = deriveEncoder
   implicit val tradeActionEncoder: Encoder[TradeActionView] = deriveEncoder
+  implicit val heroNameEncoder:    Encoder[HeroNameView]    = deriveEncoder
+  implicit val heroNamesEncoder:   Encoder[HeroNamesView]   = deriveEncoder
   implicit val statEncoder:      Encoder[StatView]      = deriveEncoder
   implicit val poolEncoder:      Encoder[PoolView]      = deriveEncoder
   implicit val traumaEncoder:    Encoder[TraumaView]    = deriveEncoder
@@ -483,6 +493,10 @@ object MiniAppView {
       maxNote  = Trades.MaxNote,
       away     = Option.unless(MiniApp.inCity(h))(content.text("trade.notInCity")))
   }
+
+  /** Подсказки имён: все, у кого имя есть, кроме самого игрока. */
+  def heroNames(self: UserId, all: List[(UserId, String, Long)]): HeroNamesView =
+    HeroNamesView(all.collect { case (user, name, lvl) if user != self => HeroNameView(name, lvl) })
 
   /** Стопками, как в сумке, — и у каждой номера всех её вещей. */
   private def withIds(items: List[Item], describe: Item => String): List[TradeItemView] =

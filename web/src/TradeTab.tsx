@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from './api'
-import type { ItemView, TradeActionView, TradeItemView, TradeOfferView, TradeSideView, TradeView } from './types'
+import type { HeroNameView, ItemView, TradeActionView, TradeItemView, TradeOfferView, TradeSideView, TradeView } from './types'
 import { Empty, ItemRow, ItemText, Sheet, num, useToast } from './ui'
 
 /** Сколько ещё ждать: «2 дн. 5 ч», «3 ч 10 мин», «меньше минуты». */
@@ -16,6 +16,35 @@ function left(ms: number): string {
 
 /** Только цифры: суммы пишут числом. */
 const digits = (s: string) => s.replace(/\D/g, '').slice(0, 9)
+
+/** Имя для сравнения: без регистра, «ё» как «е». */
+const norm = (s: string) => s.trim().toLowerCase().replace(/ё/g, 'е')
+
+/** Подсказки по набранному: сперва имена с такого начала, потом — где оно
+  * внутри, не больше шести. Набранное совпало с именем целиком — подсказывать
+  * нечего. */
+function suggest(heroes: HeroNameView[], typed: string): HeroNameView[] {
+  const q = norm(typed)
+  if (!q || heroes.some((h) => norm(h.name) === q)) return []
+  const starts = heroes.filter((h) => norm(h.name).startsWith(q))
+  const inside = heroes.filter((h) => !norm(h.name).startsWith(q) && norm(h.name).includes(q))
+  return [...starts, ...inside].slice(0, 6)
+}
+
+/** Имена героев — один раз на всё время работы: меняются они редко. Не
+  * загрузились — подсказок нет, имя пишут целиком, а в следующий раз попробуем
+  * снова. */
+let heroNames: Promise<HeroNameView[]> | null = null
+function loadHeroNames(): Promise<HeroNameView[]> {
+  heroNames ??= api
+    .heroNames()
+    .then((v) => v.heroes)
+    .catch(() => {
+      heroNames = null
+      return []
+    })
+  return heroNames
+}
 
 /** Своя сторона в работе: номера вещей, суммы — как в полях, записка. `offer` —
   * ответ на это предложение; нет — новое, партнёру `partner`. */
@@ -82,6 +111,11 @@ function Editor(props: {
   onClose: () => void
 }) {
   const { data, offer, draft, busy } = props
+  const [names, setNames] = useState<HeroNameView[]>([])
+  useEffect(() => {
+    if (!offer) loadHeroNames().then(setNames)
+  }, [offer])
+  const hints = offer ? [] : suggest(names, draft.partner)
   // Откуда берутся вещи: что уже в закладе и что при герое.
   const pool: TradeItemView[] = [...(offer?.mine.items ?? []), ...data.stock]
   const chosen = pool
@@ -107,6 +141,16 @@ function Editor(props: {
             value={draft.partner}
             onChange={(e) => set({ partner: e.target.value })}
           />
+        )}
+        {hints.length > 0 && (
+          <div className="trade-hints">
+            {hints.map((h) => (
+              <button key={h.name} className="trade-hint" onClick={() => set({ partner: h.name })}>
+                <span>{h.name}</span>
+                <span className="lvl">ур. {num(h.lvl)}</span>
+              </button>
+            ))}
+          </div>
         )}
         <div className="sub-title">Вы кладёте</div>
         {chosen.length === 0 ? (

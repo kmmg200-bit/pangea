@@ -166,6 +166,9 @@ object Queries {
   def unnamedUserIds: Fragment =
     sql"select user_id from $tableName where name is null and state <> ${StateType.Registration: StateType} order by user_id"
 
+  def namedHeroes: Fragment =
+    sql"select user_id, name, lvl from $tableName where name is not null order by lower(name)"
+
   /** Занято ли имя другим героем — без учёта регистра, как уникальный индекс. */
   def nameTaken(userId: UserId, name: String): Fragment =
     sql"select exists(select 1 from $tableName where lower(name) = lower($name) and user_id <> $userId)"

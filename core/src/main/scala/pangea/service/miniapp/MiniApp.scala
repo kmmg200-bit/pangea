@@ -31,7 +31,7 @@ import pangea.repository.user.UserRepository
 import pangea.service.auction.AuctionPurchase
 import pangea.service.cube.AzatCube
 import pangea.service.equipment.{BeltWork, BrewWork, BundleWork, GemWork, Outfit}
-import pangea.service.miniapp.MiniAppView.{TradeActionView, TradeView, AuctionActionView, AuctionView, CharacterView, CraftActionView, CraftView,
+import pangea.service.miniapp.MiniAppView.{HeroNamesView, TradeActionView, TradeView, AuctionActionView, AuctionView, CharacterView, CraftActionView, CraftView,
   InventoryActionView, InventoryView, QuestActionView, QuestsView, SquadActionView, SquadView, TopView}
 import pangea.service.parcel.Transfers
 import pangea.service.payout.Payouts
@@ -75,6 +75,9 @@ trait MiniApp {
 
   /** Обмен: открытые предложения, что при герое можно положить, правила. */
   def trade(hero: Hero): Task[TradeView]
+
+  /** Имена героев — подсказки, кому предложить обмен; себя в списке нет. */
+  def heroNames(hero: Hero): Task[HeroNamesView]
 
   /** Действие с обменом — под локом игрока, как ход в чате; правила — у
     * [[pangea.service.trade.Trades]]. */
@@ -470,6 +473,9 @@ final class MiniAppLive(
       describe <- describer(hero)
       ms       <- now
     } yield MiniAppView.trade(hero, offers, names, held.filter(transfers.sendable), content, describe, trades.describe, ms)
+
+  override def heroNames(hero: Hero): Task[HeroNamesView] =
+    heroDao.namedHeroes.map(MiniAppView.heroNames(hero.userId, _))
 
   /** Под локом игрока, героя перечитываем уже под ним. Отказ сервиса — словами
     * в ответе; сделано — что сделано. */
