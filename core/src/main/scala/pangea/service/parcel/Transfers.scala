@@ -59,8 +59,9 @@ final case class Transfers(
 
   /** Убрать вещь оттуда, где она при герое: из сумки, а нет её там — из
     * ларца, Живой сумки или шкафа. Нет и там — снимаем из сумки, как раньше:
-    * сумка и откажет, что такой вещи в ней нет. */
-  private def takeCarried(hero: Hero, item: Item): Task[Unit] =
+    * сумка и откажет, что такой вещи в ней нет. Тем же путём кладёт вещи в
+    * заклад обмен (см. `Trades`). */
+  def takeCarried(hero: Hero, item: Item): Task[Unit] =
     inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
       val stores =
         if (inv.items.data.exists(_.id == item.id)) Nil

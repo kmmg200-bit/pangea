@@ -120,6 +120,9 @@ class TestHeroDao(
   def updateTopHiddenUntil(userId: UserId, until: Option[Long]): Task[Unit] =
     topHiddenRef.update(m => until.fold(m - userId)(u => m.updated(userId, u)))
 
+  def heroByName(name: String): Task[Option[Hero]] =
+    heroRef.get.map(_.values.find(_.name.exists(_.equalsIgnoreCase(name))))
+
   def nameTaken(userId: UserId, name: String): Task[Boolean] =
     heroRef.get.map(_.exists { case (id, h) => id != userId && h.name.exists(_.equalsIgnoreCase(name)) })
 

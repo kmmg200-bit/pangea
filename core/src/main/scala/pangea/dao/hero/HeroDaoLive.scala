@@ -120,6 +120,9 @@ class HeroDaoLive(xa: Transactor[Task]) extends HeroDao {
   override def updateTopHiddenUntil(userId: UserId, until: Option[Long]): Task[Unit] =
     Queries.updateTopHiddenUntil(userId, until).update.run.transact(xa).unit
 
+  override def heroByName(name: String): Task[Option[Hero]] =
+    Queries.heroByName(name).query[Hero].option.transact(xa)
+
   override def nameTaken(userId: UserId, name: String): Task[Boolean] =
     Queries.nameTaken(userId, name).query[Boolean].unique.transact(xa)
 

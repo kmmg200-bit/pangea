@@ -24,6 +24,7 @@ import pangea.dao.item.ItemDao
 import pangea.dao.journal.JournalLive
 import pangea.dao.schedule.ScheduledTaskDao
 import pangea.dao.sendfailure.SendFailureDao
+import pangea.dao.trade.TradeDao
 import pangea.dao.user.UserDao
 import pangea.dao.vk.VkInboxDao
 import pangea.engine.{Players, SceneContent}
@@ -36,6 +37,7 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.repository.user.UserRepository
 import pangea.client.tbank.{TBankClient, TBankConfig}
+import pangea.service.trade.Trades
 import pangea.service.{Background, Leader}
 import pangea.dao.lock.AdvisoryLocks
 import pangea.metrics.GameMetrics
@@ -77,7 +79,7 @@ object Main extends ZIOAppDefault {
   private type Env =
     SchedulerPoller with Donations with ActivityContest with Transfers with Background with PrometheusPublisher
       with VkConfig with VkLongPoll with VkLongPoll.Guilds with VkInboxDao with InboxWorker with VkIngest
-      with ServerConfig with AdminConfig with MiniApp with Leader
+      with ServerConfig with AdminConfig with MiniApp with Leader with Trades
 
   /** Сборщик: только приём событий ВК в очередь — без игры. */
   private type CollectorEnv =
@@ -158,6 +160,8 @@ object Main extends ZIOAppDefault {
       PlayerLock.live,
       Leader.live,
       Transfers.live,
+      TradeDao.live,
+      Trades.live,
       StateHandler.live,
       Scheduler.live,
       SchedulerPoller.live,
@@ -202,6 +206,13 @@ object Main extends ZIOAppDefault {
   private def mailLoop(background: Background) =
     ZIO.serviceWithZIO[Transfers] { transfers =>
       leaderRepeat(background, 1.minute, "Обход почты упал")(now.flatMap(transfers.mailRound))
+    }
+
+  /** Обмен: срок предложения вышел — закрыть его и вернуть заклады хозяевам.
+    * Минута — лишь задержка после срока. */
+  private def tradesLoop(background: Background) =
+    ZIO.serviceWithZIO[Trades] { trades =>
+      leaderRepeat(background, 1.minute, "Обход обменов упал")(now.flatMap(trades.expire))
     }
 
   /** Отложенные события: готовые задачи из очереди — каждые пять секунд. */
@@ -277,6 +288,7 @@ object Main extends ZIOAppDefault {
         reconcileLoop(background) *>
         contestLoop(background) *>
         mailLoop(background) *>
+        tradesLoop(background) *>
         inboxLoop(background) *>
         inboxCleanupLoop(background) *>
         ZIO.when(vk)(longPollLoop(background) *> guildsLoop(background)) *>

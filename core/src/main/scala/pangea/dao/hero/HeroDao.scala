@@ -43,6 +43,10 @@ trait HeroDao {
   def updateTopHiddenUntil(userId: UserId, until: Option[Long]): Task[Unit]
   /** Занято ли имя другим героем (без учёта регистра). */
   def nameTaken(userId: UserId, name: String): Task[Boolean]
+
+  /** Герой по имени — без учёта регистра: имена уникальны так же (см. миграцию
+    * hero_name). */
+  def heroByName(name: String): Task[Option[Hero]]
   /** Дать герою имя. `false` — его только что занял другой: уникальность
     * держит индекс в базе, так что двое одно имя не получат. */
   def updateName(userId: UserId, name: String): Task[Boolean]
