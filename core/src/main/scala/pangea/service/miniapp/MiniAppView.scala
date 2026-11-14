@@ -15,9 +15,11 @@ import pangea.model.monster.Race
 import pangea.model.quest.NpcQuests
 import pangea.model.squad.AllyRates
 import pangea.model.top.{TopBoard, TopKind}
+import pangea.model.trade.{TradeOffer, TradeSide}
 import pangea.service.chat.Links
 import pangea.service.cube.AzatCube
 import pangea.service.equipment.{BeltWork, BrewWork}
+import pangea.service.parcel.Transfers
 import pangea.service.state.{HerbLore, ItemMenu, QuestCard, QuestJournal, QuestsDone}
 import pangea.service.storage.ItemStore.Place
 import pangea.service.state.states.{EquipmentState, InventoryState}
@@ -25,6 +27,7 @@ import pangea.service.state.states.hero.SkillsState
 import pangea.service.state.states.home.{RuneAltarState, TrophyWallState}
 import pangea.service.state.states.temple.HallAzatState
 import pangea.service.state.states.hero.SkillsState.SkillEntry
+import pangea.service.trade.Trades
 import pangea.util.TimeLeft
 
 /** Что видит Mini App: те же вещи, что и бот, но данными, а не экраном.
@@ -190,6 +193,29 @@ object MiniAppView {
     bagActs:    List[BagActView],
     drops:      List[DropView]
   )
+
+  /** Вещь в обмене и номера всех таких же: стопку кладут по одной. */
+  final case class TradeItemView(item: ItemView, ids: List[Long])
+
+  /** Сторона обмена: вещи, деньги, записка и всё это одной строкой (`summary`). */
+  final case class TradeSideView(items: List[TradeItemView], silver: Long, doubloons: Long, note: Option[String],
+                                 summary: String)
+
+  /** Предложение обмена глазами игрока: `mine` — что он отдаёт, `theirs` — что
+    * получает; `yourTurn` — можно принять и поменять своё; `proposed` — его
+    * предложение (отзывают), а не ему (отклоняют); `leftMs` — сколько ещё ждать. */
+  final case class TradeOfferView(id: Long, partner: String, mine: TradeSideView, theirs: TradeSideView,
+                                  yourTurn: Boolean, proposed: Boolean, leftMs: Long)
+
+  /** Обмен: открытые предложения, что при герое можно положить (`stock`), и
+    * правила: комиссия, наименьшая сумма, длина записки. `away` — почему сейчас
+    * можно только отозвать и отклонить: герой не в городе. */
+  final case class TradeView(hero: HeroView, offers: List[TradeOfferView], stock: List[TradeItemView], feePct: Long,
+                             minMoney: Long, maxNote: Int, away: Option[String])
+
+  /** Ответ на действие с обменом: обмен после него и что сказать; `done` —
+    * сделано (нет — `note` объясняет отказ). */
+  final case class TradeActionView(trade: TradeView, note: Option[String], done: Boolean)
 
   /** Ответ на «надеть» или «снять»: вещи после этого и что сказать. */
   final case class InventoryActionView(inventory: InventoryView, note: Option[String])
@@ -404,6 +430,11 @@ object MiniAppView {
   implicit val lotEncoder:       Encoder[LotView]       = deriveEncoder
   implicit val auctionEncoder:   Encoder[AuctionView]   = deriveEncoder
   implicit val auctionActionEncoder: Encoder[AuctionActionView] = deriveEncoder
+  implicit val tradeItemEncoder:   Encoder[TradeItemView]   = deriveEncoder
+  implicit val tradeSideEncoder:   Encoder[TradeSideView]   = deriveEncoder
+  implicit val tradeOfferEncoder:  Encoder[TradeOfferView]  = deriveEncoder
+  implicit val tradeEncoder:       Encoder[TradeView]       = deriveEncoder
+  implicit val tradeActionEncoder: Encoder[TradeActionView] = deriveEncoder
   implicit val statEncoder:      Encoder[StatView]      = deriveEncoder
   implicit val poolEncoder:      Encoder[PoolView]      = deriveEncoder
   implicit val traumaEncoder:    Encoder[TraumaView]    = deriveEncoder
@@ -429,6 +460,36 @@ object MiniAppView {
   implicit val cubeEncoder:      Encoder[CubeView]      = deriveEncoder
   implicit val craftEncoder:     Encoder[CraftView]     = deriveEncoder
   implicit val craftActEncoder:  Encoder[CraftActionView] = deriveEncoder
+
+  /** Обмен глазами героя `h`: предложения — свежие первыми, с именем партнёра
+    * (`names` — по номеру предложения), что при нём передаётся — стопками, с
+    * номерами вещей. `summary` — сторона одной строкой, как в боте. */
+  def trade(h: Hero, offers: List[TradeOffer], names: Map[Long, String], stock: List[Item], content: SceneContent,
+            describe: Item => String, summary: TradeSide => String, now: Long): TradeView = {
+    def side(s: TradeSide) = TradeSideView(withIds(s.items, describe), s.silver, s.doubloons, s.note, summary(s))
+    TradeView(
+      hero     = hero(h),
+      offers   = offers.map(o => TradeOfferView(
+                   id       = o.id,
+                   partner  = names.getOrElse(o.id, content.text("transfer.someone")),
+                   mine     = side(o.sideOf(h.userId)),
+                   theirs   = side(o.sideOf(o.partnerOf(h.userId))),
+                   yourTurn = o.turn == h.userId,
+                   proposed = o.from == h.userId,
+                   leftMs   = (o.expiresAt - now).max(0L))),
+      stock    = withIds(stock, describe),
+      feePct   = Transfers.FeePct,
+      minMoney = Transfers.MinMoney,
+      maxNote  = Trades.MaxNote,
+      away     = Option.unless(MiniApp.inCity(h))(content.text("trade.notInCity")))
+  }
+
+  /** Стопками, как в сумке, — и у каждой номера всех её вещей. */
+  private def withIds(items: List[Item], describe: Item => String): List[TradeItemView] =
+    ItemStack.grouped(items).map { case (rep, count) =>
+      val ids = ItemStack.key(rep).fold(List(rep.id))(k => items.filter(i => ItemStack.key(i).contains(k)).map(_.id))
+      TradeItemView(view(rep, count, describe(rep)), ids)
+    }
 
   def hero(h: Hero): HeroView = HeroView(h.lvl, h.silver, h.doubloons, h.name, h.raceName)
 

@@ -308,7 +308,8 @@ final class Trades(dao: TradeDao, transfers: Transfers, parcels: Parcels, bank: 
   private def write(userId: UserId, text: String): Task[Unit] =
     userRepo.getUserById(userId).flatMap(ZIO.foreachDiscard(_)(players.notify(_, text).ignore))
 
-  private def nameOf(userId: UserId): Task[String] =
+  /** Как назвать игрока в обмене: имя героя, а нет его — имя из ВК. */
+  def nameOf(userId: UserId): Task[String] =
     userRepo.getUserById(userId).flatMap {
       case Some(user) => players.getDisplayName(user).orElse(ZIO.succeed(content.text("transfer.someone")))
       case None       => ZIO.succeed(content.text("transfer.someone"))

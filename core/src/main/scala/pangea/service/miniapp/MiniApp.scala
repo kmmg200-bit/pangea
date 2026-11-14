@@ -18,6 +18,7 @@ import pangea.model.monster.Race
 import pangea.model.quest.NpcQuests
 import pangea.model.state.StateType
 import pangea.model.top.{TopBoard, TopKind}
+import pangea.model.trade.TradeStatus
 import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.auction.AuctionRepository
@@ -30,8 +31,9 @@ import pangea.repository.user.UserRepository
 import pangea.service.auction.AuctionPurchase
 import pangea.service.cube.AzatCube
 import pangea.service.equipment.{BeltWork, BrewWork, BundleWork, GemWork, Outfit}
-import pangea.service.miniapp.MiniAppView.{AuctionActionView, AuctionView, CharacterView, CraftActionView, CraftView,
+import pangea.service.miniapp.MiniAppView.{TradeActionView, TradeView, AuctionActionView, AuctionView, CharacterView, CraftActionView, CraftView,
   InventoryActionView, InventoryView, QuestActionView, QuestsView, SquadActionView, SquadView, TopView}
+import pangea.service.parcel.Transfers
 import pangea.service.payout.Payouts
 import pangea.service.squad.SquadOrders
 import pangea.service.storage.ItemStore
@@ -40,6 +42,7 @@ import pangea.service.state.{AzatData, BarrelRobbery, HerbLore, NpcQuestLog, Pla
   SceneDoor, SquadDuty, StackMove}
 import pangea.service.state.states.{EquipmentState, InventoryState}
 import pangea.service.state.states.home.Racks
+import pangea.service.trade.Trades
 import zio.{Ref, Task, ZIO, ZLayer}
 
 import java.util.concurrent.TimeUnit
@@ -69,6 +72,13 @@ trait MiniApp {
   def inventory(hero: Hero): Task[InventoryView]
 
   def auction(hero: Hero): Task[AuctionView]
+
+  /** Обмен: открытые предложения, что при герое можно положить, правила. */
+  def trade(hero: Hero): Task[TradeView]
+
+  /** Действие с обменом — под локом игрока, как ход в чате; правила — у
+    * [[pangea.service.trade.Trades]]. */
+  def tradeAct(hero: Hero, act: MiniApp.TradeAct): Task[TradeActionView]
 
   /** Купить лот — как в Торговом доме: вещь в сумку. Ответ — витрина после
     * покупки и что сказать. */
@@ -183,6 +193,20 @@ object MiniApp {
     final case class BeltTake(slot: Int) extends GearAct
   }
 
+  /** Что делают с обменом: предлагают герою по имени, отвечают своей стороной,
+    * принимают, отзывают или отклоняют. */
+  sealed trait TradeAct
+  object TradeAct {
+    final case class Propose(partner: String, draft: Trades.Draft) extends TradeAct
+    final case class Answer(id: Long, draft: Trades.Draft)         extends TradeAct
+    final case class Accept(id: Long)                              extends TradeAct
+    final case class Cancel(id: Long)                              extends TradeAct
+
+    /** Номера вещей из запроса: «11,12,15»; мусор отбрасывается. */
+    def items(raw: Option[String]): List[Long] =
+      raw.toList.flatMap(_.split(',').toList).flatMap(_.trim.toLongOption)
+  }
+
   /** Что делают с отваром из сумки. На что тратить — травму, род, ячейку фляги —
     * игрок выбрал из того, что прислал бот ([[MiniAppView.BrewAskView]]). */
   sealed trait BrewAct
@@ -268,7 +292,7 @@ object MiniApp {
                      with HeroDao with ArtifactDao with BarrelDao with BankVaultDao with TopDao with QuestOutcomeDao
                      with ItemRepository with BankRepository with ArtifactRepository with BarrelRepository
                      with Payouts with Players with PlayerLock with SceneDoor
-                     with SceneContent, Nothing, MiniApp] =
+                     with SceneContent with Trades with Transfers, Nothing, MiniApp] =
     ZLayer {
       for {
         config      <- ZIO.service[MiniAppConfig]
@@ -290,6 +314,8 @@ object MiniApp {
         players     <- ZIO.service[Players]
         lock        <- ZIO.service[PlayerLock]
         door        <- ZIO.service[SceneDoor]
+        trades      <- ZIO.service[Trades]
+        transfers   <- ZIO.service[Transfers]
         content     <- ZIO.service[SceneContent]
         topCache    <- Ref.make(Map.empty[TopKind, CachedTop])
       } yield new MiniAppLive(config, users, heroes, inventories, lots, heroDao, artifacts, barrels, vaults, content,
@@ -300,7 +326,8 @@ object MiniApp {
         new BundleWork(inventories, items, content), new SquadOrders(heroDao, content),
         new ItemStore.All(heroDao, inventories, artifactRepo, barrelRepo, bank, content),
         new BarrelRobbery(heroDao, barrelRepo, items, content), lock,
-        new AppQuests(heroDao, inventories, new QuestCard(heroDao, inventories, items, content), content, door))
+        new AppQuests(heroDao, inventories, new QuestCard(heroDao, inventories, items, content), content, door),
+        trades, transfers)
     }
 }
 
@@ -329,9 +356,11 @@ final class MiniAppLive(
   places:      ItemStore.All,
   robbery:     BarrelRobbery,
   lock:        PlayerLock,
-  appQuests:   AppQuests
+  appQuests:   AppQuests,
+  trades:      Trades,
+  transfers:   Transfers
 ) extends MiniApp {
-  import MiniApp.{BrewAct, CubeAct, Denied, GearAct, Outcome, SquadAct}
+  import MiniApp.{BrewAct, CubeAct, Denied, GearAct, Outcome, SquadAct, TradeAct}
 
   override def player(launchParams: String): Task[Either[Denied, Hero]] =
     config.vkSecret.map(_.trim).filter(_.nonEmpty) match {
@@ -430,6 +459,43 @@ final class MiniAppLive(
       describe <- describer(hero)
     } yield MiniAppView.auction(hero, onSale, mine, ms, describe,
       MiniAppView.Funds(hero.silver + vault, inv.freeSlots), content)
+
+  /** Обмен: открытые предложения с именами партнёров, что при герое передаётся
+    * (из этого кладут свою сторону) и правила. */
+  override def trade(hero: Hero): Task[TradeView] =
+    for {
+      offers   <- trades.open(hero.userId)
+      names    <- ZIO.foreach(offers)(o => trades.nameOf(o.partnerOf(hero.userId)).map(o.id -> _)).map(_.toMap)
+      held     <- transfers.carried(hero)
+      describe <- describer(hero)
+      ms       <- now
+    } yield MiniAppView.trade(hero, offers, names, held.filter(transfers.sendable), content, describe, trades.describe, ms)
+
+  /** Под локом игрока, героя перечитываем уже под ним. Отказ сервиса — словами
+    * в ответе; сделано — что сделано. */
+  override def tradeAct(hero: Hero, act: TradeAct): Task[TradeActionView] =
+    lock.withLock(hero.userId) {
+      for {
+        fresh <- heroes.getHero(hero.userId).someOrFail(new Throwable(s"Нет героя у игрока ${hero.userId.value}"))
+        user  <- users.getUserById(fresh.userId).someOrFail(new Throwable(s"Нет игрока ${fresh.userId.value}"))
+        ms    <- now
+        said  <- act match {
+                   case TradeAct.Propose(partner, draft) =>
+                     trades.propose(user, fresh, partner, draft, ms).map(_.map(_ => content.text("trade.done.sent")))
+                   case TradeAct.Answer(id, draft) =>
+                     trades.answer(user, fresh, id, draft, ms).map(_.map(_ => content.text("trade.done.answered")))
+                   case TradeAct.Accept(id) =>
+                     trades.accept(user, fresh, id, ms).map(_.map(o => content.format("trade.done.accepted",
+                       "got" -> trades.describe(o.sideOf(o.partnerOf(user.userId))))))
+                   case TradeAct.Cancel(id) =>
+                     trades.cancel(user, id, ms).map(_.map(o => content.text(
+                       if (o.status == TradeStatus.Cancelled) "trade.done.cancelled" else "trade.done.declined")))
+                 }
+      } yield fresh -> said
+    }.flatMap { case (fresh, said) =>
+      heroes.getHero(fresh.userId).map(_.getOrElse(fresh)).flatMap(trade)
+        .map(TradeActionView(_, Some(said.merge), said.isRight))
+    }
 
   /** Под локом покупателя, героя перечитываем уже под ним. Не в городе —
     * ничего не трогаем, говорим почему. */

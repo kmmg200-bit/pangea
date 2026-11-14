@@ -9,7 +9,8 @@ import org.typelevel.ci.CIStringSyntax
 import pangea.model.hero.Hero
 import pangea.model.top.TopKind
 import pangea.service.miniapp.{MiniApp, VkLaunchParams}
-import pangea.service.miniapp.MiniApp.{CubeAct, Denied, GearAct, SquadAct}
+import pangea.service.miniapp.MiniApp.{CubeAct, Denied, GearAct, SquadAct, TradeAct}
+import pangea.service.trade.Trades
 import pangea.service.miniapp.MiniAppView._
 import zio.Task
 import zio.interop.catz._
@@ -47,6 +48,24 @@ final class MiniAppRoutes(app: MiniApp) {
 
     case req @ GET -> Root / "api" / "app" / "auction" =>
       asPlayer(req)(hero => app.auction(hero).flatMap(view => Ok(view.asJson)))
+
+    // Обмен: что открыто и что можно положить; действия меняют игру — только POST.
+    case req @ GET -> Root / "api" / "app" / "trade" =>
+      asPlayer(req)(hero => app.trade(hero).flatMap(view => Ok(view.asJson)))
+
+    case req @ POST -> Root / "api" / "app" / "trade" / "propose" :? PartnerParam(partner) +& ItemsParam(items)
+        +& SilverParam(silver) +& DoubloonsParam(doubloons) +& NoteParam(note) =>
+      tradeAct(req, TradeAct.Propose(partner, draft(items, silver, doubloons, note)))
+
+    case req @ POST -> Root / "api" / "app" / "trade" / "answer" :? OfferParam(id) +& ItemsParam(items)
+        +& SilverParam(silver) +& DoubloonsParam(doubloons) +& NoteParam(note) =>
+      tradeAct(req, TradeAct.Answer(id, draft(items, silver, doubloons, note)))
+
+    case req @ POST -> Root / "api" / "app" / "trade" / "accept" :? OfferParam(id) =>
+      tradeAct(req, TradeAct.Accept(id))
+
+    case req @ POST -> Root / "api" / "app" / "trade" / "cancel" :? OfferParam(id) =>
+      tradeAct(req, TradeAct.Cancel(id))
 
     // Снаряжение: надеть вещь из сумки в слот, снять надетое. Меняют игру —
     // только POST.
@@ -181,6 +200,19 @@ final class MiniAppRoutes(app: MiniApp) {
   }
 
   private def error(code: String): Json = Json.obj("error" -> Json.fromString(code))
+
+  private def tradeAct(req: Request[Task], act: TradeAct): Task[Response[Task]] =
+    asPlayer(req)(hero => app.tradeAct(hero, act).flatMap(view => Ok(view.asJson)))
+
+  private def draft(items: Option[String], silver: Option[Long], doubloons: Option[Long], note: Option[String]) =
+    Trades.Draft(TradeAct.items(items), silver.getOrElse(0L), doubloons.getOrElse(0L), note)
+
+  private object PartnerParam   extends QueryParamDecoderMatcher[String]("partner")
+  private object OfferParam     extends QueryParamDecoderMatcher[Long]("id")
+  private object ItemsParam     extends OptionalQueryParamDecoderMatcher[String]("items")
+  private object SilverParam    extends OptionalQueryParamDecoderMatcher[Long]("silver")
+  private object DoubloonsParam extends OptionalQueryParamDecoderMatcher[Long]("doubloons")
+  private object NoteParam      extends OptionalQueryParamDecoderMatcher[String]("note")
 
   private object KindParam extends OptionalQueryParamDecoderMatcher[String]("kind")
   private object ItemParam extends QueryParamDecoderMatcher[Long]("item")
