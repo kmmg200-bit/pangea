@@ -232,19 +232,24 @@ case class BartiHouseState(
   /** Мешок оплачен: вещи — уровня героя, травы — какими он их видит; каждая со
     * своим номером из базы, по местам — как добыча: травы в Живую сумку, камни в
     * Ларец, прочее — в сумку. Что не влезло (невесомого уже предел) — строкой
-    * отказа, как в добыче. Мешок — строкой в журнал. */
+    * отказа, как в добыче. Дублоны из кошельков — сразу в кошель героя. Мешок —
+    * строкой в журнал. */
   private def openSack(user: User, hero: Hero, items: ItemRepository, left: Long, renderer: Renderer): Task[Unit] =
     for {
       lore      <- HerbLore.readLore(heroDao, user.userId)
       seed      <- Random.nextLong
-      sack       = BartiLottery.sack(hero.lvl, lore, Rng(seed))._1
-      persisted <- ZIO.foreach(sack)(items.persist(hero.id, _))
+      finds      = BartiLottery.sack(hero.lvl, lore, Rng(seed))._1
+      persisted <- ZIO.foreach(BartiLottery.items(finds))(items.persist(hero.id, _))
       results   <- ZIO.foreach(persisted)(i => ArtifactIntake.accept(artifacts, inventoryRepo, hero.id, i).map(i -> _))
-      _         <- logSack(user, persisted)
+      coins      = BartiLottery.doubloons(finds)
+      _         <- ZIO.when(coins > 0L)(heroDao.updateDoubloons(user.userId, hero.doubloons + coins))
+      _         <- logSack(user, persisted, coins)
+      purses     = finds.collect { case BartiLottery.Find.Purse(d) =>
+                     "• " + content.format("barti.lottery.purse", "doubloons" -> d.toString) }
       lines      = results.collect {
                      case (i, Intake.ToInventory)            => "• " + i.displayTitle
                      case (i, Intake.ToArtifact(kind, free)) => "• " + ArtifactIntake.line(content, i, kind, free)
-                   }
+                   } ++ purses
       lost       = results.collect { case (i, Intake.Refused) => InventoryFeedback.refusalLine(content, i) }.distinct
       slots     <- InventoryFeedback.freeSlotsLine(inventoryRepo, content, hero.id)
       luck       = Option.when(BartiLottery.jackpot(persisted))(content.text("barti.lottery.jackpot").trim)
@@ -256,10 +261,11 @@ case class BartiHouseState(
 
   /** Мешок — в журнал событий: по нему лимит на сутки и учёт в админ-панели. Не
     * записался — покупка от этого не рушится, только в лог. */
-  private def logSack(user: User, sack: List[Item]): Task[Unit] =
+  private def logSack(user: User, sack: List[Item], doubloons: Long): Task[Unit] =
     journal.fold(ZIO.unit)(_.append(GameEvent(user.userId, GameEvent.BartiLottery, Json.obj(
-      "price" -> BartiLottery.Price.asJson,
-      "items" -> sack.map(_.name).asJson)))
+      "price"     -> BartiLottery.Price.asJson,
+      "items"     -> sack.map(_.name).asJson,
+      "doubloons" -> doubloons.asJson)))
       .catchAllCause(cause => ZIO.logErrorCause("мешок Барти не записан в журнал", cause)))
 
   /** «Наутро» с экрана дома: Барти читает о себе в книге — или в дверь уже

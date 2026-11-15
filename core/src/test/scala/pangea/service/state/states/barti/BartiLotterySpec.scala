@@ -19,8 +19,8 @@ import zio.ZIO
 import zio.test._
 
 /** Серебряная лотерея Барти: мешок конфиската наудачу за 5000 серебра — десять
-  * вещей, больше всего хлама, цветов и ингредиентов; до десяти мешков в сутки,
-  * дальше — «конфиската на сегодня нет». */
+  * находок, больше всего хлама, цветов и ингредиентов, изредка — кошелёк с
+  * дублонами; до десяти мешков в сутки, дальше — «конфиската на сегодня нет». */
 object BartiLotterySpec extends ZIOSpecDefault {
 
   private val userId   = UserId(1L)
@@ -55,17 +55,24 @@ object BartiLotterySpec extends ZIOSpecDefault {
   private def heroOf(dao: TestHeroDao): ZIO[Any, Throwable, Hero] =
     dao.getHeroByUserId(userId).someOrFail(new Throwable("no hero"))
 
-  private def sacks(n: Int, lvl: Long, lore: LoreData): List[Item] =
-    (1 to n).foldLeft((List.empty[Item], Rng(7L))) { case ((acc, r), _) =>
+  private def sacks(n: Int, lvl: Long, lore: LoreData): List[BartiLottery.Find] =
+    (1 to n).foldLeft((List.empty[BartiLottery.Find], Rng(7L))) { case ((acc, r), _) =>
       val (sack, next) = BartiLottery.sack(lvl, lore, r)
       (acc ++ sack, next)
     }._1
+
+  /** Первое зерно, мешок с которого — у героя 20-го уровня без знаний о травах,
+    * как в `house`, — подходит под `p`. Зерно отдаётся мешку через TestRandom. */
+  private def seedWhere(p: List[BartiLottery.Find] => Boolean): Long =
+    Iterator.from(1).map(_.toLong).find(seed => p(BartiLottery.sack(20L, LoreData.empty, Rng(seed))._1)).getOrElse(0L)
+
+  private def purses(finds: List[BartiLottery.Find]): Int = finds.count(_.isInstanceOf[BartiLottery.Find.Purse])
 
   private def weight(p: Prize => Boolean): Int = BartiLottery.Table.collect { case (prize, w) if p(prize) => w }.sum
 
   override def spec = suite("Серебряная лотерея Барти")(
 
-    test("таблица: в сумме тысяча; хлам, цветы и ингредиенты — 77%; легендарная вещь — 0,4%") {
+    test("таблица: в сумме тысяча; хлам, цветы и ингредиенты — 75%; легендарная вещь — 0,4%; кошельки 5, 25, 50 и 75 дублонов — 2%") {
       val junkGear    = Set[Rarity](Rarity.Gray, Rarity.White)
       val ingredients = (MaterialKind.dusts.toList ++ BartiLottery.BossIngredients ++
         List(MaterialKind.RatPelt, MaterialKind.RatTail, MaterialKind.PlagueWorms, MaterialKind.SpiderSilk,
@@ -76,27 +83,32 @@ object BartiLotterySpec extends ZIOSpecDefault {
         case Prize.Material(kinds) => kinds.forall(ingredients.contains)
         case _                     => false
       }
-      assertTrue(BartiLottery.TotalWeight == 1000L && cheap == 771) &&
+      val purseWeights = BartiLottery.Table.collect { case (Prize.Doubloons(d), w) => d -> w }
+      assertTrue(BartiLottery.TotalWeight == 1000L && cheap == 751) &&
+        assertTrue(purseWeights == List(5L -> 12, 25L -> 5, 50L -> 2, 75L -> 1)) &&
         assertTrue(weight(_ == Prize.Gear(Rarity.Orange)) == 4 && BartiLottery.Price == 5000L &&
           BartiLottery.Size == 10 && BartiLottery.DailyLimit == 10L) &&
         assertTrue(BartiLottery.BossIngredients.distinct.size == 8)
     },
 
-    test("мешок — десять вещей; вещи уровня героя (−5…+1); бросков — как в таблице") {
-      val all   = sacks(2000, 30L, LoreData.empty)
+    test("мешок — десять находок; вещи уровня героя (−5…+1); бросков — как в таблице") {
+      val finds = sacks(2000, 30L, LoreData.empty)
+      val all   = BartiLottery.items(finds)
       val worn  = all.filter(i => ItemType.settable.contains(i.itemType) && i.itemType != ItemType.Flask)
       val herbs = all.count(_.material.exists(_.isHerb))
       val gray  = worn.count(_.rarity == Rarity.Gray)
-      val share = (n: Int) => n.toDouble / all.size
-      assertTrue(all.size == 20000 && BartiLottery.sack(30L, LoreData.empty, Rng(1L))._1.size == BartiLottery.Size) &&
+      val share = (n: Int) => n.toDouble / finds.size
+      assertTrue(finds.size == 20000 && BartiLottery.sack(30L, LoreData.empty, Rng(1L))._1.size == BartiLottery.Size) &&
         assertTrue(worn.forall(i => i.lvl >= 25L && i.lvl <= 31L)) &&
-        assertTrue(share(herbs) > 0.265 && share(herbs) < 0.305 && share(gray) > 0.115 && share(gray) < 0.145) &&
+        assertTrue(share(herbs) > 0.265 && share(herbs) < 0.305 && share(gray) > 0.095 && share(gray) < 0.125) &&
+        assertTrue(share(purses(finds)) > 0.015 && share(purses(finds)) < 0.025) &&
         assertTrue(worn.exists(_.rarity == Rarity.Orange) && share(worn.count(_.rarity == Rarity.Orange)) < 0.007)
     },
 
     test("цветы — какими их видит герой: без знаний — странный и необычный цветок, со знанием — сама трава") {
-      val blind = sacks(300, 30L, LoreData.empty).flatMap(_.material).filter(_.isHerb)
-      val wise  = sacks(300, 30L, LoreData(knowledge = List(Knowledge.FlowersRank1.entryName, Knowledge.FlowersRank2.entryName)))
+      val blind = BartiLottery.items(sacks(300, 30L, LoreData.empty)).flatMap(_.material).filter(_.isHerb)
+      val wise  = BartiLottery.items(sacks(300, 30L,
+        LoreData(knowledge = List(Knowledge.FlowersRank1.entryName, Knowledge.FlowersRank2.entryName))))
         .flatMap(_.material).filter(_.isHerb)
       assertTrue(blind.nonEmpty && blind.forall(MaterialKind.isUnknownFlower) &&
         blind.contains(MaterialKind.StrangeFlower) && blind.contains(MaterialKind.UnusualFlower)) &&
@@ -132,6 +144,7 @@ object BartiLotterySpec extends ZIOSpecDefault {
     test("купить мешок: −5000 серебра, десять вещей в сумке, мешок — в журнал; на сегодня 9 из 10; «Назад» — к экрану дома") {
       for {
         f      <- house(silver = 6000L)
+        _      <- TestRandom.feedLongs(seedWhere(purses(_) == 0))
         _      <- f.state.action(testUser, tap("BartiSackBuy"), f.renderer)
         last   <- f.renderer.sentScreens.map(_.last)
         hero   <- heroOf(f.dao)
@@ -152,9 +165,30 @@ object BartiLotterySpec extends ZIOSpecDefault {
     test("серебра с собой мало — Барти добирает из ячейки Торгового дома") {
       for {
         f    <- house(silver = 2000L, vault = 3000L)
+        _    <- TestRandom.feedLongs(seedWhere(purses(_) == 0))
         _    <- f.state.action(testUser, tap("BartiSackBuy"), f.renderer)
         hero <- heroOf(f.dao)
       } yield assertTrue(hero.silver == 0L && f.bank.silverSnapshot == 0L && f.inv.snapshot.size == BartiLottery.Size)
+    },
+
+    test("кошелёк с дублонами: дублоны — сразу в кошель героя, места в сумке он не занимает; в списке — строкой, в журнале — суммой") {
+      val seed  = seedWhere(purses(_) > 0)
+      val finds = BartiLottery.sack(20L, LoreData.empty, Rng(seed))._1
+      val coins = BartiLottery.doubloons(finds)
+      for {
+        f      <- house(silver = 6000L)
+        before <- heroOf(f.dao)
+        _      <- TestRandom.feedLongs(seed)
+        _      <- f.state.action(testUser, tap("BartiSackBuy"), f.renderer)
+        last   <- f.renderer.sentScreens.map(_.last)
+        hero   <- heroOf(f.dao)
+        logged <- f.journal.logged
+      } yield assertTrue(coins > 0L && hero.doubloons == before.doubloons + coins && hero.silver == 1000L) &&
+              assertTrue(f.inv.snapshot.size == BartiLottery.Size - purses(finds)) &&
+              assertTrue(finds.collect { case BartiLottery.Find.Purse(d) => d }.forall(d =>
+                last.text.contains(s"• 👛 Кошелёк с дублонами: 🟡 $d"))) &&
+              assertTrue(last.text.split("\n").count(_.startsWith("• ")) == BartiLottery.Size) &&
+              assertTrue(logged.headOption.exists(_.payload.hcursor.get[Long]("doubloons").toOption.contains(coins)))
     },
 
     test("десять мешков за сутки: одиннадцатый — «на сегодня мешков конфиската у меня нет», серебро цело") {
