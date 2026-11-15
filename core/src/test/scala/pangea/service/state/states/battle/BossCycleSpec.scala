@@ -96,6 +96,9 @@ object BossCycleSpec extends ZIOSpecDefault {
 
   private def allyOf(b: SoloPveBattle) = b.group.allies.headOption
 
+  /** Сколько раз в логе строка «Огонь смог упокоить…» (battle.joe.burnedOut). */
+  private def burnedOutLines(log: String): Int = log.split("Огонь смог упокоить", -1).length - 1
+
   /** Круг минибосса и его энергия — где бы он ни стоял: в полях они на бою, в
     * строю — на его слоте (см. MonsterSlot.bossTurn). Позвал крыс — в пару
     * может встать крыса, а король уйти в строй со своим кругом. */
@@ -250,6 +253,36 @@ object BossCycleSpec extends ZIOSpecDefault {
       } yield assertTrue(out == StateType.Battle) &&
               assertTrue(log.contains("Гнилой Джо отказывается умирать")) &&
               assertTrue(after.exists(a => a.bossRevives == 1 && a.monsterCurrentHp > 0L))
+    },
+
+    test("горящего Гнилого Джо герой свалил второй раз — «Огонь смог упокоить…» одной строкой, хоть подъём и проверяют после каждой фазы хода") {
+      val h    = hero(Squad())
+      val base = bossOne(MiniBoss.RottenJoe, h, turn = 3)
+      val b    = base.copy(monsterCurrentHp = 1L, monsterCurrentArmor = 0L, bossRevives = 1,
+                   effects = base.effects.copy(monsterBurn = Some(Burn(4))))
+      for {
+        dao      <- TestHeroDao.withHero(userId, h)
+        _        <- dao.writeActiveBattle(userId, b.asJson)
+        renderer <- TestRenderer.make
+        content  <- ZIO.attempt(SceneContent.load())
+        state     = BattleState(dao, TestInventoryRepository.accepting, TestItemRepository.make, content)
+        _        <- TestRandom.setSeed(13L) *> sureHits
+        _        <- state.action(testUser, attack(1), renderer)
+        log      <- renderer.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(burnedOutLines(log) == 1) &&
+              assertTrue(!log.contains("отказывается умирать"))
+    },
+
+    test("герой лежит — горящего Гнилого Джо второй раз свалил союзник: «Огонь смог упокоить…» тоже одной строкой") {
+      val h    = hero(behindAlly)
+      val base = tough(bossOne(MiniBoss.RottenJoe, h, turn = 3))
+      val b    = base.copy(monsterCurrentHp = 1L, monsterCurrentArmor = 0L, bossRevives = 1,
+                   effects = base.effects.copy(monsterBurn = Some(Burn(4))))
+      for {
+        t <- squadRound(h, b, seed = 13L, feed = sureHits)
+        (_, _, log) = t
+      } yield assertTrue(burnedOutLines(log) == 1) &&
+              assertTrue(!log.contains("отказывается умирать"))
     },
 
     test("Гнилого Джо добил союзник, пока герой ждёт, — Джо тоже встаёт") {

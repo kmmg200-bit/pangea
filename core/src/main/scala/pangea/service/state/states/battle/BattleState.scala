@@ -341,6 +341,11 @@ case class BattleState(
     * заканчивает бой — он встаёт с частью здоровья и слабеет в атаке. Пламя всё
     * меняет: начиная со второго падения горящий Джо упокаивается насовсем.
     *
+    * Зовётся после каждой фазы хода, где Джо могли добить (удар, союзники,
+    * раны, аура, бочки). Упокоенному огнём подъёмы тут же списываются все —
+    * иначе каждая следующая фаза снова находила бы горящего Джо с нулём HP и
+    * повторяла строку «Огонь смог упокоить…».
+    *
     * Возвращает исход как есть, если это не он, подъёмы кончились или победы в
     * этом ходу вовсе не было. */
   private def joeRises(res: TurnResult): TurnResult = {
@@ -352,7 +357,7 @@ case class BattleState(
       val burning = battle.effects.monsterBurn.isDefined
       if (deathNo > revives.size) res // подъёмы кончились — смерть окончательная
       else if (burning && deathNo >= MiniBoss.RottenJoe.FireEndsFromDeath)
-        res.copy(log = res.log :+ content.text("battle.joe.burnedOut"))
+        res.copy(battle = battle.copy(bossRevives = revives.size), log = res.log :+ content.text("battle.joe.burnedOut"))
       else {
         val maxHp  = battle.monsterStats.hp
         val newHp  = (maxHp * revives(deathNo - 1) / 100L).max(1L)
