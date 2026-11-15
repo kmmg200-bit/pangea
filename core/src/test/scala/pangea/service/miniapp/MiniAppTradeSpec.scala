@@ -34,7 +34,25 @@ object MiniAppTradeSpec extends ZIOSpecDefault {
           o.mine.note.contains("Хочу щит") && o.theirs.summary == shield.displayTitle &&
           o.leftMs == 2000L + Trades.LifetimeMs - 5000L),
         theirs.offers.map(o => (o.partner, o.yourTurn, o.proposed)) == List(("Алиса", false, false)),
+        (mine.offers ++ theirs.offers).forall(o => !o.partnerAgreed && !o.youAgreed),
         mine.feePct == 10L && mine.minMoney == 50L && mine.maxNote == Trades.MaxNote
+      )
+    },
+
+    test("согласие глазами обоих: согласившийся ждёт, второму — подтвердить") {
+      for {
+        f      <- fx()
+        a      <- f.hero(alice)
+        offer  <- f.trades.propose(alice, a, "Борис", Trades.Draft(List(sword.id), 0L, 0L, None), 1000L)
+                    .map(_.toOption.get)
+        b      <- f.hero(bob)
+        _      <- f.trades.agree(bob, b, offer.id, 2000L)
+        open   <- f.trades.open(alice.userId)
+        mine    = MiniAppView.trade(a, open, open.map(_.id -> "Борис").toMap, Nil, f.content, _.name, f.trades.describe, 3000L)
+        theirs  = MiniAppView.trade(b, open, open.map(_.id -> "Алиса").toMap, Nil, f.content, _.name, f.trades.describe, 3000L)
+      } yield assertTrue(
+        mine.offers.map(o => (o.yourTurn, o.partnerAgreed, o.youAgreed)) == List((true, true, false)),
+        theirs.offers.map(o => (o.yourTurn, o.partnerAgreed, o.youAgreed)) == List((false, false, true))
       )
     },
 

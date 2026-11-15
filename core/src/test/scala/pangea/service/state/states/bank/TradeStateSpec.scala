@@ -109,7 +109,8 @@ object TradeStateSpec extends ZIOSpecDefault {
         now    = f.dao.snapshot.headOption
       } yield assertTrue(
         list.choices.exists(c => c.id == "TradeOpen" && c.label == f.content.format("trade.menu.openYours", "n" -> "1", "name" -> "Иван Иванов")),
-        ids(card).contains("TradeAccept"), ids(card).contains("TradeEdit"),
+        // На само предложение — согласиться, а не подтвердить: подтверждает тот, кто предложил.
+        ids(card).contains("TradeAgree"), !ids(card).contains("TradeAccept"), ids(card).contains("TradeEdit"),
         labelOf(card, "TradeCancel").contains(f.content.text("trade.card.decline")),
         // Положил последнее, что было, — сказано, что легло, а не «положить нечего».
         lastIn.text.startsWith(f.content.format("trade.pick.added", "name" -> shield.displayTitle)),
@@ -119,23 +120,42 @@ object TradeStateSpec extends ZIOSpecDefault {
       )
     },
 
-    test("принять: переспросить, что отдаёте и что получаете, — и обмен; в списке — что досталось") {
+    test("согласиться и подтвердить: оба раза переспросить, что отдаёте и что получаете; в списке — что досталось") {
       for {
-        f     <- fx()
-        a     <- f.hero(alice)
-        offer <- f.trades.propose(alice, a, "Борис", Trades.Draft(List(sword.id), 0L, 0L, None), 1L).map(_.toOption.get)
-        b     <- f.hero(bob)
-        _     <- f.trades.answer(bob, b, offer.id, Trades.Draft(List(shield.id), 0L, 0L, None), 2L)
-        s      = screen(f)
-        r     <- TestRenderer.make
-        _     <- act(s, alice, r, tap("TradeOpen", TradeState.IdKey -> offer.id.toString), tap("TradeAccept", TradeState.IdKey -> offer.id.toString))
-        ask   <- last(r)
-        _     <- s.action(alice, tap("TradeAcceptYes", TradeState.IdKey -> offer.id.toString), r)
-        done  <- last(r)
+        f      <- fx()
+        a      <- f.hero(alice)
+        offer  <- f.trades.propose(alice, a, "Борис", Trades.Draft(List(sword.id), 0L, 0L, None), 1L).map(_.toOption.get)
+        b      <- f.hero(bob)
+        _      <- f.trades.answer(bob, b, offer.id, Trades.Draft(List(shield.id), 0L, 0L, None), 2L)
+        s       = screen(f)
+        ra     <- TestRenderer.make
+        rb     <- TestRenderer.make
+        id      = TradeState.IdKey -> offer.id.toString
+        _      <- act(s, alice, ra, tap("TradeOpen", id), tap("TradeAgree", id))
+        askA   <- last(ra)
+        _      <- s.action(alice, tap("TradeAgreeYes", id), ra)
+        agreed <- last(ra)
+        _      <- s.enter(alice, ra)
+        listA  <- last(ra)
+        _      <- s.action(alice, tap("TradeOpen", id), ra)
+        cardA  <- last(ra)
+        _      <- act(s, bob, rb, tap("TradeOpen", id))
+        cardB  <- last(rb)
+        _      <- s.action(bob, tap("TradeAccept", id), rb)
+        askB   <- last(rb)
+        _      <- s.action(bob, tap("TradeAcceptYes", id), rb)
+        done   <- last(rb)
       } yield assertTrue(
-        ask.text == f.content.format("trade.confirm", "mine" -> sword.displayTitle, "theirs" -> shield.displayTitle),
-        done.text.startsWith(f.content.format("trade.done.accepted", "got" -> shield.displayTitle)),
-        f.dao.snapshot.headOption.exists(_.status == TradeStatus.Accepted), f.sentTo(aHero) == List("Щит")
+        askA.text == f.content.format("trade.agreeAsk", "mine" -> sword.displayTitle, "theirs" -> shield.displayTitle),
+        agreed.text.startsWith(f.content.text("trade.done.agreed")),
+        listA.text.contains(f.content.text("trade.menu.waitConfirm")),
+        cardA.text.contains(f.content.text("trade.card.waitConfirm")), !ids(cardA).contains("TradeAgree"),
+        cardB.text.contains(f.content.text("trade.card.confirmTurn")),
+        labelOf(cardB, "TradeAccept").contains(f.content.text("trade.card.accept")), !ids(cardB).contains("TradeAgree"),
+        askB.text == f.content.format("trade.confirm", "mine" -> shield.displayTitle, "theirs" -> sword.displayTitle),
+        done.text.startsWith(f.content.format("trade.done.accepted", "got" -> sword.displayTitle)),
+        f.dao.snapshot.headOption.exists(_.status == TradeStatus.Accepted),
+        f.sentTo(aHero) == List("Щит"), f.sentTo(bHero) == List("Меч")
       )
     },
 

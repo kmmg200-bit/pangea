@@ -43,7 +43,9 @@ case class TradeState(heroDao: HeroDao, trades: Trades, transfers: Transfers, us
       "TradeNote"      -> Target.Run { (u, _, r) => ask(u, AskNote, r) },
       "TradeSend"      -> Target.Run { (u, _, r) => send(u, r) },
       "TradeDraftBack" -> Target.Run { (u, _, r) => readScene(u).flatMap(s => s.offer.fold(showList(u, r))(showCard(u, _, r))) },
-      "TradeAccept"    -> Target.Run { (u, ua, r) => idOf(ua).fold(showList(u, r))(confirmAccept(u, _, r)) },
+      "TradeAgree"     -> Target.Run { (u, ua, r) => idOf(ua).fold(showList(u, r))(reask(u, _, r, agreeing = true)) },
+      "TradeAgreeYes"  -> Target.Run { (u, ua, r) => idOf(ua).fold(showList(u, r))(agree(u, _, r)) },
+      "TradeAccept"    -> Target.Run { (u, ua, r) => idOf(ua).fold(showList(u, r))(reask(u, _, r, agreeing = false)) },
       "TradeAcceptYes" -> Target.Run { (u, ua, r) => idOf(ua).fold(showList(u, r))(accept(u, _, r)) },
       "TradeCancel"    -> Target.Run { (u, ua, r) => idOf(ua).fold(showList(u, r))(cancel(u, _, r)) },
       "TradeLeave"     -> Target.Goto(StateType.TradeHouse),
@@ -73,7 +75,7 @@ case class TradeState(heroDao: HeroDao, trades: Trades, transfers: Transfers, us
                   content.format("trade.menu.row", "n" -> (i + 1).toString, "name" -> name,
                     "mine" -> trades.describe(o.sideOf(user.userId)),
                     "theirs" -> trades.describe(o.sideOf(o.partnerOf(user.userId))),
-                    "turn" -> content.text(if (o.turn == user.userId) "trade.menu.yourTurn" else "trade.menu.theirTurn"))
+                    "turn" -> content.text(turnKey("trade.menu", o, user.userId)))
                 }
       more    = Option.when(offers.size > shown.size)(content.format("trade.menu.more", "n" -> (offers.size - shown.size).toString))
       text    = (content.format("trade.menu.head", "fee" -> Transfers.FeePct.toString) ::
@@ -93,8 +95,9 @@ case class TradeState(heroDao: HeroDao, trades: Trades, transfers: Transfers, us
 
   // ── Карточка предложения ───────────────────────────────────────────────────
 
-  /** Обе стороны, записки, чей ход и сколько ждать. В свой ход — «Принять» и
-    * «Изменить своё»; отозвать или отклонить — всегда. Закрыто — назад к списку. */
+  /** Обе стороны, записки, чей ход и сколько ждать. В свой ход — «Согласиться»
+    * (а если партнёр уже согласен — «Подтвердить») и «Изменить своё»; отозвать
+    * или отклонить — всегда. Закрыто — назад к списку. */
   private def showCard(user: User, id: Long, renderer: Renderer, note: String = ""): Task[StateType] =
     openOffer(user, id).flatMap {
       case None => showList(user, renderer, content.text("trade.closed"))
@@ -111,13 +114,15 @@ case class TradeState(heroDao: HeroDao, trades: Trades, transfers: Transfers, us
                       mine.note.map(n => content.format("trade.card.myNote", "note" -> n)) ++
                       List(content.format("trade.card.theirs", "what" -> trades.describe(theirs))) ++
                       theirs.note.map(n => content.format("trade.card.theirNote", "note" -> n)) ++
-                      List(content.text(if (yours) "trade.card.yourTurn" else "trade.card.theirTurn"),
+                      List(content.text(turnKey("trade.card", offer, user.userId)),
                         content.format("trade.card.until", "left" -> TimeLeft.format((offer.expiresAt - now).max(0L)))))
                       .mkString("\n")
           data    = Map(IdKey -> offer.id.toString)
+          confirm = offer.partnerAgreed(user.userId)
           buttons = List(
                       Option.when(yours && !(mine.isEmpty && theirs.isEmpty))(
-                        Choice("TradeAccept", content.text("trade.card.accept"), data = data, color = ChoiceColor.Positive, row = Some(0))),
+                        if (confirm) Choice("TradeAccept", content.text("trade.card.accept"), data = data, color = ChoiceColor.Positive, row = Some(0))
+                        else Choice("TradeAgree", content.text("trade.card.agree"), data = data, color = ChoiceColor.Positive, row = Some(0))),
                       Option.when(yours)(Choice("TradeEdit", content.text("trade.card.edit"), data = data, row = Some(0))),
                       Some(Choice("TradeCancel",
                         content.text(if (offer.from == user.userId) "trade.card.cancel" else "trade.card.decline"),
@@ -129,24 +134,45 @@ case class TradeState(heroDao: HeroDao, trades: Trades, transfers: Transfers, us
         } yield StateType.Trade
     }
 
-  private def confirmAccept(user: User, id: Long, renderer: Renderer): Task[StateType] =
+  /** Чей ход словами: свой — «согласиться» или, если партнёр согласен,
+    * «подтвердить»; партнёра — ждём ответа или, если сами согласились,
+    * подтверждения. `prefix` — раздел текстов: список или карточка. */
+  private def turnKey(prefix: String, offer: TradeOffer, user: UserId): String =
+    if (offer.turn == user) s"$prefix.${if (offer.partnerAgreed(user)) "confirmTurn" else "yourTurn"}"
+    else s"$prefix.${if (offer.agreed(user)) "waitConfirm" else "theirTurn"}"
+
+  /** Переспросить, что отдаёшь и что получаешь: перед согласием и перед
+    * подтверждением — у обоих после него обмен может состояться. */
+  private def reask(user: User, id: Long, renderer: Renderer, agreeing: Boolean): Task[StateType] =
     openOffer(user, id).flatMap {
       case None => showList(user, renderer, content.text("trade.closed"))
       case Some(offer) =>
         val data = Map(IdKey -> offer.id.toString)
-        renderer.show(user, Screen(content.format("trade.confirm",
+        renderer.show(user, Screen(content.format(if (agreeing) "trade.agreeAsk" else "trade.confirm",
           "mine"   -> trades.describe(offer.sideOf(user.userId)),
           "theirs" -> trades.describe(offer.sideOf(offer.partnerOf(user.userId)))), List(
-          Choice("TradeAcceptYes", content.text("trade.confirmYes"), data = data, color = ChoiceColor.Positive, row = Some(0)),
+          Choice(if (agreeing) "TradeAgreeYes" else "TradeAcceptYes",
+            content.text(if (agreeing) "trade.agreeYes" else "trade.confirmYes"), data = data, color = ChoiceColor.Positive, row = Some(0)),
           Choice("TradeOpen", content.text("trade.confirmNo"), data = data, color = ChoiceColor.Negative, row = Some(0))
         ))).as(StateType.Trade)
     }
+
+  private def agree(user: User, id: Long, renderer: Renderer): Task[StateType] =
+    for {
+      hero <- getHero(user)
+      now  <- nowMs
+      res  <- trades.agree(user, hero, id, now)
+      next <- res match {
+                case Right(_)  => showList(user, renderer, content.text("trade.done.agreed"))
+                case Left(why) => showCard(user, id, renderer, why)
+              }
+    } yield next
 
   private def accept(user: User, id: Long, renderer: Renderer): Task[StateType] =
     for {
       hero <- getHero(user)
       now  <- nowMs
-      res  <- trades.accept(user, hero, id, now)
+      res  <- trades.confirm(user, hero, id, now)
       next <- res match {
                 case Right(o) =>
                   showList(user, renderer, content.format("trade.done.accepted",

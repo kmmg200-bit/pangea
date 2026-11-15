@@ -21,10 +21,13 @@ import zio.{Task, ZIO, ZLayer}
 import java.util.concurrent.TimeUnit
 
 /** Обмен между игроками — предложением: один кладёт своё и пишет, чего хочет,
-  * другой отвечает своим, и так до согласия; принять может тот, чей ход, —
-  * то есть не тот, кто менял предложение последним. Отозвать (кто предложил)
-  * или отклонить (кому предложили) можно когда угодно и откуда угодно; всё
-  * прочее — только в городе. Одно на бота и на Mini App.
+  * другой отвечает своим, и так до согласия. Правка стороны — предложение, а
+  * не согласие: после неё второй соглашается ([[agree]]) или отвечает своим,
+  * а согласился — подтверждает ([[confirm]]) автор последних условий. Так
+  * ничего не уйдёт без подтверждения того, кто отдаёт, — даже если на его
+  * предложение просто согласились. Отозвать (кто предложил) или отклонить
+  * (кому предложили) можно когда угодно и откуда угодно; всё прочее — только
+  * в городе. Одно на бота и на Mini App.
   *
   * Положенное в обмен — заклад: вещи и деньги с комиссией сверху сразу уходят
   * от хозяина и ждут в предложении ([[TradeSide]]). Поэтому каждый трогает
@@ -65,7 +68,7 @@ final class Trades(dao: TradeDao, transfers: Transfers, parcels: Parcels, bank: 
             case Right(ch) if ch.side.isEmpty && ch.side.note.isEmpty => refuse("trade.empty")
             case Right(ch) =>
               val offer = TradeOffer(0L, user.userId, partner.userId, ch.side, TradeSide.empty, partner.userId,
-                TradeStatus.Open, now, now, now + LifetimeMs, None, 0)
+                None, TradeStatus.Open, now, now, now + LifetimeMs, None, 0)
               takeIn(user, hero, ch) *>
                 dao.insert(offer).foldZIO(
                   err => undo(user, hero, ch, now) *> ZIO.fail(err),
@@ -74,8 +77,8 @@ final class Trades(dao: TradeDao, transfers: Transfers, parcels: Parcels, bank: 
         }
     }
 
-  /** Поменять свою сторону, когда ход за тобой: ход переходит партнёру, срок
-    * считается заново. */
+  /** Поменять свою сторону, когда ход за тобой: ход переходит партнёру,
+    * согласие снимается (условия новые), срок считается заново. */
   def answer(user: User, hero: Hero, id: Long, draft: Draft, now: Long): Task[Either[String, TradeOffer]] =
     withOpen(user, id) { offer =>
       if (offer.turn != user.userId) refuse("trade.notYourTurn")
@@ -84,7 +87,7 @@ final class Trades(dao: TradeDao, transfers: Transfers, parcels: Parcels, bank: 
         case Left(why) => ZIO.left(why)
         case Right(ch) =>
           val next = offer.withSide(user.userId, ch.side)
-            .copy(turn = offer.partnerOf(user.userId), updatedAt = now, expiresAt = now + LifetimeMs)
+            .copy(turn = offer.partnerOf(user.userId), agreedBy = None, updatedAt = now, expiresAt = now + LifetimeMs)
           takeIn(user, hero, ch) *> dao.update(next).flatMap {
             case false => undo(user, hero, ch, now) *> refuse("trade.stale")
             case true =>
@@ -94,10 +97,31 @@ final class Trades(dao: TradeDao, transfers: Transfers, parcels: Parcels, bank: 
       }
     }
 
-  /** Принять, когда ход за тобой: заклад каждого — другому. */
-  def accept(user: User, hero: Hero, id: Long, now: Long): Task[Either[String, TradeOffer]] =
+  /** Согласиться с нынешними условиями, когда ход за тобой и партнёр ещё не
+    * согласился: ход — автору условий, подтверждать ему. Вещи и деньги не
+    * двигаются; срок считается заново. */
+  def agree(user: User, hero: Hero, id: Long, now: Long): Task[Either[String, TradeOffer]] =
     withOpen(user, id) { offer =>
       if (offer.turn != user.userId) refuse("trade.notYourTurn")
+      else if (offer.partnerAgreed(user.userId)) refuse("trade.agreedAlready")
+      else if (!inCity(hero)) refuse("trade.notInCity")
+      else if (offer.fromSide.isEmpty && offer.toSide.isEmpty) refuse("trade.nothing")
+      else {
+        val next = offer.copy(turn = offer.partnerOf(user.userId), agreedBy = Some(user.userId), updatedAt = now,
+          expiresAt = now + LifetimeMs)
+        dao.update(next).flatMap {
+          case false => refuse("trade.stale")
+          case true  => tell(next.turn, "trade.agreed", user.userId).as(Right(next.copy(version = next.version + 1)))
+        }
+      }
+    }
+
+  /** Подтвердить, когда ход за тобой и партнёр согласился с нынешними
+    * условиями: заклад каждого — другому. */
+  def confirm(user: User, hero: Hero, id: Long, now: Long): Task[Either[String, TradeOffer]] =
+    withOpen(user, id) { offer =>
+      if (offer.turn != user.userId) refuse("trade.notYourTurn")
+      else if (!offer.partnerAgreed(user.userId)) refuse("trade.notAgreed")
       else if (!inCity(hero)) refuse("trade.notInCity")
       else if (offer.fromSide.isEmpty && offer.toSide.isEmpty) refuse("trade.nothing")
       else {

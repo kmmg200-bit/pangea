@@ -37,12 +37,12 @@ class TradeDaoLive(xa: Transactor[Task]) extends TradeDao {
   private val Open: TradeStatus = TradeStatus.Open
 
   private val columns =
-    fr"id, from_user, to_user, from_side, to_side, turn, status, created_at, updated_at, expires_at, done_at, version"
+    fr"id, from_user, to_user, from_side, to_side, turn, agreed_by, status, created_at, updated_at, expires_at, done_at, version"
 
   override def insert(o: TradeOffer): Task[Long] =
-    sql"""insert into trade_offers(from_user, to_user, from_side, to_side, turn, status, created_at, updated_at,
-                                   expires_at, done_at)
-          values(${o.from}, ${o.to}, ${o.fromSide}, ${o.toSide}, ${o.turn}, ${o.status}, ${o.createdAt},
+    sql"""insert into trade_offers(from_user, to_user, from_side, to_side, turn, agreed_by, status, created_at,
+                                   updated_at, expires_at, done_at)
+          values(${o.from}, ${o.to}, ${o.fromSide}, ${o.toSide}, ${o.turn}, ${o.agreedBy}, ${o.status}, ${o.createdAt},
                  ${o.updatedAt}, ${o.expiresAt}, ${o.doneAt})"""
       .update.withUniqueGeneratedKeys[Long]("id").transact(xa)
 
@@ -59,7 +59,8 @@ class TradeDaoLive(xa: Transactor[Task]) extends TradeDao {
 
   override def update(o: TradeOffer): Task[Boolean] =
     sql"""update trade_offers
-          set from_side = ${o.fromSide}, to_side = ${o.toSide}, turn = ${o.turn}, status = ${o.status},
+          set from_side = ${o.fromSide}, to_side = ${o.toSide}, turn = ${o.turn}, agreed_by = ${o.agreedBy},
+              status = ${o.status},
               updated_at = ${o.updatedAt}, expires_at = ${o.expiresAt}, done_at = ${o.doneAt}, version = version + 1
           where id = ${o.id} and status = $Open and version = ${o.version}"""
       .update.run.transact(xa).map(_ > 0)

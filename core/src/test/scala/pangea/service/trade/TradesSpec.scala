@@ -90,17 +90,19 @@ object TradesSpec extends ZIOSpecDefault {
         reply  <- f.trades.answer(bob, b, offer.id, draft(List(shield), doubloons = 50L), now + 5L).map(offerOf)
         b2     <- f.hero(bob)
         again  <- f.trades.answer(bob, b2, offer.id, draft(), now + 6L)
-        early  <- f.trades.accept(bob, b2, offer.id, now + 6L)
+        early  <- f.trades.confirm(bob, b2, offer.id, now + 6L)
+        agree  <- f.trades.agree(bob, b2, offer.id, now + 6L)
       } yield assertTrue(
         reply.turn == alice.userId, reply.toSide.items == List(shield), reply.toSide.doubloonsFee == 5L,
         reply.expiresAt == now + 5L + Trades.LifetimeMs,
         f.bags.of(bHero).isEmpty, b2.doubloons == 45L,
         f.letters(alice) == List(f.content.format("trade.answered", "name" -> "Иван Иванов")),
-        again == Left(f.content.text("trade.notYourTurn")), early == Left(f.content.text("trade.notYourTurn"))
+        again == Left(f.content.text("trade.notYourTurn")), early == Left(f.content.text("trade.notYourTurn")),
+        agree == Left(f.content.text("trade.notYourTurn"))
       )
     },
 
-    test("принять: каждому — заклад другого посылкой и деньгами, комиссия сгорела; партнёру — что ему досталось") {
+    test("ответил своим — соглашается тот, кто предложил, подтверждает ответивший: каждому — заклад другого, комиссия сгорела") {
       for {
         f      <- fx()
         a      <- f.hero(alice)
@@ -108,18 +110,65 @@ object TradesSpec extends ZIOSpecDefault {
         b      <- f.hero(bob)
         _      <- f.trades.answer(bob, b, offer.id, draft(List(shield), doubloons = 50L), now)
         a2     <- f.hero(alice)
-        done   <- f.trades.accept(alice, a2, offer.id, now + 1L).map(offerOf)
-        mail   <- eventually(f.letters(bob))(_.size >= 2)
-        late   <- f.trades.cancel(bob, offer.id, now + 2L)
+        early  <- f.trades.confirm(alice, a2, offer.id, now + 1L)
+        agreed <- f.trades.agree(alice, a2, offer.id, now + 1L).map(offerOf)
+        b2     <- f.hero(bob)
+        twice  <- f.trades.agree(bob, b2, offer.id, now + 2L)
+        done   <- f.trades.confirm(bob, b2, offer.id, now + 2L).map(offerOf)
+        got     = f.content.format("trade.accepted", "name" -> "Иван Иванов", "got" -> (shield.displayTitle + ", 🟡 50"))
+        mail   <- eventually(f.letters(alice))(_.exists(_.startsWith(got)))
+        late   <- f.trades.cancel(alice, offer.id, now + 3L)
         a3     <- f.hero(alice)
         b3     <- f.hero(bob)
       } yield assertTrue(
+        early == Left(f.content.text("trade.notAgreed")),
+        agreed.turn == bob.userId, agreed.agreedBy.contains(alice.userId), agreed.expiresAt == now + 1L + Trades.LifetimeMs,
+        f.letters(bob).contains(f.content.format("trade.agreed", "name" -> "Иван Иванов")),
+        twice == Left(f.content.text("trade.agreedAlready")),
         done.status == TradeStatus.Accepted,
         f.sentTo(bHero) == List("Меч"), f.sentTo(aHero) == List("Щит"),
         f.payouts.snapshot.get(bHero).contains((100L, 0L)), f.payouts.snapshot.get(aHero).contains((0L, 50L)),
-        a3.silver == 890L, b3.doubloons == 45L,
-        mail.lastOption.exists(_.startsWith(f.content.format("trade.accepted", "name" -> "Иван Иванов", "got" -> (sword.displayTitle + ", 🪙 100")))),
+        a3.silver == 890L, b3.doubloons == 45L, mail.nonEmpty,
         late == Left(f.content.text("trade.closed"))
+      )
+    },
+
+    test("просто согласиться на предложение — ничего не уходит, пока тот, кто предложил, не подтвердит") {
+      for {
+        f      <- fx()
+        a      <- f.hero(alice)
+        offer  <- f.trades.propose(alice, a, "Борис", draft(List(sword), note = Some("Хочу щит")), now).map(offerOf)
+        b      <- f.hero(bob)
+        grab   <- f.trades.confirm(bob, b, offer.id, now + 1L)
+        agreed <- f.trades.agree(bob, b, offer.id, now + 1L).map(offerOf)
+        still  <- f.trades.confirm(bob, b, offer.id, now + 2L)
+        sent0   = f.sentTo(bHero)
+        a2     <- f.hero(alice)
+        done   <- f.trades.confirm(alice, a2, offer.id, now + 3L).map(offerOf)
+      } yield assertTrue(
+        grab == Left(f.content.text("trade.notAgreed")),
+        agreed.turn == alice.userId, agreed.agreedBy.contains(bob.userId), agreed.status == TradeStatus.Open,
+        still == Left(f.content.text("trade.notYourTurn")), sent0.isEmpty,
+        done.status == TradeStatus.Accepted, f.sentTo(bHero) == List("Меч")
+      )
+    },
+
+    test("правка своей стороны снимает согласие: подтверждать нечего, пока партнёр не согласится снова") {
+      for {
+        f      <- fx()
+        a      <- f.hero(alice)
+        offer  <- f.trades.propose(alice, a, "Борис", draft(List(sword, axe)), now).map(offerOf)
+        b      <- f.hero(bob)
+        _      <- f.trades.agree(bob, b, offer.id, now + 1L)
+        a2     <- f.hero(alice)
+        edited <- f.trades.answer(alice, a2, offer.id, draft(List(sword)), now + 2L).map(offerOf)
+        b2     <- f.hero(bob)
+        early  <- f.trades.confirm(bob, b2, offer.id, now + 3L)
+        again  <- f.trades.agree(bob, b2, offer.id, now + 3L).map(offerOf)
+      } yield assertTrue(
+        edited.agreedBy.isEmpty, edited.turn == bob.userId,
+        early == Left(f.content.text("trade.notAgreed")),
+        again.agreedBy.contains(bob.userId), again.turn == alice.userId
       )
     },
 

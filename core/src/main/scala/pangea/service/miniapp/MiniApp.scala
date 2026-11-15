@@ -196,11 +196,13 @@ object MiniApp {
   }
 
   /** Что делают с обменом: предлагают герою по имени, отвечают своей стороной,
-    * принимают, отзывают или отклоняют. */
+    * соглашаются с условиями, подтверждают (`Accept` — когда партнёр уже
+    * согласился), отзывают или отклоняют. */
   sealed trait TradeAct
   object TradeAct {
     final case class Propose(partner: String, draft: Trades.Draft) extends TradeAct
     final case class Answer(id: Long, draft: Trades.Draft)         extends TradeAct
+    final case class Agree(id: Long)                               extends TradeAct
     final case class Accept(id: Long)                              extends TradeAct
     final case class Cancel(id: Long)                              extends TradeAct
 
@@ -500,8 +502,10 @@ final class MiniAppLive(
                      trades.propose(user, fresh, partner, draft, ms).map(_.map(_ => content.text("trade.done.sent")))
                    case TradeAct.Answer(id, draft) =>
                      trades.answer(user, fresh, id, draft, ms).map(_.map(_ => content.text("trade.done.answered")))
+                   case TradeAct.Agree(id) =>
+                     trades.agree(user, fresh, id, ms).map(_.map(_ => content.text("trade.done.agreed")))
                    case TradeAct.Accept(id) =>
-                     trades.accept(user, fresh, id, ms).map(_.map(o => content.format("trade.done.accepted",
+                     trades.confirm(user, fresh, id, ms).map(_.map(o => content.format("trade.done.accepted",
                        "got" -> trades.describe(o.sideOf(o.partnerOf(user.userId))))))
                    case TradeAct.Cancel(id) =>
                      trades.cancel(user, id, ms).map(_.map(trades.closedNote(user.userId, _)))

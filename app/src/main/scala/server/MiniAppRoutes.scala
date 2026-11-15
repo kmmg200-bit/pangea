@@ -65,6 +65,10 @@ final class MiniAppRoutes(app: MiniApp) {
         +& SilverParam(silver) +& DoubloonsParam(doubloons) +& NoteParam(note) =>
       tradeAct(req, TradeAct.Answer(id, draft(items, silver, doubloons, note)))
 
+    // Согласиться с условиями; «accept» — подтвердить, когда партнёр согласен.
+    case req @ POST -> Root / "api" / "app" / "trade" / "agree" :? OfferParam(id) =>
+      tradeAct(req, TradeAct.Agree(id))
+
     case req @ POST -> Root / "api" / "app" / "trade" / "accept" :? OfferParam(id) =>
       tradeAct(req, TradeAct.Accept(id))
 

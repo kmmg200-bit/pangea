@@ -57,7 +57,8 @@ sealed trait TradeStatus extends EnumEntry
 object TradeStatus extends Enum[TradeStatus] with DoobieEnum[TradeStatus] {
   val values = findValues
 
-  /** Ждёт ответа: принять или поменять свою сторону может тот, чей ход. */
+  /** Ждёт ответа: согласиться, подтвердить или поменять свою сторону может
+    * тот, чей ход. */
   case object Open      extends TradeStatus
   case object Accepted  extends TradeStatus
   /** Отклонил тот, кому предложили. */
@@ -68,8 +69,14 @@ object TradeStatus extends Enum[TradeStatus] with DoobieEnum[TradeStatus] {
 }
 
 /** Предложение обмена: кто (`from`) кому (`to`), что лежит в закладе у каждого,
-  * чей ход (`turn`) и чем кончилось. `version` растёт с каждой записью: запись
-  * по устаревшей версии не пройдёт. */
+  * чей ход (`turn`), кто уже согласился с нынешними условиями (`agreedBy`) и
+  * чем кончилось. `version` растёт с каждой записью: запись по устаревшей
+  * версии не пройдёт.
+  *
+  * Обмен — в три шага и больше: правка стороны — предложение, а не согласие.
+  * После неё ход у второго: он соглашается или отвечает своим. Согласился —
+  * ход у автора последних условий, и подтверждает обмен он. Любая правка
+  * снимает согласие. */
 final case class TradeOffer(
   id:        Long,
   from:      UserId,
@@ -77,6 +84,7 @@ final case class TradeOffer(
   fromSide:  TradeSide,
   toSide:    TradeSide,
   turn:      UserId,
+  agreedBy:  Option[UserId],
   status:    TradeStatus,
   createdAt: Long,
   updatedAt: Long,
@@ -93,4 +101,11 @@ final case class TradeOffer(
 
   def withSide(user: UserId, side: TradeSide): TradeOffer =
     if (user == from) copy(fromSide = side) else copy(toSide = side)
+
+  /** Партнёр уже согласился с нынешними условиями — игроку осталось
+    * подтвердить. */
+  def partnerAgreed(user: UserId): Boolean = agreedBy.contains(partnerOf(user))
+
+  /** Игрок сам согласился и ждёт подтверждения партнёра. */
+  def agreed(user: UserId): Boolean = agreedBy.contains(user)
 }

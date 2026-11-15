@@ -203,10 +203,13 @@ object MiniAppView {
                                  summary: String)
 
   /** Предложение обмена глазами игрока: `mine` — что он отдаёт, `theirs` — что
-    * получает; `yourTurn` — можно принять и поменять своё; `proposed` — его
-    * предложение (отзывают), а не ему (отклоняют); `leftMs` — сколько ещё ждать. */
+    * получает; `yourTurn` — можно согласиться (или подтвердить) и поменять своё;
+    * `partnerAgreed` — партнёр согласен, осталось подтвердить; `youAgreed` —
+    * игрок согласился и ждёт подтверждения; `proposed` — его предложение
+    * (отзывают), а не ему (отклоняют); `leftMs` — сколько ещё ждать. */
   final case class TradeOfferView(id: Long, partner: String, mine: TradeSideView, theirs: TradeSideView,
-                                  yourTurn: Boolean, proposed: Boolean, leftMs: Long)
+                                  yourTurn: Boolean, partnerAgreed: Boolean, youAgreed: Boolean, proposed: Boolean,
+                                  leftMs: Long)
 
   /** Обмен: открытые предложения, что при герое можно положить (`stock`), и
     * правила: комиссия, наименьшая сумма, длина записки. `away` — почему сейчас
@@ -485,6 +488,8 @@ object MiniAppView {
                    mine     = side(o.sideOf(h.userId)),
                    theirs   = side(o.sideOf(o.partnerOf(h.userId))),
                    yourTurn = o.turn == h.userId,
+                   partnerAgreed = o.partnerAgreed(h.userId),
+                   youAgreed = o.agreed(h.userId),
                    proposed = o.from == h.userId,
                    leftMs   = (o.expiresAt - now).max(0L))),
       stock    = withIds(stock, describe),
