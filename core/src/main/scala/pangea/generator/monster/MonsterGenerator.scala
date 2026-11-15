@@ -21,6 +21,21 @@ object DragonRates {
   val Stat: Long = 100000L
 }
 
+/** Глубина (решение пользователя): с [[DeepFrom]]-го уровня к каждой базовой
+  * ставке моба — атаке, HP, броне, защите, уклонению, точности — ещё
+  * +[[DeepBonus]], до умножения на уровень, редкость и расу (как `ArmorBonus` и
+  * `DefenceBonus`). По уровню самого моба — у всех, кто считается этой
+  * формулой: в лабиринте (вернулся на 25-й — новые мобы обычные), в заданиях,
+  * сюжете, контрактах и событиях; и у союзников, чья сила — «как у моба того же
+  * уровня». У минибоссов и дракона ставки свои — их это не касается. */
+object DepthRates {
+  val DeepFrom: Int     = 26
+  val DeepBonus: Double = 2.0
+
+  /** Прибавка к базовым ставкам моба этого уровня. */
+  def bonus(level: Int): Double = if (level >= DeepFrom) DeepBonus else 0.0
+}
+
 object MonsterGenerator {
 
   private val N = 1.1
@@ -149,21 +164,26 @@ object MonsterGenerator {
       energy = s.energy
     )
 
+  /** `deep` — прибавка глубины к каждой базовой ставке (атака, HP, броня,
+    * защита, уклонение, точность) до умножения на уровень, редкость и расу — с
+    * [[DepthRates.DeepFrom]]-го уровня моба. Энергию она не трогает: цены умений
+    * от неё не зависят. */
   private def buildStats(level: Int, rarity: Rarity, race: Race): FightStats = {
+    val deep = DepthRates.bonus(level)
     val base = level.toDouble * rarity.factor * N
     val f    = MonsterRaceFactor.of(race)
     FightStats(
-      atk = (10.0 * base * f.attackFactor).toLong.max(1L),
-      hp = (40.0 * base * f.hpFactor).toLong.max(1L),
-      armor = ((22.0 + ArmorBonus) * base * f.armorFactor).toLong,
+      atk = ((10.0 + deep) * base * f.attackFactor).toLong.max(1L),
+      hp = ((40.0 + deep) * base * f.hpFactor).toLong.max(1L),
+      armor = ((22.0 + ArmorBonus + deep) * base * f.armorFactor).toLong,
       // Защита — процентное снижение урона, третий слой поверх брони и HP.
       // Растёт линейно по уровню, как и пробитие героя, — поэтому доля
       // срезанного держится ровной всю игру (см. BattleState.pierce).
-      defence = ((5.0 + DefenceBonus) * base * f.defenceFactor).toLong,
-      evasion = (16.25 * base * f.evasionFactor).toLong,
+      defence = ((5.0 + DefenceBonus + deep) * base * f.defenceFactor).toLong,
+      evasion = ((16.25 + deep) * base * f.evasionFactor).toLong,
       // Точность у всех вдвое меньше, чем была, а в попадании весит вдвое
       // больше (см. BattleState.dodgeChance) — бьют мобы так же метко.
-      accuracy = (8.25 * base * f.accuracyFactor).toLong,
+      accuracy = ((8.25 + deep) * base * f.accuracyFactor).toLong,
       // Потолок энергии — из него моб платит за свои умения (см. MonsterEnergy).
       energy = MonsterEnergy.maxEnergy(level.toLong)
     )

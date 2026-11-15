@@ -6,7 +6,7 @@ import io.circe.{Decoder, Encoder}
 import pangea.dao.hero.HeroDao
 import pangea.domain.Rng
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
-import pangea.generator.monster.MonsterGenerator
+import pangea.generator.monster.{DepthRates, MonsterGenerator}
 import pangea.model.battle.SoloPveBattle
 import pangea.model.item.{BeltSlot, BrewRates, ItemDetails}
 import pangea.model.monster.{MiniBoss, Monster, Race, Rarity}
@@ -431,10 +431,16 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
   private def atDeepest(user: User, hero: Hero, nowMs: Long, renderer: Renderer): Task[StateType] =
     renderer.show(user, enterScreen(hero, nowMs).noted(content.text("dungeon.deepestReached"))).as(StateType.Dungeon)
 
+  /** Шаг к тьме. Перешёл на [[DepthRates.DeepFrom]]-й уровень — над экраном
+    * строка о том, что дальше воздух другой: с него мобы крепче (см. DepthRates);
+    * так — при каждом переходе туда с уровня выше. */
   private def descend(user: User, hero: Hero, nowMs: Long, renderer: Renderer): Task[StateType] = {
     val newLevel = math.min(150, hero.dungeonLevel + 1)
+    val screen   = enterScreen(hero.copy(dungeonLevel = newLevel), nowMs)
     heroDao.updateDungeonLevel(user.userId, newLevel) *>
-      renderer.show(user, enterScreen(hero.copy(dungeonLevel = newLevel), nowMs))
+      renderer.show(user,
+        if (newLevel == DepthRates.DeepFrom && hero.dungeonLevel < DepthRates.DeepFrom) screen.noted(content.text("dungeon.deepAir"))
+        else screen)
         .as(StateType.Dungeon)
   }
 

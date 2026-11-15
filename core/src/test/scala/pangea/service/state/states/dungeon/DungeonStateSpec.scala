@@ -391,6 +391,23 @@ object DungeonStateSpec extends ZIOSpecDefault {
               assertTrue(updatedHero.exists(_.dungeonLevel == 6))
     },
 
+    test("GoDarker с 25-го на 26-й → над экраном строка о другом воздухе; с 26-го на 27-й и с 24-го на 25-й — без неё") {
+      def go(from: Int) =
+        for {
+          quad    <- makeState(dungeonLevel = from)
+          (state, _, renderer, _) = quad
+          _       <- state.action(testUser, tap("GoDarker"), renderer)
+          screens <- renderer.sentScreens
+        } yield screens.map(_.text).mkString("\n")
+      for {
+        to26 <- go(25)
+        to27 <- go(26)
+        to25 <- go(24)
+        c    <- ZIO.attempt(SceneContent.load())
+        air   = c.text("dungeon.deepAir")
+      } yield assertTrue(air.contains("Воздух здесь пахнет иначе"), to26.contains(air), !to27.contains(air), !to25.contains(air))
+    },
+
     test("GoLighter → уменьшает уровень лабиринта на 1") {
       for {
         quad                          <- makeState(dungeonLevel = 5)
