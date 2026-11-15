@@ -221,7 +221,7 @@ object NecroQuestSpec extends ZIOSpecDefault {
         battle <- battleOf(dao)
         said   <- texts(r)
         back   <- lootOf(dao).map(_.flatMap(_.eventData).flatMap(_.as[CaveScene].toOption))
-      } yield assertTrue(out == StateType.Battle && said.contains("Мертвецы вокруг поднимают")) &&
+      } yield assertTrue(out == StateType.Battle && said.contains("Вокруг восстают мертвецы — все до единого")) &&
               assertTrue(battle.exists(_.boss.contains(MiniBoss.Necromancer))) &&
               assertTrue(battle.exists(_.monsterLvl == MiniBoss.Necromancer.bossLvl(41L))) &&
               assertTrue(battle.exists(b => b.group.others.size >= MiniBoss.Necromancer.GuardMin &&
