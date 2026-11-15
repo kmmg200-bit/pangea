@@ -517,11 +517,12 @@ object DungeonState {
     * после него остаётся жив — хотя бы на единице HP. */
   val TrapDamagePct: Long = 150L
 
-  /** Логово дракона — уровни лабиринта с 26-го по 50-й: здесь любой осмотр и
-    * выслеживание выводят на дракона. «Уйти» отводит на 25-й. */
-  val DragonFrom: Int         = 26
-  val DragonTo: Int           = 50
-  val DragonRetreatLevel: Int = 25
+  /** Логово дракона — уровни лабиринта с 51-го по 75-й (решение пользователя;
+    * раньше было с 26-го по 50-й): здесь любой осмотр и выслеживание выводят на
+    * дракона. «Уйти» отводит на уровень выше логова — 50-й. */
+  val DragonFrom: Int         = 51
+  val DragonTo: Int           = 75
+  val DragonRetreatLevel: Int = DragonFrom - 1
 
   def dragonLair(dungeonLevel: Int): Boolean = dungeonLevel >= DragonFrom && dungeonLevel <= DragonTo
 

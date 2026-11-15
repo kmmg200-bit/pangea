@@ -12,8 +12,9 @@ import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestRend
 import zio.test._
 import zio.{Duration, ZIO}
 
-/** Дракон глубин: на 26–50-м уровне лабиринта любой осмотр и выслеживание
-  * выводят на предупреждение стражи — «Напасть» или «Уйти» (на 25-й). */
+/** Дракон глубин: на 51–75-м уровне лабиринта любой осмотр и выслеживание
+  * выводят на предупреждение стражи — «Напасть» или «Уйти» (на 50-й). Раньше
+  * логово было на 26–50-м — там теперь обычный лабиринт. */
 object DragonLairSpec extends ZIOSpecDefault {
 
   private val userId   = UserId(1L)
@@ -35,13 +36,14 @@ object DragonLairSpec extends ZIOSpecDefault {
 
   override def spec = suite("Дракон глубин")(
 
-    test("логово — с 26-го по 50-й уровень включительно") {
-      assertTrue(!DungeonState.dragonLair(25) && DungeonState.dragonLair(26) &&
-        DungeonState.dragonLair(50) && !DungeonState.dragonLair(51))
+    test("логово — с 51-го по 75-й уровень включительно; 26–50-й — уже не логово") {
+      assertTrue(!DungeonState.dragonLair(50) && DungeonState.dragonLair(51) &&
+        DungeonState.dragonLair(75) && !DungeonState.dragonLair(76)) &&
+      assertTrue(!DungeonState.dragonLair(26) && !DungeonState.dragonLair(25) && DungeonState.DragonRetreatLevel == 50)
     },
 
-    test("«Исследовать» на 26-м и 50-м — предупреждение стражи с «Напасть» и «Уйти», боя ещё нет") {
-      ZIO.foreach(List(26, 50)) { level =>
+    test("«Исследовать» на 51-м и 75-м — предупреждение стражи с «Напасть» и «Уйти», боя ещё нет") {
+      ZIO.foreach(List(51, 75)) { level =>
         for {
           q <- makeState(level)
           (state, heroDao, renderer, _) = q
@@ -55,8 +57,8 @@ object DragonLairSpec extends ZIOSpecDefault {
       }.map(_.reduce(_ && _))
     },
 
-    test("на 25-м и 51-м дракона нет — обычный осмотр") {
-      ZIO.foreach(List(25, 51)) { level =>
+    test("на 26-м, 50-м и 76-м дракона нет — обычный осмотр") {
+      ZIO.foreach(List(26, 50, 76)) { level =>
         for {
           q <- makeState(level)
           (state, _, renderer, _) = q
@@ -67,10 +69,10 @@ object DragonLairSpec extends ZIOSpecDefault {
       }.map(_.reduce(_ && _))
     },
 
-    test("дракон раньше обязательных встреч: волчий зов на 30-м не срабатывает и не сгорает") {
+    test("дракон раньше обязательных встреч: волчий зов на 60-м не срабатывает и не сгорает") {
       import pangea.model.item.BrewRates
       import pangea.model.stats.{ParamsBuff, StatBoost, StatBoosts}
-      val called = TestFixtures.hero(userId, dungeonLevel = 30, maxDungeonLevel = 150).copy(statBoosts =
+      val called = TestFixtures.hero(userId, dungeonLevel = 60, maxDungeonLevel = 150).copy(statBoosts =
         StatBoosts.none.add(StatBoost(BrewRates.WolfCallBoost, ParamsBuff.zero, BrewRates.WolfCallMs), 0L))
       for {
         heroDao   <- TestHeroDao.withHero(userId, called)
@@ -85,21 +87,21 @@ object DragonLairSpec extends ZIOSpecDefault {
               assertTrue(hero.statBoosts.hasActive(BrewRates.WolfCallBoost, 0L))
     },
 
-    test("«Уйти» — герой на 25-м уровне, экран этажа") {
+    test("«Уйти» — герой на 50-м уровне, экран этажа") {
       for {
-        q <- makeState(37)
+        q <- makeState(62)
         (state, heroDao, renderer, _) = q
         res     <- state.action(testUser, tap("DragonLeave"), renderer)
         hero    <- heroDao.getHeroByUserId(userId).map(_.get)
         screens <- renderer.sentScreens
-      } yield assertTrue(res == StateType.Dungeon && hero.dungeonLevel == 25) &&
-              assertTrue(screens.exists(_.text.contains("вернулись на 25-й уровень"))) &&
-              assertTrue(screens.last.text.contains("Уровень: 25") && screens.last.choices.exists(_.id == "FindEvent"))
+      } yield assertTrue(res == StateType.Dungeon && hero.dungeonLevel == 50) &&
+              assertTrue(screens.exists(_.text.contains("вернулись на 50-й уровень"))) &&
+              assertTrue(screens.last.text.contains("Уровень: 50") && screens.last.choices.exists(_.id == "FindEvent"))
     },
 
     test("«Напасть» — бой с драконом: все показатели по 100 000, сородичей не зовёт") {
       for {
-        q <- makeState(33)
+        q <- makeState(58)
         (state, heroDao, renderer, _) = q
         res    <- state.action(testUser, tap("DragonAttack"), renderer)
         battle <- battleOf(heroDao)
@@ -107,43 +109,45 @@ object DragonLairSpec extends ZIOSpecDefault {
         s       = battle.map(_.monsterStats)
       } yield assertTrue(res == StateType.Battle) &&
               assertTrue(battle.exists(b => b.monsterRace == Race.Dragon.entryName && b.monsterName == "Дракон" &&
-                b.monsterLvl == 33L && b.noKin && b.monsterCurrentHp == 100000L &&
+                b.monsterLvl == 58L && b.noKin && b.monsterCurrentHp == 100000L &&
                 b.monsterCurrentArmor == 100000L && b.monsterCurrentEnergy == 100000L && !b.cantFlee)) &&
               assertTrue(s.exists(f => List(f.atk, f.hp, f.armor, f.defence, f.evasion, f.accuracy, f.energy)
                 .forall(_ == 100000L))) &&
               assertTrue(scene.contains(io.circe.Json.Null))
     },
 
-    test("старые кнопки дракона вне логова — просто экран этажа: ни боя, ни переноса") {
-      for {
-        q <- makeState(20)
-        (state, heroDao, renderer, _) = q
-        a       <- state.action(testUser, tap("DragonAttack"), renderer)
-        l       <- state.action(testUser, tap("DragonLeave"), renderer)
-        battle  <- battleOf(heroDao)
-        hero    <- heroDao.getHeroByUserId(userId).map(_.get)
-        screens <- renderer.sentScreens
-      } yield assertTrue(a == StateType.Dungeon && l == StateType.Dungeon) &&
-              assertTrue(battle.isEmpty && hero.dungeonLevel == 20) &&
-              assertTrue(screens.forall(_.text.contains("Уровень: 20")))
+    test("старые кнопки дракона вне логова — просто экран этажа: ни боя, ни переноса (и на 30-м, где логово было раньше)") {
+      ZIO.foreach(List(20, 30)) { level =>
+        for {
+          q <- makeState(level)
+          (state, heroDao, renderer, _) = q
+          a       <- state.action(testUser, tap("DragonAttack"), renderer)
+          l       <- state.action(testUser, tap("DragonLeave"), renderer)
+          battle  <- battleOf(heroDao)
+          hero    <- heroDao.getHeroByUserId(userId).map(_.get)
+          screens <- renderer.sentScreens
+        } yield assertTrue(a == StateType.Dungeon && l == StateType.Dungeon) &&
+                assertTrue(battle.isEmpty && hero.dungeonLevel == level) &&
+                assertTrue(screens.forall(_.text.contains(s"Уровень: $level")))
+      }.map(_.reduce(_ && _))
     },
 
     test("выслеживание в логове — сразу дракон, таймер не ставится") {
       for {
-        q <- makeState(40, max = 40)
+        q <- makeState(65, max = 65)
         (state, heroDao, renderer, scheduler) = q
         res       <- state.action(testUser, tap("GoDarker"), renderer)
         screens   <- renderer.sentScreens
         scheduled <- scheduler.scheduled
         hero      <- heroDao.getHeroByUserId(userId).map(_.get)
-      } yield assertTrue(res == StateType.Dungeon && hero.dungeonLevel == 40) &&
+      } yield assertTrue(res == StateType.Dungeon && hero.dungeonLevel == 65) &&
               assertTrue(screens.last.text.contains(Warning)) &&
               assertTrue(!scheduled.exists(_.kind == TaskKind.DarknessTracking))
     },
 
     test("выслеживание, начатое до логова, по таймеру выводит на дракона, а не на Отмеченного") {
       for {
-        q <- makeState(30, max = 30)
+        q <- makeState(55, max = 55)
         (state, heroDao, renderer, scheduler) = q
         _         <- heroDao.writeSceneData(userId, io.circe.Json.obj("darknessTrackingUntil" -> io.circe.Json.fromLong(1000L)))
         _         <- TestClock.adjust(Duration.fromMillis(2000L))
@@ -158,20 +162,22 @@ object DragonLairSpec extends ZIOSpecDefault {
               assertTrue(cancelled.contains(userId -> TaskKind.DarknessTracking))
     },
 
-    test("с 25-го на 26-й выслеживать можно, как раньше") {
-      for {
-        q <- makeState(25, max = 25)
-        (state, _, renderer, scheduler) = q
-        _         <- state.action(testUser, tap("GoDarker"), renderer)
-        screens   <- renderer.sentScreens
-        scheduled <- scheduler.scheduled
-      } yield assertTrue(!screens.exists(_.text.contains(Warning))) &&
-              assertTrue(scheduled.exists(_.kind == TaskKind.DarknessTracking))
+    test("с 50-го на 51-й выслеживать можно, как раньше; и с 25-го на 26-й — тоже") {
+      ZIO.foreach(List(50, 25)) { level =>
+        for {
+          q <- makeState(level, max = level)
+          (state, _, renderer, scheduler) = q
+          _         <- state.action(testUser, tap("GoDarker"), renderer)
+          screens   <- renderer.sentScreens
+          scheduled <- scheduler.scheduled
+        } yield assertTrue(!screens.exists(_.text.contains(Warning))) &&
+                assertTrue(scheduled.exists(_.kind == TaskKind.DarknessTracking))
+      }.map(_.reduce(_ && _))
     },
 
     test("дракона не отравить, не обескровить и не поджечь") {
       val hero   = TestFixtures.hero(userId)
-      val battle = SoloPveBattle.from(MonsterGenerator.dragon(30), hero)
+      val battle = SoloPveBattle.from(MonsterGenerator.dragon(60), hero)
       val hit    = battle.withEffects(BattleEffects.empty.copy(
         monsterPoison = Some(Poison(10)), monsterBleed = Some(Bleed(10)), monsterBurn = Some(Burn(10))))
       assertTrue(hit.effects.monsterPoison.isEmpty && hit.effects.monsterBleed.isEmpty &&
