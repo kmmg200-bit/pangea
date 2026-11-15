@@ -106,29 +106,41 @@ object BartiSaltSpec extends ZIOSpecDefault {
                 shield._2 != StateType.BartiHouse)
     },
 
-    test("Торговая площадь: «Дом Барти» у одиночки, пока «Соль» ждёт разговора; у Щита и после — нет") {
-      def buttons(q: NpcQuests) =
+    test("«Дом Барти» на площади: до «Большого дела» — у одиночки, пока «Соль» ждёт разговора; после — у всех, а «📜 Соль» — на экране дома у одиночки") {
+      def visit(q: NpcQuests) =
         for {
-          c <- content
-          d <- dao(q)
-          r <- TestRenderer.make
-          _ <- MarketSquareState(c, Some(d)).enter(testUser, r)
-          s <- r.sentScreens.map(_.last)
-        } yield s.choices.map(_.id)
+          c      <- content
+          d      <- dao(q)
+          r      <- TestRenderer.make
+          _      <- MarketSquareState(c, Some(d)).enter(testUser, r)
+          square <- r.sentScreens.map(_.last)
+          r2     <- TestRenderer.make
+          _      <- BartiHouseState(d, TestInventoryRepository.withItems(Nil), c, Some(TestItemRepository.make)).enter(testUser, r2)
+          home   <- r2.sentScreens.map(_.last)
+        } yield (square.choices.map(_.id), home.choices.map(_.id))
       for {
-        alone  <- buttons(ready(Path.Alone))
-        shield <- buttons(ready(Path.Shield))
-        taken  <- buttons(toCaravan)
-      } yield assertTrue(alone.contains("BartiHome") && !shield.contains("BartiHome") && !taken.contains("BartiHome"))
+        alone    <- visit(ready(Path.Alone, bigDeal = false))
+        shield   <- visit(ready(Path.Shield, bigDeal = false))
+        taken    <- visit(ready(Path.Alone, bigDeal = false).take(NpcQuest.BartiSalt, 0L))
+        settled  <- visit(ready(Path.Alone))
+        shieldOk <- visit(ready(Path.Shield))
+        going    <- visit(toCaravan)
+      } yield assertTrue(alone._1.contains("BartiHome") && !shield._1.contains("BartiHome") && !taken._1.contains("BartiHome")) &&
+              assertTrue(settled._1.contains("BartiHome") && shieldOk._1.contains("BartiHome") && going._1.contains("BartiHome")) &&
+              assertTrue(settled._2.contains("BartiQuestSalt") && going._2.contains("BartiQuestSalt") &&
+                !shieldOk._2.contains("BartiQuestSalt"))
     },
 
     test("у Барти: Загон — старая солеварня, соль туда возит Та'Нахир; задание взято; «Синяя дверь» подождёт; Та'Нахир помнит героя по «Большому делу»") {
+      // После «Большого дела» — с экрана дома, кнопкой «📜 Соль»; до него — сразу.
       def talk(q: NpcQuests) =
         for {
           c <- content
           d <- dao(q)
           r <- TestRenderer.make
-          _ <- BartiHouseState(d, TestInventoryRepository.withItems(Nil), c, Some(TestItemRepository.make)).enter(testUser, r)
+          st = BartiHouseState(d, TestInventoryRepository.withItems(Nil), c, Some(TestItemRepository.make))
+          _ <- st.enter(testUser, r)
+          _ <- ZIO.when(q.isDone(NpcQuest.BigDeal))(st.action(testUser, tap("BartiQuestSalt"), r))
           s <- r.sentScreens.map(_.last)
           q <- questOf(d)
         } yield (s, q)

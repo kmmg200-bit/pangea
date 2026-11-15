@@ -323,6 +323,30 @@ object StoryMorningSpec extends ZIOSpecDefault {
                 met._10.exists(_.questItem.contains(QuestItemKind.StoryCellBook)))
     },
 
+    test("Сам по себе, после «Большого дела»: книга ведёт на экран дома — «📜 Наутро»; кнопка — к главе, и «Яма» её ждёт") {
+      // Герой дорос до «Ямы», а «Большая поставка» закрыта: глава у Барти всё
+      // равно раньше — дом открыт, а не опечатан.
+      val settled = morning(Path.Alone, 1).take(NpcQuest.HotGoods, 0L).finish(NpcQuest.HotGoods)
+        .take(NpcQuest.BigDeal, 0L).finish(NpcQuest.BigDeal).take(NpcQuest.BartiRoof, 0L).finish(NpcQuest.BartiRoof)
+        .take(NpcQuest.BartiDelivery, 0L).finish(NpcQuest.BartiDelivery)
+      for {
+        c     <- content
+        d     <- dao(hero().copy(lvl = 40L), settled)
+        inv    = TestInventoryRepository.withItems(List(book))
+        house  = BartiHouseState(d, inv, c, Some(TestItemRepository.make))
+        r     <- TestRenderer.make
+        _     <- house.enter(testUser, r)
+        home  <- r.sentScreens.map(_.last)
+        _     <- house.action(testUser, tap("BartiQuestMorning"), r)
+        said  <- texts(r)
+        door  <- r.sentScreens.map(_.last)
+        q     <- questOf(d)
+      } yield assertTrue(home.text.contains("Дом Барти за синей дверью") && !home.text.contains("Имущество под залогом") &&
+                home.choices.find(_.id == "BartiQuestMorning").map(_.label).contains("📜 Наутро")) &&
+              assertTrue(said.contains("А, это ты! Заходи") && door.text.contains("Счетовод ячейки пришёл за своей книгой") &&
+                StoryMorningQuest.toBartiFight(q) && !q.isTaken(NpcQuest.BartiPit))
+    },
+
     test("без хранилища вещей у Барти — по-старому: «Наутро» не трогает дом") {
       for {
         c <- content

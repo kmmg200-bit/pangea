@@ -15,7 +15,7 @@ import pangea.service.state.StoryToolQuest.Path
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.battle.BattleState
 import pangea.service.state.states.story.StoryFight
-import pangea.service.state.states.{DeathState, MarketSquareState}
+import pangea.service.state.states.DeathState
 import pangea.service.state.{BartiDoorQuest, NpcQuestLog, QuestJournal, StoryPowderQuest, StoryToolQuest, UserAction}
 import pangea.test._
 import zio.test._
@@ -23,7 +23,7 @@ import zio.{Task, ZIO}
 
 /** «Синяя дверь» — побочное задание Барти, только у пути «Сам по себе»: Барти
   * похвастался, с кем водится, и ночью Братство присылает жечь его дом демонов.
-  * Дом — кнопкой с Торговой площади, пока задание доступно или идёт. Бой с
+  * Задание — кнопкой с экрана дома Барти, пока оно доступно или идёт. Бой с
   * поджигателями, Барти со сковородой — в строю. */
 object BartiDoorSpec extends ZIOSpecDefault {
 
@@ -66,33 +66,35 @@ object BartiDoorSpec extends ZIOSpecDefault {
 
   override def spec = suite("«Синяя дверь»: поджигатели у дома Барти")(
 
-    test("Торговая площадь: «Дом Барти» — только у одиночки, после «Наутро» и «Большого дела», пока задание идёт") {
-      def buttons(q: NpcQuests) =
+    test("экран дома Барти: «📜 Синяя дверь» — только у одиночки, после «Наутро» и «Большого дела», пока задание идёт") {
+      def errands(q: NpcQuests) =
         for {
           c <- content
           d <- dao(q)
           r <- TestRenderer.make
-          _ <- MarketSquareState(c, Some(d)).enter(testUser, r)
+          _ <- house(d, c).enter(testUser, r)
           s <- r.sentScreens.map(_.last)
-        } yield s.choices.map(_.id)
+        } yield (s.text, s.choices.map(_.id))
       for {
-        alone  <- buttons(ready(Path.Alone))
-        shield <- buttons(ready(Path.Shield))
-        shadow <- buttons(ready(Path.Shadow))
-        early  <- buttons(ready(Path.Alone).update(NpcQuest.StoryMorning)(_.copy(done = false)))
-        going  <- buttons(night)
-        closed <- buttons(night.finish(NpcQuest.BartiDoor))
-      } yield assertTrue(alone.contains("BartiHome") && going.contains("BartiHome")) &&
-              assertTrue(!shield.contains("BartiHome") && !shadow.contains("BartiHome") && !early.contains("BartiHome") &&
-                !closed.contains("BartiHome"))
+        alone  <- errands(ready(Path.Alone))
+        shield <- errands(ready(Path.Shield))
+        shadow <- errands(ready(Path.Shadow))
+        early  <- errands(ready(Path.Alone).update(NpcQuest.StoryMorning)(_.copy(done = false)))
+        going  <- errands(night)
+        closed <- errands(night.finish(NpcQuest.BartiDoor))
+      } yield assertTrue(List(alone, shield, shadow, going, closed).forall(_._1.contains("Дом Барти за синей дверью"))) &&
+              assertTrue(alone._2.contains("BartiQuestDoor") && going._2.contains("BartiQuestDoor")) &&
+              assertTrue(!shield._2.contains("BartiQuestDoor") && !shadow._2.contains("BartiQuestDoor") &&
+                !early._2.contains("BartiQuestDoor") && !closed._2.contains("BartiQuestDoor"))
     },
 
-    test("впервые: метка на двери, Барти признаётся — задание взято, ночь у двери") {
+    test("впервые — кнопкой с экрана дома: метка на двери, Барти признаётся — задание взято, ночь у двери") {
       for {
         c <- content
         d <- dao(ready(Path.Alone))
         r <- TestRenderer.make
         _ <- house(d, c).enter(testUser, r)
+        _ <- house(d, c).action(testUser, tap("BartiQuestDoor"), r)
         s <- r.sentScreens.map(_.last)
         q <- questOf(d)
       } yield assertTrue(s.text.contains("круг, перечёркнутый клинком") && s.text.contains("И жене его") &&

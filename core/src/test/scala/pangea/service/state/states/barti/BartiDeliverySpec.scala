@@ -15,7 +15,7 @@ import pangea.service.state.StoryToolQuest.Path
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.battle.BattleState
 import pangea.service.state.states.story.StoryFight
-import pangea.service.state.states.{ConstructionState, DeathState, MarketSquareState}
+import pangea.service.state.states.{ConstructionState, DeathState}
 import pangea.service.state.{BartiDeliveryQuest, NpcQuestLog, QuestJournal, StoryPowderQuest, StoryToolQuest, UserAction}
 import pangea.test._
 import zio.test._
@@ -23,7 +23,7 @@ import zio.{Task, ZIO}
 
 /** «Большая поставка» — побочное задание Барти в Акте II, все пути: заказ на
   * десять бутылей самогона в лагерь Чернолома у Старой вырубки, плата вперёд —
-  * досками. Лавка — кнопкой с Торговой площади после «Крыши». Самогон носят
+  * досками. Лавка — кнопкой с экрана дома Барти после «Крыши». Самогон носят
   * Барти по бутыли, потом везут в лагерь — бой с пьяной бригадой, Барти под
   * телегой; остаток — тоже досками, и доски берёт прораб Гуннар: платит
   * золотом. */
@@ -73,20 +73,20 @@ object BartiDeliverySpec extends ZIOSpecDefault {
 
   override def spec = suite("«Большая поставка»: самогон для Чернолома, плата досками")(
 
-    test("Торговая площадь: «Лавка Барти» — после «Крыши», пока «Поставка» доступна или идёт") {
-      def buttons(q: NpcQuests) =
+    test("лавка — кнопкой «📜 Большая поставка» с экрана дома Барти после «Крыши», пока «Поставка» доступна или идёт") {
+      def errand(q: NpcQuests) =
         for {
           c <- content
           d <- dao(q)
           r <- TestRenderer.make
-          _ <- MarketSquareState(c, Some(d)).enter(testUser, r)
+          _ <- BartiHouseState(d, TestInventoryRepository.withItems(Nil), c, Some(TestItemRepository.make)).enter(testUser, r)
           s <- r.sentScreens.map(_.last)
-        } yield s.choices.map(_.id)
+        } yield s.choices.find(_.id == "BartiShop").map(_.label)
       for {
-        open   <- buttons(ready)
-        going  <- buttons(delivery(3))
-        closed <- buttons(delivery(3).finish(NpcQuest.BartiDelivery))
-      } yield assertTrue(open.contains("BartiShop") && going.contains("BartiShop") && !closed.contains("BartiShop"))
+        open   <- errand(ready)
+        going  <- errand(delivery(3))
+        closed <- errand(delivery(3).finish(NpcQuest.BartiDelivery))
+      } yield assertTrue(open.contains("📜 Большая поставка") && going.contains("📜 Большая поставка") && closed.isEmpty)
     },
 
     test("впервые: доски вместо платы и рецепт самогона — задание взято, рецепт в книге") {

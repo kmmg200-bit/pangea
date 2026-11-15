@@ -26,7 +26,7 @@ import zio.test._
 import zio.{Task, ZIO}
 
 /** «Крыша» — побочное задание Барти в Акте II: ночная стража берёт с его лавки
-  * плату «за охрану». Лавка — кнопкой с Торговой площади, пока задание
+  * плату «за охрану». Лавка — кнопкой с экрана дома Барти, пока задание
   * доступно или идёт. Щит идёт к Юноне за поддержкой, Тени Братство предлагает
   * решить вопрос само (без боя, но Барти теперь должен Братству), одиночка —
   * сразу ночью в лавку. Ночью — бой с капитаном и четырьмя, Барти под
@@ -78,30 +78,39 @@ object BartiRoofSpec extends ZIOSpecDefault {
 
   override def spec = suite("«Крыша»: лавка Барти и ночная стража")(
 
-    test("Торговая площадь: «Лавка Барти» — когда Рубеж I пройден и «Большое дело» закрыто, пока задание идёт; после — уже ради «Большой поставки»") {
-      def buttons(q: NpcQuests) =
+    test("лавка — кнопкой с экрана дома Барти: «📜 Крыша», пока задание доступно или идёт; после — «📜 Большая поставка»; на площади своей кнопки у лавки нет") {
+      def visit(q: NpcQuests) =
         for {
-          c <- content
-          d <- dao(q)
-          r <- TestRenderer.make
-          _ <- MarketSquareState(c, Some(d)).enter(testUser, r)
-          s <- r.sentScreens.map(_.last)
-        } yield s.choices.map(_.id)
+          c      <- content
+          d      <- dao(q)
+          r      <- TestRenderer.make
+          _      <- MarketSquareState(c, Some(d)).enter(testUser, r)
+          square <- r.sentScreens.map(_.last)
+          r2     <- TestRenderer.make
+          home    = BartiHouseState(d, TestInventoryRepository.withItems(Nil), c, Some(TestItemRepository.make))
+          _      <- home.enter(testUser, r2)
+          shown  <- r2.sentScreens.map(_.last)
+          go     <- home.action(testUser, tap("BartiShop"), r2)
+        } yield (square.choices.map(_.id), shown.choices.find(_.id == "BartiShop").map(_.label), go)
       for {
-        early  <- buttons(ready(Path.Alone).update(NpcQuest.BigDeal)(_.copy(done = false)))
-        open   <- buttons(ready(Path.Alone))
-        going  <- buttons(roof(Path.Alone, 3))
+        early  <- visit(ready(Path.Alone).update(NpcQuest.BigDeal)(_.copy(done = false)))
+        open   <- visit(ready(Path.Alone))
+        going  <- visit(roof(Path.Alone, 3))
         // «Крыша» закрыта — лавка остаётся ради «Большой поставки», а закрыта и
         // она — кнопки нет.
-        next   <- buttons(roof(Path.Alone, 3).finish(NpcQuest.BartiRoof))
-        closed <- buttons(roof(Path.Alone, 3).finish(NpcQuest.BartiRoof).take(NpcQuest.BartiDelivery, 0L)
+        next   <- visit(roof(Path.Alone, 3).finish(NpcQuest.BartiRoof))
+        closed <- visit(roof(Path.Alone, 3).finish(NpcQuest.BartiRoof).take(NpcQuest.BartiDelivery, 0L)
                     .finish(NpcQuest.BartiDelivery))
         c      <- content
         r      <- TestRenderer.make
         _      <- MarketSquareState(c).enter(testUser, r)
         old    <- r.sentScreens.map(_.last)
-      } yield assertTrue(!early.contains("BartiShop") && open.contains("BartiShop") && going.contains("BartiShop") &&
-                next.contains("BartiShop") && !closed.contains("BartiShop") && !old.choices.exists(_.id == "BartiShop"))
+      } yield assertTrue(List(early, open, going, next, closed).forall(!_._1.contains("BartiShop")) &&
+                !old.choices.exists(_.id == "BartiShop")) &&
+              assertTrue(!early._1.contains("BartiHome") && List(open, going, next, closed).forall(_._1.contains("BartiHome"))) &&
+              assertTrue(early._2.isEmpty && open._2.contains("📜 Крыша") && going._2.contains("📜 Крыша") &&
+                next._2.contains("📜 Большая поставка") && closed._2.isEmpty) &&
+              assertTrue(open._3 == StateType.BartiShop)
     },
 
     test("лавка впервые: квитанция в сумке, задание взято на шаге своего пути — Щиту к Юноне, Тени — Братство, одиночке — сразу ночь") {

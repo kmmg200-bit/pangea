@@ -4,14 +4,13 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.state.StateType
 import pangea.model.user.User
-import pangea.service.state.{BartiDeliveryQuest, BartiDoorQuest, BartiPitQuest, BartiRoofQuest, BartiSaltQuest, NpcQuestLog, State,
-  UserAction}
+import pangea.service.state.{BartiHome, NpcQuestLog, State, UserAction}
 import zio.{Task, ZIO}
 
-/** Торговая площадь. Пока «Крыша» или «Большая поставка» доступна или идёт (см.
-  * BartiRoofQuest, BartiDeliveryQuest), здесь же — лавка Барти, а пока идёт
-  * «Синяя дверь» (BartiDoorQuest) — его дом; без журнала заданий (`heroDao` — в
-  * старых тестах) их нет. */
+/** Торговая площадь. После «Большого дела» здесь насовсем — дом Барти: все дела
+  * с ним, и лавочные тоже, идут оттуда (см. BartiHome); до него — только у
+  * одиночки, пока «Соль» ждёт разговора с Барти. Без журнала заданий (`heroDao`
+  * — в старых тестах) дома нет. */
 case class MarketSquareState(content: SceneContent, heroDao: Option[HeroDao] = None) extends State {
 
   private val branch = new Branch(
@@ -23,6 +22,8 @@ case class MarketSquareState(content: SceneContent, heroDao: Option[HeroDao] = N
       "Gustavo"            -> Target.Goto(StateType.Gustavo),
       "Construction"       -> Target.Goto(StateType.Construction),
       "TradeHouse"         -> Target.Goto(StateType.TradeHouse),
+      // Лавка Барти своей кнопки на площади больше не носит — её задания идут
+      // из дома Барти; старое сообщение с кнопкой пусть ведёт куда обещало.
       "BartiShop"          -> Target.Goto(StateType.BartiShop),
       "BartiHome"          -> Target.Goto(StateType.BartiHouse),
       "BackToMarketSquare" -> Target.Run { (user, _, renderer) => enter(user, renderer).as(StateType.MarketSquare) },
@@ -34,22 +35,15 @@ case class MarketSquareState(content: SceneContent, heroDao: Option[HeroDao] = N
   override def targetStates: Set[StateType] = branch.gotoTargets
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
-    ZIO.foreach(heroDao)(dao => NpcQuestLog.load(dao, user.userId) <*> dao.getHeroByUserId(user.userId)).flatMap { loaded =>
-      val quests = loaded.map(_._1)
-      val byId   = content.screen("marketSquare.enter").choices.map(c => c.id -> c).toMap
-      val barti  = Option.when(quests.exists(q => BartiRoofQuest.shopOpen(q) || BartiDeliveryQuest.shopOpen(q)))(
-        content.choice("BartiShop", "marketSquare.bartiShopLabel").copy(color = ChoiceColor.Positive, row = Some(1)))
-      // «Долговая яма» — только с BartiPitQuest.MinHeroLvl-го уровня героя.
-      val pit = loaded.exists { case (q, hero) => hero.exists(BartiPitQuest.houseOpen(q, _)) }
-      // «Синяя дверь» (только одиночка): дом Барти — пока задание доступно или
-      // идёт; и пока у одиночки «Соль» ждёт разговора с Барти.
-      val door = Option.when(pit || quests.exists(q => BartiDoorQuest.houseOpen(q) || BartiSaltQuest.available(q)))(
+    ZIO.foreach(heroDao)(NpcQuestLog.load(_, user.userId)).flatMap { quests =>
+      val byId  = content.screen("marketSquare.enter").choices.map(c => c.id -> c).toMap
+      val barti = Option.when(quests.exists(BartiHome.onSquare))(
         content.choice("BartiHome", "marketSquare.bartiHomeLabel").copy(color = ChoiceColor.Positive, row = Some(1)))
       val choices = List(
         byId("StreetMerchants").copy(row = Some(0)),
         byId("Construction").copy(row = Some(0)),
         byId("TradeHouse").copy(row = Some(1))
-      ) ++ barti.toList ++ door.toList :+ byId("BackToCity").copy(color = ChoiceColor.Negative, row = Some(2))
+      ) ++ barti.toList :+ byId("BackToCity").copy(color = ChoiceColor.Negative, row = Some(2))
       renderer.show(user, Screen(content.text("marketSquare.enter.text"), choices))
     }
 

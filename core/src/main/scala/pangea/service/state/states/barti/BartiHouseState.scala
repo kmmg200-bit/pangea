@@ -17,14 +17,22 @@ import pangea.service.purse.Purse
 import pangea.service.state.StoryToolQuest.Path
 import pangea.service.state.states.story.StoryFight
 import pangea.service.state.BartiPitQuest.Way
-import pangea.service.state.{BartiDoorQuest, BartiPitQuest, BartiSaltQuest, BigDealQuest, NpcQuestLog, QuestSupport, State,
-  StoryMorningQuest, UserAction}
+import pangea.service.state.BartiHome.Errand
+import pangea.service.state.{BartiDoorQuest, BartiHome, BartiPitQuest, BartiSaltQuest, BigDealQuest, NpcQuestLog, QuestSupport,
+  State, StoryMorningQuest, UserAction}
 import zio.{Task, ZIO}
 
 import java.util.concurrent.TimeUnit
 
-/** Дом Барти — синяя дверь на Торговой площади (см. BigDealQuest). Сюда ведёт
-  * карточка адреса, из города. Впервые — затея с контрабандой: каджитам
+/** Дом Барти — синяя дверь на Торговой площади. После «Большого дела» это его
+  * место (см. BartiHome): кнопка «Дом Барти» на площади — насовсем, а в доме —
+  * экран с его заданиями, кнопка на каждое, что можно взять или что идёт
+  * («Наутро», «Соль», «Синяя дверь», а «Крыша» и «Большая поставка» — в лавку).
+  * Отметка победы после боя — раньше экрана: добыча вернула сюда, чтобы
+  * закончить задание. Пока Барти в «Долговой яме», дом опечатан — экрана нет.
+  *
+  * «Большое дело» (см. BigDealQuest): сюда ведёт карточка адреса, из города.
+  * Впервые — затея с контрабандой: каджитам
   * нужны шнапс и живая вода, платят они золотом; задание взято. Дальше Барти
   * принимает товар хоть по одной склянке («📦 Отдать товар» берёт из сумки
   * всё, что ему ещё нужно) и складывает у себя. Собрано всё — ждать каравана:
@@ -67,6 +75,11 @@ case class BartiHouseState(
       "PitBrotherhood"  -> Target.Run { (u, _, r) => pitBrotherhood(u, r) },
       "PitPay"          -> Target.Run { (u, _, r) => pitPay(u, r) },
       "PitFight"        -> Target.Run { (u, _, r) => pitFight(u, r) },
+      // Задания с экрана дома: каждое — к своему шагу; лавочные — в лавку.
+      Errand.Morning.id -> Target.Run { (u, _, r) => morningErrand(u, r) },
+      Errand.Salt.id    -> Target.Run { (u, _, r) => saltErrand(u, r) },
+      Errand.Door.id    -> Target.Run { (u, _, r) => doorErrand(u, r) },
+      Errand.Roof.id    -> Target.Goto(StateType.BartiShop),
       "BartiLeave"      -> Target.Goto(StateType.MarketSquare)
     ),
     fallback = Target.Run { (u, _, r) => enter(u, r).as(StateType.BartiHouse) }
@@ -81,20 +94,22 @@ case class BartiHouseState(
       items  <- bag(hero)
       data   <- heroDao.readSceneData(user.userId)
       story   = itemRepo.filter(_ => StoryMorningQuest.atBarti(quests))
+      // Добыча вернула сюда после боя: сперва закончить задание, потом всё прочее.
       _      <- if (story.isDefined && StoryFight.won(data, WonKey) && StoryMorningQuest.toBartiFight(quests))
                   storyWon(user, renderer)
+                else if (StoryFight.won(data, DoorWonKey) && BartiDoorQuest.toNight(quests)) doorWon(user, renderer)
+                else if (StoryFight.won(data, PitWonKey) && BartiPitQuest.toNight(quests)) pitFreed(user, Way.Breakout, renderer)
+                // После «Большого дела» Барти дома — экран его дел.
+                else if (BartiHome.atHome(quests, hero, story.isDefined)) renderer.show(user, homeScreen(quests, story.isDefined))
                 else if (story.isDefined && StoryMorningQuest.toBarti(quests)) storyTalk(user, quests, renderer)
                 else if (story.isDefined) renderer.show(user, knockScreen)
                 // «Синяя дверь» (только одиночка): поджигатели Братства.
-                else if (StoryFight.won(data, DoorWonKey) && BartiDoorQuest.toNight(quests)) doorWon(user, renderer)
                 else if (BartiDoorQuest.toNight(quests)) renderer.show(user, nightScreen(None))
                 // «Соль» (только одиночка): где Загон — Барти знает, кто туда возит.
                 // Раньше ещё не начатой «Синей двери»: это дорога главы 9.
                 else if (BartiSaltQuest.available(quests)) saltBegin(user, quests, renderer)
-                else if (BartiSaltQuest.toCaravan(quests))
-                  renderer.show(user, Screen(content.text("barti.salt.waiting").trim, List(leave.copy(row = Some(0)))))
+                else if (BartiSaltQuest.toCaravan(quests)) renderer.show(user, saltWaiting)
                 // «Долговая яма» (все пути): Барти в долговой яме, дом опечатан.
-                else if (StoryFight.won(data, PitWonKey) && BartiPitQuest.toNight(quests)) pitFreed(user, Way.Breakout, renderer)
                 else if (BartiPitQuest.available(quests, hero)) pitBegin(user, quests, renderer)
                 else if (quests.isTaken(NpcQuest.BartiPit)) renderer.show(user, pitScreen(quests, None))
                 else if (BartiDoorQuest.available(quests)) doorBegin(user, quests, renderer)
@@ -111,6 +126,48 @@ case class BartiHouseState(
 
   private def leave: Choice =
     content.choice("BartiLeave", "barti.house.leaveLabel").copy(color = ChoiceColor.Negative, row = Some(1))
+
+  // ── Дом Барти — его место ──────────────────────────────────────────────────
+
+  /** Экран дома: Барти у себя, кнопка на каждое его задание, что можно взять
+    * или что идёт (`story` — у Барти ждёт «Наутро»); по две в ряд. */
+  private def homeScreen(quests: NpcQuests, story: Boolean): Screen = {
+    val errands = BartiHome.errands(quests, story).zipWithIndex.map { case (e, i) =>
+      Choice(e.id, Choice.fit(content.format("barti.home.questLabel", "title" -> content.text(e.titleKey))), row = Some(i / 2))
+    }
+    val lastRow = errands.flatMap(_.row).maxOption.fold(0)(_ + 1)
+    Screen(content.text("barti.home.text").trim, errands :+ leave.copy(row = Some(lastRow)))
+  }
+
+  /** «Наутро» с экрана дома: Барти читает о себе в книге — или в дверь уже
+    * стучат. Главы у Барти нет — снова экран дома. */
+  private def morningErrand(user: User, renderer: Renderer): Task[StateType] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      val story = itemRepo.isDefined && StoryMorningQuest.atBarti(quests)
+      if (story && StoryMorningQuest.toBarti(quests)) storyTalk(user, quests, renderer)
+      else if (story) renderer.show(user, knockScreen)
+      else enter(user, renderer)
+    }.as(StateType.BartiHouse)
+
+  /** «Соль» с экрана дома: впервые — Барти о Загоне, взята — ждать каравана. */
+  private def saltErrand(user: User, renderer: Renderer): Task[StateType] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (BartiSaltQuest.available(quests)) saltBegin(user, quests, renderer)
+      else if (BartiSaltQuest.toCaravan(quests)) renderer.show(user, saltWaiting)
+      else enter(user, renderer)
+    }.as(StateType.BartiHouse)
+
+  /** «Синяя дверь» с экрана дома: впервые — метка на двери, взята — ночь у двери. */
+  private def doorErrand(user: User, renderer: Renderer): Task[StateType] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (BartiDoorQuest.toNight(quests)) renderer.show(user, nightScreen(None))
+      else if (BartiDoorQuest.available(quests)) doorBegin(user, quests, renderer)
+      else enter(user, renderer)
+    }.as(StateType.BartiHouse)
+
+  /** «Соль» взята: ночью — к каравану у Сухого колодца. */
+  private def saltWaiting: Screen =
+    Screen(content.text("barti.salt.waiting").trim, List(leave.copy(row = Some(0))))
 
   /** Впервые: затея с контрабандой — задание взято. */
   private def begin(user: User, quests: NpcQuests, items: List[Item], renderer: Renderer): Task[Unit] =

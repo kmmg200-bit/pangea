@@ -80,25 +80,30 @@ object BartiPitSpec extends ZIOSpecDefault {
 
   override def spec = suite("«Долговая яма»: Барти в долговой яме совета")(
 
-    test("Торговая площадь: «Дом Барти» после «Большой поставки», пока «Яма» доступна или идёт") {
-      def buttons(q: NpcQuests) =
+    test("дом опечатан, пока «Яма» доступна или идёт; до неё и после — экран дома; «Дом Барти» на площади — всё время") {
+      def visit(q: NpcQuests) =
         for {
-          c <- content
-          d <- dao(q)
-          r <- TestRenderer.make
-          _ <- MarketSquareState(c, Some(d)).enter(testUser, r)
-          s <- r.sentScreens.map(_.last)
-        } yield s.choices.map(_.id)
+          c      <- content
+          d      <- dao(q)
+          r      <- TestRenderer.make
+          _      <- MarketSquareState(c, Some(d)).enter(testUser, r)
+          square <- r.sentScreens.map(_.last)
+          r2     <- TestRenderer.make
+          _      <- house(d, TestInventoryRepository.withItems(Nil), c).enter(testUser, r2)
+          door   <- r2.sentScreens.map(_.last)
+        } yield (square.choices.map(_.id), door.text)
       for {
-        open   <- buttons(ready(Path.Shield))
-        going  <- buttons(taken(Path.Shield))
-        closed <- buttons(taken(Path.Shield).finish(NpcQuest.BartiPit))
-        early  <- buttons(ready(Path.Shield).update(NpcQuest.BartiDelivery)(_.copy(done = false)))
-      } yield assertTrue(open.contains("BartiHome") && going.contains("BartiHome") && !closed.contains("BartiHome") &&
-                !early.contains("BartiHome"))
+        open   <- visit(ready(Path.Shield))
+        going  <- visit(taken(Path.Shield))
+        closed <- visit(taken(Path.Shield).finish(NpcQuest.BartiPit))
+        early  <- visit(ready(Path.Shield).update(NpcQuest.BartiDelivery)(_.copy(done = false)))
+      } yield assertTrue(List(open, going, closed, early).forall(_._1.contains("BartiHome"))) &&
+              assertTrue(open._2.contains("Имущество под залогом") && going._2.contains("Юнона") &&
+                !open._2.contains("Дом Барти за синей дверью") && !going._2.contains("Дом Барти за синей дверью")) &&
+              assertTrue(closed._2.contains("Дом Барти за синей дверью") && early._2.contains("Дом Барти за синей дверью"))
     },
 
-    test("с 35-го уровня героя: раньше нет ни «Дома Барти», ни опечатанной двери; уже взятая «Яма» идёт на любом уровне") {
+    test("с 35-го уровня героя: раньше дом не опечатан — экран дома, задания нет; уже взятая «Яма» идёт на любом уровне") {
       def visit(q: NpcQuests, lvl: Long) =
         for {
           c      <- content
@@ -115,8 +120,8 @@ object BartiPitSpec extends ZIOSpecDefault {
         low   <- visit(ready(Path.Shield), BartiPitQuest.MinHeroLvl - 1L)
         exact <- visit(ready(Path.Shield), BartiPitQuest.MinHeroLvl)
         going <- visit(taken(Path.Alone), 20L)
-      } yield assertTrue(!low._1.contains("BartiHome") && !low._2.text.contains("Имущество под залогом") &&
-                !low._3.isTaken(NpcQuest.BartiPit)) &&
+      } yield assertTrue(low._1.contains("BartiHome") && low._2.text.contains("Дом Барти за синей дверью") &&
+                !low._2.text.contains("Имущество под залогом") && !low._3.isTaken(NpcQuest.BartiPit)) &&
               assertTrue(exact._1.contains("BartiHome") && exact._2.text.contains("Имущество под залогом") &&
                 exact._3.isTaken(NpcQuest.BartiPit)) &&
               assertTrue(going._1.contains("BartiHome") && BartiPitQuest.toNight(going._3) &&

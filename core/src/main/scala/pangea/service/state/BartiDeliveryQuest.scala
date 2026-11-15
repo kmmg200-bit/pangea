@@ -12,7 +12,7 @@ import pangea.model.quest.{NpcQuest, NpcQuests}
   * досками: «серебром туго». Самогон — это шнапс, ещё раз через куб с полынью и
   * шалфеем: рецепт Барти даёт, а куба у него нет.
   *
-  * Берётся в его лавке — кнопкой с Торговой площади, — когда «Крыша» закрыта.
+  * Берётся в его лавке — кнопкой с экрана дома Барти, — когда «Крыша» закрыта.
   * Шаги: 1 — самогон собирается у Барти (носить можно хоть по одной бутыли,
   * сколько сложено — в `counter`); 2 — везти в лагерь: бригада вскрывает
   * ящики до расчёта и дерётся за бутыли (бой, Барти — под телегой); 3 — остаток
@@ -48,7 +48,7 @@ object BartiDeliveryQuest {
   def available(q: NpcQuests): Boolean =
     q.isDone(NpcQuest.BartiRoof) && !q.isTaken(NpcQuest.BartiDelivery) && !q.isDone(NpcQuest.BartiDelivery)
 
-  /** Кнопка «Лавка Барти» на Торговой площади: задание доступно или идёт. */
+  /** Кнопка лавки на экране дома Барти: задание доступно или идёт. */
   def shopOpen(q: NpcQuests): Boolean = available(q) || q.isTaken(NpcQuest.BartiDelivery)
 
   def toCollect(q: NpcQuests): Boolean = q.onStep(NpcQuest.BartiDelivery, 1)
