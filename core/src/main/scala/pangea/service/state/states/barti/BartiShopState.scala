@@ -2,6 +2,7 @@ package pangea.service.state.states.barti
 
 import io.circe.Json
 import pangea.dao.hero.HeroDao
+import pangea.dao.quest.QuestOutcomeDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.hero.Hero
 import pangea.model.item.{Item, QuestItemKind}
@@ -40,7 +41,9 @@ case class BartiShopState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
   itemRepo:      ItemRepository,
-  content:       SceneContent
+  content:       SceneContent,
+  // «Крыша»: кто разобрался со стражей — в подсчёт «как и вы».
+  outcomes:      Option[QuestOutcomeDao] = None
 ) extends State {
   import BartiShopState._
 
@@ -126,7 +129,7 @@ case class BartiShopState(
       if (!BartiRoofQuest.toOffer(quests)) renderer.show(user, stepScreen(quests, None))
       else for {
         hero   <- getHero(user)
-        reward <- BartiRoofQuest.finish(heroDao, inventoryRepo, content, user, hero, Some(Deal.Brotherhood))
+        reward <- BartiRoofQuest.finish(heroDao, inventoryRepo, content, user, hero, Some(Deal.Brotherhood), outcomes)
         _      <- renderer.show(user, Screen(content.text("barti.roof.brotherhood").trim + "\n\n" + reward, List(leave.copy(row = Some(0)))))
       } yield ()
     }.as(StateType.BartiShop)
@@ -163,7 +166,7 @@ case class BartiShopState(
       path    = StoryToolQuest.choice(quests)
       deal    = Option.when(path.contains(Path.Shadow))(Deal.Self)
       coda    = content.text(s"barti.roof.coda.${path.fold(Path.Alone.key)(_.key)}").trim
-      reward <- BartiRoofQuest.finish(heroDao, inventoryRepo, content, user, hero, deal)
+      reward <- BartiRoofQuest.finish(heroDao, inventoryRepo, content, user, hero, deal, outcomes)
       _      <- renderer.show(user, Screen(List(content.text("barti.roof.won").trim, coda, reward).mkString("\n\n"),
                   List(leave.copy(row = Some(0)))))
     } yield ()

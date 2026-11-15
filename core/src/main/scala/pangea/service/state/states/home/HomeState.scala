@@ -21,10 +21,12 @@ import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.bank.BankRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
+import pangea.service.parcel.Parcels
 import pangea.service.purse.Purse
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.{EquipmentState, InventoryState, LootState}
-import pangea.service.state.{AppButton, AzatData, BartiRoofQuest, BeltContents, FirstStepsQuest, ItemMenu, NpcQuestDialog, NpcQuestLog, QuestSupport,
+import pangea.service.state.BartiPitQuest.Way
+import pangea.service.state.{AppButton, AzatData, BartiPitQuest, BartiRoofQuest, BeltContents, FirstStepsQuest, ItemMenu, NpcQuestDialog, NpcQuestLog, QuestSupport,
   QuestOutcomeLog, SlotChoice, State, StoryBrandQuest, StoryClearingQuest, StoryFaceQuest, StoryFurnaceQuest, StoryLine,
   StoryMorningQuest, StoryNewcomerQuest, StoryPowderQuest, StoryToolQuest, UserAction}
 import zio.{Random, Task, ZIO}
@@ -66,7 +68,9 @@ case class HomeState(
   // Живая сумка и Ларец: «Разложить всё» берёт травы и камни и из них.
   artifacts:     Option[ArtifactRepository] = None,
   // «Встать на ноги» засчитано здесь — в каком доме, идёт в подсчёт исходов.
-  outcomes:      Option[QuestOutcomeDao] = None
+  outcomes:      Option[QuestOutcomeDao] = None,
+  // Пояс надзирателя ★ из «Долговой ямы»: не влез в сумку — посылкой.
+  parcels:       Option[Parcels] = None
 ) extends State {
   import HomeState._
 
@@ -94,6 +98,9 @@ case class HomeState(
       "HomeJunonaClearing"  -> Target.Run { (u, _, r) => junonaClearing(u, r) },
       "HomeJunonaPen"       -> Target.Run { (u, _, r) => junonaPen(u, r) },
       "HomeJunonaPenTell"   -> Target.Run { (u, _, r) => junonaPenTell(u, r) },
+      "HomeJunonaPit"       -> Target.Run { (u, _, r) => junonaPit(u, r) },
+      "HomeJunonaPitPay"    -> Target.Run { (u, _, r) => junonaPitFree(u, r, Way.Self) },
+      "HomeJunonaPitWrite"  -> Target.Run { (u, _, r) => junonaPitFree(u, r, Way.Junona) },
       "HomeFurnItem"   -> Target.Run { (u, ua, r) => furnItem(u, ua, r) },
       "HomeFurnBuy"    -> Target.Run { (u, ua, r) => furnBuy(u, ua, r) },
       "HomeClutterPay" -> Target.Run { (u, _, r) => clutterPay(u, r) },
@@ -212,10 +219,14 @@ case class HomeState(
       // кнопкой, рядом с сюжетной: побочное задание главу не ждёт.
       roof   <- junonaRoofOpen(user)
       receipt = Option.when(roof)(Choice("HomeJunonaRoof", content.text("barti.roof.junona.label"), row = Some(houses.size)))
+      // «Долговая яма» Барти, путь Щита: тоже своей кнопкой — побочное.
+      pitQ   <- NpcQuestLog.load(heroDao, user.userId)
+      pit     = Option.when(BartiPitQuest.toJunona(pitQ))(
+                  Choice("HomeJunonaPit", content.text("barti.pit.junona.label"), row = Some(houses.size)))
       back    =
         if (current.isDefined) Choice("HomeMain", content.text("home.office.home"), color = ChoiceColor.Negative, row = Some(houses.size + 1))
         else Choice("LeaveHome", content.text("home.office.leave"), color = ChoiceColor.Negative, row = Some(houses.size + 1))
-      _      <- renderer.show(user, Screen(text, houses ++ List(furnish) ++ marked.toList ++ receipt.toList ++ List(back)))
+      _      <- renderer.show(user, Screen(text, houses ++ List(furnish) ++ marked.toList ++ receipt.toList ++ pit.toList ++ List(back)))
     } yield StateType.Home
 
   /** «Что горит на груди» на шаге Юноны, и набросок узора при герое. */
@@ -320,6 +331,41 @@ case class HomeState(
               } yield ())
       res  <- office(user, renderer)
     } yield res
+
+  /** «Долговая яма», путь Щита: Юнона читает бумагу Торгового дома — заплатить
+    * самому или пусть она спишет долг. Не тот шаг — канцелярия. */
+  private def junonaPit(user: User, renderer: Renderer): Task[StateType] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (!BartiPitQuest.toJunona(quests)) office(user, renderer)
+      else renderer.show(user, junonaPitScreen(None)).as(StateType.Home)
+    }
+
+  private def junonaPitScreen(lead: Option[String]): Screen =
+    Screen((lead.toList :+ content.text("barti.pit.junona.text").trim).mkString("\n\n"), List(
+      Choice("HomeJunonaPitPay", content.format("barti.pit.payLabel", "debt" -> BartiPitQuest.debt.toString),
+        color = ChoiceColor.Positive, row = Some(0)),
+      Choice("HomeJunonaPitWrite", content.text("barti.pit.junona.writeLabel"), row = Some(0)),
+      Choice("HomeOffice", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(1))))
+
+  /** Барти на свободе: заплатил герой (`Way.Self`, с рук и из ячейки) или
+    * Юнона списала долг (`Way.Junona`). Не хватает серебра — так и сказать. */
+  private def junonaPitFree(user: User, renderer: Renderer, way: Way): Task[StateType] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (!BartiPitQuest.toJunona(quests)) office(user, renderer)
+      else for {
+        hero <- getHero(user)
+        paid <- if (way == Way.Self) purse.charge(user.userId, hero, BartiPitQuest.debt).map(_.isDefined) else ZIO.succeed(true)
+        res  <- if (!paid)
+                  renderer.show(user, junonaPitScreen(Some(content.format("barti.pit.notEnough",
+                    "debt" -> BartiPitQuest.debt.toString)))).as(StateType.Home)
+                else for {
+                  fresh <- getHero(user)
+                  text  <- BartiPitQuest.finish(heroDao, inventoryRepo, Some(itemRepo), parcels, outcomes, content, user, fresh, way)
+                  _     <- renderer.show(user, Screen(text, Nil))
+                  back  <- office(user, renderer)
+                } yield back
+      } yield res
+    }
 
   /** «Печь» (путь Щита) на шаге `onStep` и `item` при герое. */
   private def junonaPenOpen(user: User, onStep: NpcQuests => Boolean, item: QuestItemKind): Task[Boolean] =

@@ -7,7 +7,7 @@ import pangea.model.hero.{Hero, LoreData}
 import pangea.model.home.{HomeData, House}
 import pangea.model.item.{Item, QuestItemKind}
 import pangea.model.monster.{Race, Rarity}
-import pangea.model.quest.{DailyQuests, Difficulty, FirstSteps, NpcQuest, NpcQuests}
+import pangea.model.quest.{DailyQuests, Difficulty, FirstSteps, NpcQuest, NpcQuests, QuestOutcome}
 import pangea.model.squad.AllyKind
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
@@ -70,8 +70,11 @@ object BartiRoofSpec extends ZIOSpecDefault {
 
   private val receipt: Item = QuestItemKind.item(QuestItemKind.BartiReceipt).copy(id = 971L)
 
-  private def shop(d: TestHeroDao, inv: TestInventoryRepository, c: SceneContent) =
-    BartiShopState(d, inv, TestItemRepository.make, c)
+  private def shop(d: TestHeroDao, inv: TestInventoryRepository, c: SceneContent, o: Option[TestQuestOutcomeDao] = None) =
+    BartiShopState(d, inv, TestItemRepository.make, c, o)
+
+  /** Строка «как и вы» у первого, кто закончил задание. */
+  private val firstStats = "Вы — среди первых, кто закончил «Крыша»"
 
   override def spec = suite("«Крыша»: лавка Барти и ночная стража")(
 
@@ -173,20 +176,24 @@ object BartiRoofSpec extends ZIOSpecDefault {
                 h.exp > 0L && !inv.snapshot.exists(_.questItem.contains(QuestItemKind.BartiReceipt)))
     },
 
-    test("Тень: «Пусть решает Братство» — без боя, Воска переводят в порт, Барти теперь должен Братству; «Разберусь сам» — ночь, бой, задание закрыто") {
+    test("Тень: «Пусть решает Братство» — без боя, Воска переводят в порт, Барти теперь должен Братству; «Разберусь сам» — ночь, бой, задание закрыто; исход — в «как и вы»") {
       for {
         c      <- content
         d      <- dao(roof(Path.Shadow, 2))
         inv     = TestInventoryRepository.withItems(List(receipt))
+        o      <- TestQuestOutcomeDao.make
         r      <- TestRenderer.make
-        _      <- shop(d, inv, c).action(testUser, tap("RoofBrotherhood"), r)
+        _      <- shop(d, inv, c, Some(o)).action(testUser, tap("RoofBrotherhood"), r)
         let    <- texts(r)
         q1     <- questOf(d)
         bt     <- d.readActiveBattle(userId)
+        h1     <- d.getHeroByUserId(userId).map(_.get)
+        mine1  <- o.of(h1.id, NpcQuest.BartiRoof)
         e      <- dao(roof(Path.Shadow, 2))
         inv2    = TestInventoryRepository.withItems(List(receipt))
+        o2     <- TestQuestOutcomeDao.make
         r2     <- TestRenderer.make
-        st      = shop(e, inv2, c)
+        st      = shop(e, inv2, c, Some(o2))
         _      <- st.action(testUser, tap("RoofSelf"), r2)
         night  <- r2.sentScreens.map(_.last)
         q2     <- questOf(e)
@@ -194,22 +201,29 @@ object BartiRoofSpec extends ZIOSpecDefault {
         _      <- st.enter(testUser, r2)
         won    <- texts(r2)
         q3     <- questOf(e)
+        h3     <- e.getHeroByUserId(userId).map(_.get)
+        mine3  <- o2.of(h3.id, NpcQuest.BartiRoof)
       } yield assertTrue(let.contains("перевели в порт") && let.contains("Я ему не говорю") && let.contains("📜 Квест «Крыша» завершён.") &&
                 q1.isDone(NpcQuest.BartiRoof) && BartiRoofQuest.deal(q1).contains(Deal.Brotherhood) && bt.isEmpty &&
                 !inv.snapshot.exists(_.questItem.contains(QuestItemKind.BartiReceipt))) &&
+              assertTrue(let.contains(firstStats) && mine1.contains(QuestOutcome.RoofBrotherhood) &&
+                won.contains(firstStats) && mine3.contains(QuestOutcome.RoofFought)) &&
               assertTrue(night.text.contains("Сам так сам. Э. запомнит") && night.choices.map(_.id) == List("RoofFight", "RoofLeave") &&
                 BartiRoofQuest.toNight(q2)) &&
               assertTrue(won.contains("Э. просил передать: неплохо") && BartiRoofQuest.deal(q3).contains(Deal.Self))
     },
 
-    test("одиночка: отбились — Барти отдаёт долю; смерть в лавке — проснуться на Торговой площади, шаг тот же") {
+    test("одиночка: отбились — Барти отдаёт долю, исход — «разобрались сами»; смерть в лавке — проснуться на Торговой площади, шаг тот же") {
       for {
         c     <- content
         d     <- dao(roof(Path.Alone, 3))
+        o     <- TestQuestOutcomeDao.make
         r     <- TestRenderer.make
         _     <- d.writeSceneData(userId, StoryFight.mark(BartiShopState.WonKey))
-        _     <- shop(d, TestInventoryRepository.withItems(List(receipt)), c).enter(testUser, r)
+        _     <- shop(d, TestInventoryRepository.withItems(List(receipt)), c, Some(o)).enter(testUser, r)
         won   <- texts(r)
+        hw    <- d.getHeroByUserId(userId).map(_.get)
+        mine  <- o.of(hw.id, NpcQuest.BartiRoof)
         e     <- dao(roof(Path.Alone, 3))
         fight  = SoloPveBattle.fromGroup(BartiRoofQuest.foes("Капитан Воск"), hero, List.fill(5)(0L))
                    .copy(story = Some(BartiRoofQuest.FightStory))
@@ -217,7 +231,8 @@ object BartiRoofSpec extends ZIOSpecDefault {
         _     <- DeathState(e, TestInventoryRepository.withItems(Nil), c).enter(testUser, r)
         wake  <- e.readSceneData(userId)
         q     <- questOf(e)
-      } yield assertTrue(won.contains("Вот твоя доля") && won.contains("📜 Квест «Крыша» завершён.")) &&
+      } yield assertTrue(won.contains("Вот твоя доля") && won.contains("📜 Квест «Крыша» завершён.") && won.contains(firstStats) &&
+                mine.contains(QuestOutcome.RoofFought)) &&
               assertTrue(wake.exists(_.hcursor.get[List[String]]("wakeLines").toOption.contains(List("barti.roof.death"))) &&
                 wake.exists(_.hcursor.get[StateType]("wakeTo").toOption.contains(StateType.MarketSquare)) &&
                 BartiRoofQuest.toNight(q) && c.text("barti.roof.death").contains("Стража вернётся следующей ночью"))

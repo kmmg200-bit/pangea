@@ -2,18 +2,23 @@ package pangea.service.state.states.barti
 
 import io.circe.Json
 import pangea.dao.hero.HeroDao
+import pangea.dao.quest.QuestOutcomeDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.hero.Hero
 import pangea.model.item.{Item, QuestItemKind}
 import pangea.model.quest.{Difficulty, NpcQuest, NpcQuests}
 import pangea.model.state.StateType
 import pangea.model.user.User
+import pangea.repository.bank.BankRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
+import pangea.service.parcel.Parcels
+import pangea.service.purse.Purse
 import pangea.service.state.StoryToolQuest.Path
 import pangea.service.state.states.story.StoryFight
-import pangea.service.state.{BartiDoorQuest, BartiSaltQuest, BigDealQuest, NpcQuestLog, QuestSupport, State, StoryMorningQuest,
-  UserAction}
+import pangea.service.state.BartiPitQuest.Way
+import pangea.service.state.{BartiDoorQuest, BartiPitQuest, BartiSaltQuest, BigDealQuest, NpcQuestLog, QuestSupport, State,
+  StoryMorningQuest, UserAction}
 import zio.{Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -32,20 +37,36 @@ import java.util.concurrent.TimeUnit
   * становится партнёром героя; следом в дверь стучат люди Братства — за
   * книгой. «Драться» — сюжетный бой, без «Сбежать», Барти со сковородой — в
   * строю; добыча вернёт сюда с отметкой победы — опись урожая, глава закрыта.
-  * Без хранилища вещей (`itemRepo`) этой ветки нет: опись класть некуда. */
+  * Без хранилища вещей (`itemRepo`) этой ветки нет: опись класть некуда.
+  *
+  * «Долговая яма» (см. BartiPitQuest): дверь опечатана Торговым домом, Барти в
+  * долговой яме совета. Тени у дома предлагают помощь Братства — или заплатить
+  * самому; Щиту — к Юноне; одиночке — ночью в яму: сюжетный бой с надзирателем
+  * и стражей, добыча вернёт сюда с отметкой победы. Барти на свободе — пояс
+  * надзирателя ★ в сумку (`parcels` — посылкой, если не влез). */
 case class BartiHouseState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
   content:       SceneContent,
-  itemRepo:      Option[ItemRepository] = None
+  itemRepo:      Option[ItemRepository] = None,
+  parcels:       Option[Parcels] = None,
+  bank:          Option[BankRepository] = None,
+  // «Долговая яма»: как вытащили Барти — в подсчёт «как и вы».
+  outcomes:      Option[QuestOutcomeDao] = None
 ) extends State {
   import BartiHouseState._
+
+  /** Кошель: своё серебро, а следом — то, что лежит в ячейке Торгового дома. */
+  private val purse = Purse(heroDao, bank)
 
   private val branch = new Branch(
     routes = Map(
       "BartiGive"       -> Target.Run { (u, _, r) => give(u, r) },
       "BartiStoryFight" -> Target.Run { (u, _, r) => storyFight(u, r) },
       "BartiDoorFight"  -> Target.Run { (u, _, r) => doorFight(u, r) },
+      "PitBrotherhood"  -> Target.Run { (u, _, r) => pitBrotherhood(u, r) },
+      "PitPay"          -> Target.Run { (u, _, r) => pitPay(u, r) },
+      "PitFight"        -> Target.Run { (u, _, r) => pitFight(u, r) },
       "BartiLeave"      -> Target.Goto(StateType.MarketSquare)
     ),
     fallback = Target.Run { (u, _, r) => enter(u, r).as(StateType.BartiHouse) }
@@ -72,6 +93,10 @@ case class BartiHouseState(
                 else if (BartiSaltQuest.available(quests)) saltBegin(user, quests, renderer)
                 else if (BartiSaltQuest.toCaravan(quests))
                   renderer.show(user, Screen(content.text("barti.salt.waiting").trim, List(leave.copy(row = Some(0)))))
+                // «Долговая яма» (все пути): Барти в долговой яме, дом опечатан.
+                else if (StoryFight.won(data, PitWonKey) && BartiPitQuest.toNight(quests)) pitFreed(user, Way.Breakout, renderer)
+                else if (BartiPitQuest.available(quests)) pitBegin(user, quests, renderer)
+                else if (quests.isTaken(NpcQuest.BartiPit)) renderer.show(user, pitScreen(quests, None))
                 else if (BartiDoorQuest.available(quests)) doorBegin(user, quests, renderer)
                 else if (BigDealQuest.canBegin(quests) && QuestSupport.hasItem(items, QuestItemKind.BartiAddress))
                   begin(user, quests, items, renderer)
@@ -142,6 +167,77 @@ case class BartiHouseState(
       renderer.show(user, Screen((lead.toList :+ content.text("barti.house.early").trim).mkString("\n\n"), List(leave)))
     else NpcQuestLog.save(heroDao, user.userId, BigDealQuest.step(quests, 3)) *>
       renderer.show(user, Screen((lead.toList :+ content.text("barti.house.arrived").trim).mkString("\n\n"), List(leave)))
+
+  // ── «Долговая яма» ─────────────────────────────────────────────────────────
+
+  /** Впервые: дверь опечатана, записка Барти — задание взято на шаге своего
+    * пути; дальше — экран этого шага. */
+  private def pitBegin(user: User, quests: NpcQuests, renderer: Renderer): Task[Unit] =
+    for {
+      now  <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+      taken = BartiPitQuest.take(quests, now)
+      _    <- NpcQuestLog.save(heroDao, user.userId, taken)
+      line  = content.format("barti.taken", "title" -> content.text("journal.quests.bartiPit.title"),
+                "step" -> content.list("journal.quests.bartiPit.steps").lift(taken.of(NpcQuest.BartiPit).step - 1).getOrElse(""))
+      _    <- renderer.show(user, pitScreen(taken,
+                Some(content.format("barti.pit.sealed", "debt" -> BartiPitQuest.debt.toString).trim + "\n\n" + line)))
+    } yield ()
+
+  /** Экран шага: Тени — человек Братства у дома, Щиту — к Юноне, одиночке —
+    * ночью в яму. `lead` — что сказать перед этим. */
+  private def pitScreen(quests: NpcQuests, lead: Option[String]): Screen = {
+    def text(body: String) = (lead.toList :+ body).mkString("\n\n")
+    val debt = BartiPitQuest.debt.toString
+    val difficulty = content.format("marisa.difficulty", "difficulty" -> Difficulty.render(BartiPitQuest.Level))
+    if (BartiPitQuest.toOffer(quests))
+      Screen(text(content.text("barti.pit.shadow").trim), List(
+        content.choice("PitBrotherhood", "barti.pit.brotherhoodLabel").copy(row = Some(0)),
+        content.choice("PitPay", "barti.pit.payLabel", "debt" -> debt).copy(color = ChoiceColor.Positive, row = Some(0)),
+        leave))
+    else if (BartiPitQuest.toJunona(quests)) Screen(text(content.text("barti.pit.shield").trim), List(leave.copy(row = Some(0))))
+    else Screen(text(content.text("barti.pit.alone").trim + "\n\n" + difficulty), List(
+      content.choice("PitFight", "barti.pit.fightLabel").copy(row = Some(0)), leave.copy(row = Some(0))))
+  }
+
+  /** Тень: пусть платит Братство — Барти выходит его человеком. */
+  private def pitBrotherhood(user: User, renderer: Renderer): Task[StateType] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (!BartiPitQuest.toOffer(quests)) enter(user, renderer)
+      else pitFreed(user, Way.Brotherhood, renderer)
+    }.as(StateType.BartiHouse)
+
+  /** Тень: заплатить самому — с рук, нехватку кошель доберёт из ячейки. */
+  private def pitPay(user: User, renderer: Renderer): Task[StateType] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (!BartiPitQuest.toOffer(quests)) enter(user, renderer)
+      else getHero(user).flatMap(hero => purse.charge(user.userId, hero, BartiPitQuest.debt)).flatMap {
+        case Some(_) => pitFreed(user, Way.Self, renderer)
+        case None    => renderer.show(user, pitScreen(quests,
+                          Some(content.format("barti.pit.notEnough", "debt" -> BartiPitQuest.debt.toString))))
+      }
+    }.as(StateType.BartiHouse)
+
+  /** Одиночка: ночью в яму — надзиратель и четверо. Добыча вернёт сюда с
+    * отметкой победы. */
+  private def pitFight(user: User, renderer: Renderer): Task[StateType] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (!BartiPitQuest.toNight(quests)) enter(user, renderer).as(StateType.BartiHouse)
+      else for {
+        hero <- getHero(user)
+        _    <- StoryFight.start(heroDao, user, hero, BartiPitQuest.foes(content.text("barti.pit.wardenName")), Nil,
+                  BartiPitQuest.FightStory, StateType.BartiHouse, PitWonKey)
+        _    <- renderer.show(user, Screen(content.text("barti.pit.fightStart").trim, Nil))
+      } yield StateType.Battle
+    }
+
+  /** Барти на свободе — так, как вытащили (`way`): задание закрыто, пояс ★. */
+  private def pitFreed(user: User, way: Way, renderer: Renderer): Task[Unit] =
+    for {
+      _    <- heroDao.writeSceneData(user.userId, Json.Null)
+      hero <- getHero(user)
+      text <- BartiPitQuest.finish(heroDao, inventoryRepo, itemRepo, parcels, outcomes, content, user, hero, way)
+      _    <- renderer.show(user, Screen(text, List(leave.copy(row = Some(0)))))
+    } yield ()
 
   // ── «Соль» ─────────────────────────────────────────────────────────────────
 
@@ -261,6 +357,9 @@ case class BartiHouseState(
 }
 
 object BartiHouseState {
+
+  /** Отметка в `scene_data`: стража долговой ямы побита («Долговая яма»). */
+  val PitWonKey: String = "bartiPitWon"
 
   /** Отметка в `scene_data`: люди Братства у Барти побиты (Акт II, «Наутро»). */
   val WonKey: String = "storyBartiHouseWon"

@@ -115,6 +115,28 @@ object QuestOutcome extends Enum[QuestOutcome] {
   /** Пал в засаде — каджиты отбились сами и заплатили меньше. */
   case object BigDealFell extends QuestOutcome("fell", NpcQuest.BigDeal.key)
 
+  // ── «Крыша» Барти: кто разобрался с ночной стражей ─────────────────────────
+
+  /** Тень пустила Братство к капитану — без боя, Барти теперь должен Братству. */
+  case object RoofBrotherhood extends QuestOutcome("brotherhood", NpcQuest.BartiRoof.key)
+
+  /** Разобрались со стражей сами — ночью в лавке (Тень по выбору, Щит и одиночка). */
+  case object RoofFought extends QuestOutcome("fought", NpcQuest.BartiRoof.key)
+
+  // ── «Долговая яма» Барти: как его вытащили ───────────────────────────────────
+
+  /** Выкупил сам (Тень или Щит). */
+  case object PitSelf extends QuestOutcome("self", NpcQuest.BartiPit.key)
+
+  /** Юнона списала долг (Щит). */
+  case object PitJunona extends QuestOutcome("junona", NpcQuest.BartiPit.key)
+
+  /** Заплатило Братство — Барти теперь его человек (Тень). */
+  case object PitBrotherhood extends QuestOutcome("brotherhood", NpcQuest.BartiPit.key)
+
+  /** Вытащил ночью сам, через надзирателя и стражу (одиночка). */
+  case object PitBreakout extends QuestOutcome("breakout", NpcQuest.BartiPit.key)
+
   // ── «Встать на ноги»: в каком доме засчитано (строка — House.key) ─────────────
 
   /** «Домик в две комнаты». */

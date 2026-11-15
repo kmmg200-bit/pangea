@@ -35,19 +35,27 @@ object QuestOutcomeSpec extends ZIOSpecDefault {
         "storyFurnace" -> "kept",
         "bigDeal"   -> "won",
         "bigDeal"   -> "fell",
+        "bartiRoof" -> "brotherhood",
+        "bartiRoof" -> "fought",
+        "bartiPit"  -> "self",
+        "bartiPit"  -> "junona",
+        "bartiPit"  -> "brotherhood",
+        "bartiPit"  -> "breakout",
         "firstSteps" -> "cottage",
         "firstSteps" -> "townhouse",
         "firstSteps" -> "island"
       ))
     },
-    test("отслеживаются задания с развилкой: Мариса — пять исходов, мурлоки — три, дружина — два, «Порох у причала» — три, «Список» — два, Рубеж I — три пути, «Новенький» — три, «Печь» — два, «Большое дело» — два") {
+    test("отслеживаются задания с развилкой: Мариса — пять исходов, мурлоки — три, дружина — два, «Порох у причала» — три, «Список» — два, Рубеж I — три пути, «Новенький» — три, «Печь» — два, «Большое дело» — два, «Крыша» — два, «Долговая яма» — четыре") {
       val tracked = NpcQuest.values.filter(q => QuestOutcome.of(q).nonEmpty).toList
       assertTrue(tracked == List(NpcQuest.Marisa, NpcQuest.Murloc, NpcQuest.LostSquad, NpcQuest.StoryPowder, NpcQuest.StoryList,
-        NpcQuest.StoryTool, NpcQuest.StoryNewcomer, NpcQuest.StoryFurnace, NpcQuest.BigDeal)) &&
+        NpcQuest.StoryTool, NpcQuest.StoryNewcomer, NpcQuest.StoryFurnace, NpcQuest.BigDeal, NpcQuest.BartiRoof,
+        NpcQuest.BartiPit)) &&
       assertTrue(QuestOutcome.of(NpcQuest.Marisa).size == 5 && QuestOutcome.of(NpcQuest.Murloc).size == 3 &&
         QuestOutcome.of(NpcQuest.LostSquad).size == 2 && QuestOutcome.of(NpcQuest.StoryTool).size == 3 &&
         QuestOutcome.of(NpcQuest.StoryNewcomer).size == 3 && QuestOutcome.of(NpcQuest.StoryFurnace).size == 2 &&
-        QuestOutcome.of(NpcQuest.BigDeal).size == 2) &&
+        QuestOutcome.of(NpcQuest.BigDeal).size == 2 && QuestOutcome.of(NpcQuest.BartiRoof).size == 2 &&
+        QuestOutcome.of(NpcQuest.BartiPit).size == 4) &&
       // «Встать на ноги» — по дому, строка исхода — ключ дома
       assertTrue(QuestOutcome.of(FirstSteps.Key).map(_.entryName) == pangea.model.home.House.values.map(_.key) &&
         QuestOutcome.FirstStepsIsland.titleKey == "firstSteps.title" &&

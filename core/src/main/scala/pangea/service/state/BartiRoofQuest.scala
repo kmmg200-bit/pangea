@@ -1,12 +1,13 @@
 package pangea.service.state
 
 import pangea.dao.hero.HeroDao
+import pangea.dao.quest.QuestOutcomeDao
 import pangea.engine.SceneContent
 import pangea.generator.monster.MonsterGenerator
 import pangea.model.hero.Hero
 import pangea.model.item.QuestItemKind
 import pangea.model.monster.{Monster, Race, Rarity}
-import pangea.model.quest.{NpcQuest, NpcQuests}
+import pangea.model.quest.{NpcQuest, NpcQuests, QuestOutcome}
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
 import pangea.service.state.StoryToolQuest.Path
@@ -99,11 +100,16 @@ object BartiRoofQuest {
     MonsterGenerator.generateOfRaceAndRarity(Level, GuardRace, CaptainRarity, Some(captain)) ::
       List.fill(Guards)(MonsterGenerator.generateOfRaceAndRarity(Level, GuardRace, GuardRarity))
 
+  /** Чем кончилось для «как и вы»: пустили Братство — или разобрались сами
+    * (Тень по выбору, Щит и одиночка — всегда). */
+  def outcome(deal: Option[Deal]): QuestOutcome =
+    if (deal.contains(Deal.Brotherhood)) QuestOutcome.RoofBrotherhood else QuestOutcome.RoofFought
+
   /** Развязка: квитанция уходит из сумки, серебро и опыт, задание закрыто — у
-    * Тени с тем, как решили. Ответ — строка награды, затея Барти на будущее и
-    * «Квест завершён». */
+    * Тени с тем, как решили; исход — в подсчёт «как и вы». Ответ — строка
+    * награды, затея Барти на будущее и «Квест завершён» со статистикой. */
   def finish(heroDao: HeroDao, inventoryRepo: InventoryRepository, content: SceneContent, user: User, hero: Hero,
-             deal: Option[Deal]): Task[String] =
+             deal: Option[Deal], outcomes: Option[QuestOutcomeDao] = None): Task[String] =
     for {
       _    <- QuestSupport.removeItems(inventoryRepo, hero, Set(QuestItemKind.BartiReceipt))
       paid  = hero.copy(silver = hero.silver + silver)
@@ -111,8 +117,9 @@ object BartiRoofQuest {
       done <- NpcQuestDialog(heroDao, content, NpcQuest.BartiRoof, "BartiRoof")
                 .complete(user, paid, q => deal.fold(q)(d => q.update(NpcQuest.BartiRoof)(_.copy(counter = d.n))))
       (_, expLine) = done
+      stats <- QuestOutcomeLog.recordAndCount(outcomes, content, hero, outcome(deal))
     } yield List(
       content.format("barti.roof.reward", "silver" -> silver.toString, "exp" -> expLine),
       content.text("barti.roof.next").trim,
-      content.text("barti.roof.questDone")).mkString("\n\n")
+      QuestOutcomeLog.withStats(content.text("barti.roof.questDone"), stats)).mkString("\n\n")
 }
