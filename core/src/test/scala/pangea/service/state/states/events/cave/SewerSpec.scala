@@ -372,7 +372,7 @@ object SewerSpec extends ZIOSpecDefault {
         said  <- texts(r)
         after <- dao.getHeroByUserId(userId).map(_.get)
         board <- dao.readQuestData(userId).map(_.flatMap(_.as[BoardDesk].toOption).flatMap(_.boards.headOption).get)
-      } yield assertTrue(said.contains("+80 опыта") && after.exp == 80L) &&
+      } yield assertTrue(said.contains("+64 опыта") && after.exp == 64L) &&
               assertTrue(said.contains("Большая крыса больше никого не испугает")) &&
               assertTrue(said.contains("В канализации тихо")) &&
               // закрыто объявление о крысах; смежное, про пещеру, не тронуто

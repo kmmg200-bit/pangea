@@ -125,7 +125,7 @@ object CaveDeepLairSpec extends ZIOSpecDefault {
         said  <- texts(r)
         after <- dao.getHeroByUserId(userId).map(_.get)
         slot  <- board(dao)
-      } yield assertTrue(said.contains("+80 опыта") && after.exp == 80L) &&
+      } yield assertTrue(said.contains("+64 опыта") && after.exp == 64L) &&
               assertTrue(said.contains("теперь всё чисто")) &&
               assertTrue(slot.exists(_.done))
     },
@@ -140,7 +140,7 @@ object CaveDeepLairSpec extends ZIOSpecDefault {
         said  <- texts(r)
         after <- dao.getHeroByUserId(userId).map(_.get)
       } yield assertTrue(old.lastFloor && !old.hasStairs) &&
-              assertTrue(said.contains("+80 опыта") && after.exp == 80L)
+              assertTrue(said.contains("+64 опыта") && after.exp == 64L)
     },
 
     test("в логове нижнего яруса — бой с хозяином, уровень мобов — от лабиринта") {

@@ -11,7 +11,7 @@ import pangea.model.hero.{Hero, LoreData}
 import pangea.model.item.{Item, QuestItemKind}
 import pangea.generator.monster.MonsterGenerator
 import pangea.model.monster.{Breed, Monster, Race, Rarity}
-import pangea.model.quest.{DailyQuests, Difficulty, NpcQuest, NpcQuests}
+import pangea.model.quest.{BoardRates, DailyQuests, Difficulty, NpcQuest, NpcQuests}
 import pangea.model.state.StateType
 import pangea.model.stats.FightStats
 import pangea.model.user.{TelegramId, User, UserId, VkId}
@@ -386,6 +386,15 @@ object VillageSpec extends ZIOSpecDefault {
               assertTrue(q.village.isEmpty && inv.snapshot.isEmpty) &&
               assertTrue(bye.text.contains("кивает вам на прощание") && h2.silver == h.silver && h2.exp == h.exp) &&
               assertTrue(out == StateType.Dungeon)
+    },
+
+    test("опыт за контракт — четыре пятых от задания доски того же уровня; доска платит по-прежнему") {
+      val levels = List(1, 7, QuestLevel, 60, VillageRates.QuestLevelCap)
+      assertTrue(VillageRates.ExpPct == 80L) &&
+      assertTrue(levels.forall(l => VillageRates.exp(l) == BoardRates.exp(l.toLong) * 4L / 5L)) &&
+      assertTrue(levels.forall(l => VillageRates.exp(l) < BoardRates.exp(l.toLong))) &&
+      // доска не тронута — пять процентов уровня: на 26-м 2184 опыта, у контракта — 1747
+      assertTrue(BoardRates.exp(QuestLevel.toLong) == 2184L && VillageRates.exp(QuestLevel) == 1747L)
     },
 
     test("плата с дублонами: староста называет их и платит — серебро, дублоны и опыт; карточка и журнал — с ними же") {

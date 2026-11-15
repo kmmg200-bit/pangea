@@ -607,11 +607,11 @@ object MonsterCaveSpec extends ZIOSpecDefault {
                 s.text.contains("Кажется, теперь всё чисто.")))
     },
 
-    test("за последнего убитого — сто шестьдесят процентов взятого, и только один раз") {
+    test("за последнего убитого — сто двадцать восемь процентов взятого, и только один раз") {
       for {
         t <- cave()
         (state, dao, _, _, r) = t
-        _      <- put(dao, smallCave(monsters = 0).copy(expEarned = 20L))
+        _      <- put(dao, smallCave(monsters = 0).copy(expEarned = 25L))
         _      <- state.enter(testUser, r)
         first  <- r.sentScreens
         said   <- texts(r)
@@ -621,7 +621,7 @@ object MonsterCaveSpec extends ZIOSpecDefault {
         twice  <- dao.getHeroByUserId(userId).map(_.get)
         screen <- r.sentScreens.map(_.last)
       } yield assertTrue(said.contains("+32 опыта") && after.exp == 32L) &&
-              assertTrue(CaveRates.ClearExpPct == 160L) &&
+              assertTrue(CaveRates.ClearExpPct == 128L) &&
               assertTrue(said.contains("Кажется, теперь всё чисто.")) &&
               // опыт со ★, «всё чисто» и комната — одним сообщением
               assertTrue(first.size == 1 && first.forall(s => s.text.startsWith("★ Последний из них") &&

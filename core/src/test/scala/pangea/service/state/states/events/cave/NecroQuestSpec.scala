@@ -248,7 +248,7 @@ object NecroQuestSpec extends ZIOSpecDefault {
         board2 <- boardOf(dao)
         after  <- dao.getHeroByUserId(userId).map(_.get)
       } yield assertTrue(upper.contains("Этот ярус упокоен") && board1.slots.forall(!_.done)) &&
-              assertTrue(said.contains("+80 опыта") && after.exp == 80L) &&
+              assertTrue(said.contains("+64 опыта") && after.exp == 64L) &&
               assertTrue(said.contains("Некроманта больше нет") && said.contains("больше никто не встаёт")) &&
               assertTrue(board2.slots.find(_.kind == BoardKind.NecromancerHunt).exists(_.done)) &&
               assertTrue(board2.slots.filterNot(_.kind == BoardKind.NecromancerHunt).forall(!_.done))
