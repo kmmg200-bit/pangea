@@ -24,7 +24,8 @@ import pangea.service.state.states.home.Racks
 import pangea.service.state.{BarrelThievesQuest, BartiRoofQuest, BartiSaltQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HerbLore, HotGoodsQuest, ItemMenu,
   JorgenQuest,
   FaelinQuest, MarisaQuest, MurlocQuest, NpcQuestLog, PlukhQuest, QuestCard, QuestGoods, SlotChoice, StackMove, State,
-  StoryBrandQuest, StoryClearingQuest, StoryFaceQuest, StoryFurnaceQuest, StoryListQuest, StoryMarkQuest, StoryMorningQuest,
+  StoryBrandQuest, StoryClearingQuest, StoryCollectorQuest, StoryFaceQuest, StoryFurnaceQuest, StoryListQuest, StoryMarkQuest,
+  StoryMorningQuest,
   StoryNewcomerQuest, StoryPowderQuest,
   StoryToolQuest, StrayCasketQuest, UiScene, UserAction, Villages}
 import zio.{Random, Task, ZIO}
@@ -129,7 +130,7 @@ case class InventoryState(
         StateType.StoryGraveyard, StateType.BartiHouse, StateType.BartiCaravan, StateType.JorgenLair, StateType.VillageTrail,
         StateType.PlukhHunt, StateType.FaelinRoots, StateType.Village, StateType.VillageBandits, StateType.VillageSpiders,
         StateType.VillageCaravan, StateType.StoryDen, StateType.StoryCellar, StateType.BartiShop,
-        StateType.StorySquare, StateType.StoryClearing, StateType.StoryFurnace) ++ BackpackOrigins
+        StateType.StorySquare, StateType.StoryClearing, StateType.StoryFurnace, StateType.StoryCollector) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.
@@ -1441,10 +1442,17 @@ object InventoryState {
                       BartiSaltQuest.Level else StoryFurnaceQuest.Level
         if (now.isEmpty) s"${item.displayTitle}\n\n${QuestItemKind.StoryWaybill.description}"
         else s"${item.displayTitle}\n${difficulty(level)}\n\n${QuestItemKind.StoryWaybill.description}\n\n$now"
-      // Книга печи — зацепка главы 10 (у Щита сперва — к Юноне).
+      // Книга печи ведёт главу 10 (у Щита после «Печи» сперва — к Юноне): пока
+      // она идёт — сложность и что делать сейчас.
       case Some(QuestItemKind.StoryLedger) =>
         val now = StoryFurnaceQuest.ledgerLine(content, quests)
-        s"${item.displayTitle}\n\n${QuestItemKind.StoryLedger.description}" + (if (now.isEmpty) "" else "\n\n" + now)
+        if (now.isEmpty) s"${item.displayTitle}\n\n${QuestItemKind.StoryLedger.description}"
+        else if (!quests.isTaken(NpcQuest.StoryCollector)) s"${item.displayTitle}\n\n${QuestItemKind.StoryLedger.description}\n\n$now"
+        else s"${item.displayTitle}\n${difficulty(StoryCollectorQuest.Level)}\n\n${QuestItemKind.StoryLedger.description}\n\n$now"
+      // Купчая на дегтярный склад: на склад — и дальше зацепка Рубежа II.
+      case Some(QuestItemKind.StoryDeed) =>
+        val now = StoryCollectorQuest.deedLine(content, quests)
+        s"${item.displayTitle}\n\n${QuestItemKind.StoryDeed.description}" + (if (now.isEmpty) "" else "\n\n" + now)
       case Some(QuestItemKind.BartiPlan) =>
         val now = HotGoodsQuest.cardLine(content, quests)
         s"${item.displayTitle}\n${difficulty(HotGoodsQuest.Level)}\n\n${QuestItemKind.BartiPlan.description}" +

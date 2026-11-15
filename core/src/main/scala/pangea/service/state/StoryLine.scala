@@ -41,16 +41,19 @@ object StoryLine {
     // Рубеж I: глава с выбором пути, последняя в Акте I.
     Chapter(NpcQuest.StoryTool),
     // Акт II: ветки — по пути Рубежа I. Глава 6 начинается дома (см.
-    // StoryMorningQuest.atHome), а глава 10 пока висит до обновления.
+    // StoryMorningQuest.atHome), а Рубеж II пока висит до обновления.
     Chapter(NpcQuest.StoryMorning),
     Chapter(NpcQuest.StoryNewcomer),
     Chapter(NpcQuest.StoryClearing),
     Chapter(NpcQuest.StoryFurnace),
-    Chapter(NpcQuest.StoryCollector)
+    Chapter(NpcQuest.StoryCollector),
+    // Рубеж II: глава с выбором, последняя в Акте II.
+    Chapter(NpcQuest.StoryFeed)
   )
 
   /** Главы, где шаги у каждого пути Рубежа I свои (см. [[step]]). */
-  val PathSteps: Set[NpcQuest] = Set(NpcQuest.StoryMorning, NpcQuest.StoryClearing, NpcQuest.StoryFurnace)
+  val PathSteps: Set[NpcQuest] = Set(NpcQuest.StoryMorning, NpcQuest.StoryClearing, NpcQuest.StoryFurnace,
+    NpcQuest.StoryCollector)
 
   /** На каком по счёту исследовании уровня после «Встать на ноги» герой
     * находит первую зацепку. */
@@ -125,7 +128,7 @@ object StoryLine {
 
   /** Что делать в главе сейчас — строка шага для журнала. В «Что горит на
     * груди» собеседник шага, назвавший цену разговора, — строкой с ценой
-    * (`priced`, см. [[StoryBrandQuest.priced]]). В «Наутро», «Просеке» и «Печи» шаги
+    * (`priced`, см. [[StoryBrandQuest.priced]]). В «Наутро», «Просеке», «Печи» и «Сборщике» шаги
     * свои у каждого пути Рубежа I ([[PathSteps]]) — список по ключу пути
     * (`shadow`, `shield`, `alone`), а `steps` — на случай, если путь не
     * записан. */

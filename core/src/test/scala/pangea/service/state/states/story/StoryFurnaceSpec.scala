@@ -30,7 +30,7 @@ import zio.{Task, ZIO}
   * одиночка с соляным караваном — ночью через крышу, с капитанами каравана.
   * Развилка у печи — разбить или оставить — у всех; исход — в «как и вы».
   * Помнятся новенький из главы 7 и Смотритель из главы 2. В сумке остаётся
-  * книга печи, глава 10 висит до обновления. */
+  * книга печи — она ведёт главу 10. */
 object StoryFurnaceSpec extends ZIOSpecDefault {
 
   private val userId   = UserId(1L)
@@ -264,7 +264,7 @@ object StoryFurnaceSpec extends ZIOSpecDefault {
                 kept._9.contains(Fork.Kept.outcome))
     },
 
-    test("смерть у Загона — проснуться в городе, шаг тот же; журнал — по пути; книга печи у Щита — к Юноне, потом — «Сборщик» с обновлением") {
+    test("смерть у Загона — проснуться в городе, шаг тот же; журнал — по пути; книга печи у Щита — к Юноне, потом — «Сборщик»") {
       def die(q: NpcQuests, story: String) =
         for {
           c    <- content
@@ -285,14 +285,15 @@ object StoryFurnaceSpec extends ZIOSpecDefault {
         toTell  = furnace(Path.Shield, 4).update(NpcQuest.StoryFurnace)(_.copy(counter = Fork.Broken.n))
         closed  = furnace(Path.Alone, 2).finish(NpcQuest.StoryFurnace).take(NpcQuest.StoryCollector, 0L)
         tellCard = InventoryState.questText(c, ledger, toTell, 41L)
-        soonCard = InventoryState.questText(c, ledger, closed, 41L)
+        nextCard = InventoryState.questText(c, ledger, closed, 41L)
       } yield assertTrue(raid == ((Some(List("story.storyFurnace.pen.deathShield")), Some(StateType.GlobalMap), true))) &&
               assertTrue(night == ((Some(List("story.storyFurnace.pen.deathAlone")), Some(StateType.GlobalMap), true))) &&
               assertTrue(line(furnace(Path.Shadow, 1)).contains("отвезти урожай Братства в Загон") &&
                 line(furnace(Path.Shield, 3)).contains("решить, что делать с печью") &&
                 line(furnace(Path.Alone, 1)).contains("доехать с соляным караваном до Загона")) &&
               assertTrue(tellCard.contains("Книга печи") && tellCard.contains("Рассказать Юноне, что нашлось в Загоне")) &&
-              assertTrue(soonCard.contains("станет ясно с обновлением 🔜") && line(closed).contains("📌 «Сборщик»"))
+              assertTrue(nextCard.contains("Барти стучит ночью") && nextCard.contains(Difficulty.render(46)) &&
+                line(closed).contains("📌 «Сборщик»"))
     }
   )
 }

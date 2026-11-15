@@ -20,7 +20,7 @@ import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.{AzatData, BarrelThievesQuest, BartiDeliveryQuest, BartiDoorQuest, BartiPitQuest, BartiRoofQuest, BartiSaltQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HotGoodsQuest, JorgenQuest, LostSquadQuest, MarisaQuest,
-  FaelinQuest, MurlocQuest, PlukhQuest, QuestOutcomeLog, State, StoryFaceQuest, StoryClearingQuest, StoryFurnaceQuest, StoryListQuest, StoryMarkQuest, StoryMorningQuest, StoryNewcomerQuest, StoryPowderQuest,
+  FaelinQuest, MurlocQuest, PlukhQuest, QuestOutcomeLog, State, StoryFaceQuest, StoryClearingQuest, StoryCollectorQuest, StoryFurnaceQuest, StoryListQuest, StoryMarkQuest, StoryMorningQuest, StoryNewcomerQuest, StoryPowderQuest,
   StoryToolQuest,
   StrayCasketQuest, UserAction, VillageLair, Villages}
 import zio.{Random, Task, ZIO}
@@ -142,6 +142,11 @@ case class DeathState(
       // проснуться в городе, накладная поведёт снова.
       furnaceRaid   = battle.exists(_.story.contains(StoryFurnaceQuest.RaidStory))
       furnaceNight  = battle.exists(_.story.contains(StoryFurnaceQuest.NightStory))
+      // Смерть в бою «Сборщика»: шаг тот же — у Тени и Щита проснуться в
+      // городе, у одиночки — у синей двери.
+      collectorNight = battle.exists(_.story.contains(StoryCollectorQuest.NightStory))
+      collectorHall  = battle.exists(_.story.contains(StoryCollectorQuest.HallStory))
+      collectorCheck = battle.exists(_.story.contains(StoryCollectorQuest.CheckStory))
       // Смерть у изгороди, где звери зажали Барти: задание так и не начато —
       // Барти встретится снова; проснуться в лабиринте.
       barti         = battle.exists(_.story.contains(HotGoodsQuest.FightStory))
@@ -273,6 +278,15 @@ case class DeathState(
                       else if (furnaceNight) Json.obj(
                         "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
                         "wakeLines" -> List("story.storyFurnace.pen.deathAlone").asJson)
+                      else if (collectorNight) Json.obj(
+                        "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
+                        "wakeLines" -> List("story.storyCollector.night.deathShadow").asJson)
+                      else if (collectorHall) Json.obj(
+                        "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
+                        "wakeLines" -> List("story.storyCollector.night.deathShield").asJson)
+                      else if (collectorCheck) Json.obj(
+                        "wakeTo"    -> (StateType.MarketSquare: StateType).asJson,
+                        "wakeLines" -> List("story.storyCollector.night.deathAlone").asJson)
                       else if (bartiDoor) Json.obj(
                         "wakeTo"    -> (StateType.MarketSquare: StateType).asJson,
                         "wakeLines" -> List("barti.door.death").asJson)

@@ -27,7 +27,8 @@ import pangea.service.schedule.Scheduler
 import pangea.service.state.states.{EquipmentState, InventoryState, LootState}
 import pangea.service.state.BartiPitQuest.Way
 import pangea.service.state.{AppButton, AzatData, BartiPitQuest, BartiRoofQuest, BeltContents, FirstStepsQuest, ItemMenu, NpcQuestDialog, NpcQuestLog, QuestSupport,
-  QuestOutcomeLog, SlotChoice, State, StoryBrandQuest, StoryClearingQuest, StoryFaceQuest, StoryFurnaceQuest, StoryLine,
+  QuestOutcomeLog, SlotChoice, State, StoryBrandQuest, StoryClearingQuest, StoryCollectorQuest, StoryFaceQuest, StoryFurnaceQuest,
+  StoryLine,
   StoryMorningQuest, StoryNewcomerQuest, StoryPowderQuest, StoryToolQuest, UserAction}
 import zio.{Random, Task, ZIO}
 
@@ -99,6 +100,7 @@ case class HomeState(
       "HomeJunonaPen"       -> Target.Run { (u, _, r) => junonaPen(u, r) },
       "HomeJunonaPenTell"   -> Target.Run { (u, _, r) => junonaPenTell(u, r) },
       "HomeJunonaPit"       -> Target.Run { (u, _, r) => junonaPit(u, r) },
+      "HomeJunonaRubus"     -> Target.Run { (u, _, r) => junonaRubus(u, r) },
       "HomeJunonaPitPay"    -> Target.Run { (u, _, r) => junonaPitFree(u, r, Way.Self) },
       "HomeJunonaPitWrite"  -> Target.Run { (u, _, r) => junonaPitFree(u, r, Way.Junona) },
       "HomeFurnItem"   -> Target.Run { (u, ua, r) => furnItem(u, ua, r) },
@@ -204,6 +206,8 @@ case class HomeState(
       // совета; книга печи — что нашлось в Загоне.
       pen    <- junonaPenOpen(user, StoryFurnaceQuest.toJunona, QuestItemKind.StoryWaybill)
       tell   <- junonaPenOpen(user, StoryFurnaceQuest.toTell, QuestItemKind.StoryLedger)
+      // «Сборщик», путь Щита: книга печи при герое — Юнона о приказе Рубуса.
+      rubus  <- junonaPenOpen(user, StoryCollectorQuest.toJunona, QuestItemKind.StoryLedger)
       marked  = Option.when(story)(Choice("HomeJunonaStory", content.text("story.storyBrand.junona.label"), row = Some(houses.size))) orElse
                   Option.when(copies)(Choice("HomeJunonaFace", content.text("story.storyFace.junona.label"), row = Some(houses.size))) orElse
                   Option.when(brey)(Choice("HomeJunonaBrey", content.text("story.storyMorning.junona.label"), row = Some(houses.size))) orElse
@@ -214,6 +218,8 @@ case class HomeState(
                   Option.when(pen)(Choice("HomeJunonaPen", content.text("story.storyFurnace.junona.label"),
                     row = Some(houses.size))) orElse
                   Option.when(tell)(Choice("HomeJunonaPenTell", content.text("story.storyFurnace.junona.tellLabel"),
+                    row = Some(houses.size))) orElse
+                  Option.when(rubus)(Choice("HomeJunonaRubus", content.text("story.storyCollector.junona.label"),
                     row = Some(houses.size)))
       // «Крыша» Барти, путь Щита: квитанция ночной стражи при герое — своей
       // кнопкой, рядом с сюжетной: побочное задание главу не ждёт.
@@ -328,6 +334,20 @@ case class HomeState(
                 quests <- NpcQuestLog.load(heroDao, user.userId)
                 _      <- NpcQuestLog.save(heroDao, user.userId, BartiRoofQuest.step(quests, 3))
                 _      <- renderer.show(user, Screen(content.text("barti.roof.junona.text").trim, Nil))
+              } yield ())
+      res  <- office(user, renderer)
+    } yield res
+
+  /** «Сборщик», путь Щита: Юнона в архиве — совет отдаёт героя и Сойку Братству,
+    * приказ подписал Рубус, у него и второй ключ от её печати; пропуск через
+    * архив — и к Горну. Глава на втором шаге. */
+  private def junonaRubus(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      open <- junonaPenOpen(user, StoryCollectorQuest.toJunona, QuestItemKind.StoryLedger)
+      _    <- ZIO.when(open)(for {
+                quests <- NpcQuestLog.load(heroDao, user.userId)
+                _      <- NpcQuestLog.save(heroDao, user.userId, StoryCollectorQuest.step(quests, 2))
+                _      <- renderer.show(user, Screen(content.text("story.storyCollector.junona.text").trim, Nil))
               } yield ())
       res  <- office(user, renderer)
     } yield res

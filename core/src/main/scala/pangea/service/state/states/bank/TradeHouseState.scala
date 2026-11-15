@@ -12,6 +12,7 @@ import pangea.model.user.{ReceiptEmail, User}
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.bank.BankRepository
 import pangea.repository.inventory.InventoryRepository
+import pangea.repository.item.ItemRepository
 import pangea.repository.user.UserRepository
 import pangea.service.parcel.Parcels
 import pangea.service.purse.Purse
@@ -19,7 +20,8 @@ import pangea.model.item.{Item, MaterialKind}
 import pangea.model.quest.{DailyNpc, NpcQuest}
 import pangea.model.payment.{DonationSku, OrderId, Payment}
 import pangea.service.donation.Donations
-import pangea.service.state.{CityExit, DailyDialog, NpcQuestDialog, NpcQuestLog, QuestSupport, State, StoryLine, StoryListQuest,
+import pangea.service.state.{CityExit, DailyDialog, NpcQuestDialog, NpcQuestLog, QuestSupport, State, StoryCollectorQuest, StoryLine,
+  StoryListQuest,
   UserAction}
 import zio.{Task, ZIO}
 
@@ -36,7 +38,9 @@ case class TradeHouseState(
   donations:     Donations,
   content:       SceneContent,
   // Надколотый камень для поручения мог сам лечь в Ларец Азата.
-  artifacts:     Option[ArtifactRepository] = None
+  artifacts:     Option[ArtifactRepository] = None,
+  // «Сборщик»: купчая на дегтярный склад — в сумку.
+  itemRepo:      Option[ItemRepository] = None
 ) extends State {
 
   /** Ячейку тоже можно оплатить из уже выкупленных: сперва своё, потом банк. */
@@ -66,6 +70,7 @@ case class TradeHouseState(
       "LeaveTradeHouse" -> Target.Goto(StateType.MarketSquare),
       quest.questAction   -> Target.Run { (u, _, r) => questTalk(u, r) },
       "RakStory"          -> Target.Run { (u, _, r) => storyPaper(u, r) },
+      "StoryWarehouseBuy" -> Target.Run { (u, _, r) => buyWarehouse(u, r) },
       quest.acceptAction  -> Target.Run { (u, _, r) => quest.accept(u, r) *> showMenu(u, r).as(StateType.TradeHouse) },
       quest.declineAction -> Target.Run { (u, _, r) => showMenu(u, r).as(StateType.TradeHouse) },
       daily.openAction  -> Target.Run { (u, _, r) => showDaily(u, r) },
@@ -172,9 +177,43 @@ case class TradeHouseState(
       quests <- quest.load(user)
       // Основная линия: страница списка при герое — Рахадим узнает бумагу.
       paper <- storyOpen(hero, quests)
-      chap   = Option.when(paper)(content.choice("RakStory", "story.storyList.rakhadim.label"))
+      // «Сборщик»: дегтярный склад продаётся здесь — пока глава на шаге покупки.
+      buy    = Option.when(StoryCollectorQuest.toBuy(quests) && itemRepo.isDefined)(
+                 content.choice("StoryWarehouseBuy", "story.storyCollector.buy.label",
+                   "price" -> StoryCollectorQuest.WarehousePrice.toString).copy(color = ChoiceColor.Positive))
+      chap   = Option.when(paper)(content.choice("RakStory", "story.storyList.rakhadim.label")) orElse buy
       _     <- renderer.show(user, menuScreen(vault, mail, daily.button(task), quest.button(quests), chap))
     } yield ()
+
+  /** «Сборщик»: дегтярный склад — с рук, нехватку кошель доберёт из ячейки.
+    * Хватило — купчая в сумку, глава на шаге склада; нет — так и сказать. Не
+    * тот шаг — меню. */
+  private def buyWarehouse(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      quests <- quest.load(user)
+      hero   <- getHero(user)
+      price   = StoryCollectorQuest.WarehousePrice
+      _      <- (itemRepo, StoryCollectorQuest.toBuy(quests)) match {
+                  case (Some(items), true) =>
+                    purse.charge(user.userId, hero, price).flatMap {
+                      case None =>
+                        renderer.show(user, Screen(content.format("story.storyCollector.buy.notEnough",
+                          "price" -> price.toString), Nil)) *> showMenu(user, renderer)
+                      case Some(_) =>
+                        for {
+                          _ <- QuestSupport.giveItem(inventoryRepo, items, hero, pangea.model.item.QuestItemKind.StoryDeed)
+                          _ <- NpcQuestLog.save(heroDao, user.userId,
+                                 StoryCollectorQuest.step(quests, StoryCollectorQuest.warehouseStep(quests)))
+                          _ <- renderer.show(user, Screen(List(
+                                 content.text("story.storyCollector.buy.bought").trim,
+                                 content.text(s"story.storyCollector.buy.${StoryCollectorQuest.path(quests).key}").trim)
+                                 .mkString("\n\n"), Nil))
+                          _ <- showMenu(user, renderer)
+                        } yield ()
+                    }
+                  case _ => showMenu(user, renderer)
+                }
+    } yield StateType.TradeHouse
 
   /** Страница списка при герое, и глава «Список» у Рахадима: её можно начать
     * (уровень героя не важен) — или она на его шаге. */

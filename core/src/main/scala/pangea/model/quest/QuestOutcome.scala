@@ -107,6 +107,17 @@ object QuestOutcome extends Enum[QuestOutcome] {
   /** Оставил стоять: Братству, совету или себе — на потом. */
   case object FurnaceKept extends QuestOutcome("kept", NpcQuest.StoryFurnace.key)
 
+  // ── «Сборщик» (глава 10): договор с главой Братства ──────────────────────────
+
+  /** Принял место в Братстве — выше прежних, с защитой в его стенах. */
+  case object CollectorPlace extends QuestOutcome("place", NpcQuest.StoryCollector.key)
+
+  /** Выбрал покой: Братство забудет героя, когда Сборщик будет взят. */
+  case object CollectorPeace extends QuestOutcome("peace", NpcQuest.StoryCollector.key)
+
+  /** Отказался от обоих. */
+  case object CollectorRefuse extends QuestOutcome("refuse", NpcQuest.StoryCollector.key)
+
   // ── «Большое дело» Барти: чем кончилась засада ночной стражи у каравана ─────
 
   /** Отбился от стражи сам — каджиты заплатили сполна. */

@@ -89,6 +89,7 @@ import pangea.model.state.StateType.{
   StorySquare,
   StoryClearing,
   StoryFurnace,
+  StoryCollector,
   BartiMeet,
   BartiHouse,
   BartiCaravan,
@@ -176,8 +177,8 @@ import pangea.service.state.states.merc.{BramblHallState, FaelinRootsState, Jorg
 import pangea.service.state.states.village.{VillageCaravanState, VillageLairState, VillageState, VillageTrailState}
 import pangea.service.state.VillageLair
 import pangea.service.state.states.story.{StoryArchiveState, StoryBinderyState, StoryBridgeState, StoryCacheState, StoryCellarState,
-  StoryClearingState, StoryCloakState, StoryDenState, StoryFurnaceState, StoryGraveyardState, StoryMeetingState, StorySojkaState,
-  StorySquareState, StoryWarehouseState}
+  StoryClearingState, StoryCloakState, StoryCollectorState, StoryDenState, StoryFurnaceState, StoryGraveyardState, StoryMeetingState,
+  StorySojkaState, StorySquareState, StoryWarehouseState}
 import pangea.service.state.states.race.RaceQuestState
 import pangea.service.state.states.name.NameChangeState
 import pangea.service.state.states.merchant.MerchantState
@@ -311,7 +312,8 @@ object StatesMap {
           ElementalSearch -> ElementalSearchState(heroDao, inventoryRepo, itemRepo, scheduler, content, artifacts),
           Socketing -> SocketingState(heroDao, inventoryRepo, content, itemRepo),
           CityCenter -> CityCenterState(content),
-          TradeHouse -> TradeHouseState(heroDao, userRepo, bankRepo, parcels, inventoryRepo, donations, content, artifacts),
+          TradeHouse -> TradeHouseState(heroDao, userRepo, bankRepo, parcels, inventoryRepo, donations, content, artifacts,
+            Some(itemRepo)),
           Transfer   -> TransferState(heroDao, transfers, content, background),
           Trade      -> pangea.service.state.states.bank.TradeState(heroDao, trades, transfers, userRepo, players, content),
           Mail       -> MailState(heroDao, inventoryRepo, parcels, content),
@@ -385,6 +387,7 @@ object StatesMap {
           StorySquare       -> StorySquareState(heroDao, inventoryRepo, itemRepo, content, outcomes),
           StoryClearing     -> StoryClearingState(heroDao, inventoryRepo, itemRepo, content, bank),
           StoryFurnace      -> StoryFurnaceState(heroDao, inventoryRepo, itemRepo, content, outcomes),
+          StoryCollector    -> StoryCollectorState(heroDao, inventoryRepo, content, outcomes),
           BartiMeet         -> BartiMeetState(heroDao, inventoryRepo, itemRepo, content),
           BartiHouse        -> BartiHouseState(heroDao, inventoryRepo, content, Some(itemRepo), Some(parcels), bank, outcomes),
           BartiCaravan      -> BartiCaravanState(heroDao, inventoryRepo, content, outcomes, Some(itemRepo), Some(parcels)),

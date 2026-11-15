@@ -249,6 +249,13 @@ object AllyKind extends Enum[AllyKind] {
     hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
     accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
 
+  /** Э. — начальник героя-Тени в Братстве: в главе 10 он встаёт рядом против
+    * людей Сборщика. По силе легендарный человек уровня задания; имя и статы —
+    * на самом союзнике, после боя в отряд не встаёт. Стихии нет. */
+  case object BrotherhoodAgent extends AllyKind("Человек Братства", Race.Human, None, maxLvl = 150L,
+    hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
+    accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
+
   val values: IndexedSeq[AllyKind] = findValues
 
   /** Кого можно нанять за столом таверны. Нежить и крысы туда не садятся. */

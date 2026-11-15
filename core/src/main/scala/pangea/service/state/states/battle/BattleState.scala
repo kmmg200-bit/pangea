@@ -6597,6 +6597,8 @@ case class BattleState(
           case pangea.model.squad.AllyKind.Informant   => s
           // Асессор совета шёл на штурм Загона — после него возвращается к бумагам.
           case pangea.model.squad.AllyKind.CouncilEnvoy => s
+          // Э. встал рядом на одну ночь — и уходит по своим делам.
+          case pangea.model.squad.AllyKind.BrotherhoodAgent => s
           case pangea.model.squad.AllyKind.Rat        => s.summonRat(form, a.lvl, nowMs, near = a.position + toSquad)
           case _                                      => s.admitRisen(form, a.lvl, nowMs)
         }
@@ -8013,6 +8015,7 @@ object BattleState {
       pangea.service.state.BartiDoorQuest.FightStory, pangea.service.state.StoryClearingQuest.FightStory,
       pangea.service.state.BartiDeliveryQuest.FightStory, pangea.service.state.BartiSaltQuest.FightStory,
       pangea.service.state.BartiPitQuest.FightStory) ++
+      pangea.service.state.StoryCollectorQuest.FightStories ++
       pangea.service.state.StoryFurnaceQuest.FightStories ++
       pangea.service.state.StoryMorningQuest.FightStories ++ pangea.service.state.StoryNewcomerQuest.FightStories
 
@@ -8089,6 +8092,7 @@ object BattleState {
     else if (a.kind == pangea.model.squad.AllyKind.GuildSeeker) "battle.ally.guildSeekerDown"
     else if (a.kind == pangea.model.squad.AllyKind.Informant) "battle.ally.informantDown"
     else if (a.kind == pangea.model.squad.AllyKind.CouncilEnvoy) "battle.ally.councilEnvoyDown"
+    else if (a.kind == pangea.model.squad.AllyKind.BrotherhoodAgent) "battle.ally.brotherhoodAgentDown"
     else if (a.undead.isDefined) "battle.ally.crumbled"
     else "battle.ally.scroll"
 

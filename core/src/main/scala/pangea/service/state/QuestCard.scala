@@ -138,6 +138,11 @@ final class QuestCard(heroDao: HeroDao, inventoryRepo: InventoryRepository, item
       // у одиночки — после «Соли»).
       case "StoryFurnaceGo" =>
         fromCity(StoryFurnaceQuest.atFurnace(quests), "story.storyFurnace.card.onlyInCity", StateType.StoryFurnace)
+      // «Сборщик»: с карточки книги печи — в ночь своего пути, с купчей — на склад.
+      case "StoryCollectorGo" =>
+        fromCity(StoryCollectorQuest.toFight(quests), "story.storyCollector.card.onlyInCity", StateType.StoryCollector)
+      case "StoryWarehouseGo" =>
+        fromCity(StoryCollectorQuest.toWarehouse(quests), "story.storyCollector.card.onlyInCity", StateType.StoryCollector)
       case _                => Go.Stale
     }
   }
@@ -194,7 +199,7 @@ object QuestCard {
     "StoryPortGo", "StoryArchiveGo", "StoryGraveyardGo", "StoryBinderyGo", "StoryMeetGo", "StorySojkaGo",
     "StoryBridgeGo", "BartiHouseGo", "BartiCaravanGo", "VillageGo", "VillageReturn",
     "StoryDenGo", "StoryCellarGo", "StoryBartiGo", "BartiShopGo", "StorySquareGo", "StoryClearingGo",
-    "BartiSaltAsk", "BartiSaltGo", "StoryFurnaceGo")
+    "BartiSaltAsk", "BartiSaltGo", "StoryFurnaceGo", "StoryCollectorGo", "StoryWarehouseGo")
 
   /** Ответы на вопрос кнопки `id`: карта Кельвина спрашивает, брать ли Марису. */
   def answers(id: String): Set[String] =
@@ -285,6 +290,12 @@ object QuestCard {
         val path = StoryFurnaceQuest.path(quests)
         val key  = if (StoryFurnaceQuest.toFork(quests) && path != StoryToolQuest.Path.Shadow) "goFork" else s"go${path.key.capitalize}"
         Some(plain("StoryFurnaceGo", s"story.storyFurnace.card.$key"))
+      // Книга печи, глава 10: в ночь своего пути.
+      case Some(QuestItemKind.StoryLedger) if StoryCollectorQuest.toFight(quests) =>
+        Some(plain("StoryCollectorGo", s"story.storyCollector.card.go${StoryCollectorQuest.path(quests).key.capitalize}"))
+      // Купчая на дегтярный склад: на склад — к тем, кто там ждёт.
+      case Some(QuestItemKind.StoryDeed) if StoryCollectorQuest.toWarehouse(quests) =>
+        Some(plain("StoryWarehouseGo", "story.storyCollector.card.warehouseLabel"))
       // Квитанция ночной стражи: Тени — за ответом Братству, ночью — встречать стражу.
       case Some(QuestItemKind.BartiReceipt) if BartiRoofQuest.toShop(quests) =>
         Some(plain("BartiShopGo", if (BartiRoofQuest.toNight(quests)) "barti.roof.card.nightLabel" else "barti.roof.card.shopLabel"))
