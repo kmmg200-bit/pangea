@@ -91,7 +91,7 @@ case class GustavoBeltState(
       heroDao.updateEquipment(user.userId, hero.equipment.copy(
         belt = belt.copy(details = filled.getOrElse(belt.details)))) *>
       renderer.show(user, Screen(content.format("gustavo.supplies.beltRefilled",
-        "charges" -> poured.toString), back))
+        "flasks" -> poured.toString), back))
   }
 
   private def hasBelt(belt: Item): Boolean = beltDetails(belt).isDefined

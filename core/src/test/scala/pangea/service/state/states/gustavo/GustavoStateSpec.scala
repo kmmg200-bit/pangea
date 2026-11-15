@@ -312,7 +312,7 @@ object GustavoStateSpec extends ZIOSpecDefault {
         } yield assertTrue(st == StateType.Gustavo) &&
                 assertTrue(beltCharges(h.equipment.belt).contains(3)) &&
                 assertTrue(h.silver == 4800L) &&
-                assertTrue(screens.exists(_.text.contains("забил бутыли")))
+                assertTrue(screens.exists(_.text.contains("🧴 Фляги на поясе были пополнены: 1.")))
       },
 
       test("Refill без серебра → сообщение, бутыли и серебро не меняются") {
