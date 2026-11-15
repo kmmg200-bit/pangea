@@ -99,6 +99,14 @@ object QuestOutcome extends Enum[QuestOutcome] {
   /** Вывел через изгородь подальше от Кинэта. */
   case object NewcomerHedge extends QuestOutcome("hedge", NpcQuest.StoryNewcomer.key)
 
+  // ── «Печь» (глава 9): что стало с печью в Загоне ─────────────────────────────
+
+  /** Разбил: залил, засыпал солью или отдал молот Горну. */
+  case object FurnaceBroken extends QuestOutcome("broken", NpcQuest.StoryFurnace.key)
+
+  /** Оставил стоять: Братству, совету или себе — на потом. */
+  case object FurnaceKept extends QuestOutcome("kept", NpcQuest.StoryFurnace.key)
+
   // ── «Большое дело» Барти: чем кончилась засада ночной стражи у каравана ─────
 
   /** Отбился от стражи сам — каджиты заплатили сполна. */

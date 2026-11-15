@@ -79,7 +79,7 @@ object BartiSaltSpec extends ZIOSpecDefault {
 
   override def spec = suite("«Соль»: соляной караван в Загон")(
 
-    test("карточка накладной у одиночки: спросить Барти, потом к каравану, потом ждать; у Щита — «с обновлением»") {
+    test("карточка накладной у одиночки: спросить Барти, потом к каравану, потом — глава 9 с караваном; у Щита — своя глава 9") {
       def card(q: NpcQuests, button: String) =
         for {
           c     <- content
@@ -100,9 +100,9 @@ object BartiSaltSpec extends ZIOSpecDefault {
                 ask._1.choices.exists(_.id == "BartiSaltAsk") && ask._2 == StateType.BartiHouse) &&
               assertTrue(ride._1.text.contains("Та'Нахир ждёт ночью у Сухого колодца") &&
                 ride._1.choices.exists(_.id == "BartiSaltGo") && ride._2 == StateType.BartiCaravan) &&
-              assertTrue(done._1.text.contains("Ра'Тхар найдёт меня в Кинэте") && !done._1.choices.exists(_.id == "BartiSaltGo") &&
-                done._2 != StateType.BartiCaravan) &&
-              assertTrue(shield._1.text.contains("станет ясно с обновлением 🔜") && !shield._1.choices.exists(_.id.startsWith("BartiSalt")) &&
+              assertTrue(done._1.text.contains("Ра'Тхар нашёл меня в Кинэте") && !done._1.choices.exists(_.id == "BartiSaltGo") &&
+                done._1.choices.exists(_.id == "StoryFurnaceGo") && done._2 != StateType.BartiCaravan) &&
+              assertTrue(shield._1.text.contains("Юнона просила зайти") && !shield._1.choices.exists(_.id.startsWith("BartiSalt")) &&
                 shield._2 != StateType.BartiHouse)
     },
 

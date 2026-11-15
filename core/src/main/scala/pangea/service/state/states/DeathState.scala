@@ -20,7 +20,7 @@ import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.{AzatData, BarrelThievesQuest, BartiDeliveryQuest, BartiDoorQuest, BartiRoofQuest, BartiSaltQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HotGoodsQuest, JorgenQuest, LostSquadQuest, MarisaQuest,
-  FaelinQuest, MurlocQuest, PlukhQuest, QuestOutcomeLog, State, StoryFaceQuest, StoryClearingQuest, StoryListQuest, StoryMarkQuest, StoryMorningQuest, StoryNewcomerQuest, StoryPowderQuest,
+  FaelinQuest, MurlocQuest, PlukhQuest, QuestOutcomeLog, State, StoryFaceQuest, StoryClearingQuest, StoryFurnaceQuest, StoryListQuest, StoryMarkQuest, StoryMorningQuest, StoryNewcomerQuest, StoryPowderQuest,
   StoryToolQuest,
   StrayCasketQuest, UserAction, VillageLair, Villages}
 import zio.{Random, Task, ZIO}
@@ -135,6 +135,10 @@ case class DeathState(
       // Смерть на просеке («Просека»): шаг тот же — проснуться в лабиринте,
       // пропуск поведёт снова.
       clearing      = battle.exists(_.story.contains(StoryClearingQuest.FightStory))
+      // Смерть у Загона («Печь»): шаг тот же — Горн или каджиты увезли героя,
+      // проснуться в городе, накладная поведёт снова.
+      furnaceRaid   = battle.exists(_.story.contains(StoryFurnaceQuest.RaidStory))
+      furnaceNight  = battle.exists(_.story.contains(StoryFurnaceQuest.NightStory))
       // Смерть у изгороди, где звери зажали Барти: задание так и не начато —
       // Барти встретится снова; проснуться в лабиринте.
       barti         = battle.exists(_.story.contains(HotGoodsQuest.FightStory))
@@ -260,6 +264,12 @@ case class DeathState(
                         "wakeTo"    -> (StateType.CityCenter: StateType).asJson,
                         "wakeLines" -> List("story.storyNewcomer.square.death").asJson)
                       else if (clearing) Json.obj("wakeLines" -> List("story.storyClearing.clearing.death").asJson)
+                      else if (furnaceRaid) Json.obj(
+                        "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
+                        "wakeLines" -> List("story.storyFurnace.pen.deathShield").asJson)
+                      else if (furnaceNight) Json.obj(
+                        "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
+                        "wakeLines" -> List("story.storyFurnace.pen.deathAlone").asJson)
                       else if (bartiDoor) Json.obj(
                         "wakeTo"    -> (StateType.MarketSquare: StateType).asJson,
                         "wakeLines" -> List("barti.door.death").asJson)

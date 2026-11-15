@@ -203,6 +203,9 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   // Акт II, глава «Просека».
   case object StoryClearing extends StateType // просека в изгороди: бригада Чернолома, бочки с порохом, Тихие поют
 
+  // Акт II, глава «Печь».
+  case object StoryFurnace extends StateType // Загон, старая солеварня: печь на живом дереве, клети с отмеченными, развилка
+
   // Побочная линия Барти.
   case object BartiMeet  extends StateType // Барти у изгороди: звери, «Ходовой товар», а потом — адрес
   case object BartiHouse extends StateType // дом Барти на Торговой площади: «Большое дело», товар для каравана

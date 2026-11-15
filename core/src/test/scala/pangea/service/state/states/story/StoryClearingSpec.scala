@@ -248,7 +248,7 @@ object StoryClearingSpec extends ZIOSpecDefault {
                 alone._1.contains("из сундука десятника"))
     },
 
-    test("смерть на просеке — проснуться в лабиринте, шаг тот же; журнал — по пути; Фаэлин при герое — свои слова; накладная — «Печь» с обновлением, у одиночки — к Барти") {
+    test("смерть на просеке — проснуться в лабиринте, шаг тот же; журнал — по пути; Фаэлин при герое — свои слова; накладная ведёт «Печь», у одиночки — сперва к Барти") {
       for {
         c      <- content
         d      <- dao(atClearing(Path.Alone))
@@ -283,9 +283,9 @@ object StoryClearingSpec extends ZIOSpecDefault {
                 line(Path.Shield, 1).contains("показать бирку Чернолома Юноне Кинтслев") &&
                 line(Path.Shield, 2).contains("остановить рубку вместе с Горном") &&
                 line(Path.Alone, 1).contains("войти с ящиком шнапса Барти в лагерь Чернолома")) &&
-              assertTrue(journal.contains("📌 «Печь»") && journal.contains("глава откроется с обновлением")) &&
+              assertTrue(journal.contains("📌 «Печь»") && journal.contains("доехать с соляным караваном до Загона")) &&
               assertTrue(waybill.contains("Накладная на лес") && waybill.contains("Барти знает всех, кто что куда возит")) &&
-              assertTrue(waybillShield.contains("Накладная на лес") && waybillShield.contains("станет ясно с обновлением 🔜"))
+              assertTrue(waybillShield.contains("Накладная на лес") && waybillShield.contains("Юнона просила зайти"))
     }
   )
 }

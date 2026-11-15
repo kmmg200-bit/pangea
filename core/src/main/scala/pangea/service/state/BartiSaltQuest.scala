@@ -54,13 +54,13 @@ object BartiSaltQuest {
   def captains(content: SceneContent): List[BattleAlly] =
     content.list("barti.caravan.kinCaptains").map(BigDealQuest.captainAt(_, Level))
 
-  /** Строка карточки накладной у одиночки: спросить Барти, ехать к каравану
-    * или — после «Соли» — ждать, когда караван тронется к печи. Не одиночка
-    * или «Просека» не закрыта — ничего. */
+  /** Строка карточки накладной у одиночки, пока «Соль» не закрыта: спросить
+    * Барти или ехать к каравану. Дальше карточку ведёт глава 9 (см.
+    * StoryFurnaceQuest.cardLine). Не одиночка или «Просека» не закрыта —
+    * ничего. */
   def cardLine(content: SceneContent, q: NpcQuests): String =
     if (!alone(q) || !q.isDone(NpcQuest.StoryClearing)) ""
     else if (available(q)) content.text("barti.salt.card.ask")
     else if (toCaravan(q)) content.text("barti.salt.card.caravan")
-    else if (q.isDone(NpcQuest.BartiSalt)) content.text("barti.salt.card.done")
     else ""
 }

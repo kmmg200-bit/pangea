@@ -25,8 +25,8 @@ import pangea.service.purse.Purse
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.{EquipmentState, InventoryState, LootState}
 import pangea.service.state.{AppButton, AzatData, BartiRoofQuest, BeltContents, FirstStepsQuest, ItemMenu, NpcQuestDialog, NpcQuestLog, QuestSupport,
-  SlotChoice, State, StoryBrandQuest, StoryClearingQuest, StoryFaceQuest, StoryLine, StoryMorningQuest, StoryPowderQuest,
-  StoryToolQuest, UserAction}
+  QuestOutcomeLog, SlotChoice, State, StoryBrandQuest, StoryClearingQuest, StoryFaceQuest, StoryFurnaceQuest, StoryLine,
+  StoryMorningQuest, StoryNewcomerQuest, StoryPowderQuest, StoryToolQuest, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -92,6 +92,8 @@ case class HomeState(
       "HomeJunonaTestimony" -> Target.Run { (u, _, r) => junonaTestimony(u, r) },
       "HomeJunonaRoof"      -> Target.Run { (u, _, r) => junonaRoof(u, r) },
       "HomeJunonaClearing"  -> Target.Run { (u, _, r) => junonaClearing(u, r) },
+      "HomeJunonaPen"       -> Target.Run { (u, _, r) => junonaPen(u, r) },
+      "HomeJunonaPenTell"   -> Target.Run { (u, _, r) => junonaPenTell(u, r) },
       "HomeFurnItem"   -> Target.Run { (u, ua, r) => furnItem(u, ua, r) },
       "HomeFurnBuy"    -> Target.Run { (u, ua, r) => furnBuy(u, ua, r) },
       "HomeClutterPay" -> Target.Run { (u, _, r) => clutterPay(u, r) },
@@ -191,12 +193,20 @@ case class HomeState(
       told   <- junonaMorningOpen(user, StoryMorningQuest.toTestimony)
       // «Просека», путь Щита: пропуск при герое — Юнона узнаёт свою печать.
       seal   <- junonaClearingOpen(user)
+      // «Печь», путь Щита: накладная при герое — Юнона ищет Загон в бумагах
+      // совета; книга печи — что нашлось в Загоне.
+      pen    <- junonaPenOpen(user, StoryFurnaceQuest.toJunona, QuestItemKind.StoryWaybill)
+      tell   <- junonaPenOpen(user, StoryFurnaceQuest.toTell, QuestItemKind.StoryLedger)
       marked  = Option.when(story)(Choice("HomeJunonaStory", content.text("story.storyBrand.junona.label"), row = Some(houses.size))) orElse
                   Option.when(copies)(Choice("HomeJunonaFace", content.text("story.storyFace.junona.label"), row = Some(houses.size))) orElse
                   Option.when(brey)(Choice("HomeJunonaBrey", content.text("story.storyMorning.junona.label"), row = Some(houses.size))) orElse
                   Option.when(told)(Choice("HomeJunonaTestimony", content.text("story.storyMorning.junona.testimonyLabel"),
                     row = Some(houses.size))) orElse
                   Option.when(seal)(Choice("HomeJunonaClearing", content.text("story.storyClearing.junona.label"),
+                    row = Some(houses.size))) orElse
+                  Option.when(pen)(Choice("HomeJunonaPen", content.text("story.storyFurnace.junona.label"),
+                    row = Some(houses.size))) orElse
+                  Option.when(tell)(Choice("HomeJunonaPenTell", content.text("story.storyFurnace.junona.tellLabel"),
                     row = Some(houses.size)))
       // «Крыша» Барти, путь Щита: квитанция ночной стражи при герое — своей
       // кнопкой, рядом с сюжетной: побочное задание главу не ждёт.
@@ -307,6 +317,59 @@ case class HomeState(
                 quests <- NpcQuestLog.load(heroDao, user.userId)
                 _      <- NpcQuestLog.save(heroDao, user.userId, BartiRoofQuest.step(quests, 3))
                 _      <- renderer.show(user, Screen(content.text("barti.roof.junona.text").trim, Nil))
+              } yield ())
+      res  <- office(user, renderer)
+    } yield res
+
+  /** «Печь» (путь Щита) на шаге `onStep` и `item` при герое. */
+  private def junonaPenOpen(user: User, onStep: NpcQuests => Boolean, item: QuestItemKind): Task[Boolean] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (!onStep(quests)) ZIO.succeed(false)
+      else getHero(user).flatMap(hero => inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)))
+        .map(inv => QuestSupport.hasItem(inv.items.data, item))
+    }
+
+  /** Юнона находит Загон в бумагах совета: склад соли, сданный за монету, с её
+    * печатью и чужой подписью; на штурм идут Горн и асессор Штиль. Глава на
+    * втором шаге. */
+  private def junonaPen(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      open <- junonaPenOpen(user, StoryFurnaceQuest.toJunona, QuestItemKind.StoryWaybill)
+      _    <- ZIO.when(open)(for {
+                quests <- NpcQuestLog.load(heroDao, user.userId)
+                _      <- NpcQuestLog.save(heroDao, user.userId, StoryFurnaceQuest.step(quests, 2))
+                _      <- renderer.show(user, Screen(content.text("story.storyFurnace.junona.text").trim, Nil))
+              } yield ())
+      res  <- office(user, renderer)
+    } yield res
+
+  /** Юнона выслушивает, что нашлось в Загоне: если новенького отдали совету —
+    * узнаёт, что его продали за её спиной; что стало с печью — по выбору. Глава
+    * закрыта: серебро и опыт, исход — в подсчёт, глава 10 взята и висит. */
+  private def junonaPenTell(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      open <- junonaPenOpen(user, StoryFurnaceQuest.toTell, QuestItemKind.StoryLedger)
+      _    <- ZIO.when(open)(for {
+                now    <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+                quests <- NpcQuestLog.load(heroDao, user.userId)
+                hero   <- getHero(user)
+                fork    = StoryFurnaceQuest.fork(quests).getOrElse(StoryFurnaceQuest.Fork.Broken)
+                sold    = Option.when(StoryNewcomerQuest.fate(quests).contains(StoryNewcomerQuest.Fate.Council))(
+                            "story.storyFurnace.junona.sold")
+                keys    = List("story.storyFurnace.junona.tell") ++ sold.toList ++
+                            List(s"story.storyFurnace.junona.${fork.key}", "story.storyFurnace.junona.end")
+                silver  = StoryFurnaceQuest.silver
+                _      <- heroDao.updateSilver(user.userId, hero.silver + silver)
+                done   <- NpcQuestDialog(heroDao, content, NpcQuest.StoryFurnace, "StoryFurnace")
+                            .complete(user, hero.copy(silver = hero.silver + silver), _.take(NpcQuest.StoryCollector, now))
+                (_, expLine) = done
+                stats  <- QuestOutcomeLog.recordAndCount(outcomes, content, hero, fork.outcome)
+                after  <- NpcQuestLog.load(heroDao, user.userId)
+                _      <- renderer.show(user, Screen(keys.map(k => content.text(k).trim).mkString("\n\n"), Nil))
+                _      <- renderer.show(user, Screen(List(
+                            content.format("story.storyFurnace.reward.shield", "silver" -> silver.toString, "exp" -> expLine),
+                            QuestOutcomeLog.withStats(content.text("story.storyFurnace.questDone"), stats),
+                            StoryLine.takenLine(content, NpcQuest.StoryCollector, after)).mkString("\n\n"), Nil))
               } yield ())
       res  <- office(user, renderer)
     } yield res

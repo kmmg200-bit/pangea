@@ -6595,6 +6595,8 @@ case class BattleState(
           case pangea.model.squad.AllyKind.GuildMaster => s
           case pangea.model.squad.AllyKind.GuildSeeker => s
           case pangea.model.squad.AllyKind.Informant   => s
+          // Асессор совета шёл на штурм Загона — после него возвращается к бумагам.
+          case pangea.model.squad.AllyKind.CouncilEnvoy => s
           case pangea.model.squad.AllyKind.Rat        => s.summonRat(form, a.lvl, nowMs, near = a.position + toSquad)
           case _                                      => s.admitRisen(form, a.lvl, nowMs)
         }
@@ -8010,6 +8012,7 @@ object BattleState {
       Villages.SpidersStory, Villages.CaravanStory, pangea.service.state.BartiRoofQuest.FightStory,
       pangea.service.state.BartiDoorQuest.FightStory, pangea.service.state.StoryClearingQuest.FightStory,
       pangea.service.state.BartiDeliveryQuest.FightStory, pangea.service.state.BartiSaltQuest.FightStory) ++
+      pangea.service.state.StoryFurnaceQuest.FightStories ++
       pangea.service.state.StoryMorningQuest.FightStories ++ pangea.service.state.StoryNewcomerQuest.FightStories
 
   /** Бой с ловцами Братства (MonsterSkill.CatcherNet), не на арене: здесь
@@ -8084,6 +8087,7 @@ object BattleState {
     else if (a.kind == pangea.model.squad.AllyKind.GuildMaster) "battle.ally.guildMasterDown"
     else if (a.kind == pangea.model.squad.AllyKind.GuildSeeker) "battle.ally.guildSeekerDown"
     else if (a.kind == pangea.model.squad.AllyKind.Informant) "battle.ally.informantDown"
+    else if (a.kind == pangea.model.squad.AllyKind.CouncilEnvoy) "battle.ally.councilEnvoyDown"
     else if (a.undead.isDefined) "battle.ally.crumbled"
     else "battle.ally.scroll"
 
