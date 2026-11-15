@@ -1,16 +1,18 @@
 package pangea.service.miniapp
 
 import io.circe.syntax.EncoderOps
-import pangea.engine.SceneContent
+import pangea.engine.{Renderer, SceneContent, Screen}
 import pangea.generator.item.GemGenerator
-import pangea.model.hero.{AzatState, CubeStatus}
+import pangea.model.hero.{Achievement, AzatState, CubeStatus}
+import pangea.model.home.{HomeData, RecipeNote}
 import pangea.model.item.{GemKind, Item}
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.cube.AzatCube
-import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository}
+import pangea.service.state.QuestSupport
+import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestRenderer}
 import zio.test._
-import zio.{Ref, ZIO}
+import zio.{Ref, Task, ZIO}
 
 /** Куб из приложения: общий с ботом [[AzatCube]] и то, что приложение
   * добавляет сверху, — город и строки итога в ответ, а не в чат. */
@@ -63,6 +65,44 @@ object MiniAppCubeSpec extends ZIOSpecDefault {
         azat.cubeCharges == 4,
         said == Vector(c.text("cube.activated"))
       )
+    },
+    test("достижение из приложения — строкой в ответ приложению и той же строкой в личку; итог активации в личку не идёт") {
+      // В книге девять рецептов: десятый из куба даёт «Артефактор I».
+      val nine = List.tabulate(9)(i => RecipeNote(List(s"Камень №$i"), s"Итог №$i", 1))
+      for {
+        dao   <- TestHeroDao.withHero(userId, hero)
+        _     <- dao.writeAzatData(userId, AzatState(cube = CubeStatus.Active, cubeCharges = 5,
+                   cubeItems = List(ruby(1L), ruby(2L), ruby(3L))).asJson)
+        _     <- dao.writeHomeData(userId, HomeData.empty.copy(recipes = nine).asJson)
+        c     <- ZIO.attempt(SceneContent.load())
+        cube   = new AzatCube(dao, TestInventoryRepository.withItems(Nil), TestItemRepository.make, c)
+        lines <- Ref.make(Vector.empty[String])
+        dm    <- TestRenderer.make
+        _     <- cube.activate(user, hero, new MiniApp.Collect(lines, Some(dm)))
+        said  <- lines.get
+        told  <- dm.sentScreens.map(_.map(_.text))
+        after <- dao.getHeroByUserId(userId).map(_.get)
+        line   = c.format("marisa.achievement", "title" -> Achievement.Artificer1.title,
+                   "bonus" -> Achievement.Artificer1.bonusLine)
+      } yield assertTrue(
+        after.hasAchievement(Achievement.Artificer1),
+        said.headOption.contains(c.text("cube.activated")),
+        said.contains(line),
+        told.contains(line),
+        !told.contains(c.text("cube.activated"))
+      )
+    },
+    test("личка не ответила — действие в приложении не падает, строка о достижении в ответе есть") {
+      val broken = new Renderer {
+        def show(user: User, screen: Screen): Task[Unit] = ZIO.fail(new RuntimeException("ВК недоступен"))
+      }
+      for {
+        dao   <- TestHeroDao.withHero(userId, hero)
+        c     <- ZIO.attempt(SceneContent.load())
+        lines <- Ref.make(Vector.empty[String])
+        got   <- QuestSupport.grant(dao, c, user, hero, Achievement.Artificer1, new MiniApp.Collect(lines, Some(broken)))
+        said  <- lines.get
+      } yield assertTrue(got.hasAchievement(Achievement.Artificer1), said.size == 1, said.head.contains("Артефактор I"))
     },
     test("с кубом из приложения работают только в городе") {
       assertTrue(

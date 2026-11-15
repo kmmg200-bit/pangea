@@ -252,9 +252,18 @@ object MiniApp {
   private[miniapp] final case class Outcome(note: Option[String], made: List[Long])
 
   /** Строки, которые куб показал бы в чате (итог активации, достижение), —
-    * в ответ приложению, а не в беседу: там свой экран со своими кнопками. */
-  private[miniapp] final class Collect(lines: zio.Ref[Vector[String]]) extends Renderer {
+    * в ответ приложению, а не в беседу: там свой экран со своими кнопками.
+    *
+    * Строка о новом достижении — ещё и в личку `dm` (чат игрока с ботом), как
+    * в боте: приложение могли закрыть, не дочитав. Не ушла в личку — действие
+    * от этого не падает: в ответе приложению строка всё равно есть. Без `dm`
+    * (в тестах) — только в ответ. */
+  private[miniapp] final class Collect(lines: zio.Ref[Vector[String]], dm: Option[Renderer] = None) extends Renderer {
     def show(user: User, screen: Screen): Task[Unit] = lines.update(_ :+ screen.text)
+
+    override def achieved(user: User, screen: Screen): Task[Unit] =
+      show(user, screen) *> ZIO.foreachDiscard(dm)(_.show(user, screen).catchAll(err =>
+        ZIO.logWarning(s"miniapp: строка о достижении не ушла в личку игроку ${user.userId.value}: ${err.getMessage}")))
   }
 
   /** Герой в городе — только тогда из приложения можно работать с кубом,
@@ -329,7 +338,7 @@ object MiniApp {
         new ItemStore.All(heroDao, inventories, artifactRepo, barrelRepo, bank, content),
         new BarrelRobbery(heroDao, barrelRepo, items, content), lock,
         new AppQuests(heroDao, inventories, new QuestCard(heroDao, inventories, items, content), content, door),
-        trades, transfers)
+        trades, transfers, door.chat)
     }
 }
 
@@ -360,7 +369,9 @@ final class MiniAppLive(
   lock:        PlayerLock,
   appQuests:   AppQuests,
   trades:      Trades,
-  transfers:   Transfers
+  transfers:   Transfers,
+  // Чат игрока с ботом: строка о достижении, полученном в приложении, — и туда.
+  dm:          Renderer
 ) extends MiniApp {
   import MiniApp.{BrewAct, CubeAct, Denied, GearAct, Outcome, SquadAct, TradeAct}
 
@@ -418,7 +429,7 @@ final class MiniAppLive(
     for {
       user    <- users.getUserById(hero.userId).someOrFail(new Throwable(s"Нет игрока ${hero.userId.value}"))
       lines   <- Ref.make(Vector.empty[String])
-      say      = new MiniApp.Collect(lines)
+      say      = new MiniApp.Collect(lines, Some(dm))
       ms      <- now
       settled <- SquadDuty.settle(heroDao, content, user, hero, ms, say)
       _       <- act match {
@@ -587,7 +598,7 @@ final class MiniAppLive(
       for {
         user  <- users.getUserById(fresh.userId).someOrFail(new Throwable(s"Нет игрока ${fresh.userId.value}"))
         lines <- Ref.make(Vector.empty[String])
-        say    = new MiniApp.Collect(lines)
+        say    = new MiniApp.Collect(lines, Some(dm))
         tell   = say.show(user, Screen(gone, Nil))
         inv   <- inventories.get(fresh.id).mapError(e => new Throwable(e.toString))
         _     <- inv.items.data.find(_.id == itemId) match {
@@ -617,7 +628,7 @@ final class MiniAppLive(
     for {
       user  <- users.getUserById(hero.userId).someOrFail(new Throwable(s"Нет игрока ${hero.userId.value}"))
       lines <- Ref.make(Vector.empty[String])
-      say    = new MiniApp.Collect(lines)
+      say    = new MiniApp.Collect(lines, Some(dm))
       inv   <- inventories.get(hero.id).mapError(e => new Throwable(e.toString))
       _     <- inv.items.data.find(_.id == itemId) match {
                  case None => say.show(user, Screen(content.text("stack.gone"), Nil))
@@ -642,7 +653,7 @@ final class MiniAppLive(
     for {
       user  <- users.getUserById(hero.userId).someOrFail(new Throwable(s"Нет игрока ${hero.userId.value}"))
       lines <- Ref.make(Vector.empty[String])
-      say    = new MiniApp.Collect(lines)
+      say    = new MiniApp.Collect(lines, Some(dm))
       gone   = say.show(user, Screen(content.text("equipment.wearGone"), Nil))
       empty  = say.show(user, Screen(content.text("equipment.slotEmpty"), Nil))
       wornAt = (idx: Int) => EquipmentState.slots.lift(idx).map(_.get(hero.equipment)).filter(_.itemType != ItemType.NoItem)
@@ -800,7 +811,7 @@ final class MiniAppLive(
         fresh <- heroes.getHero(hero.userId).someOrFail(new Throwable(s"Нет героя у игрока ${hero.userId.value}"))
         user  <- users.getUserById(fresh.userId).someOrFail(new Throwable(s"Нет игрока ${fresh.userId.value}"))
         lines <- Ref.make(Vector.empty[String])
-        _     <- act(user, fresh, new MiniApp.Collect(lines))
+        _     <- act(user, fresh, new MiniApp.Collect(lines, Some(dm)))
         said  <- lines.get
         note   = said.mkString("\n\n")
       } yield fresh -> note
@@ -884,7 +895,7 @@ final class MiniAppLive(
         for {
           user  <- users.getUserById(hero.userId).someOrFail(new Throwable(s"Нет игрока ${hero.userId.value}"))
           lines <- zio.Ref.make(Vector.empty[String])
-          made  <- azatCube.activate(user, hero, new MiniApp.Collect(lines))
+          made  <- azatCube.activate(user, hero, new MiniApp.Collect(lines, Some(dm)))
           said  <- lines.get
         } yield Outcome(Option.when(said.nonEmpty)(said.mkString("\n\n")), made.map(_.id))
     }
