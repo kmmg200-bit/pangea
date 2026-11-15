@@ -119,6 +119,11 @@ final class QuestCard(heroDao: HeroDao, inventoryRepo: InventoryRepository, item
       case "StoryBridgeGo"  => fromCity(StoryListQuest.toBridge(quests), "story.storyList.card.onlyInCity", StateType.StoryBridge)
       case "BartiHouseGo"   => fromCity(BigDealQuest.houseOpen(quests), "barti.card.onlyInCity", StateType.BartiHouse)
       case "BartiCaravanGo" => fromCity(BigDealQuest.toCaravan(quests), "barti.card.caravanOnlyInCity", StateType.BartiCaravan)
+      // Акт II, «Наутро»: Тень — в «Три кости» за писарем, Щит — ночью в подвал
+      // совета, одиночка — к Барти. Глава к этому времени уже взята дома.
+      case "StoryDenGo"    => fromCity(StoryMorningQuest.toDen(quests), "story.storyMorning.card.onlyInCity", StateType.StoryDen)
+      case "StoryCellarGo" => fromCity(StoryMorningQuest.toCellar(quests), "story.storyMorning.card.onlyInCity", StateType.StoryCellar)
+      case "StoryBartiGo"  => fromCity(StoryMorningQuest.atBarti(quests), "story.storyMorning.card.onlyInCity", StateType.BartiHouse)
       case _                => Go.Stale
     }
   }
@@ -173,7 +178,8 @@ object QuestCard {
     "OpenLetter", "UseKelvinMap", "MapWithMarisa", "MapAlone", "UseMurlocMap", "RaceChange", "NameChange",
     "StrayGo", "BarrelTrail", "StoryCacheGo", "JorgenLairGo", "FaelinRootsGo", "PlukhHuntGo",
     "StoryPortGo", "StoryArchiveGo", "StoryGraveyardGo", "StoryBinderyGo", "StoryMeetGo", "StorySojkaGo",
-    "StoryBridgeGo", "BartiHouseGo", "BartiCaravanGo", "VillageGo", "VillageReturn")
+    "StoryBridgeGo", "BartiHouseGo", "BartiCaravanGo", "VillageGo", "VillageReturn",
+    "StoryDenGo", "StoryCellarGo", "StoryBartiGo")
 
   /** Ответы на вопрос кнопки `id`: карта Кельвина спрашивает, брать ли Марису. */
   def answers(id: String): Set[String] =
@@ -239,6 +245,14 @@ object QuestCard {
       // Записка «Э.»: на кладбище — Рубеж I берётся здесь.
       case Some(QuestItemKind.StoryNote) if StoryToolQuest.open(quests) =>
         Some(plain("StoryGraveyardGo", "story.storyTool.card.goLabel"))
+      // Акт II, «Наутро»: поручение Э. — в «Три кости»; грамота совета — в
+      // подвал совета; книга ячейки — к Барти.
+      case Some(QuestItemKind.StoryShadowOrder) if StoryMorningQuest.toDen(quests) =>
+        Some(plain("StoryDenGo", "story.storyMorning.card.denLabel"))
+      case Some(QuestItemKind.StoryCouncilWrit) if StoryMorningQuest.toCellar(quests) =>
+        Some(plain("StoryCellarGo", "story.storyMorning.card.cellarLabel"))
+      case Some(QuestItemKind.StoryCellBook) if StoryMorningQuest.atBarti(quests) =>
+        Some(plain("StoryBartiGo", "story.storyMorning.card.bartiLabel"))
       // Адрес Барти: к нему домой, на Торговую площадь, — «Большое дело».
       case Some(QuestItemKind.BartiAddress) if BigDealQuest.houseOpen(quests) =>
         Some(plain("BartiHouseGo", "barti.card.houseLabel"))

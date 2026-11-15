@@ -84,6 +84,8 @@ import pangea.model.state.StateType.{
   StoryArchive,
   StoryBindery,
   StoryGraveyard,
+  StoryDen,
+  StoryCellar,
   BartiMeet,
   BartiHouse,
   BartiCaravan,
@@ -169,8 +171,8 @@ import pangea.service.state.states.barti.{BartiCaravanState, BartiHouseState, Ba
 import pangea.service.state.states.merc.{BramblHallState, FaelinRootsState, JorgenLairState, PlukhHuntState}
 import pangea.service.state.states.village.{VillageCaravanState, VillageLairState, VillageState, VillageTrailState}
 import pangea.service.state.VillageLair
-import pangea.service.state.states.story.{StoryArchiveState, StoryBinderyState, StoryBridgeState, StoryCacheState, StoryCloakState,
-  StoryGraveyardState, StoryMeetingState, StorySojkaState, StoryWarehouseState}
+import pangea.service.state.states.story.{StoryArchiveState, StoryBinderyState, StoryBridgeState, StoryCacheState, StoryCellarState,
+  StoryCloakState, StoryDenState, StoryGraveyardState, StoryMeetingState, StorySojkaState, StoryWarehouseState}
 import pangea.service.state.states.race.RaceQuestState
 import pangea.service.state.states.name.NameChangeState
 import pangea.service.state.states.merchant.MerchantState
@@ -373,8 +375,10 @@ object StatesMap {
           StoryArchive      -> StoryArchiveState(heroDao, content),
           StoryBindery      -> StoryBinderyState(heroDao, inventoryRepo, itemRepo, content),
           StoryGraveyard    -> StoryGraveyardState(heroDao, inventoryRepo, itemRepo, content, outcomes, Some(parcels)),
+          StoryDen          -> StoryDenState(heroDao, inventoryRepo, itemRepo, content, bank),
+          StoryCellar       -> StoryCellarState(heroDao, content),
           BartiMeet         -> BartiMeetState(heroDao, inventoryRepo, itemRepo, content),
-          BartiHouse        -> BartiHouseState(heroDao, inventoryRepo, content),
+          BartiHouse        -> BartiHouseState(heroDao, inventoryRepo, content, Some(itemRepo)),
           BartiCaravan      -> BartiCaravanState(heroDao, inventoryRepo, content, outcomes, Some(itemRepo), Some(parcels)),
           JorgenLair        -> JorgenLairState(heroDao, inventoryRepo, itemRepo, content),
           BramblHall        -> BramblHallState(heroDao, inventoryRepo, content),

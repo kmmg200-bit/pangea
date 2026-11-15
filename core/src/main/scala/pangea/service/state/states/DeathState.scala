@@ -20,7 +20,7 @@ import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.{AzatData, BarrelThievesQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HotGoodsQuest, JorgenQuest, LostSquadQuest, MarisaQuest,
-  FaelinQuest, MurlocQuest, PlukhQuest, QuestOutcomeLog, State, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest,
+  FaelinQuest, MurlocQuest, PlukhQuest, QuestOutcomeLog, State, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryMorningQuest, StoryPowderQuest, StoryToolQuest,
   StrayCasketQuest, UserAction, VillageLair, Villages}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
@@ -112,6 +112,11 @@ case class DeathState(
       // в городе, ключ (или записка) поведёт снова.
       bindery       = battle.exists(_.story.contains(StoryFaceQuest.FightStory))
       graveyard     = battle.exists(_.story.contains(StoryToolQuest.FightStory))
+      // Смерть в «Трёх костях», в подвале совета и у Барти («Наутро»): глава
+      // на том же шаге — проснуться у порта, в городе или на Торговой площади.
+      den           = battle.exists(_.story.contains(StoryMorningQuest.DenStory))
+      cellar        = battle.exists(_.story.contains(StoryMorningQuest.CellarStory))
+      bartiHouse    = battle.exists(_.story.contains(StoryMorningQuest.BartiStory))
       // Смерть у изгороди, где звери зажали Барти: задание так и не начато —
       // Барти встретится снова; проснуться в лабиринте.
       barti         = battle.exists(_.story.contains(HotGoodsQuest.FightStory))
@@ -224,6 +229,15 @@ case class DeathState(
                       else if (graveyard) Json.obj(
                         "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
                         "wakeLines" -> List("story.storyTool.graveyard.death").asJson)
+                      else if (den) Json.obj(
+                        "wakeTo"    -> (StateType.HarborQuarter: StateType).asJson,
+                        "wakeLines" -> List("story.storyMorning.den.death").asJson)
+                      else if (cellar) Json.obj(
+                        "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
+                        "wakeLines" -> List("story.storyMorning.cellar.death").asJson)
+                      else if (bartiHouse) Json.obj(
+                        "wakeTo"    -> (StateType.MarketSquare: StateType).asJson,
+                        "wakeLines" -> List("story.storyMorning.barti.death").asJson)
                       else if (barti) Json.obj("wakeLines" -> List("barti.meet.death").asJson)
                       else if (ambush) Json.obj(
                         "wakeTo"    -> (StateType.MarketSquare: StateType).asJson,

@@ -193,6 +193,10 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   case object StoryBindery   extends StateType // переплётная у рыбного рынка: днём — лицо из прошлого, ночью — ячейка
   case object StoryGraveyard extends StateType // старое кладбище за городской стеной: встреча, бой, выбор пути
 
+  // Акт II, глава «Наутро».
+  case object StoryDen    extends StateType // «Три кости», игорный дом у порта: писарь Горна в залоге, откуп или бой
+  case object StoryCellar extends StateType // подвал совета ночью: Брей за решёткой, Горн с искателями, чистильщики
+
   // Побочная линия Барти.
   case object BartiMeet  extends StateType // Барти у изгороди: звери, «Ходовой товар», а потом — адрес
   case object BartiHouse extends StateType // дом Барти на Торговой площади: «Большое дело», товар для каравана

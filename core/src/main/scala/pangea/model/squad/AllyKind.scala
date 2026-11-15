@@ -219,6 +219,29 @@ object AllyKind extends Enum[AllyKind] {
     hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
     accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
 
+  /** Мастер Горн в подвале совета (глава 6 «Наутро», путь Щита): встаёт рядом
+    * с героем против чистильщиков Братства — по силе легендарный человек уровня
+    * задания. Имя, уровень и статы лежат на самом союзнике ([[UndeadForm]], см.
+    * StoryMorningQuest.horn); нанять негде, после боя в отряд не встаёт.
+    * Стихии нет. */
+  case object GuildMaster extends AllyKind("Мастер Гильдии", Race.Human, None, maxLvl = 150L,
+    hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
+    accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
+
+  /** Искатель, которого Горн привёл в подвал совета (там же): по силе редкий
+    * человек уровня задания; имя и статы — на самом союзнике, после боя в
+    * отряд не встаёт. Стихии нет. */
+  case object GuildSeeker extends AllyKind("Искатель Гильдии", Race.Human, None, maxLvl = 150L,
+    hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
+    accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
+
+  /** Барти со сковородой (глава 6, путь «Сам по себе»): дерётся у себя дома
+    * против людей Братства — плохо, по силе необычный человек уровня задания.
+    * Имя и статы — на самом союзнике, после боя в отряд не встаёт. Стихии нет. */
+  case object Informant extends AllyKind("Осведомитель", Race.Human, None, maxLvl = 150L,
+    hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
+    accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
+
   val values: IndexedSeq[AllyKind] = findValues
 
   /** Кого можно нанять за столом таверны. Нежить и крысы туда не садятся. */

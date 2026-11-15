@@ -24,8 +24,8 @@ import pangea.service.state.states.home.Racks
 import pangea.service.state.{BarrelThievesQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HerbLore, HotGoodsQuest, ItemMenu,
   JorgenQuest,
   FaelinQuest, MarisaQuest, MurlocQuest, NpcQuestLog, PlukhQuest, QuestCard, QuestGoods, SlotChoice, StackMove, State,
-  StoryBrandQuest, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryPowderQuest, StoryToolQuest, StrayCasketQuest,
-  UiScene, UserAction, Villages}
+  StoryBrandQuest, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryMorningQuest, StoryNewcomerQuest, StoryPowderQuest,
+  StoryToolQuest, StrayCasketQuest, UiScene, UserAction, Villages}
 import zio.{Random, Task, ZIO}
 
 case class InventoryState(
@@ -125,9 +125,9 @@ case class InventoryState(
         StateType.MarisaHunt, StateType.MurlocVillage, StateType.RaceQuest, StateType.NameChange,
         StateType.StrayCasket, StateType.BarrelThieves, StateType.StoryCache, StateType.StoryWarehouse,
         StateType.StoryMeeting, StateType.StoryBridge, StateType.StorySojka, StateType.StoryArchive, StateType.StoryBindery,
-        StateType.StoryGraveyard, StateType.BartiHouse, StateType.BartiCaravan, StateType.JorgenLair,
+        StateType.StoryGraveyard, StateType.BartiHouse, StateType.BartiCaravan, StateType.JorgenLair, StateType.VillageTrail,
         StateType.PlukhHunt, StateType.FaelinRoots, StateType.Village, StateType.VillageBandits, StateType.VillageSpiders,
-        StateType.VillageCaravan, StateType.VillageTrail) ++ BackpackOrigins
+        StateType.VillageCaravan, StateType.StoryDen, StateType.StoryCellar) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.
@@ -1410,9 +1410,21 @@ object InventoryState {
         val now = StoryToolQuest.cardLine(content, quests)
         s"${item.displayTitle}\n${difficulty(StoryToolQuest.Level)}\n\n${QuestItemKind.StoryNote.description}" +
           (if (now.isEmpty) "" else "\n\n" + now)
-      // Знаки пути с Рубежа I: что дальше — скажет Акт II.
+      // Знаки пути с Рубежа I: у Щита и одиночки они же ведут «Наутро» —
+      // пока глава идёт, на карточке её сложность и что делать сейчас.
       case Some(kind @ (QuestItemKind.StoryShadowRing | QuestItemKind.StoryCouncilWrit | QuestItemKind.StoryCellBook)) =>
-        s"${item.displayTitle}\n\n${kind.description}"
+        val now = StoryMorningQuest.cardLine(content, quests, kind)
+        if (now.isEmpty) s"${item.displayTitle}\n\n${kind.description}"
+        else s"${item.displayTitle}\n${difficulty(StoryMorningQuest.Level)}\n\n${kind.description}\n\n$now"
+      // Акт II, «Наутро», путь Тени: поручение Э. — где писарь и что дальше.
+      case Some(QuestItemKind.StoryShadowOrder) =>
+        val now = StoryMorningQuest.cardLine(content, quests, QuestItemKind.StoryShadowOrder)
+        s"${item.displayTitle}\n${difficulty(StoryMorningQuest.Level)}\n\n${QuestItemKind.StoryShadowOrder.description}" +
+          (if (now.isEmpty) "" else "\n\n" + now)
+      // Опись урожая — зацепка главы 7: пока глава не открыта — «с обновлением».
+      case Some(QuestItemKind.StoryHarvest) =>
+        val now = StoryNewcomerQuest.cardLine(content, quests)
+        s"${item.displayTitle}\n\n${QuestItemKind.StoryHarvest.description}" + (if (now.isEmpty) "" else "\n\n" + now)
       case Some(QuestItemKind.BartiPlan) =>
         val now = HotGoodsQuest.cardLine(content, quests)
         s"${item.displayTitle}\n${difficulty(HotGoodsQuest.Level)}\n\n${QuestItemKind.BartiPlan.description}" +

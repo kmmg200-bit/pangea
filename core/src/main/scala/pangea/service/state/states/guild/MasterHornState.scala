@@ -15,7 +15,7 @@ import pangea.service.purse.Purse
 import pangea.model.quest.{DailyKind, DailyNpc, DailyRates}
 import pangea.model.squad.{AllyKind, AllyRates}
 import pangea.service.state.{CityExit, DailyDialog, DailyQuestLog, JorgenQuest, MercQuests, NpcQuestDialog, NpcQuestLog, QuestSupport,
-  State, StoryFaceQuest, StoryMarkQuest, UserAction}
+  State, StoryFaceQuest, StoryMarkQuest, StoryMorningQuest, UserAction}
 import zio.{Task, ZIO}
 
 /**
@@ -72,6 +72,8 @@ case class MasterHornState(
       "HornStory"            -> Target.Run { (u, _, r) => storyLedger(u, r) },
       "HornFace"             -> Target.Run { (u, _, r) => faceNumbers(u, r) },
       "HornTokens"           -> Target.Run { (u, _, r) => handTokens(u, r) },
+      "HornClerk"            -> Target.Run { (u, _, r) => askClerk(u, r) },
+      "HornCellar"           -> Target.Run { (u, _, r) => askMen(u, r) },
       CityExit.route
     ),
     fallback = Target.Run { (u, _, r) => enter(u, r).as(StateType.MasterHorn) }
@@ -96,13 +98,19 @@ case class MasterHornState(
           copies <- if (StoryFaceQuest.toHorn(quests)) hasStory(hero, QuestItemKind.StoryCopies) else ZIO.succeed(false)
           // Долг Йоргена: жетоны павших при герое — Горн впишет их в учёт.
           tokens <- if (JorgenQuest.toHorn(quests)) hasStory(hero, QuestItemKind.JorgenTokens) else ZIO.succeed(false)
+          // Акт II, «Наутро»: Тень с поручением Э. спрашивает про писаря, Щит с
+          // грамотой совета — про людей для подвала.
+          order  <- if (StoryMorningQuest.toHorn(quests)) hasStory(hero, QuestItemKind.StoryShadowOrder) else ZIO.succeed(false)
+          writ   <- if (StoryMorningQuest.toHornMen(quests)) hasStory(hero, QuestItemKind.StoryCouncilWrit) else ZIO.succeed(false)
           story   = Option.when(cloak)(content.choice("HornStory", "story.storyMark.horn.label"))
           face    = Option.when(copies)(content.choice("HornFace", "story.storyFace.horn.label"))
           ashes   = Option.when(tokens)(content.choice("HornTokens", "jorgen.horn.label"))
+          clerk   = Option.when(order)(content.choice("HornClerk", "story.storyMorning.horn.label"))
+          men     = Option.when(writ)(content.choice("HornCellar", "story.storyMorning.hornCellar.label"))
           free    = isFree(quests)
           stats   = front.map(c => statOf(c.id).fold(c)(stat => c.copy(label = priceLabel(c.label, hero, stat, free))))
           deeds   = stats ++ quest.button(quests).toList ++ daily.button(work).toList ++ story.toList ++
-                      face.toList ++ ashes.toList
+                      face.toList ++ clerk.toList ++ men.toList ++ ashes.toList
           _    <- renderer.show(user, CityExit.on(base.copy(choices = menuRows(deeds, back)), content))
         } yield ()
       }
@@ -154,6 +162,33 @@ case class MasterHornState(
                   _    <- renderer.show(user, Screen(List(grew, expLine, content.text("jorgen.questDone")).mkString("\n\n"), Nil))
                   _    <- enter(user, renderer)
                 } yield ()
+    } yield StateType.MasterHorn
+
+  /** «Наутро», путь Тени: Горн ищет своего писаря — тот носил Братству его
+    * книги — и сам говорит, где тот обычно сидит. Герой врёт, что не видел.
+    * Глава на втором шаге: в «Три кости». Не тот шаг или поручения при герое
+    * нет — меню. */
+  private def askClerk(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      quests <- quest.load(user)
+      hero   <- getHero(user)
+      order  <- hasStory(hero, QuestItemKind.StoryShadowOrder)
+      _      <- if (!StoryMorningQuest.toHorn(quests) || !order) enter(user, renderer)
+                else NpcQuestLog.save(heroDao, user.userId, StoryMorningQuest.step(quests, 2)) *>
+                  renderer.show(user, Screen(content.text("story.storyMorning.horn.text"), Nil)) *> enter(user, renderer)
+    } yield StateType.MasterHorn
+
+  /** «Наутро», путь Щита: Горн даёт двоих своих и идёт в подвал сам. Глава на
+    * третьем шаге: ночь в подвале совета. Не тот шаг или грамоты при герое
+    * нет — меню. */
+  private def askMen(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      quests <- quest.load(user)
+      hero   <- getHero(user)
+      writ   <- hasStory(hero, QuestItemKind.StoryCouncilWrit)
+      _      <- if (!StoryMorningQuest.toHornMen(quests) || !writ) enter(user, renderer)
+                else NpcQuestLog.save(heroDao, user.userId, StoryMorningQuest.step(quests, 3)) *>
+                  renderer.show(user, Screen(content.text("story.storyMorning.hornCellar.text"), Nil)) *> enter(user, renderer)
     } yield StateType.MasterHorn
 
   private def hasStory(hero: Hero, kind: QuestItemKind): Task[Boolean] =

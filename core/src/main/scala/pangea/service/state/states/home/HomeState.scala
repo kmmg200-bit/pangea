@@ -12,7 +12,7 @@ import pangea.model.hero.{AzatState, CubeStatus, Equipment}
 import pangea.model.home.{Furniture, HomeData, HomeRates, House}
 import pangea.model.artifact.ArtifactKind
 import pangea.model.item.{Item, ItemType, QuestItemKind}
-import pangea.model.quest.NpcQuest
+import pangea.model.quest.{NpcQuest, NpcQuests}
 import pangea.model.schedule.TaskKind
 import pangea.model.state.StateType
 import pangea.model.stats.{ParamsBuff, StatBoost}
@@ -25,7 +25,7 @@ import pangea.service.purse.Purse
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.{EquipmentState, InventoryState, LootState}
 import pangea.service.state.{AppButton, AzatData, BeltContents, FirstStepsQuest, ItemMenu, NpcQuestDialog, NpcQuestLog, QuestSupport,
-  SlotChoice, State, StoryBrandQuest, StoryFaceQuest, StoryLine, StoryPowderQuest, UserAction}
+  SlotChoice, State, StoryBrandQuest, StoryFaceQuest, StoryLine, StoryMorningQuest, StoryPowderQuest, StoryToolQuest, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -87,6 +87,8 @@ case class HomeState(
       "HomeJunonaStory" -> Target.Run { (u, _, r) => junonaMarked(u, r) },
       "HomeJunonaPay"   -> Target.Run { (u, _, r) => junonaPay(u, r) },
       "HomeJunonaFace"  -> Target.Run { (u, _, r) => junonaCopies(u, r) },
+      "HomeJunonaBrey"      -> Target.Run { (u, _, r) => junonaBrey(u, r) },
+      "HomeJunonaTestimony" -> Target.Run { (u, _, r) => junonaTestimony(u, r) },
       "HomeFurnItem"   -> Target.Run { (u, ua, r) => furnItem(u, ua, r) },
       "HomeFurnBuy"    -> Target.Run { (u, ua, r) => furnBuy(u, ua, r) },
       "HomeClutterPay" -> Target.Run { (u, _, r) => clutterPay(u, r) },
@@ -135,9 +137,12 @@ case class HomeState(
       case (Some(_), _) => showSleeping(user, renderer).unit
       case (_, Some(_)) => showCleaning(user, renderer).unit
       // Вошёл в свой дом — и «Встать на ноги», если все пункты выполнены,
-      // засчитывается здесь (см. FirstStepsQuest.completeAtHome).
+      // засчитывается здесь (см. FirstStepsQuest.completeAtHome). Здесь же,
+      // наутро после кладбища, начинается Акт II (StoryMorningQuest.atHome).
       case _            => loadHome(user).flatMap(home =>
-                             (if (home.owns) FirstStepsQuest.completeAtHome(heroDao, content, user, home, renderer, outcomes) *> showHouse(user, renderer)
+                             (if (home.owns) FirstStepsQuest.completeAtHome(heroDao, content, user, home, renderer, outcomes) *>
+                                StoryMorningQuest.atHome(heroDao, inventoryRepo, itemRepo, content, user, renderer) *>
+                                showHouse(user, renderer)
                               else office(user, renderer)).unit)
     }
 
@@ -177,8 +182,15 @@ case class HomeState(
       // совет; копии списка отмеченных — показать, кто переплетает книги совета.
       story  <- junonaOpen(user)
       copies <- junonaFaceOpen(user)
+      // Акт II, путь Щита: грамота при герое — Юнона просит стеречь Брея, а
+      // потом выслушивает, что он сказал.
+      brey   <- junonaMorningOpen(user, StoryMorningQuest.toJunona)
+      told   <- junonaMorningOpen(user, StoryMorningQuest.toTestimony)
       marked  = Option.when(story)(Choice("HomeJunonaStory", content.text("story.storyBrand.junona.label"), row = Some(houses.size))) orElse
-                  Option.when(copies)(Choice("HomeJunonaFace", content.text("story.storyFace.junona.label"), row = Some(houses.size)))
+                  Option.when(copies)(Choice("HomeJunonaFace", content.text("story.storyFace.junona.label"), row = Some(houses.size))) orElse
+                  Option.when(brey)(Choice("HomeJunonaBrey", content.text("story.storyMorning.junona.label"), row = Some(houses.size))) orElse
+                  Option.when(told)(Choice("HomeJunonaTestimony", content.text("story.storyMorning.junona.testimonyLabel"),
+                    row = Some(houses.size)))
       back    =
         if (current.isDefined) Choice("HomeMain", content.text("home.office.home"), color = ChoiceColor.Negative, row = Some(houses.size + 1))
         else Choice("LeaveHome", content.text("home.office.leave"), color = ChoiceColor.Negative, row = Some(houses.size + 1))
@@ -264,6 +276,43 @@ case class HomeState(
                                content.format("story.storyFace.reward", "silver" -> silver.toString, "exp" -> expLine) +
                                  "\n\n" + content.text("story.storyFace.questDone"), Nil))
               } yield ())
+      res  <- office(user, renderer)
+    } yield res
+
+  /** «Наутро» (путь Щита) на шаге Юноны — `onStep` — и грамота совета при герое. */
+  private def junonaMorningOpen(user: User, onStep: NpcQuests => Boolean): Task[Boolean] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (!onStep(quests)) ZIO.succeed(false)
+      else getHero(user).flatMap(hero => inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)))
+        .map(inv => QuestSupport.hasItem(inv.items.data, QuestItemKind.StoryCouncilWrit))
+    }
+
+  /** Юнона просит стеречь Брея в подвале совета — стража у неё продаётся, а
+    * Горну она уже написала. Если живы оба, подмастерье сидит отдельно. Глава
+    * на втором шаге: к Горну. */
+  private def junonaBrey(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      open <- junonaMorningOpen(user, StoryMorningQuest.toJunona)
+      _    <- ZIO.when(open)(for {
+                quests    <- NpcQuestLog.load(heroDao, user.userId)
+                survivors <- StoryLine.survivorsOf(heroDao, user.userId)
+                _         <- NpcQuestLog.save(heroDao, user.userId, StoryMorningQuest.step(quests, 2))
+                apprentice = Option.when(survivors == StoryLine.Survivors.Both)("story.storyMorning.junona.apprentice")
+                _         <- renderer.show(user, Screen(
+                               (List("story.storyMorning.junona.text") ++ apprentice.toList ++ List("story.storyMorning.junona.end"))
+                                 .map(k => content.text(k).trim).mkString("\n\n"), Nil))
+              } yield ())
+      res  <- office(user, renderer)
+    } yield res
+
+  /** Брей заговорил: совет решил оставить ему жизнь за показания, Юнона была
+    * против; копию показаний — опись урожая — она «не отдаёт». Глава закрыта. */
+  private def junonaTestimony(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      open <- junonaMorningOpen(user, StoryMorningQuest.toTestimony)
+      _    <- ZIO.when(open)(getHero(user).flatMap(hero =>
+                StoryMorningQuest.finish(heroDao, inventoryRepo, itemRepo, content, user, hero,
+                  StoryToolQuest.Path.Shield, content.text("story.storyMorning.junona.testimony"), Nil, renderer)))
       res  <- office(user, renderer)
     } yield res
 

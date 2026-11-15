@@ -1,14 +1,18 @@
 package pangea.service.state.states.barti
 
+import io.circe.Json
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.hero.Hero
 import pangea.model.item.{Item, QuestItemKind}
-import pangea.model.quest.{NpcQuest, NpcQuests}
+import pangea.model.quest.{Difficulty, NpcQuest, NpcQuests}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
-import pangea.service.state.{BigDealQuest, NpcQuestLog, QuestSupport, State, UserAction}
+import pangea.repository.item.ItemRepository
+import pangea.service.state.StoryToolQuest.Path
+import pangea.service.state.states.story.StoryFight
+import pangea.service.state.{BigDealQuest, NpcQuestLog, QuestSupport, State, StoryMorningQuest, UserAction}
 import zio.{Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -20,29 +24,45 @@ import java.util.concurrent.TimeUnit
   * всё, что ему ещё нужно) и складывает у себя. Собрано всё — ждать каравана:
   * пока герой ниже уровня задания, Барти говорит «рано, караван не пришёл»
   * (для этого задания так решил пользователь); дорос — караван пришёл, и
-  * задание ведёт к нему. «Уйти» — на Торговую площадь. */
+  * задание ведёт к нему. «Уйти» — на Торговую площадь.
+  *
+  * Акт II, «Наутро», путь «Сам по себе» (см. StoryMorningQuest): сюда ведёт
+  * карточка книги ячейки. Барти читает о себе «болтает, платить пивом» и
+  * становится партнёром героя; следом в дверь стучат люди Братства — за
+  * книгой. «Драться» — сюжетный бой, без «Сбежать», Барти со сковородой — в
+  * строю; добыча вернёт сюда с отметкой победы — опись урожая, глава закрыта.
+  * Без хранилища вещей (`itemRepo`) этой ветки нет: опись класть некуда. */
 case class BartiHouseState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
-  content:       SceneContent
+  content:       SceneContent,
+  itemRepo:      Option[ItemRepository] = None
 ) extends State {
+  import BartiHouseState._
 
   private val branch = new Branch(
     routes = Map(
-      "BartiGive"  -> Target.Run { (u, _, r) => give(u, r) },
-      "BartiLeave" -> Target.Goto(StateType.MarketSquare)
+      "BartiGive"       -> Target.Run { (u, _, r) => give(u, r) },
+      "BartiStoryFight" -> Target.Run { (u, _, r) => storyFight(u, r) },
+      "BartiLeave"      -> Target.Goto(StateType.MarketSquare)
     ),
     fallback = Target.Run { (u, _, r) => enter(u, r).as(StateType.BartiHouse) }
   )
 
-  override def targetStates: Set[StateType] = branch.gotoTargets
+  override def targetStates: Set[StateType] = branch.gotoTargets ++ Set(StateType.Battle, StateType.BartiHouse)
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     for {
       hero   <- getHero(user)
       quests <- NpcQuestLog.load(heroDao, user.userId)
       items  <- bag(hero)
-      _      <- if (BigDealQuest.canBegin(quests) && QuestSupport.hasItem(items, QuestItemKind.BartiAddress))
+      data   <- heroDao.readSceneData(user.userId)
+      story   = itemRepo.filter(_ => StoryMorningQuest.atBarti(quests))
+      _      <- if (story.isDefined && StoryFight.won(data, WonKey) && StoryMorningQuest.toBartiFight(quests))
+                  storyWon(user, renderer)
+                else if (story.isDefined && StoryMorningQuest.toBarti(quests)) storyTalk(user, quests, renderer)
+                else if (story.isDefined) renderer.show(user, knockScreen)
+                else if (BigDealQuest.canBegin(quests) && QuestSupport.hasItem(items, QuestItemKind.BartiAddress))
                   begin(user, quests, items, renderer)
                 else if (BigDealQuest.collecting(quests)) renderer.show(user, stockScreen(None, quests, items))
                 else if (BigDealQuest.waiting(quests)) gate(user, hero, quests, None, renderer)
@@ -112,10 +132,62 @@ case class BartiHouseState(
     else NpcQuestLog.save(heroDao, user.userId, BigDealQuest.step(quests, 3)) *>
       renderer.show(user, Screen((lead.toList :+ content.text("barti.house.arrived").trim).mkString("\n\n"), List(leave)))
 
+  // ── Акт II, «Наутро», путь «Сам по себе» ──────────────────────────────────
+
+  /** Барти читает о себе в книге ячейки и становится партнёром — тут же в
+    * дверь стучат люди Братства. Встречались ли они в этой жизни — по «Ходовому
+    * товару»: если нет, Барти видит героя впервые. Глава на втором шаге. */
+  private def storyTalk(user: User, quests: NpcQuests, renderer: Renderer): Task[Unit] = {
+    val met = quests.of(NpcQuest.HotGoods).step > 0
+    NpcQuestLog.save(heroDao, user.userId, StoryMorningQuest.step(quests, 2)) *>
+      renderer.show(user, Screen(
+        List(if (met) "story.storyMorning.barti.met" else "story.storyMorning.barti.stranger", "story.storyMorning.barti.talk")
+          .map(k => content.text(k).trim).mkString("\n\n"), Nil)) *>
+      renderer.show(user, knockScreen)
+  }
+
+  /** Стук в дверь: счетовод ячейки и его люди — за книгой. */
+  private def knockScreen: Screen =
+    Screen(
+      content.text("story.storyMorning.barti.knock").trim + "\n\n" +
+        content.format("marisa.difficulty", "difficulty" -> Difficulty.render(StoryMorningQuest.Level)),
+      List(content.choice("BartiStoryFight", "story.storyMorning.barti.fightLabel").copy(row = Some(0)),
+        content.choice("BartiLeave", "story.storyMorning.barti.leaveLabel").copy(color = ChoiceColor.Negative, row = Some(0))))
+
+  /** Бой со счетоводом и его людьми; Барти — в строю. Добыча вернёт сюда. */
+  private def storyFight(user: User, renderer: Renderer): Task[StateType] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (itemRepo.isEmpty || !StoryMorningQuest.toBartiFight(quests)) enter(user, renderer).as(StateType.BartiHouse)
+      else for {
+        hero <- getHero(user)
+        _    <- StoryFight.start(heroDao, user, hero,
+                  StoryMorningQuest.gang(content.text("story.storyMorning.barti.leaderName")),
+                  List(StoryMorningQuest.bartiGuest(content)), StoryMorningQuest.BartiStory, StateType.BartiHouse, WonKey)
+        _    <- renderer.show(user, Screen(content.text("story.storyMorning.barti.fightStart"), Nil))
+      } yield StateType.Battle
+    }
+
+  /** Отбились: у счетовода в кармане — опись урожая; глава закрыта. */
+  private def storyWon(user: User, renderer: Renderer): Task[Unit] =
+    ZIO.foreachDiscard(itemRepo) { repo =>
+      for {
+        _    <- heroDao.writeSceneData(user.userId, Json.Null)
+        hero <- getHero(user)
+        _    <- StoryMorningQuest.finish(heroDao, inventoryRepo, repo, content, user, hero, Path.Alone,
+                  content.text("story.storyMorning.barti.won"), List(leave.copy(row = Some(0))), renderer)
+      } yield ()
+    }
+
   private def bag(hero: Hero): Task[List[Item]] =
     inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)).map(_.items.data)
 
   private def getHero(user: User): Task[Hero] =
     heroDao.getHeroByUserId(user.userId).flatMap(ZIO.fromOption(_))
       .orElseFail(new Throwable(s"No hero for user ${user.userId}"))
+}
+
+object BartiHouseState {
+
+  /** Отметка в `scene_data`: люди Братства у Барти побиты (Акт II, «Наутро»). */
+  val WonKey: String = "storyBartiHouseWon"
 }

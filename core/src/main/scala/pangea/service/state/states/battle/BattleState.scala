@@ -6454,14 +6454,19 @@ case class BattleState(
           case pangea.model.squad.AllyKind.SquadGnome => s
           // Мурлок-собрат выходил из воды только на этот бой — туда и уходит.
           case pangea.model.squad.AllyKind.MurlocKin  => s
+          // Бывший пленник с заставы и так стоит в отряде, восставшим он не станет.
+          case pangea.model.squad.AllyKind.FreedCaptive => s
           // Элиар пел изгороди только этот бой — с ней и остаётся.
           case pangea.model.squad.AllyKind.HedgeElf   => s
           // Капитаны каравана бились за собрата только этот бой — и уходят к своим.
           case pangea.model.squad.AllyKind.CaravanKhajiit => s
           // Караванщики деревни бились за свой обоз — с ним и остаются.
           case pangea.model.squad.AllyKind.CaravanGuard => s
-          // Бывший пленник с заставы и так стоит в отряде, восставшим он не станет.
-          case pangea.model.squad.AllyKind.FreedCaptive => s
+          // Горн с искателями стерегли подвал совета, Барти дрался у себя дома, —
+          // после боя они остаются там же.
+          case pangea.model.squad.AllyKind.GuildMaster => s
+          case pangea.model.squad.AllyKind.GuildSeeker => s
+          case pangea.model.squad.AllyKind.Informant   => s
           case pangea.model.squad.AllyKind.Rat        => s.summonRat(form, a.lvl, nowMs, near = a.position + toSquad)
           case _                                      => s.admitRisen(form, a.lvl, nowMs)
         }
@@ -7870,8 +7875,9 @@ object BattleState {
     Set(MurlocQuest.RaidStory, LostSquadQuest.EscortStory, HedgeSongQuest.WaveStory, BarrelThievesQuest.FightStory,
       StoryMarkQuest.FightStory, StoryPowderQuest.FightStory, StoryListQuest.FightStory, StoryFaceQuest.FightStory,
       StoryToolQuest.FightStory, HotGoodsQuest.FightStory, BigDealQuest.AmbushStory, JorgenQuest.LairStory,
+      Villages.ArtifactStory, Villages.HuntersStory,
       BramblQuest.HallStory, PlukhQuest.HuntStory, FaelinQuest.RootsStory, Villages.RaidStory, Villages.BanditsStory,
-      Villages.SpidersStory, Villages.CaravanStory, Villages.ArtifactStory, Villages.HuntersStory)
+      Villages.SpidersStory, Villages.CaravanStory) ++ pangea.service.state.StoryMorningQuest.FightStories
 
   /** Паутина, проклятие Некроманта и лёд Ледяного элементаля на герое и
     * союзниках — на раунд меньше (см. SpiderWeb, HealCurse,
@@ -7928,10 +7934,13 @@ object BattleState {
   def goneKey(a: BattleAlly): String =
     if (a.kind == pangea.model.squad.AllyKind.SquadGnome) "battle.ally.squadGnomeDown"
     else if (a.kind == pangea.model.squad.AllyKind.MurlocKin) "battle.ally.kinDown"
+    else if (a.kind == pangea.model.squad.AllyKind.FreedCaptive) "battle.ally.captiveDown"
     else if (a.kind == pangea.model.squad.AllyKind.HedgeElf) "battle.ally.hedgeElfDown"
     else if (a.kind == pangea.model.squad.AllyKind.CaravanKhajiit) "battle.ally.caravanKhajiitDown"
     else if (a.kind == pangea.model.squad.AllyKind.CaravanGuard) "battle.ally.caravanGuardDown"
-    else if (a.kind == pangea.model.squad.AllyKind.FreedCaptive) "battle.ally.captiveDown"
+    else if (a.kind == pangea.model.squad.AllyKind.GuildMaster) "battle.ally.guildMasterDown"
+    else if (a.kind == pangea.model.squad.AllyKind.GuildSeeker) "battle.ally.guildSeekerDown"
+    else if (a.kind == pangea.model.squad.AllyKind.Informant) "battle.ally.informantDown"
     else if (a.undead.isDefined) "battle.ally.crumbled"
     else "battle.ally.scroll"
 

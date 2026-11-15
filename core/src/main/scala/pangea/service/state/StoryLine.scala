@@ -39,7 +39,11 @@ object StoryLine {
     Chapter(NpcQuest.StoryList),
     Chapter(NpcQuest.StoryFace),
     // Рубеж I: глава с выбором пути, последняя в Акте I.
-    Chapter(NpcQuest.StoryTool)
+    Chapter(NpcQuest.StoryTool),
+    // Акт II: ветки — по пути Рубежа I. Глава 6 начинается дома (см.
+    // StoryMorningQuest.atHome), а глава 7 пока висит до обновления.
+    Chapter(NpcQuest.StoryMorning),
+    Chapter(NpcQuest.StoryNewcomer)
   )
 
   /** На каком по счёту исследовании уровня после «Встать на ноги» герой
@@ -115,9 +119,14 @@ object StoryLine {
 
   /** Что делать в главе сейчас — строка шага для журнала. В «Что горит на
     * груди» собеседник шага, назвавший цену разговора, — строкой с ценой
-    * (`priced`, см. [[StoryBrandQuest.priced]]). */
+    * (`priced`, см. [[StoryBrandQuest.priced]]). В «Наутро» шаги свои у
+    * каждого пути Рубежа I — список по ключу пути (`shadow`, `shield`,
+    * `alone`), а `steps` — на случай, если путь не записан. */
   def step(content: SceneContent, q: NpcQuest, quests: NpcQuests): String = {
-    val list = if (q == NpcQuest.StoryBrand && StoryBrandQuest.priced(quests)) "priced" else "steps"
+    val list =
+      if (q == NpcQuest.StoryBrand && StoryBrandQuest.priced(quests)) "priced"
+      else if (q == NpcQuest.StoryMorning) StoryToolQuest.choice(quests).fold("steps")(_.key)
+      else "steps"
     content.list(s"journal.quests.${q.key}.$list").lift(quests.of(q).step - 1).getOrElse("")
   }
 

@@ -372,12 +372,15 @@ object MercenariesState {
     case AllyKind.Elf    => "elf"
     case AllyKind.Undead => "undead"
     case AllyKind.Rat    => "rat"
+    case AllyKind.FreedCaptive   => "freedCaptive"
     case AllyKind.SquadGnome => "squadGnome"
     case AllyKind.MurlocKin  => "murlocKin"
     case AllyKind.HedgeElf   => "hedgeElf"
     case AllyKind.CaravanKhajiit => "caravanKhajiit"
     case AllyKind.CaravanGuard   => "caravanGuard"
-    case AllyKind.FreedCaptive   => "freedCaptive"
+    case AllyKind.GuildMaster    => "guildMaster"
+    case AllyKind.GuildSeeker    => "guildSeeker"
+    case AllyKind.Informant      => "informant"
   }
 
   /** Кто сейчас за столом. Пока идёт «Пропавшая дружина» (`bramblCalled`),
