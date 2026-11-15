@@ -12,7 +12,8 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.state.StoryToolQuest.Path
 import pangea.service.state.states.story.StoryFight
-import pangea.service.state.{BartiDoorQuest, BigDealQuest, NpcQuestLog, QuestSupport, State, StoryMorningQuest, UserAction}
+import pangea.service.state.{BartiDoorQuest, BartiSaltQuest, BigDealQuest, NpcQuestLog, QuestSupport, State, StoryMorningQuest,
+  UserAction}
 import zio.{Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -65,8 +66,13 @@ case class BartiHouseState(
                 else if (story.isDefined) renderer.show(user, knockScreen)
                 // «Синяя дверь» (только одиночка): поджигатели Братства.
                 else if (StoryFight.won(data, DoorWonKey) && BartiDoorQuest.toNight(quests)) doorWon(user, renderer)
-                else if (BartiDoorQuest.available(quests)) doorBegin(user, quests, renderer)
                 else if (BartiDoorQuest.toNight(quests)) renderer.show(user, nightScreen(None))
+                // «Соль» (только одиночка): где Загон — Барти знает, кто туда возит.
+                // Раньше ещё не начатой «Синей двери»: это дорога главы 9.
+                else if (BartiSaltQuest.available(quests)) saltBegin(user, quests, renderer)
+                else if (BartiSaltQuest.toCaravan(quests))
+                  renderer.show(user, Screen(content.text("barti.salt.waiting").trim, List(leave.copy(row = Some(0)))))
+                else if (BartiDoorQuest.available(quests)) doorBegin(user, quests, renderer)
                 else if (BigDealQuest.canBegin(quests) && QuestSupport.hasItem(items, QuestItemKind.BartiAddress))
                   begin(user, quests, items, renderer)
                 else if (BigDealQuest.collecting(quests)) renderer.show(user, stockScreen(None, quests, items))
@@ -136,6 +142,24 @@ case class BartiHouseState(
       renderer.show(user, Screen((lead.toList :+ content.text("barti.house.early").trim).mkString("\n\n"), List(leave)))
     else NpcQuestLog.save(heroDao, user.userId, BigDealQuest.step(quests, 3)) *>
       renderer.show(user, Screen((lead.toList :+ content.text("barti.house.arrived").trim).mkString("\n\n"), List(leave)))
+
+  // ── «Соль» ─────────────────────────────────────────────────────────────────
+
+  /** «Соль» впервые: Барти о Загоне и о соляном караване Та'Нахира — задание
+    * взято, ночью — к каравану у Сухого колодца. Помнит ли Та'Нахир героя — по
+    * «Большому делу». */
+  private def saltBegin(user: User, quests: NpcQuests, renderer: Renderer): Task[Unit] =
+    for {
+      now  <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+      taken = quests.take(NpcQuest.BartiSalt, now)
+      _    <- NpcQuestLog.save(heroDao, user.userId, taken)
+      met   = Option.when(quests.isDone(NpcQuest.BigDeal))(content.text("barti.salt.met").trim)
+      line  = content.format("barti.taken", "title" -> content.text("journal.quests.bartiSalt.title"),
+                "step" -> content.list("journal.quests.bartiSalt.steps").headOption.getOrElse(""))
+      _    <- renderer.show(user, Screen((List(content.text("barti.salt.talk").trim) ++ met.toList ++ List(line,
+                content.format("marisa.difficulty", "difficulty" -> Difficulty.render(BartiSaltQuest.Level))))
+                .mkString("\n\n"), List(leave.copy(row = Some(0)))))
+    } yield ()
 
   // ── Акт II, «Наутро», путь «Сам по себе» ──────────────────────────────────
 

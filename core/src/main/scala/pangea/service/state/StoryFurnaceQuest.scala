@@ -13,8 +13,10 @@ object StoryFurnaceQuest {
   val Level: Int = 41
 
   /** Строка карточки накладной: глава 8 закрыта, а 9-я ещё не открыта —
-    * «откроется с обновлением». Иначе — ничего. */
+    * «откроется с обновлением». Одиночка едет в Загон с соляным караваном —
+    * у него строка «Соли» (см. BartiSaltQuest). Иначе — ничего. */
   def cardLine(content: SceneContent, q: NpcQuests): String =
     if (!q.isDone(NpcQuest.StoryClearing) || q.isDone(NpcQuest.StoryFurnace)) ""
+    else if (StoryToolQuest.choice(q).contains(StoryToolQuest.Path.Alone)) BartiSaltQuest.cardLine(content, q)
     else content.text("story.storyFurnace.card.soon")
 }

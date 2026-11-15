@@ -7,7 +7,7 @@ import pangea.dao.quest.QuestOutcomeDao
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.model.battle.SoloPveBattle
 import pangea.model.hero.Hero
-import pangea.model.quest.{Difficulty, QuestOutcome}
+import pangea.model.quest.{Difficulty, NpcQuest, QuestOutcome}
 import pangea.model.skill.MonsterEnergy
 import pangea.model.state.StateType
 import pangea.model.user.User
@@ -15,7 +15,8 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.parcel.Parcels
 import pangea.service.state.states.LootState.LootData
-import pangea.service.state.{BigDealQuest, NpcQuestLog, QuestOutcomeLog, State, UserAction}
+import pangea.service.state.states.story.StoryFight
+import pangea.service.state.{BartiSaltQuest, BigDealQuest, NpcQuestDialog, NpcQuestLog, QuestOutcomeLog, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 /** «Большое дело», шаг 3: каджитский караван у Сухого колодца на Западной
@@ -29,7 +30,13 @@ import zio.{Random, Task, ZIO}
   * когда отходят от костров, проговаривается, что разболтал о сделке. Пал —
   * задание всё равно закрыто (см. DeathState). «Уйти» — караван подождёт.
   * Герой-каджит: караван встречает собрата теплее, а в засаде двое капитанов
-  * каравана сразу встают на его сторону. */
+  * каравана сразу встают на его сторону.
+  *
+  * «Соль» (только одиночка, см. BartiSaltQuest): тот же караван везёт соль в
+  * Загон, и место в повозке для героя нашлось. «Ехать с караваном» — на
+  * соляной колее дозор Загона: сюжетный бой, капитаны Ра'Тхар и Ма'Кесс в
+  * строю; добыча вернёт сюда с отметкой победы — Та'Нахир платит за охрану
+  * соли, задание закрыто. */
 case class BartiCaravanState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
@@ -44,6 +51,8 @@ case class BartiCaravanState(
     routes = Map(
       "CaravanBoxes" -> Target.Run { (u, _, r) => boxes(u, r) },
       "CaravanLeave" -> Target.Run { (u, _, r) => leave(u, r) },
+      "SaltRide"     -> Target.Run { (u, _, r) => ride(u, r) },
+      "SaltLeave"    -> Target.Run { (u, _, r) => saltLeave(u, r) },
       "CaravanOut"   -> Target.Goto(StateType.GlobalMap)
     ),
     fallback = Target.Run { (u, _, r) => enter(u, r).as(StateType.BartiCaravan) }
@@ -54,10 +63,14 @@ case class BartiCaravanState(
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     for {
-      won    <- heroDao.readSceneData(user.userId).map(_.exists(_.as[BartiCaravanState.Won].exists(_.won)))
+      data   <- heroDao.readSceneData(user.userId)
+      won     = data.exists(_.as[BartiCaravanState.Won].exists(_.won))
       quests <- NpcQuestLog.load(heroDao, user.userId)
       _      <- if (won && BigDealQuest.toCaravan(quests)) paid(user, renderer)
                 else if (BigDealQuest.toCaravan(quests)) getHero(user).flatMap(h => renderer.show(user, caravanScreen(h)))
+                // «Соль»: соляной караван в Загон.
+                else if (StoryFight.won(data, BartiCaravanState.SaltWonKey) && BartiSaltQuest.toCaravan(quests)) saltWon(user, renderer)
+                else if (BartiSaltQuest.toCaravan(quests)) renderer.show(user, saltScreen)
                 else renderer.show(user, Screen(content.text("barti.caravan.gone"), List(out)))
     } yield ()
 
@@ -124,12 +137,61 @@ case class BartiCaravanState(
       _     <- renderer.show(user, Screen(note.fold("")(QuestOutcomeLog.withStats(_, stats)), List(out)))
     } yield ()
 
+  // ── «Соль» ─────────────────────────────────────────────────────────────────
+
+  /** «Уйти»: соляной караван подождёт ещё ночь. */
+  private def saltLeave(user: User, renderer: Renderer): Task[StateType] =
+    renderer.show(user, Screen(content.text("barti.salt.left"), Nil)).as(StateType.GlobalMap)
+
+  /** Соляной караван у колодца: Та'Нахир, мешки с солью и двое капитанов, что
+    * поедут рядом с героем. */
+  private def saltScreen: Screen =
+    Screen(
+      content.text("barti.salt.caravan").trim + "\n\n" +
+        content.format("marisa.difficulty", "difficulty" -> Difficulty.render(BartiSaltQuest.Level)),
+      List(
+        content.choice("SaltRide", "barti.salt.rideLabel").copy(row = Some(0)),
+        content.choice("SaltLeave", "barti.salt.leaveLabel").copy(row = Some(0))))
+
+  /** «Ехать с караваном»: на соляной колее — дозор Загона, бой; капитаны
+    * каравана в строю. Добыча вернёт сюда с отметкой победы. */
+  private def ride(user: User, renderer: Renderer): Task[StateType] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (!BartiSaltQuest.toCaravan(quests)) enter(user, renderer).as(StateType.BartiCaravan)
+      else for {
+        hero <- getHero(user)
+        _    <- StoryFight.start(heroDao, user, hero, BartiSaltQuest.foes(content.text("barti.salt.leaderName")),
+                  BartiSaltQuest.captains(content), BartiSaltQuest.FightStory, StateType.BartiCaravan,
+                  BartiCaravanState.SaltWonKey)
+        _    <- renderer.show(user, Screen(content.text("barti.salt.road").trim, Nil))
+      } yield StateType.Battle
+    }
+
+  /** Дозор побит: Та'Нахир платит за охрану соли и повезёт героя к печи, когда
+    * шум уляжется. Задание закрыто. */
+  private def saltWon(user: User, renderer: Renderer): Task[Unit] =
+    for {
+      _    <- heroDao.writeSceneData(user.userId, Json.Null)
+      hero <- getHero(user)
+      paid  = hero.copy(doubloons = hero.doubloons + BartiSaltQuest.Doubloons)
+      _    <- heroDao.updateDoubloons(user.userId, paid.doubloons)
+      done <- NpcQuestDialog(heroDao, content, NpcQuest.BartiSalt, "BartiSalt").complete(user, paid, identity)
+      (_, expLine) = done
+      _    <- renderer.show(user, Screen(List(
+                content.text("barti.salt.won").trim,
+                content.format("barti.salt.reward", "doubloons" -> BartiSaltQuest.Doubloons.toString, "exp" -> expLine),
+                content.text("barti.salt.questDone")).mkString("\n\n"), List(out)))
+    } yield ()
+
   private def getHero(user: User): Task[Hero] =
     heroDao.getHeroByUserId(user.userId).flatMap(ZIO.fromOption(_))
       .orElseFail(new Throwable(s"No hero for user ${user.userId}"))
 }
 
 object BartiCaravanState {
+
+  /** Отметка в scene_data: дозор Загона на соляной колее побит («Соль»). */
+  val SaltWonKey: String = "bartiSaltWon"
 
   /** Отметка в scene_data: ночная стража у каравана перебита. */
   final case class Won(won: Boolean = true)

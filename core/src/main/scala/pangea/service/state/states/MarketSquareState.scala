@@ -4,7 +4,7 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.state.StateType
 import pangea.model.user.User
-import pangea.service.state.{BartiDeliveryQuest, BartiDoorQuest, BartiRoofQuest, NpcQuestLog, State, UserAction}
+import pangea.service.state.{BartiDeliveryQuest, BartiDoorQuest, BartiRoofQuest, BartiSaltQuest, NpcQuestLog, State, UserAction}
 import zio.{Task, ZIO}
 
 /** Торговая площадь. Пока «Крыша» или «Большая поставка» доступна или идёт (см.
@@ -37,8 +37,9 @@ case class MarketSquareState(content: SceneContent, heroDao: Option[HeroDao] = N
       val byId  = content.screen("marketSquare.enter").choices.map(c => c.id -> c).toMap
       val barti = Option.when(quests.exists(q => BartiRoofQuest.shopOpen(q) || BartiDeliveryQuest.shopOpen(q)))(
         content.choice("BartiShop", "marketSquare.bartiShopLabel").copy(color = ChoiceColor.Positive, row = Some(1)))
-      // «Синяя дверь» (только одиночка): дом Барти — пока задание доступно или идёт.
-      val door = Option.when(quests.exists(BartiDoorQuest.houseOpen))(
+      // «Синяя дверь» (только одиночка): дом Барти — пока задание доступно или
+      // идёт; и пока у одиночки «Соль» ждёт разговора с Барти.
+      val door = Option.when(quests.exists(q => BartiDoorQuest.houseOpen(q) || BartiSaltQuest.available(q)))(
         content.choice("BartiHome", "marketSquare.bartiHomeLabel").copy(color = ChoiceColor.Positive, row = Some(1)))
       val choices = List(
         byId("StreetMerchants").copy(row = Some(0)),

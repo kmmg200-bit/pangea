@@ -59,10 +59,14 @@ object BigDealQuest {
   def isKin(hero: Hero): Boolean = hero.race == Race.Khajiit
 
   /** Капитан каравана в строю героя. */
-  def captain(name: String): BattleAlly = {
-    val stats = MonsterGenerator.generateOfRaceAndRarity(Level, Race.Khajiit, KinCaptainRarity).fightStats
+  def captain(name: String): BattleAlly = captainAt(name, Level)
+
+  /** Тот же капитан уровня `lvl` — так он встаёт в строй и в других заданиях
+    * (в «Соли» — уровнем задания). */
+  def captainAt(name: String, lvl: Int): BattleAlly = {
+    val stats = MonsterGenerator.generateOfRaceAndRarity(lvl, Race.Khajiit, KinCaptainRarity).fightStats
     BattleAlly(AllyKind.CaravanKhajiit, position = 0, hp = stats.hp, armor = stats.armor, energy = stats.energy,
-      stats = stats, lvl = Level.toLong, undead = Some(UndeadForm(name, Level.toLong, stats)), home = 0)
+      stats = stats, lvl = lvl.toLong, undead = Some(UndeadForm(name, lvl.toLong, stats)), home = 0)
   }
 
   /** Поставить капитанов в строй — каждого на ближайшее к герою свободное

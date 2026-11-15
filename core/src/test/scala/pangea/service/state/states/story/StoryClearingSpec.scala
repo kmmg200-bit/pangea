@@ -248,7 +248,7 @@ object StoryClearingSpec extends ZIOSpecDefault {
                 alone._1.contains("из сундука десятника"))
     },
 
-    test("смерть на просеке — проснуться в лабиринте, шаг тот же; журнал — по пути; Фаэлин при герое — свои слова; накладная — «Печь» с обновлением") {
+    test("смерть на просеке — проснуться в лабиринте, шаг тот же; журнал — по пути; Фаэлин при герое — свои слова; накладная — «Печь» с обновлением, у одиночки — к Барти") {
       for {
         c      <- content
         d      <- dao(atClearing(Path.Alone))
@@ -272,6 +272,10 @@ object StoryClearingSpec extends ZIOSpecDefault {
         after   = atClearing(Path.Alone).finish(NpcQuest.StoryClearing).take(NpcQuest.StoryFurnace, 0L)
         journal = QuestJournal.render(c, hero, LoreData.empty, after, DailyQuests.empty, None, 0L)
         waybill = InventoryState.questText(c, QuestItemKind.item(QuestItemKind.StoryWaybill).copy(id = 983L), after, 36L)
+        // Щит ждёт главу 9 с обновлением, а одиночке накладная велит спросить
+        // Барти, кто возит в Загон («Соль», см. BartiSaltSpec).
+        shieldAfter = atClearing(Path.Shield).finish(NpcQuest.StoryClearing).take(NpcQuest.StoryFurnace, 0L)
+        waybillShield = InventoryState.questText(c, QuestItemKind.item(QuestItemKind.StoryWaybill).copy(id = 983L), shieldAfter, 36L)
       } yield assertTrue(wake.exists(_.hcursor.get[List[String]]("wakeLines").toOption.contains(List("story.storyClearing.clearing.death"))) &&
                 wake.exists(_.hcursor.downField("wakeTo").focus.isEmpty) && StoryClearingQuest.atClearing(q)) &&
               assertTrue(faelin.contains("так поёт его брат") && !plain.contains("так поёт его брат")) &&
@@ -280,7 +284,8 @@ object StoryClearingSpec extends ZIOSpecDefault {
                 line(Path.Shield, 2).contains("остановить рубку вместе с Горном") &&
                 line(Path.Alone, 1).contains("войти с ящиком шнапса Барти в лагерь Чернолома")) &&
               assertTrue(journal.contains("📌 «Печь»") && journal.contains("глава откроется с обновлением")) &&
-              assertTrue(waybill.contains("Накладная на лес") && waybill.contains("станет ясно с обновлением 🔜"))
+              assertTrue(waybill.contains("Накладная на лес") && waybill.contains("Барти знает всех, кто что куда возит")) &&
+              assertTrue(waybillShield.contains("Накладная на лес") && waybillShield.contains("станет ясно с обновлением 🔜"))
     }
   )
 }
