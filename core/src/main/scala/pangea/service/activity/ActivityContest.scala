@@ -6,14 +6,18 @@ import pangea.engine.{Players, SceneContent}
 import pangea.model.hero.{AzatState, Hero}
 import pangea.model.user.{User, VkId}
 import pangea.repository.user.UserRepository
-import zio.{Random, Task, ZIO, ZLayer}
+import zio.{Random, Task, UIO, ZIO, ZLayer}
+
+import scala.annotation.tailrec
 
 /** Билеты за активность в группе ВК. Лайк свежего поста — золотой билет, по
   * одному на пост; комментарий под свежим постом — серебряный, по одному в
   * сутки. О каждом новом билете игроку сразу приходит письмо — шуточная
   * находка и счёт за неделю. В конце недели каждый золотой оборачивается
-  * двумя дублонами, каждый серебряный — серебром от 100 до 300, и об этом ещё
-  * одно письмо.
+  * двумя дублонами, каждый серебряный — серебром от 100 до 300, и сверх того
+  * каждый билет бросается на выигрыш (так решил пользователь): золотой — 10%
+  * на 10 дублонов и 0,5% на 100, серебряный — 10% на 1000 серебра и 0,5% на
+  * 10 000. Об итогах — ещё одно письмо, с выигрышами отдельной строкой.
   *
   * Свежий пост — вышедший не раньше суток назад. Сутки и неделя — московские
   * (неделя с понедельника 00:00). Билеты идут только игрокам с героем. */
@@ -84,18 +88,26 @@ final case class ActivityContest(
         for {
           tickets <- dao.tickets(week)
           found   <- ZIO.foreach(tickets)(t => byUserId(t).map(_.map { case (u, h) => (t, u, h) }))
-          winners <- ZIO.foreach(found.flatten) { case (t, user, hero) =>
-                       silverFor(t.silver).map(silver => TicketPrize(hero.id, silver, t.gold * DoubloonsPerTicket) -> user)
-                     }
-          paid    <- dao.award(week, winners.map(_._1), now)
+          winners <- ZIO.foreach(found.flatten) { case (t, user, hero) => winningsOf(t, hero).map(_ -> user) }
+          paid    <- dao.award(week, winners.map(_._1.prize), now)
           _       <- ZIO.when(paid && winners.nonEmpty)(congratulate(winners))
         } yield ()
     }
   }
 
-  /** Серебро за `count` серебряных билетов: каждый бросается отдельно. */
-  private def silverFor(count: Long): Task[Long] =
-    ZIO.foldLeft(1L to count)(0L)((sum, _) => Random.nextLongBetween(SilverMin, SilverMax + 1L).map(sum + _))
+  /** Что принесли билеты одного игрока: каждый — свою долю (золотой — дублоны,
+    * серебряный — серебро, у каждого своё) и свой бросок на выигрыш сверх неё. */
+  private def winningsOf(t: WeekTickets, hero: Hero): Task[Winnings] =
+    for {
+      gold   <- ZIO.foreach(List.range(0L, t.gold))(_ => winRoll(GoldWins))
+      silver <- ZIO.foreach(List.range(0L, t.silver))(_ =>
+                  Random.nextLongBetween(SilverMin, SilverMax + 1L) <*> winRoll(SilverWins))
+    } yield Winnings(
+      TicketPrize(hero.id, silver.map { case (share, won) => share + won }.sum, t.gold * DoubloonsPerTicket + gold.sum),
+      gold.filter(_ > 0L), silver.map(_._2).filter(_ > 0L))
+
+  /** Бросок одного билета на выигрыш: сколько он выиграл сверх своей доли. */
+  private def winRoll(wins: List[Win]): UIO[Long] = Random.nextIntBounded(WinScale).map(win(wins, _))
 
   private def byUserId(t: WeekTickets): Task[Option[(User, Hero)]] =
     for {
@@ -103,9 +115,9 @@ final case class ActivityContest(
       hero <- heroDao.getHeroByUserId(t.userId)
     } yield for { u <- user; h <- hero } yield (u, h)
 
-  private def congratulate(winners: List[(TicketPrize, User)]): Task[Unit] = {
-    val doubloons = winners.map(_._1.doubloons).sum
-    val silver    = winners.map(_._1.silver).sum
+  private def congratulate(winners: List[(Winnings, User)]): Task[Unit] = {
+    val doubloons = winners.map(_._1.prize.doubloons).sum
+    val silver    = winners.map(_._1.prize.silver).sum
     for {
       _ <- ZIO.foreachDiscard(winners) { case (prize, user) => players.notify(user, letter(prize)).ignore }
       _ <- players.announce(content.format("activity.results",
@@ -113,14 +125,24 @@ final case class ActivityContest(
     } yield ()
   }
 
-  /** Письмо игроку: что принесли билеты каждого вида — сами билеты не считаем. */
-  private def letter(prize: TicketPrize): String = {
-    val gold   = Option.when(prize.doubloons > 0L)(content.format("activity.goldLine",
-                   "doubloons" -> prize.doubloons.toString))
-    val silver = Option.when(prize.silver > 0L)(content.format("activity.silverLine",
-                   "silver" -> prize.silver.toString))
+  /** Письмо игроку: что принесли билеты каждого вида — сами билеты не считаем;
+    * под строкой вида — что из этого выиграно сверх доли. */
+  private def letter(w: Winnings): String = {
+    val gold   = Option.when(w.prize.doubloons > 0L)(content.format("activity.goldLine",
+                   "doubloons" -> w.prize.doubloons.toString) + winsLine(w.goldWins, "activity.goldWin"))
+    val silver = Option.when(w.prize.silver > 0L)(content.format("activity.silverLine",
+                   "silver" -> w.prize.silver.toString) + winsLine(w.silverWins, "activity.silverWin"))
     content.format("activity.yourTickets", "lines" -> (gold.toList ++ silver).mkString("\n"))
   }
+
+  /** Строка выигрышей: «🎉 Из них выигрыш: 🟡 100, 🟡 10 ×2» — крупные первыми,
+    * одинаковые — одной записью со счётом. Выигрышей нет — ничего. */
+  private def winsLine(wins: List[Long], key: String): String =
+    if (wins.isEmpty) ""
+    else "\n" + content.format("activity.winsLine", "wins" ->
+      wins.groupBy(identity).toList.sortBy { case (amount, _) => -amount }.map { case (amount, all) =>
+        content.format(key, "amount" -> amount.toString) + (if (all.size > 1) s" ×${all.size}" else "")
+      }.mkString(", "))
 }
 
 object ActivityContest {
@@ -137,6 +159,33 @@ object ActivityContest {
   val DoubloonsPerTicket: Long = 2L
   val SilverMin: Long          = 100L
   val SilverMax: Long          = 300L
+
+  /** Выигрыш билета сверх его доли: шанс — на тысячу (`perMille`), и сколько. */
+  final case class Win(perMille: Int, amount: Long)
+
+  /** Бросок на выигрыш — из стольких. */
+  val WinScale: Int = 1000
+
+  /** Золотой билет: 0,5% — 100 дублонов, 10% — 10 (так решил пользователь). */
+  val GoldWins: List[Win] = List(Win(5, 100L), Win(100, 10L))
+
+  /** Серебряный билет: 0,5% — 10 000 серебра, 10% — 1000. */
+  val SilverWins: List[Win] = List(Win(5, 10000L), Win(100, 1000L))
+
+  /** Что выиграл бросок `roll` (от 0 до [[WinScale]] − 1): выигрыши идут подряд,
+    * каждый своей долей; не попал ни в один — без выигрыша. */
+  def win(wins: List[Win], roll: Int): Long = {
+    @tailrec
+    def go(rest: List[Win], from: Int): Long = rest match {
+      case w :: tail => if (roll < from + w.perMille) w.amount else go(tail, from + w.perMille)
+      case Nil       => 0L
+    }
+    go(wins, 0)
+  }
+
+  /** Итог недели одного игрока: выплата и что из неё выиграли его билеты сверх
+    * доли (по выигрышу на билет). */
+  final case class Winnings(prize: TicketPrize, goldWins: List[Long], silverWins: List[Long])
 
   private val DayMs: Long = 24L * 60L * 60L * 1000L
   val WeekMs: Long        = 7L * DayMs

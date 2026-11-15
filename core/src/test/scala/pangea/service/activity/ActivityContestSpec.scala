@@ -136,9 +136,10 @@ object ActivityContestSpec extends ZIOSpecDefault {
         _ <- c.handle(comment(3, 3L), now + day)
         _ <- c.handle(comment(1, 3L), now + day)       // у первого — второй серебряный
         // наступила следующая неделя; серебро бросается на каждый билет:
-        // первому 120 и 300, третьему 100
+        // первому 120 и 300, третьему 100; на выигрыш — шесть бросков мимо
         nextWeek = week + ActivityContest.WeekMs + hour
         _ <- TestRandom.feedLongs(120L, 300L, 100L)
+        _ <- TestRandom.feedInts(999, 999, 999, 999, 999, 999)
         _ <- c.settle(nextWeek)
         _ <- c.settle(nextWeek + 60000L)               // через минуту — уже подведено
         // письма о каждом билете тут не в счёт — только итоги
@@ -154,6 +155,39 @@ object ActivityContestSpec extends ZIOSpecDefault {
               assertTrue(!letters(UserId(3L)).contains("Золотые")) &&
               assertTrue(players.announced == List(
                 "🎫 Участники лотереи разделили между собой 🟡 6 и 🪙 520, спасибо всем за участие!"))
+    },
+
+    test("выигрыш сверх доли: золотой — 0,5% на 100 и 10% на 10 дублонов, серебряный — 0,5% на 10 000 и 10% на 1000; в письме — строкой, в беседе — со всем вместе") {
+      for {
+        t <- contest()
+        (c, _, payouts, players) = t
+        _ <- c.handle(post(1L, now - hour), now)
+        _ <- c.handle(post(2L, now - hour), now)
+        _ <- c.handle(post(3L, now - hour), now)
+        _ <- c.handle(like(1, 1L), now)
+        _ <- c.handle(like(1, 2L), now)
+        _ <- c.handle(like(1, 3L), now)
+        _ <- c.handle(comment(1, 1L), now)
+        nextWeek = week + ActivityContest.WeekMs + hour
+        // броски на выигрыш: золотые — 3 (сотня), 50 и 104 (по десятке);
+        // серебряный — 150 серебра своей доли и бросок 4 (10 000)
+        _ <- TestRandom.feedInts(3, 50, 104, 4)
+        _ <- TestRandom.feedLongs(150L)
+        _ <- c.settle(nextWeek)
+        letters = players.sentLetters.filter(_._2.contains("Итоги недели")).toMap
+        mine    = letters.getOrElse(UserId(1L), "").replace("\r", "")
+      } yield assertTrue(payouts.snapshot == Map(HeroId(1L) -> (10150L, 126L))) &&
+              assertTrue(mine.contains("Золотые билеты принесли вам 🟡 126\n🎉 Из них выигрыш: 🟡 100, 🟡 10 ×2")) &&
+              assertTrue(mine.contains("Серебряные билеты принесли вам 🪙 10150\n🎉 Из них выигрыш: 🪙 10000")) &&
+              assertTrue(players.announced == List(
+                "🎫 Участники лотереи разделили между собой 🟡 126 и 🪙 10150, спасибо всем за участие!"))
+    },
+
+    test("шансы выигрыша на тысячу бросков: золотой — 5 на сотню и 100 на десятку, серебряный — 5 на 10 000 и 100 на 1000") {
+      val gold   = (0 until ActivityContest.WinScale).map(ActivityContest.win(ActivityContest.GoldWins, _))
+      val silver = (0 until ActivityContest.WinScale).map(ActivityContest.win(ActivityContest.SilverWins, _))
+      assertTrue(gold.count(_ == 100L) == 5 && gold.count(_ == 10L) == 100 && gold.count(_ == 0L) == 895) &&
+        assertTrue(silver.count(_ == 10000L) == 5 && silver.count(_ == 1000L) == 100 && silver.count(_ == 0L) == 895)
     },
 
     test("неделя без билетов подводится молча: ни выплат, ни писем, ни сводки") {
