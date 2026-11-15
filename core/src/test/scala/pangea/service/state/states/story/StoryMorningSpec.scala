@@ -359,7 +359,7 @@ object StoryMorningSpec extends ZIOSpecDefault {
                 c.text("story.storyMorning.cellar.death").contains("Грамота при вас"))
     },
 
-    test("журнал: глава — сюжетным заданием, шаг своего пути; после неё висит «Новенький», на карточке описи — «с обновлением»") {
+    test("журнал: глава — сюжетным заданием, шаг своего пути; после неё — «Новенький», на карточке описи — что делать в главе 7") {
       for {
         c <- content
       } yield {
@@ -370,8 +370,8 @@ object StoryMorningSpec extends ZIOSpecDefault {
           journal(morning(Path.Shadow, 2)).contains("вызволить писаря из «Трёх костей»")) &&
         assertTrue(journal(morning(Path.Shield, 3)).contains("стеречь ночью Брея в подвале совета")) &&
         assertTrue(journal(morning(Path.Alone, 1)).contains("зайти к Барти, в дом с синей дверью")) &&
-        assertTrue(journal(done).contains("📌 «Новенький»") && journal(done).contains("глава откроется с обновлением")) &&
-        assertTrue(harvest.contains("Урожай к первому снегу") && harvest.contains("станет ясно с обновлением 🔜"))
+        assertTrue(journal(done).contains("📌 «Новенький»") && journal(done).contains("найти на главной площади того, кто упал из портала")) &&
+        assertTrue(harvest.contains("Урожай к первому снегу") && harvest.contains("Сходить посмотреть, кто успеет к нему первым"))
       }
     },
 

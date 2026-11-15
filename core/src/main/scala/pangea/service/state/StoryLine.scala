@@ -41,9 +41,10 @@ object StoryLine {
     // Рубеж I: глава с выбором пути, последняя в Акте I.
     Chapter(NpcQuest.StoryTool),
     // Акт II: ветки — по пути Рубежа I. Глава 6 начинается дома (см.
-    // StoryMorningQuest.atHome), а глава 7 пока висит до обновления.
+    // StoryMorningQuest.atHome), а глава 8 пока висит до обновления.
     Chapter(NpcQuest.StoryMorning),
-    Chapter(NpcQuest.StoryNewcomer)
+    Chapter(NpcQuest.StoryNewcomer),
+    Chapter(NpcQuest.StoryClearing)
   )
 
   /** На каком по счёту исследовании уровня после «Встать на ноги» герой

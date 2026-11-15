@@ -88,6 +88,17 @@ object QuestOutcome extends Enum[QuestOutcome] {
   /** Сам по себе: свёл счёты и забрал тайник ячейки. */
   case object ToolAlone extends QuestOutcome("alone", NpcQuest.StoryTool.key)
 
+  // ── «Новенький» (глава 7): куда герой дел нового отмеченного ───────────────
+
+  /** Отдал Братству. */
+  case object NewcomerBrotherhood extends QuestOutcome("brotherhood", NpcQuest.StoryNewcomer.key)
+
+  /** Отдал совету. */
+  case object NewcomerCouncil extends QuestOutcome("council", NpcQuest.StoryNewcomer.key)
+
+  /** Вывел через изгородь подальше от Кинэта. */
+  case object NewcomerHedge extends QuestOutcome("hedge", NpcQuest.StoryNewcomer.key)
+
   // ── «Большое дело» Барти: чем кончилась засада ночной стражи у каравана ─────
 
   /** Отбился от стражи сам — каджиты заплатили сполна. */

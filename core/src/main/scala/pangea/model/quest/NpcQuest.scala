@@ -153,9 +153,16 @@ object NpcQuest extends Enum[NpcQuest] {
     * урожая, зацепка главы 7. */
   case object StoryMorning extends NpcQuest("storyMorning")
 
-  /** Глава 7, «Новенький» (задание 31-го уровня): берётся в конце главы 6 и
-    * пока висит в журнале — откроется с обновлением (см. StoryNewcomerQuest). */
+  /** Глава 7, «Новенький» (задание 31-го уровня): берётся в конце главы 6;
+    * ведёт опись урожая (см. StoryNewcomerQuest). Шаги: 1 — главная площадь,
+    * новый отмеченный и те, кто пришёл за ним раньше героя (бой); 2 — куда его
+    * девать. Закрыта — `counter` хранит выбор (StoryNewcomerQuest.Fate), в
+    * сумке пропуск на просеку, зацепка главы 8. */
   case object StoryNewcomer extends NpcQuest("storyNewcomer")
+
+  /** Глава 8, «Просека» (задание 36-го уровня): берётся в конце главы 7 и
+    * пока висит в журнале — откроется с обновлением (см. StoryClearingQuest). */
+  case object StoryClearing extends NpcQuest("storyClearing")
 
   // ── Побочная линия Барти — дурачка-осведомителя, которого герой знает по
   // прошлой жизни (см. HotGoodsQuest, BigDealQuest).

@@ -20,7 +20,7 @@ import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.{AzatData, BarrelThievesQuest, BartiRoofQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HotGoodsQuest, JorgenQuest, LostSquadQuest, MarisaQuest,
-  FaelinQuest, MurlocQuest, PlukhQuest, QuestOutcomeLog, State, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryMorningQuest, StoryPowderQuest, StoryToolQuest,
+  FaelinQuest, MurlocQuest, PlukhQuest, QuestOutcomeLog, State, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryMorningQuest, StoryNewcomerQuest, StoryPowderQuest, StoryToolQuest,
   StrayCasketQuest, UserAction, VillageLair, Villages}
 import zio.{Random, Task, ZIO}
 import java.util.concurrent.TimeUnit
@@ -120,6 +120,8 @@ case class DeathState(
       // Смерть у лавки Барти («Крыша»): шаг тот же — проснуться на Торговой
       // площади, стража придёт следующей ночью.
       bartiShop     = battle.exists(_.story.contains(BartiRoofQuest.FightStory))
+      // Смерть на главной площади («Новенький»): шаг тот же — проснуться там же.
+      square        = battle.exists(_.story.exists(StoryNewcomerQuest.FightStories.contains))
       // Смерть у изгороди, где звери зажали Барти: задание так и не начато —
       // Барти встретится снова; проснуться в лабиринте.
       barti         = battle.exists(_.story.contains(HotGoodsQuest.FightStory))
@@ -241,6 +243,9 @@ case class DeathState(
                       else if (bartiHouse) Json.obj(
                         "wakeTo"    -> (StateType.MarketSquare: StateType).asJson,
                         "wakeLines" -> List("story.storyMorning.barti.death").asJson)
+                      else if (square) Json.obj(
+                        "wakeTo"    -> (StateType.CityCenter: StateType).asJson,
+                        "wakeLines" -> List("story.storyNewcomer.square.death").asJson)
                       else if (bartiShop) Json.obj(
                         "wakeTo"    -> (StateType.MarketSquare: StateType).asJson,
                         "wakeLines" -> List("barti.roof.death").asJson)
