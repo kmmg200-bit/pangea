@@ -223,6 +223,27 @@ object DailyQuestSpec extends ZIOSpecDefault {
               assertTrue(inv.snapshot.size == 1)
     },
 
+    test("Густаво на шесть трав берёт простые и странный цветок, а редкие — ни траву второго ранга, ни нераскрытую розу, ни необычный цветок") {
+      val day = DailyRates.dayOf(noon)
+      for {
+        d     <- dao()
+        h     <- d.getHeroByUserId(userId).map(_.get)
+        c     <- ZIO.attempt(SceneContent.load())
+        r     <- TestRenderer.make
+        rare   = List(herb(11L, MaterialKind.BubbleLily), herb(12L, MaterialKind.UnopenedRose),
+                   herb(13L, MaterialKind.UnusualFlower))
+        inv    = TestInventoryRepository.withItems(List(herb(1L, MaterialKind.Sage), herb(2L, MaterialKind.Nettle),
+                   herb(3L, MaterialKind.StrangeFlower)) ++ rare)
+        _     <- seed(d, DailyNpc.Gustavo, DailyTask(DailyKind.HerbsAny, day, taken = true))
+        dlg    = DailyDialog(d, c, DailyNpc.Gustavo, "Gustavo", Some(inv))
+        _     <- dlg.give(testUser, h, noon, r)
+        task  <- dlg.today(h, noon)
+      } yield assertTrue(task.count == 3L && !task.ready) &&
+              assertTrue(inv.snapshot.map(_.id).sorted == List(11L, 12L, 13L)) &&
+              assertTrue(!rare.exists(DailyKind.HerbsAny.accepts(_, None)) &&
+                DailyKind.HerbsAny.accepts(herb(3L, MaterialKind.StrangeFlower), None))
+    },
+
     test("чужого не берут: ни реликвию другой расы, ни целый камень") {
       val day  = DailyRates.dayOf(noon)
       val task = DailyTask(DailyKind.BankRelic, day, pick = Some(Race.Elf.entryName), taken = true)

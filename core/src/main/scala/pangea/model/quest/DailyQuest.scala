@@ -181,12 +181,15 @@ object DailyKind extends Enum[DailyKind] {
   case object HornUpgrade extends DailyKind("upgrade", DailyNpc.Horn, 1L)
 
   // ── Густаво: всё, что растёт ──────────────────────────────────────────────
-  /** Травы, любые: котёл не разбирает. */
+  /** Простые травы, любые: котёл не разбирает. Редкие — второго ранга, и
+    * необычный цветок тоже, это та же редкая трава, — в общий котёл Густаво не
+    * берёт (так решил пользователь); странный цветок — простая трава, его
+    * берёт. */
   case object HerbsAny extends DailyKind("herbs", DailyNpc.Gustavo, 6L) with DailyBring {
     override def weight: Int = DailyRates.GustavoPlainWeight
     def accepts(item: Item, pick: Option[String]): Boolean = {
       val _ = pick
-      item.material.exists(_.isHerb)
+      item.material.exists(m => m.isHerb && MaterialKind.rankOf(m) == 1)
     }
   }
 

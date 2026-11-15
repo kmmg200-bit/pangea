@@ -468,6 +468,11 @@ object MaterialKind extends Enum[MaterialKind] {
 
   def isUnknownFlower(kind: MaterialKind): Boolean = unknownFlowerRank(kind).isDefined
 
+  /** Ранг травы, кто бы её ни сорвал: у опознанной — свой, у неопознанного
+    * цветка — тот, которой он был на деле (странный — 1, необычный — 2). Не
+    * трава — 0. */
+  def rankOf(kind: MaterialKind): Int = unknownFlowerRank(kind).getOrElse(kind.herbRank)
+
   /** Каким цветком видит траву этого ранга тот, кто её не знает. */
   def unknownFlower(rank: Int): MaterialKind = if (rank >= 2) UnusualFlower else StrangeFlower
 
