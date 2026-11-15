@@ -7884,7 +7884,8 @@ object BattleState {
       StoryToolQuest.FightStory, HotGoodsQuest.FightStory, BigDealQuest.AmbushStory, JorgenQuest.LairStory,
       Villages.ArtifactStory, Villages.HuntersStory,
       BramblQuest.HallStory, PlukhQuest.HuntStory, FaelinQuest.RootsStory, Villages.RaidStory, Villages.BanditsStory,
-      Villages.SpidersStory, Villages.CaravanStory, pangea.service.state.BartiRoofQuest.FightStory) ++
+      Villages.SpidersStory, Villages.CaravanStory, pangea.service.state.BartiRoofQuest.FightStory,
+      pangea.service.state.BartiDoorQuest.FightStory) ++
       pangea.service.state.StoryMorningQuest.FightStories ++ pangea.service.state.StoryNewcomerQuest.FightStories
 
   /** Бой с ловцами Братства (MonsterSkill.CatcherNet), не на арене: здесь

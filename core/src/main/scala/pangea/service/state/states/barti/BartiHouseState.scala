@@ -12,7 +12,7 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.state.StoryToolQuest.Path
 import pangea.service.state.states.story.StoryFight
-import pangea.service.state.{BigDealQuest, NpcQuestLog, QuestSupport, State, StoryMorningQuest, UserAction}
+import pangea.service.state.{BartiDoorQuest, BigDealQuest, NpcQuestLog, QuestSupport, State, StoryMorningQuest, UserAction}
 import zio.{Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -44,6 +44,7 @@ case class BartiHouseState(
     routes = Map(
       "BartiGive"       -> Target.Run { (u, _, r) => give(u, r) },
       "BartiStoryFight" -> Target.Run { (u, _, r) => storyFight(u, r) },
+      "BartiDoorFight"  -> Target.Run { (u, _, r) => doorFight(u, r) },
       "BartiLeave"      -> Target.Goto(StateType.MarketSquare)
     ),
     fallback = Target.Run { (u, _, r) => enter(u, r).as(StateType.BartiHouse) }
@@ -62,6 +63,10 @@ case class BartiHouseState(
                   storyWon(user, renderer)
                 else if (story.isDefined && StoryMorningQuest.toBarti(quests)) storyTalk(user, quests, renderer)
                 else if (story.isDefined) renderer.show(user, knockScreen)
+                // «Синяя дверь» (только одиночка): поджигатели Братства.
+                else if (StoryFight.won(data, DoorWonKey) && BartiDoorQuest.toNight(quests)) doorWon(user, renderer)
+                else if (BartiDoorQuest.available(quests)) doorBegin(user, quests, renderer)
+                else if (BartiDoorQuest.toNight(quests)) renderer.show(user, nightScreen(None))
                 else if (BigDealQuest.canBegin(quests) && QuestSupport.hasItem(items, QuestItemKind.BartiAddress))
                   begin(user, quests, items, renderer)
                 else if (BigDealQuest.collecting(quests)) renderer.show(user, stockScreen(None, quests, items))
@@ -178,6 +183,51 @@ case class BartiHouseState(
       } yield ()
     }
 
+  // ── Акт II, «Синяя дверь» (только одиночка) ────────────────────────────────
+
+  /** Впервые: метка Братства на двери, Барти признаётся, что похвастался, —
+    * задание взято, ночь у двери. */
+  private def doorBegin(user: User, quests: NpcQuests, renderer: Renderer): Task[Unit] =
+    for {
+      now   <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+      taken  = quests.take(NpcQuest.BartiDoor, now)
+      _     <- NpcQuestLog.save(heroDao, user.userId, taken)
+      line   = content.format("barti.taken", "title" -> content.text("journal.quests.bartiDoor.title"),
+                 "step" -> content.list("journal.quests.bartiDoor.steps").headOption.getOrElse(""))
+      _     <- renderer.show(user, nightScreen(Some(content.text("barti.door.pitch").trim + "\n\n" + line)))
+    } yield ()
+
+  /** Ночь у синей двери: идут поджигатели — демоны. `lead` — что сказать перед этим. */
+  private def nightScreen(lead: Option[String]): Screen =
+    Screen(
+      (lead.toList :+ content.text("barti.door.night").trim).mkString("\n\n") + "\n\n" +
+        content.format("marisa.difficulty", "difficulty" -> Difficulty.render(BartiDoorQuest.Level)),
+      List(content.choice("BartiDoorFight", "barti.door.fightLabel").copy(row = Some(0)),
+        content.choice("BartiLeave", "barti.door.leaveLabel").copy(color = ChoiceColor.Negative, row = Some(0))))
+
+  /** Бой с поджигателями; Барти со сковородой — в строю. Добыча вернёт сюда. */
+  private def doorFight(user: User, renderer: Renderer): Task[StateType] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (!BartiDoorQuest.toNight(quests)) enter(user, renderer).as(StateType.BartiHouse)
+      else for {
+        hero <- getHero(user)
+        _    <- StoryFight.start(heroDao, user, hero, BartiDoorQuest.foes(content.text("barti.door.leaderName")),
+                  List(StoryMorningQuest.bartiGuest(content, BartiDoorQuest.Level)), BartiDoorQuest.FightStory,
+                  StateType.BartiHouse, DoorWonKey)
+        _    <- renderer.show(user, Screen(content.text("barti.door.fightStart"), Nil))
+      } yield StateType.Battle
+    }
+
+  /** Отбились: дом в дырах, но цел, мебель спасена; теперь это и убежище героя. */
+  private def doorWon(user: User, renderer: Renderer): Task[Unit] =
+    for {
+      _      <- heroDao.writeSceneData(user.userId, Json.Null)
+      hero   <- getHero(user)
+      reward <- BartiDoorQuest.finish(heroDao, content, user, hero)
+      _      <- renderer.show(user, Screen(List(content.text("barti.door.won").trim, content.text("barti.door.shelter").trim, reward)
+                  .mkString("\n\n"), List(leave.copy(row = Some(0)))))
+    } yield ()
+
   private def bag(hero: Hero): Task[List[Item]] =
     inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)).map(_.items.data)
 
@@ -190,4 +240,7 @@ object BartiHouseState {
 
   /** Отметка в `scene_data`: люди Братства у Барти побиты (Акт II, «Наутро»). */
   val WonKey: String = "storyBartiHouseWon"
+
+  /** Отметка в `scene_data`: поджигатели у синей двери побиты («Синяя дверь»). */
+  val DoorWonKey: String = "bartiDoorWon"
 }

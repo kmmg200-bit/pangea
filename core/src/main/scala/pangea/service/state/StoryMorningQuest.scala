@@ -165,12 +165,13 @@ object StoryMorningQuest {
     MonsterGenerator.generateOfRaceAndRarity(Level, FoeRace, LeaderRarity, Some(leader)) ::
       List.fill(Henchmen)(MonsterGenerator.generateOfRaceAndRarity(Level, FoeRace, HenchmanRarity))
 
-  /** Гость в строю героя: имя, уровень задания и статы моба этой редкости;
-    * место ему раздаёт [[withGuests]], после боя в отряд он не встаёт. */
-  def guest(kind: AllyKind, name: String, rarity: Rarity): BattleAlly = {
-    val stats = MonsterGenerator.generateOfRaceAndRarity(Level, GuestRace, rarity).fightStats
+  /** Гость в строю героя: имя, уровень (по умолчанию — этой главы) и статы
+    * моба этой редкости; место ему раздаёт [[withGuests]], после боя в отряд он
+    * не встаёт. */
+  def guest(kind: AllyKind, name: String, rarity: Rarity, lvl: Int = Level): BattleAlly = {
+    val stats = MonsterGenerator.generateOfRaceAndRarity(lvl, GuestRace, rarity).fightStats
     BattleAlly(kind, position = 0, hp = stats.hp, armor = stats.armor, energy = stats.energy,
-      stats = stats, lvl = Level.toLong, undead = Some(UndeadForm(name, Level.toLong, stats)), home = 0)
+      stats = stats, lvl = lvl.toLong, undead = Some(UndeadForm(name, lvl.toLong, stats)), home = 0)
   }
 
   /** Щит: Горн и двое его искателей. */
@@ -178,9 +179,10 @@ object StoryMorningQuest {
     guest(AllyKind.GuildMaster, content.text("story.storyMorning.cellar.hornName"), HornRarity) ::
       content.list("story.storyMorning.cellar.seekers").map(name => guest(AllyKind.GuildSeeker, name, SeekerRarity))
 
-  /** Одиночка: Барти со сковородой. */
-  def bartiGuest(content: SceneContent): BattleAlly =
-    guest(AllyKind.Informant, content.text("story.storyMorning.barti.name"), BartiRarity)
+  /** Одиночка: Барти со сковородой — уровня этой главы или того задания, где
+    * он снова дерётся (`lvl`). */
+  def bartiGuest(content: SceneContent, lvl: Int = Level): BattleAlly =
+    guest(AllyKind.Informant, content.text("story.storyMorning.barti.name"), BartiRarity, lvl)
 
   /** Поставить гостей в строй — каждого на ближайшее к герою свободное место.
     * Отряд занял всё — кому места нет, тот бьётся из-за спин и в строй не встаёт. */

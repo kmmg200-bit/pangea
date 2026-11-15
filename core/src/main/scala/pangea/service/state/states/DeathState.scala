@@ -19,7 +19,7 @@ import pangea.service.parcel.Parcels
 import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
-import pangea.service.state.{AzatData, BarrelThievesQuest, BartiRoofQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HotGoodsQuest, JorgenQuest, LostSquadQuest, MarisaQuest,
+import pangea.service.state.{AzatData, BarrelThievesQuest, BartiDoorQuest, BartiRoofQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HotGoodsQuest, JorgenQuest, LostSquadQuest, MarisaQuest,
   FaelinQuest, MurlocQuest, PlukhQuest, QuestOutcomeLog, State, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryMorningQuest, StoryNewcomerQuest, StoryPowderQuest, StoryToolQuest,
   StrayCasketQuest, UserAction, VillageLair, Villages}
 import zio.{Random, Task, ZIO}
@@ -120,6 +120,9 @@ case class DeathState(
       // Смерть у лавки Барти («Крыша»): шаг тот же — проснуться на Торговой
       // площади, стража придёт следующей ночью.
       bartiShop     = battle.exists(_.story.contains(BartiRoofQuest.FightStory))
+      // Смерть у синей двери («Синяя дверь»): шаг тот же — проснуться на Торговой
+      // площади, поджигатели вернутся.
+      bartiDoor     = battle.exists(_.story.contains(BartiDoorQuest.FightStory))
       // Смерть на главной площади («Новенький»): шаг тот же — проснуться там же.
       square        = battle.exists(_.story.exists(StoryNewcomerQuest.FightStories.contains))
       // Смерть у изгороди, где звери зажали Барти: задание так и не начато —
@@ -246,6 +249,9 @@ case class DeathState(
                       else if (square) Json.obj(
                         "wakeTo"    -> (StateType.CityCenter: StateType).asJson,
                         "wakeLines" -> List("story.storyNewcomer.square.death").asJson)
+                      else if (bartiDoor) Json.obj(
+                        "wakeTo"    -> (StateType.MarketSquare: StateType).asJson,
+                        "wakeLines" -> List("barti.door.death").asJson)
                       else if (bartiShop) Json.obj(
                         "wakeTo"    -> (StateType.MarketSquare: StateType).asJson,
                         "wakeLines" -> List("barti.roof.death").asJson)
