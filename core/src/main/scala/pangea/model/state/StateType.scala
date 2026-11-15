@@ -201,6 +201,7 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   case object BartiMeet  extends StateType // Барти у изгороди: звери, «Ходовой товар», а потом — адрес
   case object BartiHouse extends StateType // дом Барти на Торговой площади: «Большое дело», товар для каравана
   case object BartiCaravan extends StateType // каджитский караван у Сухого колодца: сделка, засада стражи, дублоны
+  case object BartiShop    extends StateType // лавка Барти на Торговой площади: «Крыша» — ночная стража берёт за охрану
 
   // Личные задания наёмников (см. MercQuests).
   case object JorgenLair extends StateType // логово огненных, где пал отряд Йоргена: двое элементалей, жетоны в пепле

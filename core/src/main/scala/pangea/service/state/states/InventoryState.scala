@@ -21,7 +21,7 @@ import pangea.repository.item.ItemRepository
 import pangea.service.equipment.{BeltWork, BrewWork, BundleWork, GemWork, Outfit}
 import pangea.service.state.states.InventoryState._
 import pangea.service.state.states.home.Racks
-import pangea.service.state.{BarrelThievesQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HerbLore, HotGoodsQuest, ItemMenu,
+import pangea.service.state.{BarrelThievesQuest, BartiRoofQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HerbLore, HotGoodsQuest, ItemMenu,
   JorgenQuest,
   FaelinQuest, MarisaQuest, MurlocQuest, NpcQuestLog, PlukhQuest, QuestCard, QuestGoods, SlotChoice, StackMove, State,
   StoryBrandQuest, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryMorningQuest, StoryNewcomerQuest, StoryPowderQuest,
@@ -127,7 +127,7 @@ case class InventoryState(
         StateType.StoryMeeting, StateType.StoryBridge, StateType.StorySojka, StateType.StoryArchive, StateType.StoryBindery,
         StateType.StoryGraveyard, StateType.BartiHouse, StateType.BartiCaravan, StateType.JorgenLair, StateType.VillageTrail,
         StateType.PlukhHunt, StateType.FaelinRoots, StateType.Village, StateType.VillageBandits, StateType.VillageSpiders,
-        StateType.VillageCaravan, StateType.StoryDen, StateType.StoryCellar) ++ BackpackOrigins
+        StateType.VillageCaravan, StateType.StoryDen, StateType.StoryCellar, StateType.BartiShop) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.
@@ -1428,6 +1428,11 @@ object InventoryState {
       case Some(QuestItemKind.BartiPlan) =>
         val now = HotGoodsQuest.cardLine(content, quests)
         s"${item.displayTitle}\n${difficulty(HotGoodsQuest.Level)}\n\n${QuestItemKind.BartiPlan.description}" +
+          (if (now.isEmpty) "" else "\n\n" + now)
+      // «Крыша»: квитанция стражи — что делать сейчас, по шагу задания.
+      case Some(QuestItemKind.BartiReceipt) =>
+        val now = BartiRoofQuest.cardLine(content, quests)
+        s"${item.displayTitle}\n${difficulty(BartiRoofQuest.Level)}\n\n${QuestItemKind.BartiReceipt.description}" +
           (if (now.isEmpty) "" else "\n\n" + now)
       case Some(QuestItemKind.BartiAddress) =>
         val now = BigDealQuest.cardLine(content, quests)

@@ -89,6 +89,7 @@ import pangea.model.state.StateType.{
   BartiMeet,
   BartiHouse,
   BartiCaravan,
+  BartiShop,
   JorgenLair,
   BramblHall,
   PlukhHunt,
@@ -167,7 +168,7 @@ import pangea.service.state.states.lostsquad.SquadMineState
 import pangea.service.state.states.straycasket.StrayCasketState
 import pangea.service.state.states.hedgesong.HedgeSongState
 import pangea.service.state.states.barrelthieves.{BarrelReturnState, BarrelThievesState}
-import pangea.service.state.states.barti.{BartiCaravanState, BartiHouseState, BartiMeetState}
+import pangea.service.state.states.barti.{BartiCaravanState, BartiHouseState, BartiMeetState, BartiShopState}
 import pangea.service.state.states.merc.{BramblHallState, FaelinRootsState, JorgenLairState, PlukhHuntState}
 import pangea.service.state.states.village.{VillageCaravanState, VillageLairState, VillageState, VillageTrailState}
 import pangea.service.state.VillageLair
@@ -257,7 +258,7 @@ object StatesMap {
         states = Map[StateType, State](
           GlobalMap     -> GlobalMapState(heroDao, content),
           HarborQuarter -> HarborQuarterState(content),
-          MarketSquare  -> MarketSquareState(content),
+          MarketSquare  -> MarketSquareState(content, Some(heroDao)),
           StreetMerchants -> StreetMerchantsState(content),
           UnassumingBarrel -> UnassumingBarrelState(
             heroDao,
@@ -380,6 +381,7 @@ object StatesMap {
           BartiMeet         -> BartiMeetState(heroDao, inventoryRepo, itemRepo, content),
           BartiHouse        -> BartiHouseState(heroDao, inventoryRepo, content, Some(itemRepo)),
           BartiCaravan      -> BartiCaravanState(heroDao, inventoryRepo, content, outcomes, Some(itemRepo), Some(parcels)),
+          BartiShop         -> BartiShopState(heroDao, inventoryRepo, itemRepo, content),
           JorgenLair        -> JorgenLairState(heroDao, inventoryRepo, itemRepo, content),
           BramblHall        -> BramblHallState(heroDao, inventoryRepo, content),
           PlukhHunt         -> PlukhHuntState(heroDao, inventoryRepo, content),

@@ -24,7 +24,7 @@ import pangea.repository.item.ItemRepository
 import pangea.service.purse.Purse
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.{EquipmentState, InventoryState, LootState}
-import pangea.service.state.{AppButton, AzatData, BeltContents, FirstStepsQuest, ItemMenu, NpcQuestDialog, NpcQuestLog, QuestSupport,
+import pangea.service.state.{AppButton, AzatData, BartiRoofQuest, BeltContents, FirstStepsQuest, ItemMenu, NpcQuestDialog, NpcQuestLog, QuestSupport,
   SlotChoice, State, StoryBrandQuest, StoryFaceQuest, StoryLine, StoryMorningQuest, StoryPowderQuest, StoryToolQuest, UserAction}
 import zio.{Random, Task, ZIO}
 
@@ -89,6 +89,7 @@ case class HomeState(
       "HomeJunonaFace"  -> Target.Run { (u, _, r) => junonaCopies(u, r) },
       "HomeJunonaBrey"      -> Target.Run { (u, _, r) => junonaBrey(u, r) },
       "HomeJunonaTestimony" -> Target.Run { (u, _, r) => junonaTestimony(u, r) },
+      "HomeJunonaRoof"      -> Target.Run { (u, _, r) => junonaRoof(u, r) },
       "HomeFurnItem"   -> Target.Run { (u, ua, r) => furnItem(u, ua, r) },
       "HomeFurnBuy"    -> Target.Run { (u, ua, r) => furnBuy(u, ua, r) },
       "HomeClutterPay" -> Target.Run { (u, _, r) => clutterPay(u, r) },
@@ -191,10 +192,14 @@ case class HomeState(
                   Option.when(brey)(Choice("HomeJunonaBrey", content.text("story.storyMorning.junona.label"), row = Some(houses.size))) orElse
                   Option.when(told)(Choice("HomeJunonaTestimony", content.text("story.storyMorning.junona.testimonyLabel"),
                     row = Some(houses.size)))
+      // «Крыша» Барти, путь Щита: квитанция ночной стражи при герое — своей
+      // кнопкой, рядом с сюжетной: побочное задание главу не ждёт.
+      roof   <- junonaRoofOpen(user)
+      receipt = Option.when(roof)(Choice("HomeJunonaRoof", content.text("barti.roof.junona.label"), row = Some(houses.size)))
       back    =
         if (current.isDefined) Choice("HomeMain", content.text("home.office.home"), color = ChoiceColor.Negative, row = Some(houses.size + 1))
         else Choice("LeaveHome", content.text("home.office.leave"), color = ChoiceColor.Negative, row = Some(houses.size + 1))
-      _      <- renderer.show(user, Screen(text, houses ++ List(furnish) ++ marked.toList ++ List(back)))
+      _      <- renderer.show(user, Screen(text, houses ++ List(furnish) ++ marked.toList ++ receipt.toList ++ List(back)))
     } yield StateType.Home
 
   /** «Что горит на груди» на шаге Юноны, и набросок узора при герое. */
@@ -275,6 +280,27 @@ case class HomeState(
                 _         <- renderer.show(user, Screen(
                                content.format("story.storyFace.reward", "silver" -> silver.toString, "exp" -> expLine) +
                                  "\n\n" + content.text("story.storyFace.questDone"), Nil))
+              } yield ())
+      res  <- office(user, renderer)
+    } yield res
+
+  /** «Крыша» на шаге Юноны (путь Щита) и квитанция ночной стражи при герое. */
+  private def junonaRoofOpen(user: User): Task[Boolean] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (!BartiRoofQuest.toJunona(quests)) ZIO.succeed(false)
+      else getHero(user).flatMap(hero => inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)))
+        .map(inv => QuestSupport.hasItem(inv.items.data, QuestItemKind.BartiReceipt))
+    }
+
+  /** Юнона узнаёт печать: капитана без поличного не тронуть, но её люди будут
+    * за углом лавки ночью. «Крыша» — на шаге ночи. */
+  private def junonaRoof(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      open <- junonaRoofOpen(user)
+      _    <- ZIO.when(open)(for {
+                quests <- NpcQuestLog.load(heroDao, user.userId)
+                _      <- NpcQuestLog.save(heroDao, user.userId, BartiRoofQuest.step(quests, 3))
+                _      <- renderer.show(user, Screen(content.text("barti.roof.junona.text").trim, Nil))
               } yield ())
       res  <- office(user, renderer)
     } yield res
