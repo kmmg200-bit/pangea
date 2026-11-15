@@ -157,7 +157,7 @@ object ActivityContestSpec extends ZIOSpecDefault {
                 "🎫 Участники лотереи разделили между собой 🟡 6 и 🪙 520, спасибо всем за участие!"))
     },
 
-    test("выигрыш сверх доли: золотой — 0,5% на 100 и 10% на 10 дублонов, серебряный — 0,5% на 10 000 и 10% на 1000; в письме — строкой, в беседе — со всем вместе") {
+    test("выигрыш сверх доли: золотой — 0,5% на 100 и 10% на 10 дублонов, серебряный — 0,5% на 10 000 и 10% на 1000; в письме и в беседе — уже в сумме, отдельной строки нет") {
       for {
         t <- contest()
         (c, _, payouts, players) = t
@@ -177,8 +177,8 @@ object ActivityContestSpec extends ZIOSpecDefault {
         letters = players.sentLetters.filter(_._2.contains("Итоги недели")).toMap
         mine    = letters.getOrElse(UserId(1L), "").replace("\r", "")
       } yield assertTrue(payouts.snapshot == Map(HeroId(1L) -> (10150L, 126L))) &&
-              assertTrue(mine.contains("Золотые билеты принесли вам 🟡 126\n🎉 Из них выигрыш: 🟡 100, 🟡 10 ×2")) &&
-              assertTrue(mine.contains("Серебряные билеты принесли вам 🪙 10150\n🎉 Из них выигрыш: 🪙 10000")) &&
+              assertTrue(mine.contains("🎫 Золотые билеты принесли вам 🟡 126\n🎟 Серебряные билеты принесли вам 🪙 10150") &&
+                !mine.contains("выигрыш")) &&
               assertTrue(players.announced == List(
                 "🎫 Участники лотереи разделили между собой 🟡 126 и 🪙 10150, спасибо всем за участие!"))
     },
