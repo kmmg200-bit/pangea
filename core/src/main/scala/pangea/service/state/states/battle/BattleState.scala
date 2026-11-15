@@ -7,7 +7,7 @@ import pangea.domain.Rng
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.generator.loot.LootGenerator
 import pangea.generator.monster.MonsterGenerator
-import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Convoy, Element, Formation, GroupState, HealCurse, HealedWounds, MonsterSlot, Nature, Poison, RaceTactics, Regen, RedSpider, SlainMonster, SoloPveBattle, SkillSlotState, SpiderWeb, TimedDefenceDebuff, Wagon, Ward}
+import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Convoy, Element, Formation, GroupState, HealCurse, HealedWounds, MonsterSlot, Nature, Poison, PowderKeg, RaceTactics, Regen, RedSpider, SlainMonster, SoloPveBattle, SkillSlotState, SpiderWeb, TimedDefenceDebuff, Wagon, Ward}
 import pangea.model.cave.CaveGenerator
 import pangea.model.item.ItemSet
 import pangea.model.squad.AllySkill
@@ -261,9 +261,13 @@ case class BattleState(
       prefs   <- BattleState.prefs(heroDao, user.userId)
       fogged   = auraTick(allyTicked, prefs.miasma)
       promoted4 = promoteAfterKill(joeRises(fogged))
+      // Бочки с порохом на поле (просека Чернолома): одна может рвануть —
+      // павших от неё разбираем тем же порядком, что павших от ауры.
+      blasted  <- kegBlast(promoted4, now)
+      promoted5 = promoteAfterKill(joeRises(blasted))
       // Охрана вся полегла — стрелкам некого прикрывать: они бросают башни и
       // уходят, бой на этом кончается победой.
-      abandoned = towersAlone(promoted4)
+      abandoned = towersAlone(promoted5)
       ended   <- endRound(battle, abandoned).map(preyFlees)
       // «Крыса» (порог 6): раз в раунд у героя из-под ног может выскочить своя.
       ratted  <- ratCall(hero, ended)
@@ -1156,9 +1160,13 @@ case class BattleState(
       // что и смерти от неё ему нет: его исход решит отряд (см. auraFelled).
       allyTicked = tickAllyEffects(promoted2)
       fogged     = promoteAfterKill(joeRises(auraTick(allyTicked, on = false)))
+      // Бочкам с порохом всё равно, стоит герой или лежит: рвутся и теперь,
+      // только лежачего не задевают (см. kegTargets).
+      blasted   <- kegBlast(fogged, now)
+      kegged     = promoteAfterKill(joeRises(blasted))
       // Охрану доломали союзники, пока герой лежал, — башням некого
       // прикрывать, и бой кончается так же, как если бы её добил он сам.
-      abandoned = towersAlone(fogged)
+      abandoned = towersAlone(kegged)
       ended    <- endRound(battle, abandoned).map(preyFlees)
       // Конец раунда: кому некого бить, идёт к врагу — мобы к отряду, отряд
       // к мобам. Каждый раунд, даже если в этом никто никого не задел: иначе
@@ -5978,6 +5986,119 @@ case class BattleState(
       else stood.copy(outcome = Outcome.Victory)
     }
 
+  // ── Бочки с порохом ─────────────────────────────────────────────────────────
+
+  /** Бочки с порохом на поле (см. [[PowderKeg]]): в конце раунда одна может
+    * рвануть. Кого задеть, решает бросок: взрыв не разбирает сторон — герой,
+    * отряд и мобы вперемешку. Пламя на героя ложится с поправкой на
+    * «Каменного стража» (порог 10), как от удара. Бочек нет, раунд не
+    * кончился или бой уже решён — поле молчит. */
+  private def kegBlast(res: TurnResult, now: Long): Task[TurnResult] =
+    if (res.outcome != Outcome.Continue || !res.endsRound || res.battle.kegs <= 0) ZIO.succeed(res)
+    else
+      for {
+        blows   <- chanceRoll(active = true, PowderKeg.ChancePct)
+        order   <- if (blows) Random.shuffle(kegTargets(res)) else ZIO.succeed(List.empty[BattleState.KegTarget])
+        hit      = order.take(PowderKeg.Victims)
+        catches <- chanceRoll(hit.contains(BattleState.KegTarget.Hero), 100L - res.hero.sets.igniteResistPct)
+      } yield if (hit.isEmpty) res else kegHits(res, hit, catches, now)
+
+  /** Кто стоит на поле и кого может задеть взрыв. Лежачего героя бочка не
+    * трогает — как и аура: его исход решит отряд. */
+  private def kegTargets(res: TurnResult): List[BattleState.KegTarget] = {
+    val b = res.battle
+    Option.when(!b.group.heroDown && res.hero.fightStats.hp > 0L)(BattleState.KegTarget.Hero).toList ++
+      b.group.allies.filter(_.alive).map(a => BattleState.KegTarget.Ally(a.position)) ++
+      Option.when(b.monsterCurrentHp > 0L)(BattleState.KegTarget.Active).toList ++
+      b.group.others.zipWithIndex.collect { case (slot, idx) if slot.alive => BattleState.KegTarget.Slot(idx) }
+  }
+
+  /** Взрыв бочки по тем, кого задело (`hit`): каждому — доля его максимума HP
+    * мимо брони (минибоссу — вдвое меньше и не больше остатка его предела за
+    * раунд, см. `BossRoundCap`) и пламя: горящий разгорается, замёрзший
+    * оттаивает, а кого огонь не берёт — не загорается. `heroCatches` — легло ли
+    * пламя на героя. Строка одна на весь взрыв; павшие союзники уходят своими
+    * строками, павшие из строя — в павшие. Героя и того, кто в полях,
+    * разбирает [[auraFelled]] — тем же порядком, что павших от ауры. Бочкой на
+    * поле меньше. */
+  private[battle] def kegHits(res: TurnResult, hit: List[BattleState.KegTarget], heroCatches: Boolean,
+                              now: Long): TurnResult = {
+    import BattleState.KegTarget
+    def fire(lit: Boolean): String = if (lit) content.text("battle.kegs.fire") else ""
+    val dead = content.text("battle.kegs.dead")
+    def part(name: String, hp: Long, mark: String): String =
+      content.format("battle.kegs.hit", "name" -> name, "hp" -> hp.toString, "mark" -> mark)
+    val start = (res.hero, res.battle, Vector.empty[String], Vector.empty[BattleAlly], List.empty[Int])
+    val (hero, battle, parts, gone, fallen) = hit.foldLeft(start) {
+      case ((h, b, ps, gs, fs), KegTarget.Hero) =>
+        val dmg   = PowderKeg.damageOn(h.effectiveMaxHp(now)).min(h.fightStats.hp)
+        val hurt  = h.copy(fightStats = h.fightStats.copy(hp = h.fightStats.hp - dmg))
+        // Пламя ложится только на того, кто устоял: павшему гореть незачем.
+        val lit   = if (heroCatches && hurt.fightStats.hp > 0L) reigniteVictim(Victim.Hero, b, Burn.Initial)._1 else b
+        val burns = lit.effects.heroBurn.isDefined && lit.effects.heroBurn != b.effects.heroBurn
+        (hurt, lit, ps :+ content.format("battle.kegs.hitHero", "hp" -> dmg.toString, "mark" -> fire(burns)), gs, fs)
+      case ((h, b, ps, gs, fs), KegTarget.Ally(pos)) =>
+        b.group.allyAt(pos).filter(_.alive) match {
+          case None    => (h, b, ps, gs, fs)
+          case Some(a) =>
+            val dmg  = PowderKeg.damageOn(a.stats.hp).min(a.hp)
+            val hurt = b.copy(group = b.group.updateAlly(pos)(x => x.copy(hp = x.hp - dmg)))
+            if (a.hp - dmg <= 0L)
+              (h, hurt.copy(group = hurt.group.withoutAlly(pos)), ps :+ part(a.name, dmg, dead), gs :+ a, fs)
+            else {
+              val lit   = reigniteVictim(Victim.Ally(pos), hurt, Burn.Initial)._1
+              val burn  = lit.group.allyAt(pos).flatMap(_.burn)
+              (h, lit, ps :+ part(a.name, dmg, fire(burn.isDefined && burn != a.burn)), gs, fs)
+            }
+        }
+      case ((h, b, ps, gs, fs), KegTarget.Active) =>
+        if (b.monsterCurrentHp <= 0L) (h, b, ps, gs, fs)
+        else {
+          val hurt         = b.hurtActive(0L, b.pctDamage(PowderKeg.damageOn(b.monsterStats.hp)))
+          val lost         = b.monsterCurrentHp - hurt.battle.monsterCurrentHp
+          val (lit, burns) = if (hurt.battle.monsterCurrentHp <= 0L) (hurt.battle, false) else kegIgnite(hurt.battle)
+          (h, lit, ps :+ part(b.monsterName, lost, if (lit.monsterCurrentHp <= 0L) dead else fire(burns)), gs, fs)
+        }
+      case ((h, b, ps, gs, fs), KegTarget.Slot(idx)) =>
+        b.group.others.lift(idx).filter(_.alive) match {
+          case None       => (h, b, ps, gs, fs)
+          case Some(slot) =>
+            val raw     = PowderKeg.damageOn(slot.stats.hp)
+            val boss    = slot.boss.flatMap(MiniBoss.byName).isDefined
+            val (hb, _) = b.hurtSlot(idx, 0L, if (boss) BossPercentDamage(raw) else raw)
+            val after   = hb.group.others.lift(idx).getOrElse(slot)
+            val lost    = slot.currentHp - after.currentHp
+            if (!after.alive) (h, hb, ps :+ part(slot.name, lost, dead), gs, idx :: fs)
+            else {
+              // Пламя — тем же правилом, что тому, кто в полях: слот на миг
+              // встаёт в пару и возвращается в строй со своими эффектами.
+              val (lit, burns) = kegIgnite(hb.withActive(after))
+              val back = hb.copy(group = hb.group.copy(others = hb.group.others.updated(idx, lit.activeSlot)))
+              (h, back, ps :+ part(slot.name, lost, fire(burns)), gs, fs)
+            }
+        }
+    }
+    // Павших из строя убираем с конца, чтобы индексы не плыли.
+    val swept = fallen.sorted.reverse.foldLeft(battle)((b, idx) => b.sideFallen(idx))
+    val left  = (swept.kegs - 1).max(0)
+    val line  =
+      if (left > 0) content.format("battle.kegs.blast", "hits" -> parts.mkString(", "), "left" -> left.toString)
+      else content.format("battle.kegs.blastLast", "hits" -> parts.mkString(", "))
+    val goneLines = gone.map(a => content.format(BattleState.goneKey(a), "name" -> a.name))
+    auraFelled(res.copy(hero = hero, battle = swept.copy(kegs = left), log = (res.log :+ line) ++ goneLines))
+  }
+
+  /** Пламя от взрыва на того, кто в полях: под холодом лёд тает и огонь не
+    * занимается, горящий разгорается сильнее, а кого огонь не берёт (огненный
+    * элементаль, дракон), тот и не загорается (см. `withEffects`). Второе —
+    * занялось ли пламя. */
+  private def kegIgnite(b: SoloPveBattle): (SoloPveBattle, Boolean) =
+    if (b.effects.coldOnMonster) (b.copy(effects = b.effects.copy(monsterColdDefenceCut = 0, chilledTurns = 0)), false)
+    else {
+      val lit = b.withEffects(b.effects.copy(monsterBurn = Some(b.effects.monsterBurn.map(_.reignited).getOrElse(Burn.onIgnite))))
+      (lit, lit.effects.monsterBurn.isDefined)
+    }
+
   /** Держатся ли на поле миазмы в этом раунде: герой их не свернул и ему есть
     * чем платить — или их держит моб, у которого хватает энергии. Осевшие
     * миазмы святую воду не гасят. */
@@ -7001,7 +7122,9 @@ case class BattleState(
   private def groupLines(battle: SoloPveBattle): Vector[String] = {
     val queued = if (battle.group.queue.isEmpty) Vector.empty
                  else Vector(content.format("battle.group.queueLine", "n" -> battle.group.queue.size.toString))
-    formationLines(battle) ++ queued
+    // Бочки с порохом (см. PowderKeg): сколько их ещё на поле.
+    val kegs   = Option.when(battle.kegs > 0)(content.format("battle.kegs.onField", "n" -> battle.kegs.toString)).toVector
+    formationLines(battle) ++ queued ++ kegs
   }
 
   /** Имя моба в строю — с булавкой, пока он пригвождён. */
@@ -8194,6 +8317,16 @@ object BattleState {
   object Victim {
     case object Hero                     extends Victim
     final case class Ally(position: Int) extends Victim
+  }
+
+  /** Кого задело взрывом бочки с порохом (см. PowderKeg): героя, союзника на
+    * месте `pos`, того, кто в полях, или моба строя под индексом `idx`. */
+  sealed trait KegTarget
+  object KegTarget {
+    case object Hero                extends KegTarget
+    final case class Ally(pos: Int) extends KegTarget
+    case object Active              extends KegTarget
+    final case class Slot(idx: Int) extends KegTarget
   }
 
   final case class TurnResult(

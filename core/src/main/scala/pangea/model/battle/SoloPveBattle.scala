@@ -167,7 +167,11 @@ case class SoloPveBattle(
   // или из строя. Победа переносит это в данные сцены (см. `markPreyLeft`): вор
   // с артефактом деревни ушёл — погоня продолжается. В записях до этого поля
   // его нет — читается как false.
-  preyLeft: Boolean = false
+  preyLeft: Boolean = false,
+  // Сколько бочек с порохом ещё стоит на поле (см. PowderKeg): в конце раунда
+  // одна может рвануть. Ставит их сюжет; в прочих боях и в записях до этого
+  // поля — ноль.
+  kegs: Int = 0
 ) {
 
   /** Множитель Стены трофеев к урону героя по тому, кто сейчас в полях. */
@@ -1106,6 +1110,8 @@ object SoloPveBattle {
       monsterBreed        <- pangea.model.monster.Breed.read(c, "monsterBreed")
       chainUsed           <- c.getOrElse[Boolean]("chainUsedThisRound")(false)
       preyLeft            <- c.getOrElse[Boolean]("preyLeft")(false)
+      // Бой, сохранённый до бочек с порохом, — без них.
+      kegs                <- c.getOrElse[Int]("kegs")(0)
     } yield SoloPveBattle(monsterLvl, monsterRace, monsterRarity, monsterStats,
                          monsterCurrentHp, monsterCurrentArmor, heroBattleState, consumableUsed, monsterMarked,
                          monsterUndead,
@@ -1115,7 +1121,7 @@ object SoloPveBattle {
                          heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall,
                          monsterLastAllyHit, heroStruck, roundsFought, secondWindUsed, preyName, preyGone,
                          monsterDodgeBonus, comboUsed, bossArmorTaken, squadTaken, monsterBreed,
-                         chainUsed, preyLeft).cycleToBossSlot
+                         chainUsed, preyLeft, kegs).cycleToBossSlot
       // ↑ Бой, сохранённый до того, как круг минибосса переехал на слот: круг
       // того, кто стоит в строю, забираем с боя на его слот.
 
