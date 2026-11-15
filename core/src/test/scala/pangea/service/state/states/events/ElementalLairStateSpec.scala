@@ -148,7 +148,7 @@ object ElementalLairStateSpec extends ZIOSpecDefault {
               assertTrue(battle.monsterStats.accuracy == 125L * 2L) &&
               assertTrue(battle.monsterStats.evasion == 100L * 2L) &&
               assertTrue(battle.monsterStats.energy == 150L * 2L) &&
-              assertTrue(battle.monsterStats.defence == 0L) &&
+              assertTrue(battle.monsterStats.defence == 50L * 2L) &&
               assertTrue(scene.contains(Json.Null)) // сцену освободили для боя
     },
 
@@ -168,7 +168,7 @@ object ElementalLairStateSpec extends ZIOSpecDefault {
               assertTrue(battle.monsterStats.accuracy == 100L * 2L) &&
               assertTrue(battle.monsterStats.evasion == 50L * 2L) &&
               assertTrue(battle.monsterStats.energy == 100L * 2L) &&
-              assertTrue(battle.monsterStats.defence == 0L) &&
+              assertTrue(battle.monsterStats.defence == 100L * 2L) &&
               // энергии он копит по 7 за уровень босса, как и огненный
               assertTrue(MiniBoss.StoneElemental.energyRegen(2L) == 14L) &&
               assertTrue(MiniBoss.StoneElemental.expReward(2L) == 400L)

@@ -106,7 +106,7 @@ object IceElementalSpec extends ZIOSpecDefault {
   override def spec = suite("Ледяной элементаль")(
 
     test("статы от BossLvL, дальник на три места со стартом на четвёртом, бьёт холодом") {
-      assertTrue(stats.hp == 3000L && stats.armor == 3300L && stats.atk == 690L && stats.defence == 0L) &&
+      assertTrue(stats.hp == 3000L && stats.armor == 3300L && stats.atk == 690L && stats.defence == 300L) &&
       assertTrue(stats.energy == 540L && stats.accuracy == 420L && stats.evasion == 240L) &&
       assertTrue(ice.energyRegen(bossLvl) == 27L && ice.expReward(bossLvl) == 600L) &&
       assertTrue(ice.reach == 3 && ice.startPos == 4 && ice.lairMinHeroLvl == 15L && ice.abilities == 5) &&

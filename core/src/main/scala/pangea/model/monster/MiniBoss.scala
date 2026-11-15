@@ -155,6 +155,8 @@ object MiniBoss extends Enum[MiniBoss] {
     val EnergyPerLvl: Long   = 150L
     val AccuracyPerLvl: Long = 125L
     val EvasionPerLvl: Long  = 100L
+    /** Защита: пламя удар режет слабо. */
+    val DefencePerLvl: Long  = 50L
     val EnergyRegenPerLvl: Long = 7L
     val ExpPerLvl: Long      = 200L
 
@@ -199,7 +201,7 @@ object MiniBoss extends Enum[MiniBoss] {
       atk      = AtkPerLvl * bossLvl,
       hp       = HpPerLvl * bossLvl,
       armor    = ArmorPerLvl * bossLvl,
-      defence  = 0L,
+      defence  = DefencePerLvl * bossLvl,
       evasion  = EvasionPerLvl * bossLvl,
       accuracy = AccuracyPerLvl * bossLvl,
       energy   = EnergyPerLvl * bossLvl
@@ -252,6 +254,8 @@ object MiniBoss extends Enum[MiniBoss] {
     val EnergyPerLvl: Long      = 100L
     val AccuracyPerLvl: Long    = 100L
     val EvasionPerLvl: Long     = 50L
+    /** Защита: камень твёрд, удар он режет заметно. */
+    val DefencePerLvl: Long     = 100L
     val EnergyRegenPerLvl: Long = 7L
     val ExpPerLvl: Long         = 200L
 
@@ -301,7 +305,7 @@ object MiniBoss extends Enum[MiniBoss] {
       atk      = AtkPerLvl * bossLvl,
       hp       = HpPerLvl * bossLvl,
       armor    = ArmorPerLvl * bossLvl,
-      defence  = 0L,
+      defence  = DefencePerLvl * bossLvl,
       evasion  = EvasionPerLvl * bossLvl,
       accuracy = AccuracyPerLvl * bossLvl,
       energy   = EnergyPerLvl * bossLvl
@@ -345,6 +349,8 @@ object MiniBoss extends Enum[MiniBoss] {
     val EnergyPerLvl: Long      = 200L
     val AccuracyPerLvl: Long    = 150L
     val EvasionPerLvl: Long     = 100L
+    /** Защита — как у огня: грозу удар режет слабо. */
+    val DefencePerLvl: Long     = 50L
     val EnergyRegenPerLvl: Long = 10L
     val ExpPerLvl: Long         = 200L
 
@@ -395,7 +401,7 @@ object MiniBoss extends Enum[MiniBoss] {
       atk      = AtkPerLvl * bossLvl,
       hp       = HpPerLvl * bossLvl,
       armor    = ArmorPerLvl * bossLvl,
-      defence  = 0L,
+      defence  = DefencePerLvl * bossLvl,
       evasion  = EvasionPerLvl * bossLvl,
       accuracy = AccuracyPerLvl * bossLvl,
       energy   = EnergyPerLvl * bossLvl
@@ -446,6 +452,8 @@ object MiniBoss extends Enum[MiniBoss] {
     val EnergyPerLvl: Long      = 180L
     val AccuracyPerLvl: Long    = 140L
     val EvasionPerLvl: Long     = 80L
+    /** Защита — как у камня: лёд твёрд, удар он режет заметно. */
+    val DefencePerLvl: Long     = 100L
     val EnergyRegenPerLvl: Long = 9L
     val ExpPerLvl: Long         = 200L
 
@@ -500,7 +508,7 @@ object MiniBoss extends Enum[MiniBoss] {
       atk      = AtkPerLvl * bossLvl,
       hp       = HpPerLvl * bossLvl,
       armor    = ArmorPerLvl * bossLvl,
-      defence  = 0L,
+      defence  = DefencePerLvl * bossLvl,
       evasion  = EvasionPerLvl * bossLvl,
       accuracy = AccuracyPerLvl * bossLvl,
       energy   = EnergyPerLvl * bossLvl

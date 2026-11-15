@@ -98,7 +98,7 @@ object ThunderElementalSpec extends ZIOSpecDefault {
   override def spec = suite("Громовой элементаль")(
 
     test("статы от BossLvL, дальник на три места со стартом на четвёртом, бьёт молнией") {
-      assertTrue(stats.hp == 3600L && stats.armor == 2100L && stats.atk == 750L && stats.defence == 0L) &&
+      assertTrue(stats.hp == 3600L && stats.armor == 2100L && stats.atk == 750L && stats.defence == 150L) &&
       assertTrue(stats.energy == 600L && stats.accuracy == 450L && stats.evasion == 300L) &&
       assertTrue(thunder.energyRegen(bossLvl) == 30L && thunder.expReward(bossLvl) == 600L) &&
       assertTrue(thunder.reach == 3 && thunder.startPos == 4 && thunder.lairMinHeroLvl == 15L && thunder.abilities == 5) &&
