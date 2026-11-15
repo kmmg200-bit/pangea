@@ -616,11 +616,11 @@ case class SoloPveBattle(
     else copy(group = group.copy(places = group.places.updated(group.idxOf(from), to)))
 
   /** Кого бьёт союзник: моба напротив, затем того, что в паре с героем, затем
-    * соседей — ближних раньше дальних, — в его досягаемости: у всех это
-    * соседи ([[GroupState.Reach]]), у лучника дальше ([[AllyKind.reach]]).
-    * Бить некого — None. */
+    * соседей — ближних раньше дальних, — в его досягаемости ([[BattleAlly.reach]]):
+    * у всех это соседи ([[GroupState.Reach]]), у лучника и у поднятого эльфа —
+    * дальше. Бить некого — None. */
   def allyTarget(a: BattleAlly): Option[Int] = {
-    val reach = a.kind.reach
+    val reach = a.reach
     (List(a.position, group.heroPos) ++ (1 to reach).flatMap(d => List(a.position - d, a.position + d))).distinct
       .filter(p => math.abs(p - a.position) <= reach)
       .find(p => monsterAt(p).exists(_.alive))

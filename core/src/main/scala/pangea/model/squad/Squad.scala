@@ -5,19 +5,28 @@ import doobie.postgres.circe.jsonb.implicits.{pgDecoderGet, pgEncoderPut}
 import io.circe.generic.semiauto.deriveEncoder
 import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder, HCursor, Json}
+import pangea.model.monster.{Monster, Race}
 import pangea.model.stats.FightStats
 
 /** Своя форма союзника: имя, уровень и потолки статов прямо на нём, а не от
  *  уровня героя. Так живут те, кого не наняли, а добыли: поднятый с алтаря
  *  (имя остаётся от того, кем он был при жизни, см. [[AllyKind.Undead]]) и
  *  крыса, выскочившая из-под ног на набор «Крыса» ([[AllyKind.Rat]]) — она тот
- *  же моб, что водится в канализации. Имя типа осталось от первого из них. */
-final case class UndeadForm(name: String, lvl: Long, stats: FightStats) {
+ *  же моб, что водится в канализации. Имя типа осталось от первого из них.
+ *
+ *  `race` — кем поднятый был при жизни (`Race.entryName`): от неё его
+ *  досягаемость — эльф стреляет, как эльфы-мобы (см. `BattleAlly.reach`). В
+ *  старых записях её нет — None. */
+final case class UndeadForm(name: String, lvl: Long, stats: FightStats, race: Option[String] = None) {
 
   /** Уникальный поднятый — Тёмный волк с алтаря: тот самый Белый волк, а не
     * рядовой моб, поэтому умений наёмников (фляга, починка, удары) у него нет —
     * только своя атака. Узнаём по имени: оно же лежит и в уже поднятых. */
   def unique: Boolean = name == UndeadForm.DarkWolfName
+
+  /** Кем он был при жизни: записано при подъёме, а у поднятых раньше — по
+    * имени из таблиц генератора, как и [[unique]]. Неизвестно — None. */
+  def raceOf: Option[Race] = race.flatMap(Race.withNameOption).orElse(Monster.raceByName(name))
 }
 
 object UndeadForm {
@@ -27,13 +36,15 @@ object UndeadForm {
 
   implicit val encoder: Encoder[UndeadForm] = (u: UndeadForm) =>
     Json.obj("name" -> u.name.asJson, "lvl" -> u.lvl.asJson, "stats" -> u.stats.asJson)
+      .deepMerge(u.race.fold(Json.obj())(r => Json.obj("race" -> r.asJson)))
 
   implicit val decoder: Decoder[UndeadForm] = (c: HCursor) =>
     for {
       name  <- c.get[String]("name")
       lvl   <- c.getOrElse[Long]("lvl")(1L)
       stats <- c.get[FightStats]("stats")
-    } yield UndeadForm(name, lvl, stats)
+      race  <- c.getOrElse[Option[String]]("race")(None)
+    } yield UndeadForm(name, lvl, stats, race)
 }
 
 /** Союзник в отряде: кто, на какой позиции, что с ним сейчас и до какого

@@ -76,6 +76,14 @@ final case class BattleAlly(
   def element: Option[Element] = strike.orElse(kind.element)
   def name: String  = undead.map(_.name).getOrElse(kind.name)
 
+  /** На сколько мест в обе стороны он достаёт: по виду ([[AllyKind.reach]]), а
+    * поднятый (с алтаря и набором «Некромант») — как при жизни, по своей расе:
+    * эльф стреляет на три места, как эльфы-мобы ([[RaceTactics.reach]]).
+    * Штрафа вблизи, как у лучника, у него нет — нет его и у эльфов-мобов. */
+  def reach: Int =
+    if (kind == AllyKind.Undead) undead.flatMap(_.raceOf).fold(kind.reach)(RaceTactics.reach)
+    else kind.reach
+
   /** Как звать союзника на кнопке выбора цели — коротко, по имени, без фамилии
     * и прозвища: «Йорген Кремень» — Йорген, «Старшина Ульфрик» — Ульфрик.
     * Поднятые, крысы и мурлоки-собратья названы по виду («Чумная крыса»,

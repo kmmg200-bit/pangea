@@ -142,6 +142,16 @@ object Monster {
     (Race.Khajiit, Rarity.Mythical) -> "Капитан когтя"
   )
 
+  /** Раса моба по имени из таблиц генератора — рядового ([[namesByRaceRarity]])
+    * или легендарного ([[legendaryNames]]), без приставок нежити и метки тьмы.
+    * Нужна там, где раса не записана: у поднятых до того, как её стали
+    * записывать (см. `UndeadForm.raceOf`). Имя не из таблиц — None. */
+  def raceByName(name: String): Option[Race] = {
+    val bare = name.stripPrefix(s"$UndeadPrefix-").stripPrefix(s"$MarkedPrefix ")
+    namesByRaceRarity.collectFirst { case ((race, _), n) if n == bare => race }
+      .orElse(legendaryNames.collectFirst { case (race, names) if names.contains(bare) => race })
+  }
+
   /** Имена легендарных: у каждой расы свой список, из него имя и берётся при
     * генерации (см. `MonsterGenerator.legendaryName`). Первым в каждом списке
     * стоит то имя, под которым раса ходила до появления списков, — оно же

@@ -46,10 +46,11 @@ object DarkAltar {
   }
 
   /** Поднятый по обычному трофею: моб той же расы и того уровня, что записан в
-    * трофее, тира по ценности трофея — и на пятую часть слабее. */
+    * трофее, тира по ценности трофея — и на пятую часть слабее. Раса — при
+    * нём: эльф и поднятым стреляет, как эльфы-мобы (см. `BattleAlly.reach`). */
   def fromTrophy(race: Race, rarity: Rarity, lvl: Long): UndeadForm = {
     val monster = MonsterGenerator.generateOfRaceAndRarity(lvl.toInt, race, rarity)
-    UndeadForm(monster.name, lvl, weakened(monster.fightStats))
+    UndeadForm(monster.name, lvl, weakened(monster.fightStats), race = Some(race.entryName))
   }
 
   /** Тёмный волк того уровня, каким был убитый Белый. */
