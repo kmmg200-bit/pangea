@@ -302,8 +302,7 @@ object CubeCraft {
     val size = 6
     override def portions: Int = BrewRates.Portions
     override def portionsFor(result: Item): Int = result.brew.map(_.portions).getOrElse(BrewRates.Portions)
-    private lazy val kinds: List[BrewKind] =
-      BrewKind.values.toList.filter(k => k.base.isEmpty && !k.recipe.forall(_.isHerb))
+    private lazy val kinds: List[BrewKind] = BrewKind.values.toList.filter(_.cubeOnly)
     def tryMatch(pool: List[Item], rng: Rng): Option[(List[Item], Item, Rng)] =
       kinds.collectFirst(Function.unlift { kind =>
         kind.recipe

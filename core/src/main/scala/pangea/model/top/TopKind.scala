@@ -38,7 +38,8 @@ object TopKind extends Enum[TopKind] {
   }
 
   /** По записям в книге рецептов библиотеки — что получалось в кубе Азата на
-    * верстаке ремесленника; отвары не в счёт (см. `HomeData.recipeBook`). */
+    * верстаке ремесленника; стандартные отвары не в счёт, а то, что варит только
+    * куб, — в счёт (см. `HomeData.recipeBook`). */
   case object Recipes extends TopKind {
     override val entryName: String = "recipes"
   }

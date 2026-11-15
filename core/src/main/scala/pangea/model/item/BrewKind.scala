@@ -111,6 +111,12 @@ sealed abstract class BrewKind(
     if (recipe.exists(_.herbRank >= 2) || !recipe.forall(_.isHerb)) BrewRates.RarePortions
     else BrewRates.Portions
 
+  /** Варит его только куб: в рецепте не одни травы — железы сетеплётов, крысиные
+    * шкурки (см. CubeCraft.MaterialBrew). Это не стандартный отвар, а рецепт
+    * куба (решение пользователя): он пишется в книгу рецептов библиотеки и идёт
+    * в её счёт — «Артефактор», рейтинг «Рецепты» (см. RecipeNote.BrewNames). */
+  def cubeOnly: Boolean = base.isEmpty && !recipe.forall(_.isHerb)
+
   /** Какие фляги заправляет. */
   def refills: Set[RefillSource] = effect match {
     case BrewEffect.RefillFlask(sources) => sources

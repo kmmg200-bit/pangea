@@ -63,7 +63,7 @@ object TopDaoLive {
     case TopKind.Recipes      => recipeCount
   }
 
-  /** Записи книги рецептов, кроме отваров: их куб больше не пишет, а старые не
+  /** Записи книги рецептов, кроме стандартных отваров: их куб больше не пишет, а старые не
     * в счёт — как и в библиотеке (см. `HomeData.recipeBook`). Нет списка — ноль. */
   private def recipeCount: Fragment = {
     val list = fr"h.home_data -> 'recipes'"

@@ -88,11 +88,12 @@ final class AzatCube(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemR
              case Power.Own(n) =>
                saveAzat(user.userId, azat.copy(cubeItems = kept, cubeCharges = n - result.chargesUsed))
            }
-      // Всё, что получилось, кроме отваров, — в книгу рецептов: и дома, и в
-      // Храме, и без библиотеки (листать её — в библиотеке). По ней и
-      // «Артефактор». Отвары в книгу не идут: их считают «Зельевар» и рейтинг
-      // алхимиков (см. HomeData.recipeBook).
-      notes = result.applied.filterNot(_.result.brew.isDefined).map(AzatCube.note)
+      // Всё, что получилось, кроме стандартных отваров, — в книгу рецептов: и
+      // дома, и в Храме, и без библиотеки (листать её — в библиотеке). По ней и
+      // «Артефактор». Стандартные отвары в книгу не идут: их считают «Зельевар»
+      // и рейтинг алхимиков (см. HomeData.recipeBook). А то, что варит только
+      // куб («Яд красного паука» и др., BrewKind.cubeOnly), — рецепт куба: в книгу.
+      notes = result.applied.filterNot(_.result.brew.exists(k => !k.cubeOnly)).map(AzatCube.note)
       book <- if (notes.isEmpty) loadHome(user.userId)
               else loadHome(user.userId).map(_.noted(notes)).tap(h => saveHome(user.userId, h))
       msgKey = if (result.anyApplied) "cube.activated" else "cube.nothing"
