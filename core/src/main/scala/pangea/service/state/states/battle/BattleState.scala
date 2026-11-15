@@ -3148,10 +3148,12 @@ case class BattleState(
     if (webbed) content.text("battle.webbedYou") else ""
 
   /** Почему герой не сходит с места: опутан паутиной — своя строка; вмёрз в лёд
-    * (ледопад Ледяного) — своя; иначе прежняя, «пригвождён» (арена). */
+    * (ледопад Ледяного) — своя; в сети ловцов (бой с ловцами, см.
+    * BattleState.netFight) — своя; иначе прежняя, «пригвождён» (арена). */
   private def heldKey(battle: SoloPveBattle, pinned: String): String =
     if (battle.effects.heroWebbed) "battle.webHolds"
     else if (battle.effects.heroFrozen) "battle.iceHolds"
+    else if (BattleState.netFight(battle) && battle.effects.heroRootedTurns > 0) "battle.netHolds"
     else pinned
 
   /** Прок воздуха в ударе моба: ему точность и уклонение на несколько ходов. */
@@ -3948,6 +3950,11 @@ case class BattleState(
   ): (SoloPveBattle, Hero, String) =
     battle.group.allyAt(pos).filter(_.alive) match {
       case None => (battle, hero, "")
+      // Сеть ловцов: урона нет — союзник остаток раунда и весь следующий не
+      // сходит с места (снимается в конце раунда, см. webTicked).
+      case Some(a) if hit.roots > 0 && hit.fixed.isEmpty && hit.factor <= 0.0 =>
+        (battle.copy(group = battle.group.updateAlly(pos)(x => x.copy(rooted = x.rooted.max(hit.roots)))), hero,
+          content.format("battle.ally.mobSkillNet", "monster" -> battle.monsterName, "name" -> a.name, "skill" -> skill.label))
       case Some(a) =>
         val raw = hit.fixed.getOrElse((battle.monsterStats.atk * hit.factor).toLong).max(1L)
         val (struck, dealt) =
@@ -7880,16 +7887,26 @@ object BattleState {
       Villages.SpidersStory, Villages.CaravanStory, pangea.service.state.BartiRoofQuest.FightStory) ++
       pangea.service.state.StoryMorningQuest.FightStories
 
+  /** Бой с ловцами Братства (MonsterSkill.CatcherNet), не на арене: здесь
+    * пригвождение героя и союзников — это их сеть. */
+  def netFight(battle: SoloPveBattle): Boolean =
+    battle.arena.isEmpty && battle.story.contains(MonsterSkill.CatcherNet.Story)
+
   /** Паутина, проклятие Некроманта и лёд Ледяного элементаля на герое и
     * союзниках — на раунд меньше (см. SpiderWeb, HealCurse,
-    * MiniBoss.IceElemental.FrozenTurns). */
-  def webTicked(battle: SoloPveBattle): SoloPveBattle =
+    * MiniBoss.IceElemental.FrozenTurns). Сеть ловцов — тоже, но только в бою с
+    * ловцами ([[netFight]]): на арене пригвождение считает сама арена. */
+  def webTicked(battle: SoloPveBattle): SoloPveBattle = {
+    val nets    = netFight(battle)
+    val effects = battle.effects.webTicked.curseTicked.frozenTicked
     battle.copy(
-      effects = battle.effects.webTicked.curseTicked.frozenTicked,
+      effects = if (nets) effects.copy(heroRootedTurns = (effects.heroRootedTurns - 1).max(0)) else effects,
       group   = battle.group.copy(allies = battle.group.allies.map(a =>
-        if (a.webbed > 0 || a.cursed > 0 || a.frozen > 0)
-          a.copy(webbed = (a.webbed - 1).max(0), cursed = (a.cursed - 1).max(0), frozen = (a.frozen - 1).max(0))
+        if (a.webbed > 0 || a.cursed > 0 || a.frozen > 0 || (nets && a.rooted > 0))
+          a.copy(webbed = (a.webbed - 1).max(0), cursed = (a.cursed - 1).max(0), frozen = (a.frozen - 1).max(0),
+            rooted = if (nets) (a.rooted - 1).max(0) else a.rooted)
         else a)))
+  }
 
   /** Что срезают со зверей в бою с этим сюжетом: в гнезде сетеплётов звери —
     * пауки, и с них паучье; везде прочее — крысиное, как было. */

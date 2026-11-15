@@ -59,7 +59,10 @@ object MonsterSkill extends Enum[MonsterSkill] {
    *  `fixed` — урон не от атаки моба, а ровно столько (кинжал молнии);
    *  `energyBurn` — сколько энергии сгорает у того, в кого попало. */
   final case class OtherHit(factor: Double, ignoresArmor: Boolean = false, poisonPct: Int = 0,
-                            fixed: Option[Long] = None, energyBurn: Long = 0L)
+                            fixed: Option[Long] = None, energyBurn: Long = 0L,
+                            /** Сеть ловцов: урона нет, а тот, на кого она упала,
+                              * столько концов раунда не сходит с места. */
+                            roots: Int = 0)
 
   /** Результат применения навыка моба: обновлённый бой, новые hp/armor героя и
    *  текст. `heroEnergy` — сколько энергии у героя осталось, если умение её
@@ -238,6 +241,36 @@ object MonsterSkill extends Enum[MonsterSkill] {
         .replace("{burn}", (hero.fightStats.energy - energy).toString)
       Cast(battle, newHp, newArmor, line, heroEnergy = Some(energy))
     }
+  }
+
+  /** «Сеть» ловцов Братства (Акт II, глава 7 «Новенький»): липкая сеть с
+   *  грузилами по краю. Урона она не наносит — тот, на кого упала, герой или
+   *  союзник перед ловцом, не сходит с места остаток раунда и весь следующий
+   *  ([[Turns]] концов раунда, как паутина сетеплёта), только броню она не
+   *  обходит. Так решил пользователь: «как Ловчая сеть героя». Стоит дёшево —
+   *  [[Cost]] энергии на любом уровне; уже опутанного героя второй раз не
+   *  опутывают. Есть только у людей, и только в бою с ловцами ([[Story]]). */
+  case object CatcherNet extends MonsterSkill(
+    label    = "Сеть",
+    template = "👹 {name}: «Сеть» — вы в сети 🪢, с места не сойти."
+  ) {
+    val Turns: Int = 2
+    val Cost: Long = 20L
+
+    /** Бой, где ловцы бросают сети (глава 7, см. StoryNewcomerQuest). */
+    val Story: String = "storyCatchers"
+
+    override val races: Set[Race] = Set(Race.Human)
+
+    override def cost(lvl: Long): Long = Cost
+
+    override def againstOther: Option[OtherHit] = Some(OtherHit(0.0, roots = Turns))
+
+    def applicable(battle: SoloPveBattle): Boolean = battle.story.contains(Story) && !battle.effects.heroRooted
+
+    def cast(battle: SoloPveBattle, hero: Hero, nowMs: Long): Cast =
+      Cast(battle.copy(effects = battle.effects.copy(heroRootedTurns = Turns)), hero.fightStats.hp, hero.fightStats.armor,
+        template.replace("{name}", battle.monsterName))
   }
 
   /** Максимум брони моба — ровно его броня. Защита к броне отношения не имеет:
