@@ -3,7 +3,8 @@ package pangea.service.state.states.bank
 import pangea.engine.{Choice, SceneContent}
 import pangea.model.auction.{AuctionCurrency, AuctionLot}
 import pangea.model.hero.HeroId
-import pangea.model.item.{Item, ItemType, Rarity}
+import pangea.model.item.{Item, ItemDetails, ItemType, PassiveKind, Rarity}
+import pangea.model.skill.Skill
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.payout.Payouts
@@ -191,6 +192,35 @@ object AuctionSpec extends ZIOSpecDefault {
               assertTrue(first.last.choices.forall(_.label.length <= Choice.MaxLabelLength)) &&
               assertTrue(first.last.choices.flatMap(_.row).max < 10) &&
               assertTrue(second.last.choices.count(_.id == "ShowLot") == 4)
+    },
+
+    test("витрина: навыки вещей — строками под заголовком, активный и пассивный; без навыка строки нет") {
+      val bow  = lotOf(3L).copy(item = gear(53L, "Лук 3").copy(details = ItemDetails.Weapon(Skill.PowerShot)))
+      val ring = lotOf(5L).copy(item = gear(55L, "Кольцо 5").copy(itemType = ItemType.Ring,
+                   attack = 0, accuracy = 0, details = ItemDetails.Passive(PassiveKind.Stealthy)))
+      for {
+        f    <- auction(lots = List(lotOf(1L), bow, ring))
+        _    <- f.state.action(testUser, tap("AuctionBrowse"), f.renderer)
+        page <- f.renderer.sentScreens.map(_.last)
+      } yield {
+        val buttons = page.choices.filter(_.id == "ShowLot").flatMap(_.data.get("id"))
+        val lines   = page.text.linesIterator.filter(_.startsWith("№")).map(_.drop(1).takeWhile(_ != ' ')).toList
+        assertTrue(page.text.startsWith("Лоты в продаже. Страница 1/1\nВыберите лот или напишите его номер.\n\n№")) &&
+        assertTrue(page.text.contains(s"№3 ${bow.title} — «Мощный выстрел»")) &&
+        assertTrue(page.text.contains(s"№5 ${ring.title} — «Скрытность»")) &&
+        // строки — в том же порядке, что кнопки; у топора навыка нет — и строки о нём нет
+        assertTrue(lines == buttons.filter(Set("3", "5"))) &&
+        // кнопки лотов — как были
+        assertTrue(buttons.size == 3 && page.choices.forall(c => !c.label.contains("«")))
+      }
+    },
+
+    test("витрина без вещей с навыками — один заголовок, как раньше") {
+      for {
+        f    <- auction(lots = List(lotOf(1L), lotOf(2L)))
+        _    <- f.state.action(testUser, tap("AuctionBrowse"), f.renderer)
+        page <- f.renderer.sentScreens.map(_.last)
+      } yield assertTrue(page.text == "Лоты в продаже. Страница 1/1\nВыберите лот или напишите его номер.")
     },
 
     test("лот с витрины открывает карточку с описанием, а не сразу покупку") {

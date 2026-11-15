@@ -130,8 +130,13 @@ case class AuctionState(
                Option.when(p > 0)(Choice("AuctionPrev", content.text("common.prev"), row = Some(ItemMenu.NavRow))),
                Option.when(p < pages - 1)(Choice("AuctionNext", content.text("common.next"), row = Some(ItemMenu.NavRow)))
              ).flatten
+             // Навыки вещей — строками под заголовком: листая торги, их видно
+             // сразу, не открывая каждый лот, а в кнопку (до 40 знаков) они не влезут.
+             val skills = lots.flatMap(lot => lot.item.skillName.map(s => content.format("bank.auction.skillLine",
+               "id" -> lot.id.toString, "name" -> lot.title, "skill" -> s)))
              renderer.show(user, Screen(
-               content.format("bank.auction.browseHeader", "page" -> (p + 1).toString, "total" -> pages.toString),
+               content.format("bank.auction.browseHeader", "page" -> (p + 1).toString, "total" -> pages.toString) +
+                 (if (skills.isEmpty) "" else "\n\n" + skills.mkString("\n")),
                buttons ++ nav))
            }
     } yield ()

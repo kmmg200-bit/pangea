@@ -92,6 +92,10 @@ case class Item(
     case _                      => None
   }
 
+  /** Как зовётся навык вещи — активный или пассивный (у вещи бывает только
+    * один из них); у вещи без навыка — None. */
+  def skillName: Option[String] = activeSkill.map(_.label).orElse(passive.map(_.label))
+
   /** Камень-усилитель, если этот предмет — камень (для инвентаря/вставки). */
   def gem: Option[Gem] = details match {
     case ItemDetails.Gem(g) => Some(g)

@@ -35,6 +35,14 @@ function sortLots(lots: LotView[], sort: string): LotView[] {
 /** Что можно вписать в поле уровня: только цифры, не больше четырёх. */
 const digits = (v: string) => v.replace(/\D/g, '').slice(0, 4)
 
+/** Навык вещи — активный или пассивный — в строке лота: листая торги, его
+  * видно сразу, не открывая карточку. В боте он — строкой под заголовком
+  * витрины (см. AuctionState). */
+function skillOf(lot: LotView): string {
+  const name = lot.item.skill ?? lot.item.passive
+  return name ? ` · «${name}»` : ''
+}
+
 function left(lot: LotView): string {
   if (lot.unsold) return ' · не продан'
   if (lot.hoursLeft >= 48) return ` · ещё ${Math.floor(lot.hoursLeft / 24)} дн`
@@ -238,7 +246,7 @@ export function AuctionTab(props: { data: AuctionView; onChange: (v: AuctionView
               <ItemRow
                 key={lot.id}
                 item={lot.item}
-                note={left(lot)}
+                note={skillOf(lot) + left(lot)}
                 onOpen={() => setOpen(lot)}
                 aside={
                   <span className="price">

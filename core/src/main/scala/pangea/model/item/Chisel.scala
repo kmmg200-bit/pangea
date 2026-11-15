@@ -31,6 +31,5 @@ object Chisel {
   def fits(item: Item): Boolean = variants(item).nonEmpty
 
   /** Как зовётся узор вещи сейчас — умение или пассивка; у вещи без узора — None. */
-  def pattern(item: Item): Option[String] =
-    item.activeSkill.map(_.label).orElse(item.passive.map(_.label))
+  def pattern(item: Item): Option[String] = item.skillName
 }
