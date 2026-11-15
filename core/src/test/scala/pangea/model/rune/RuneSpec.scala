@@ -28,15 +28,24 @@ object RuneSpec extends ZIOSpecDefault {
       assertTrue(math.abs(Rune.strengthPct(12L) - 10.954) < 0.01) &&
       assertTrue(Rune.mult(1000L) == 2.0 && Rune.strengthText(12L) == "+11,0%" && Rune.strengthText(300L) == "+54,8%")
     },
-    test("название руны в карточке камня — один раз: и у пассивок, где описание само начинается с названия, и у умений") {
+    test("карточка камня: навык руны — одним названием, как у вещей; подробного описания и «…» энергии на камне нет") {
       val all  = PassiveKind.values.toList.map(Rune.Passive(_)) ++ Skill.values.toList.map(Rune.Active(_))
-      val last = all.map(r => r -> RuneStone.describe(r, RuneStoneSize.Small).lastOption.getOrElse(""))
+      val card = (r: Rune) => RuneStone.describe(r, RuneStoneSize.Big)
       assertTrue(
-        RuneStone.describe(Rune.Passive(PassiveKind.Marauder), RuneStoneSize.Small).lastOption
-          .contains(PassiveKind.Marauder.describe),
-        // «Размашистый удар: Размашистый удар по дуге…» — у умения так начинается
-        // само предложение; повтор — это «Мародёр: Мародёр: …».
-        last.collect { case (r, line) if !line.startsWith(s"${r.label}: ") || line.startsWith(s"${r.label}: ${r.label}:") => line } == Nil,
+        card(Rune.Active(Skill.CunningStrike)).lastOption.contains(s"Активный навык: «${Skill.CunningStrike.label}»"),
+        card(Rune.Passive(PassiveKind.Marauder)).lastOption.contains(s"Пассивный навык: «${PassiveKind.Marauder.label}»"),
+        all.forall(r => card(r).lastOption.contains(RuneStone.skillLine(r))),
+        all.forall(r => !card(r).exists(_.contains("расходует … энергии")) && !card(r).exists(_.contains(r.description)))
+      )
+    },
+    test("у Казимира описание руны — подробно, с расходом энергии для героя, а не «…»; название пассивки — один раз") {
+      val hero  = TestFixtures.hero(UserId(1L)).copy(lvl = 20L)
+      val all   = PassiveKind.values.toList.map(Rune.Passive(_)) ++ Skill.values.toList.map(Rune.Active(_))
+      val strike = Rune.Active(Skill.CunningStrike)
+      assertTrue(
+        strike.describeFor(hero).contains(s"расходует ${Skill.CunningStrike.energyCost(hero)} энергии"),
+        all.forall(r => !r.describeFor(hero).contains("расходует … энергии")),
+        all.forall(r => !r.describeFor(hero).contains("{}") && !r.describeFor(hero).contains("{block}")),
         all.filter(r => r.description.startsWith(s"${r.label}:")).map(_.description) == Nil
       )
     },

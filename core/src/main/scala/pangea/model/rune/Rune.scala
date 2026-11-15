@@ -1,5 +1,6 @@
 package pangea.model.rune
 
+import pangea.model.hero.Hero
 import pangea.model.item.{Item, ItemDetails, PassiveKind, Rarity}
 import pangea.model.skill.Skill
 
@@ -14,6 +15,10 @@ sealed trait Rune {
   def label: String
   def description: String
   def isActive: Boolean
+
+  /** Что делает руна — для этого героя: у боевой расход энергии посчитан по
+    * нему, а не «…» (у Казимира, см. «Руны»); у пассивной — то же описание. */
+  def describeFor(hero: Hero): String
 }
 
 object Rune {
@@ -23,6 +28,9 @@ object Rune {
     def label: String       = skill.label
     def description: String = skill.description.replace("{}", "…")
     def isActive: Boolean   = true
+
+    def describeFor(hero: Hero): String =
+      skill.description.replace("{block}", hero.equipment.blockPct.toString).replace("{}", skill.energyCost(hero).toString)
   }
 
   final case class Passive(kind: PassiveKind) extends Rune {
@@ -33,6 +41,8 @@ object Rune {
     // срезаем здесь, описания пассивок не трогаем.
     def description: String = kind.describe.stripPrefix(s"${kind.label}: ")
     def isActive: Boolean   = false
+
+    def describeFor(@scala.annotation.unused hero: Hero): String = description
   }
 
   val ActivePrefix: String  = "s:"

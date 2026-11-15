@@ -473,7 +473,7 @@ case class MentorKazimirState(heroDao: HeroDao, inventoryRepo: InventoryReposito
       val cap  = Rune.cap(hero.lvl)
       val body = pageEntries.map { case (rune, where) =>
         val n = hero.runes.understandingOf(rune)
-        s"${if (rune.isActive) "⚔" else "🔹"} ${rune.label}$where\n${rune.description}\n" +
+        s"${if (rune.isActive) "⚔" else "🔹"} ${rune.label}$where\n${rune.describeFor(hero)}\n" +
           content.format("kazimir.runes.line", "n" -> n.toString, "max" -> cap.toString, "strength" -> Rune.strengthText(n))
       }
       val header = content.text("kazimir.runes.header") + (if (totalPages > 1) s" (${p + 1}/$totalPages)" else "")

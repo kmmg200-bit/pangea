@@ -163,12 +163,20 @@ object RuneStone {
     else look(rune).engraving
 
   /** Строки карточки: узор, то, что чувствуешь, глядя на него, у малой — ещё и
-    * приписка про складывание, и напоследок — что даст сама руна. */
+    * приписка про складывание, и напоследок — какой навык даст руна: одним
+    * названием, как у вещей с навыком ([[skillLine]]). Подробно, что он делает,
+    * — у Казимира в «Рунах» (решение пользователя: подробное описание на камне
+    * читалось дважды — «Хитрый выстрел: Хитрый выстрел на упреждение…» — и
+    * тянуло за собой «расходует … энергии»). */
   def describe(rune: Rune, size: RuneStoneSize): List[String] = {
     val fold = Option.when(size == RuneStoneSize.Small)(
       s"Места в сумке не занимает; $PiecesPerBig таких складываются в большую руну.")
-    List(engraving(rune, size), Insight) ++ fold ++ List(s"${rune.label}: ${rune.description}")
+    List(engraving(rune, size), Insight) ++ fold ++ List(skillLine(rune))
   }
+
+  /** Какой навык даст руна — теми же словами, что у вещей (см. `Item.statsLines`). */
+  def skillLine(rune: Rune): String =
+    if (rune.isActive) s"Активный навык: «${rune.label}»" else s"Пассивный навык: «${rune.label}»"
 
   /** Готовый предмет. Уровня у камня нет, редкость служебная — в заголовке её не
     * видно (см. `Item.displayTitle`), а цена у Ришелье своя, по размеру. */
