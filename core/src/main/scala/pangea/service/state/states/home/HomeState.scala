@@ -25,7 +25,8 @@ import pangea.service.purse.Purse
 import pangea.service.schedule.Scheduler
 import pangea.service.state.states.{EquipmentState, InventoryState, LootState}
 import pangea.service.state.{AppButton, AzatData, BartiRoofQuest, BeltContents, FirstStepsQuest, ItemMenu, NpcQuestDialog, NpcQuestLog, QuestSupport,
-  SlotChoice, State, StoryBrandQuest, StoryFaceQuest, StoryLine, StoryMorningQuest, StoryPowderQuest, StoryToolQuest, UserAction}
+  SlotChoice, State, StoryBrandQuest, StoryClearingQuest, StoryFaceQuest, StoryLine, StoryMorningQuest, StoryPowderQuest,
+  StoryToolQuest, UserAction}
 import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -90,6 +91,7 @@ case class HomeState(
       "HomeJunonaBrey"      -> Target.Run { (u, _, r) => junonaBrey(u, r) },
       "HomeJunonaTestimony" -> Target.Run { (u, _, r) => junonaTestimony(u, r) },
       "HomeJunonaRoof"      -> Target.Run { (u, _, r) => junonaRoof(u, r) },
+      "HomeJunonaClearing"  -> Target.Run { (u, _, r) => junonaClearing(u, r) },
       "HomeFurnItem"   -> Target.Run { (u, ua, r) => furnItem(u, ua, r) },
       "HomeFurnBuy"    -> Target.Run { (u, ua, r) => furnBuy(u, ua, r) },
       "HomeClutterPay" -> Target.Run { (u, _, r) => clutterPay(u, r) },
@@ -187,10 +189,14 @@ case class HomeState(
       // потом выслушивает, что он сказал.
       brey   <- junonaMorningOpen(user, StoryMorningQuest.toJunona)
       told   <- junonaMorningOpen(user, StoryMorningQuest.toTestimony)
+      // «Просека», путь Щита: пропуск при герое — Юнона узнаёт свою печать.
+      seal   <- junonaClearingOpen(user)
       marked  = Option.when(story)(Choice("HomeJunonaStory", content.text("story.storyBrand.junona.label"), row = Some(houses.size))) orElse
                   Option.when(copies)(Choice("HomeJunonaFace", content.text("story.storyFace.junona.label"), row = Some(houses.size))) orElse
                   Option.when(brey)(Choice("HomeJunonaBrey", content.text("story.storyMorning.junona.label"), row = Some(houses.size))) orElse
                   Option.when(told)(Choice("HomeJunonaTestimony", content.text("story.storyMorning.junona.testimonyLabel"),
+                    row = Some(houses.size))) orElse
+                  Option.when(seal)(Choice("HomeJunonaClearing", content.text("story.storyClearing.junona.label"),
                     row = Some(houses.size)))
       // «Крыша» Барти, путь Щита: квитанция ночной стражи при герое — своей
       // кнопкой, рядом с сюжетной: побочное задание главу не ждёт.
@@ -301,6 +307,27 @@ case class HomeState(
                 quests <- NpcQuestLog.load(heroDao, user.userId)
                 _      <- NpcQuestLog.save(heroDao, user.userId, BartiRoofQuest.step(quests, 3))
                 _      <- renderer.show(user, Screen(content.text("barti.roof.junona.text").trim, Nil))
+              } yield ())
+      res  <- office(user, renderer)
+    } yield res
+
+  /** «Просека» (путь Щита) на шаге Юноны и пропуск на просеку при герое. */
+  private def junonaClearingOpen(user: User): Task[Boolean] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (!StoryClearingQuest.toJunona(quests)) ZIO.succeed(false)
+      else getHero(user).flatMap(hero => inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)))
+        .map(inv => QuestSupport.hasItem(inv.items.data, QuestItemKind.StoryPass))
+    }
+
+  /** Юнона узнаёт на бирке свою печать — чужой рукой — и пишет встречный
+    * приказ; Горн уже знает. Глава на втором шаге: на просеку с Горном. */
+  private def junonaClearing(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      open <- junonaClearingOpen(user)
+      _    <- ZIO.when(open)(for {
+                quests <- NpcQuestLog.load(heroDao, user.userId)
+                _      <- NpcQuestLog.save(heroDao, user.userId, StoryClearingQuest.step(quests, 2))
+                _      <- renderer.show(user, Screen(content.text("story.storyClearing.junona.text").trim, Nil))
               } yield ())
       res  <- office(user, renderer)
     } yield res

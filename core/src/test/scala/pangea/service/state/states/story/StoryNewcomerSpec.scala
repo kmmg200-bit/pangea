@@ -17,7 +17,8 @@ import pangea.service.state.StoryToolQuest.Path
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.battle.BattleState
 import pangea.service.state.states.{DeathState, InventoryState}
-import pangea.service.state.{NpcQuestLog, QuestJournal, StoryLine, StoryNewcomerQuest, StoryPowderQuest, StoryToolQuest, UserAction}
+import pangea.service.state.{NpcQuestLog, QuestJournal, StoryClearingQuest, StoryLine, StoryNewcomerQuest, StoryPowderQuest,
+  StoryToolQuest, UserAction}
 import pangea.test._
 import zio.test._
 import zio.{Task, ZIO}
@@ -26,7 +27,7 @@ import zio.{Task, ZIO}
   * отмеченный, — и за ним приходят раньше героя: у Тени стража совета, у Щита и
   * одиночки — ловцы Братства с сетями. После боя — куда его девать: Братству,
   * совету или через изгородь подальше. Исход идёт в «как и вы», в сумке —
-  * пропуск на просеку, глава 8 висит до обновления. */
+  * пропуск на просеку, глава 8 «Просека» — следом. */
 object StoryNewcomerSpec extends ZIOSpecDefault {
 
   private val userId   = UserId(1L)
@@ -178,7 +179,7 @@ object StoryNewcomerSpec extends ZIOSpecDefault {
               assertTrue(c.text("questStats.storyNewcomer.hedge").contains("через изгородь"))
     },
 
-    test("смерть на площади — проснуться там же, шаг тот же; журнал и карточка пропуска — «Просека» с обновлением") {
+    test("смерть на площади — проснуться там же, шаг тот же; журнал и карточка пропуска — что делать в «Просеке»") {
       def die(path: Path, story: String) =
         for {
           c    <- content
@@ -199,8 +200,9 @@ object StoryNewcomerSpec extends ZIOSpecDefault {
         journal = QuestJournal.render(c, hero, LoreData.empty, after, DailyQuests.empty, None, 0L)
         pass    = InventoryState.questText(c, QuestItemKind.item(QuestItemKind.StoryPass).copy(id = 982L), after, 31L)
       } yield assertTrue(List(guard, catchr).forall(_ == ((Some(List("story.storyNewcomer.square.death")), Some(StateType.CityCenter), true)))) &&
-              assertTrue(journal.contains("📌 «Просека»") && journal.contains("глава откроется с обновлением")) &&
-              assertTrue(pass.contains("Пропуск на просеку") && pass.contains("станет ясно с обновлением 🔜"))
+              assertTrue(journal.contains("📌 «Просека»") && journal.contains("войти с ящиком шнапса Барти в лагерь Чернолома")) &&
+              assertTrue(pass.contains("Пропуск на просеку") && pass.contains("шнапс ящиками") &&
+                pass.contains(Difficulty.render(StoryClearingQuest.Level)))
     }
   )
 }

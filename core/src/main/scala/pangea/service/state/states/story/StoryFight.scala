@@ -21,14 +21,16 @@ object StoryFight {
   /** Записать бой: стартовая энергия врагов — как у всех мобов, гости — на
     * ближайших к герою свободных местах ([[StoryMorningQuest.withGuests]]),
     * `story` — ключ боя (без «Сбежать», награда как за обычный), добыча
-    * вернёт в `back` с отметкой `wonKey`. Экран боя покажет сам бой. */
+    * вернёт в `back` с отметкой `wonKey`. `kegs` — сколько бочек с порохом
+    * стоит на поле (см. PowderKeg). Экран боя покажет сам бой. */
   def start(heroDao: HeroDao, user: User, hero: Hero, foes: List[Monster], guests: List[BattleAlly], story: String,
-            back: StateType, wonKey: String): Task[Unit] =
+            back: StateType, wonKey: String, kegs: Int = 0): Task[Unit] =
     for {
       energies <- ZIO.foreach(foes)(m =>
                     Random.nextLongBetween(MonsterEnergy.StartPctMin, MonsterEnergy.StartPctMax + 1L)
                       .map(pct => MonsterEnergy.startEnergy(m.lvl, m.rarity, pct)))
-      battle    = StoryMorningQuest.withGuests(SoloPveBattle.fromGroup(foes, hero, energies).copy(story = Some(story)), guests)
+      battle    = StoryMorningQuest.withGuests(
+                    SoloPveBattle.fromGroup(foes, hero, energies).copy(story = Some(story), kegs = kegs), guests)
       routing   = LootData(Nil, Nil, returnState = Some(back), eventData = Some(mark(wonKey)))
       _        <- heroDao.writeActiveBattle(user.userId, battle.asJson)
       _        <- heroDao.writeSceneData(user.userId, routing.asJson)

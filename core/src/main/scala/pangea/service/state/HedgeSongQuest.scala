@@ -106,10 +106,14 @@ object HedgeSongQuest {
   /** Элиар в строю: именной эльф уровня задания, на полных силах. Умения у
     * него свои, союзничьи ([[pangea.model.squad.AllySkill]]); место ему
     * раздаёт бой. */
-  def elf: BattleAlly = {
-    val stats = MonsterGenerator.generateOfRaceAndRarity(Level, Race.Elf, Rarity.Legendary).fightStats
+  def elf: BattleAlly = elfAt(Level)
+
+  /** Тот же Элиар уровня `lvl` — так он встаёт в строй и в других заданиях
+    * (на просеке Чернолома — уровнем главы). */
+  def elfAt(lvl: Int): BattleAlly = {
+    val stats = MonsterGenerator.generateOfRaceAndRarity(lvl, Race.Elf, Rarity.Legendary).fightStats
     BattleAlly(AllyKind.HedgeElf, position = 0, hp = stats.hp, armor = stats.armor, energy = stats.energy,
-      stats = stats, lvl = Level.toLong, undead = Some(UndeadForm(ElfName, Level.toLong, stats)), home = 0)
+      stats = stats, lvl = lvl.toLong, undead = Some(UndeadForm(ElfName, lvl.toLong, stats)), home = 0)
   }
 
   /** Поставить Элиара в строй — на ближайшее к герою свободное место. Отряд

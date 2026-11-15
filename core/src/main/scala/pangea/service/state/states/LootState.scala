@@ -94,6 +94,7 @@ case class LootState(
         StateType.MurlocElder, StateType.MurlocVillage, StateType.Home, StateType.SquadMine, StateType.StrayCasket,
         StateType.HedgeSong, StateType.BarrelReturn, StateType.StoryCache, StateType.StoryWarehouse, StateType.StoryBridge,
         StateType.StoryBindery, StateType.StoryGraveyard, StateType.StoryDen, StateType.StoryCellar, StateType.BartiHouse, StateType.BartiShop, StateType.StorySquare,
+        StateType.StoryClearing,
         StateType.BartiMeet, StateType.BartiCaravan, StateType.Construction,
         StateType.JorgenLair, StateType.BramblHall, StateType.PlukhHunt, StateType.FaelinRoots,
         StateType.Village, StateType.VillageBandits, StateType.VillageSpiders, StateType.VillageCaravan,

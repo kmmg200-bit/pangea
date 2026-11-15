@@ -87,6 +87,7 @@ import pangea.model.state.StateType.{
   StoryDen,
   StoryCellar,
   StorySquare,
+  StoryClearing,
   BartiMeet,
   BartiHouse,
   BartiCaravan,
@@ -174,7 +175,8 @@ import pangea.service.state.states.merc.{BramblHallState, FaelinRootsState, Jorg
 import pangea.service.state.states.village.{VillageCaravanState, VillageLairState, VillageState, VillageTrailState}
 import pangea.service.state.VillageLair
 import pangea.service.state.states.story.{StoryArchiveState, StoryBinderyState, StoryBridgeState, StoryCacheState, StoryCellarState,
-  StoryCloakState, StoryDenState, StoryGraveyardState, StoryMeetingState, StorySojkaState, StorySquareState, StoryWarehouseState}
+  StoryClearingState, StoryCloakState, StoryDenState, StoryGraveyardState, StoryMeetingState, StorySojkaState, StorySquareState,
+  StoryWarehouseState}
 import pangea.service.state.states.race.RaceQuestState
 import pangea.service.state.states.name.NameChangeState
 import pangea.service.state.states.merchant.MerchantState
@@ -380,6 +382,7 @@ object StatesMap {
           StoryDen          -> StoryDenState(heroDao, inventoryRepo, itemRepo, content, bank),
           StoryCellar       -> StoryCellarState(heroDao, content),
           StorySquare       -> StorySquareState(heroDao, inventoryRepo, itemRepo, content, outcomes),
+          StoryClearing     -> StoryClearingState(heroDao, inventoryRepo, itemRepo, content, bank),
           BartiMeet         -> BartiMeetState(heroDao, inventoryRepo, itemRepo, content),
           BartiHouse        -> BartiHouseState(heroDao, inventoryRepo, content, Some(itemRepo)),
           BartiCaravan      -> BartiCaravanState(heroDao, inventoryRepo, content, outcomes, Some(itemRepo), Some(parcels)),

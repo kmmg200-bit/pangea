@@ -126,6 +126,9 @@ final class QuestCard(heroDao: HeroDao, inventoryRepo: InventoryRepository, item
       case "StoryBartiGo"  => fromCity(StoryMorningQuest.atBarti(quests), "story.storyMorning.card.onlyInCity", StateType.BartiHouse)
       // «Новенький»: с карточки описи — на главную площадь, из города.
       case "StorySquareGo" => fromCity(StoryNewcomerQuest.atSquare(quests), "story.storyNewcomer.card.onlyInCity", StateType.StorySquare)
+      // «Просека»: с карточки пропуска — к просеке в изгороди, из лабиринта.
+      case "StoryClearingGo" =>
+        inMaze(StoryClearingQuest.atClearing(quests), "story.storyClearing.card.onlyInLabyrinth", StateType.StoryClearing)
       // «Крыша»: с карточки квитанции — в лавку Барти, из города.
       case "BartiShopGo"   => fromCity(BartiRoofQuest.toShop(quests), "barti.roof.card.onlyInCity", StateType.BartiShop)
       case _                => Go.Stale
@@ -183,7 +186,7 @@ object QuestCard {
     "StrayGo", "BarrelTrail", "StoryCacheGo", "JorgenLairGo", "FaelinRootsGo", "PlukhHuntGo",
     "StoryPortGo", "StoryArchiveGo", "StoryGraveyardGo", "StoryBinderyGo", "StoryMeetGo", "StorySojkaGo",
     "StoryBridgeGo", "BartiHouseGo", "BartiCaravanGo", "VillageGo", "VillageReturn",
-    "StoryDenGo", "StoryCellarGo", "StoryBartiGo", "BartiShopGo", "StorySquareGo")
+    "StoryDenGo", "StoryCellarGo", "StoryBartiGo", "BartiShopGo", "StorySquareGo", "StoryClearingGo")
 
   /** Ответы на вопрос кнопки `id`: карта Кельвина спрашивает, брать ли Марису. */
   def answers(id: String): Set[String] =
@@ -260,6 +263,9 @@ object QuestCard {
       // Опись урожая: на главную площадь — к новенькому.
       case Some(QuestItemKind.StoryHarvest) if StoryNewcomerQuest.atSquare(quests) =>
         Some(plain("StorySquareGo", "story.storyNewcomer.card.squareLabel"))
+      // Пропуск на просеку: к бригаде Чернолома, в изгородь (у Щита — после Юноны).
+      case Some(QuestItemKind.StoryPass) if StoryClearingQuest.atClearing(quests) =>
+        Some(plain("StoryClearingGo", "story.storyClearing.card.goLabel"))
       // Квитанция ночной стражи: Тени — за ответом Братству, ночью — встречать стражу.
       case Some(QuestItemKind.BartiReceipt) if BartiRoofQuest.toShop(quests) =>
         Some(plain("BartiShopGo", if (BartiRoofQuest.toNight(quests)) "barti.roof.card.nightLabel" else "barti.roof.card.shopLabel"))

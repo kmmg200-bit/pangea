@@ -24,8 +24,8 @@ import pangea.service.state.states.home.Racks
 import pangea.service.state.{BarrelThievesQuest, BartiRoofQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HerbLore, HotGoodsQuest, ItemMenu,
   JorgenQuest,
   FaelinQuest, MarisaQuest, MurlocQuest, NpcQuestLog, PlukhQuest, QuestCard, QuestGoods, SlotChoice, StackMove, State,
-  StoryBrandQuest, StoryClearingQuest, StoryFaceQuest, StoryListQuest, StoryMarkQuest, StoryMorningQuest, StoryNewcomerQuest,
-  StoryPowderQuest,
+  StoryBrandQuest, StoryClearingQuest, StoryFaceQuest, StoryFurnaceQuest, StoryListQuest, StoryMarkQuest, StoryMorningQuest,
+  StoryNewcomerQuest, StoryPowderQuest,
   StoryToolQuest, StrayCasketQuest, UiScene, UserAction, Villages}
 import zio.{Random, Task, ZIO}
 
@@ -129,7 +129,7 @@ case class InventoryState(
         StateType.StoryGraveyard, StateType.BartiHouse, StateType.BartiCaravan, StateType.JorgenLair, StateType.VillageTrail,
         StateType.PlukhHunt, StateType.FaelinRoots, StateType.Village, StateType.VillageBandits, StateType.VillageSpiders,
         StateType.VillageCaravan, StateType.StoryDen, StateType.StoryCellar, StateType.BartiShop,
-        StateType.StorySquare) ++ BackpackOrigins
+        StateType.StorySquare, StateType.StoryClearing) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.
@@ -1428,10 +1428,15 @@ object InventoryState {
         val now = StoryNewcomerQuest.cardLine(content, quests)
         if (now.isEmpty) s"${item.displayTitle}\n\n${QuestItemKind.StoryHarvest.description}"
         else s"${item.displayTitle}\n${difficulty(StoryNewcomerQuest.Level)}\n\n${QuestItemKind.StoryHarvest.description}\n\n$now"
-      // Пропуск на просеку — зацепка главы 8: пока глава не открыта — «с обновлением».
+      // Пропуск на просеку ведёт главу 8: пока она идёт — сложность и что делать сейчас.
       case Some(QuestItemKind.StoryPass) =>
         val now = StoryClearingQuest.cardLine(content, quests)
-        s"${item.displayTitle}\n\n${QuestItemKind.StoryPass.description}" + (if (now.isEmpty) "" else "\n\n" + now)
+        if (now.isEmpty) s"${item.displayTitle}\n\n${QuestItemKind.StoryPass.description}"
+        else s"${item.displayTitle}\n${difficulty(StoryClearingQuest.Level)}\n\n${QuestItemKind.StoryPass.description}\n\n$now"
+      // Накладная на лес — зацепка главы 9: пока глава не открыта — «с обновлением».
+      case Some(QuestItemKind.StoryWaybill) =>
+        val now = StoryFurnaceQuest.cardLine(content, quests)
+        s"${item.displayTitle}\n\n${QuestItemKind.StoryWaybill.description}" + (if (now.isEmpty) "" else "\n\n" + now)
       case Some(QuestItemKind.BartiPlan) =>
         val now = HotGoodsQuest.cardLine(content, quests)
         s"${item.displayTitle}\n${difficulty(HotGoodsQuest.Level)}\n\n${QuestItemKind.BartiPlan.description}" +

@@ -1,0 +1,20 @@
+package pangea.service.state
+
+import pangea.engine.SceneContent
+import pangea.model.quest.{NpcQuest, NpcQuests}
+
+/** Глава 9 основной линии, «Печь» ([[NpcQuest.StoryFurnace]], см.
+  * [[StoryLine]]). Ведёт её накладная на лес из главы 8: живое дерево из
+  * изгороди везут в Загон, на печной двор. Пока глава берётся в конце
+  * «Просеки» и висит в журнале — откроется с обновлением. */
+object StoryFurnaceQuest {
+
+  /** Уровень задания: по нему сложность, враги и награда. */
+  val Level: Int = 41
+
+  /** Строка карточки накладной: глава 8 закрыта, а 9-я ещё не открыта —
+    * «откроется с обновлением». Иначе — ничего. */
+  def cardLine(content: SceneContent, q: NpcQuests): String =
+    if (!q.isDone(NpcQuest.StoryClearing) || q.isDone(NpcQuest.StoryFurnace)) ""
+    else content.text("story.storyFurnace.card.soon")
+}
