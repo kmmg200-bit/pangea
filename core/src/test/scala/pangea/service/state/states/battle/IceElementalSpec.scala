@@ -224,14 +224,38 @@ object IceElementalSpec extends ZIOSpecDefault {
               assertTrue(stuck._2.group.heroPos == 1 && !stuck._3.contains("Ветер отбрасывает Вас"))
     },
 
-    test("ледяной панцирь возвращает 30% брони, а HP не трогает") {
+    test("ледяной панцирь возвращает 30% брони и 5% HP — как прочие элементали") {
       val h = hero()
       val b = iceBattle(h, turn = 3, at = 1).copy(monsterCurrentHp = 1500L, monsterCurrentArmor = 1650L)
       for {
         r <- turn(h, b, "Wait", ints = List(Miss))
         (_, after, log) = r
-      } yield assertTrue(log.contains("Элементаль обрастает свежим льдом… Он восстановил 990 брони!")) &&
-              assertTrue(after.monsterCurrentArmor == 1650L + 990L && after.monsterCurrentHp == 1500L)
+      } yield assertTrue(ice.ShellHpPct == 5L && ice.ShellArmorPct == 30L) &&
+              assertTrue(log.contains("Элементаль обрастает свежим льдом… Он восстановил 150 HP и 990 брони!")) &&
+              assertTrue(after.monsterCurrentArmor == 1650L + 990L && after.monsterCurrentHp == 1500L + 150L)
+    },
+
+    test("панцирь: броня цела, а HP просел — всё равно лечит; броню выше потолка не срезает") {
+      val h  = hero()
+      // огонь срезал потолок на 330, а броня цела — она выше нового потолка
+      val b0 = iceBattle(h, turn = 3, at = 1).copy(monsterCurrentHp = 1500L, monsterCurrentArmor = 3300L)
+      val b  = b0.copy(effects = b0.effects.copy(monsterMaxArmorCut = 330L))
+      for {
+        r <- turn(h, b, "Wait", ints = List(Miss))
+        (_, after, log) = r
+      } yield assertTrue(log.contains("Он восстановил 150 HP и 0 брони!")) &&
+              assertTrue(after.monsterCurrentHp == 1650L && after.monsterCurrentArmor == 3300L)
+    },
+
+    test("панцирь у целого: чинить нечего — хода на него не тратит") {
+      val h = hero()
+      val b = iceBattle(h, turn = 3, at = 1)
+      for {
+        r <- turn(h, b, "Wait", ints = List(Miss))
+        (_, after, log) = r
+      } yield assertTrue(b.monsterCurrentHp == stats.hp && b.monsterCurrentArmor == stats.armor) &&
+              assertTrue(!log.contains("обрастает свежим льдом")) &&
+              assertTrue(after.monsterCurrentHp == stats.hp && after.monsterCurrentArmor == stats.armor)
     },
 
     test("холод героя его не сковывает, а наращивает лёд: броня прибавляется, защита не тает") {

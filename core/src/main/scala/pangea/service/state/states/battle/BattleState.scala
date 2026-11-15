@@ -2828,16 +2828,23 @@ case class BattleState(
         if (energy < cost || blizzardTargets(battle).isEmpty) ZIO.succeed((next, hero, ""))
         else ZIO.succeed(blizzard(hero, spend(cost, next), atk, nowMs))
 
-      // 4) Ледяной панцирь: броня обратно — не выше потолка, что оставил огонь;
-      //    HP он себе не возвращает.
+      // 4) Ледяной панцирь: броня обратно — не выше потолка, что оставил огонь, —
+      //    и HP, как у прочих элементалей; только если есть что чинить. Броню
+      //    выше потолка (потолок упал, пока она была цела) он не срезает.
       case 3 =>
-        val cost = ice.ShellCostPerLvl * lvl
-        val cap  = monsterArmorCap(battle)
-        if (energy < cost || battle.monsterCurrentArmor >= cap) ZIO.succeed((next, hero, ""))
+        val cost  = ice.ShellCostPerLvl * lvl
+        val maxHp = battle.monsterStats.hp
+        val cap   = monsterArmorCap(battle)
+        val hurt  = battle.monsterCurrentHp < maxHp || battle.monsterCurrentArmor < cap
+        if (energy < cost || !hurt) ZIO.succeed((next, hero, ""))
         else {
-          val newArmor = (battle.monsterCurrentArmor + battle.monsterStats.armor * ice.ShellArmorPct / 100L).min(cap)
-          ZIO.succeed((spend(cost, next).copy(monsterCurrentArmor = newArmor), hero,
-            content.format("battle.ice.shell", "armor" -> (newArmor - battle.monsterCurrentArmor).toString)))
+          val newHp    = (battle.monsterCurrentHp + maxHp * ice.ShellHpPct / 100L).min(maxHp)
+          val newArmor = (battle.monsterCurrentArmor + battle.monsterStats.armor * ice.ShellArmorPct / 100L)
+                           .min(cap.max(battle.monsterCurrentArmor))
+          ZIO.succeed((spend(cost, next).copy(monsterCurrentHp = newHp, monsterCurrentArmor = newArmor), hero,
+            content.format("battle.ice.shell",
+              "hp" -> (newHp - battle.monsterCurrentHp).toString,
+              "armor" -> (newArmor - battle.monsterCurrentArmor).toString)))
         }
 
       // 5) Пропуск хода.

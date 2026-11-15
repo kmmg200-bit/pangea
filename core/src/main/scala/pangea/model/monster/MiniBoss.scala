@@ -500,8 +500,11 @@ object MiniBoss extends Enum[MiniBoss] {
     val BlizzardPush: Int            = 1
     val BlizzardCostPerLvl: Long     = 10L
 
-    /** Ледяной панцирь: сколько % потолка брони он себе возвращает (HP — нет). */
+    /** Ледяной панцирь: сколько % своих максимумов он себе возвращает — брони (не
+      * выше потолка, что оставил огонь) и HP. HP — с 2026-11-15, как у прочих
+      * элементалей (решил пользователь). */
     val ShellArmorPct: Long   = 30L
+    val ShellHpPct: Long      = 5L
     val ShellCostPerLvl: Long = 7L
 
     def stats(bossLvl: Long): FightStats = FightStats(
