@@ -143,6 +143,9 @@ final class QuestCard(heroDao: HeroDao, inventoryRepo: InventoryRepository, item
         fromCity(StoryCollectorQuest.toFight(quests), "story.storyCollector.card.onlyInCity", StateType.StoryCollector)
       case "StoryWarehouseGo" =>
         fromCity(StoryCollectorQuest.toWarehouse(quests), "story.storyCollector.card.onlyInCity", StateType.StoryCollector)
+      // Рубеж II: с карточки купчей — на склад, к Сборщику.
+      case "StoryFeedGo" =>
+        fromCity(StoryFeedQuest.open(quests), "story.storyCollector.card.onlyInCity", StateType.StoryFeed)
       case _                => Go.Stale
     }
   }
@@ -199,7 +202,7 @@ object QuestCard {
     "StoryPortGo", "StoryArchiveGo", "StoryGraveyardGo", "StoryBinderyGo", "StoryMeetGo", "StorySojkaGo",
     "StoryBridgeGo", "BartiHouseGo", "BartiCaravanGo", "VillageGo", "VillageReturn",
     "StoryDenGo", "StoryCellarGo", "StoryBartiGo", "BartiShopGo", "StorySquareGo", "StoryClearingGo",
-    "BartiSaltAsk", "BartiSaltGo", "StoryFurnaceGo", "StoryCollectorGo", "StoryWarehouseGo")
+    "BartiSaltAsk", "BartiSaltGo", "StoryFurnaceGo", "StoryCollectorGo", "StoryWarehouseGo", "StoryFeedGo")
 
   /** Ответы на вопрос кнопки `id`: карта Кельвина спрашивает, брать ли Марису. */
   def answers(id: String): Set[String] =
@@ -296,6 +299,9 @@ object QuestCard {
       // Купчая на дегтярный склад: на склад — к тем, кто там ждёт.
       case Some(QuestItemKind.StoryDeed) if StoryCollectorQuest.toWarehouse(quests) =>
         Some(plain("StoryWarehouseGo", "story.storyCollector.card.warehouseLabel"))
+      // Купчая, Рубеж II: ждать Сборщика на складе, потом — к связанному.
+      case Some(QuestItemKind.StoryDeed) if StoryFeedQuest.open(quests) =>
+        Some(plain("StoryFeedGo", if (StoryFeedQuest.toFight(quests)) "story.storyFeed.card.goFight" else "story.storyFeed.card.goChoice"))
       // Квитанция ночной стражи: Тени — за ответом Братству, ночью — встречать стражу.
       case Some(QuestItemKind.BartiReceipt) if BartiRoofQuest.toShop(quests) =>
         Some(plain("BartiShopGo", if (BartiRoofQuest.toNight(quests)) "barti.roof.card.nightLabel" else "barti.roof.card.shopLabel"))

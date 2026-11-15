@@ -255,7 +255,10 @@ case class BattleEffects(
   // не сходит с места (см. MiniBoss.IceElemental.FrozenTurns). Своё поле, а не
   // `heroRootedTurns`: тот — «пригвождён» с арены. Option — чтобы бои, записанные
   // раньше, читались.
-  heroFrozenTurns:      Option[Int]                = None
+  heroFrozenTurns:      Option[Int]                = None,
+  // Сборщик тянет узор из героя (Рубеж II, см. PatternPull): сколько раундов
+  // ещё атака героя ниже. Option — чтобы бои, записанные раньше, читались.
+  heroDrainTurns:       Option[Int]                = None
 ) {
 
   /** Только то, что висит на МОБЕ: яд, кровь, огонь, дебафы. Геройская
@@ -305,7 +308,8 @@ case class BattleEffects(
     heroWebTurns         = heroWebTurns,
     heroSkillJammed      = heroSkillJammed,
     heroCursedTurns      = heroCursedTurns,
-    heroFrozenTurns      = heroFrozenTurns
+    heroFrozenTurns      = heroFrozenTurns,
+    heroDrainTurns       = heroDrainTurns
   )
 
   /** Своя геройская половина плюс мобовая половина другого набора. */
@@ -388,6 +392,9 @@ case class BattleEffects(
 
   /** Конец раунда: проклятие на герое держит на раунд меньше. */
   def curseTicked: BattleEffects = copy(heroCursedTurns = heroCursedTurns.map(_ - 1).filter(_ > 0))
+
+  /** Тянет ли сейчас Сборщик узор из героя: атака героя ниже (см. PatternPull). */
+  def heroDrained: Boolean = heroDrainTurns.exists(_ > 0)
 
   /** Бережёт ли героя защитный отвар от этого. */
   def warded(w: Ward): Boolean = heroWards.exists(_.contains(w))

@@ -256,6 +256,13 @@ object AllyKind extends Enum[AllyKind] {
     hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
     accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
 
+  /** Сойка — второй отмеченный Кинэта: на Рубеже II, если её простили в главе 4,
+    * она прыгает с крыши склада в бой. По силе мифическая, уровня задания; имя
+    * и статы — на самой союзнице, после боя в отряд не встаёт. Стихии нет. */
+  case object Sojka extends AllyKind("Сойка", Race.Human, None, maxLvl = 150L,
+    hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
+    accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
+
   val values: IndexedSeq[AllyKind] = findValues
 
   /** Кого можно нанять за столом таверны. Нежить и крысы туда не садятся. */

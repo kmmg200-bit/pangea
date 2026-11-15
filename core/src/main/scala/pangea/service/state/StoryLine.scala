@@ -41,14 +41,16 @@ object StoryLine {
     // Рубеж I: глава с выбором пути, последняя в Акте I.
     Chapter(NpcQuest.StoryTool),
     // Акт II: ветки — по пути Рубежа I. Глава 6 начинается дома (см.
-    // StoryMorningQuest.atHome), а Рубеж II пока висит до обновления.
+    // StoryMorningQuest.atHome).
     Chapter(NpcQuest.StoryMorning),
     Chapter(NpcQuest.StoryNewcomer),
     Chapter(NpcQuest.StoryClearing),
     Chapter(NpcQuest.StoryFurnace),
     Chapter(NpcQuest.StoryCollector),
     // Рубеж II: глава с выбором, последняя в Акте II.
-    Chapter(NpcQuest.StoryFeed)
+    Chapter(NpcQuest.StoryFeed),
+    // Акт III: пока висит до обновления.
+    Chapter(NpcQuest.StoryScars)
   )
 
   /** Главы, где шаги у каждого пути Рубежа I свои (см. [[step]]). */

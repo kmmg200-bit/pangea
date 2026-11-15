@@ -186,9 +186,15 @@ object NpcQuest extends Enum[NpcQuest] {
   case object StoryCollector extends NpcQuest("storyCollector")
 
   /** Рубеж II, «Чем кормить Клеймо» (задание 50-го уровня): берётся в конце
-    * главы 10 и пока висит в журнале — откроется с обновлением (см.
-    * StoryFeedQuest). */
+    * главы 10; ведёт купчая на дегтярный склад (см. StoryFeedQuest). Шаги: 1 —
+    * ночь на складе, бой со Сборщиком и его людьми; 2 — Сборщик связан, выбор:
+    * накормить, усмирить или приручить Клеймо. Закрыт — `counter` хранит выбор
+    * (StoryFeedQuest.Brand). Акт III ветвится по нему. */
   case object StoryFeed extends NpcQuest("storyFeed")
+
+  /** Акт III, «Шрамы мира» (глава 11): берётся в конце Рубежа II и пока висит в
+    * журнале — откроется с обновлением (см. StoryScarsQuest). */
+  case object StoryScars extends NpcQuest("storyScars")
 
   // ── Побочная линия Барти — дурачка-осведомителя, которого герой знает по
   // прошлой жизни (см. HotGoodsQuest, BigDealQuest).

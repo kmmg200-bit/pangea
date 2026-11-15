@@ -113,6 +113,18 @@ object Achievement extends Enum[Achievement] {
   case object OwnPath extends Achievement("Ничьё орудие",
     s"+${AchievementRates.PathStatPct}% к атаке")
 
+  /** Рубеж II, «накормить»: Клеймо забрало узор Сборщика (см. StoryFeedQuest). */
+  case object FedBrand extends Achievement("Сытое Клеймо",
+    s"+${AchievementRates.PathStatPct}% к атаке")
+
+  /** Рубеж II, «усмирить»: Сборщик отдан живым, Клеймо затихло. */
+  case object CalmBrand extends Achievement("Тихое Клеймо",
+    s"+${AchievementRates.PathStatPct}% к броне")
+
+  /** Рубеж II, «приручить»: Сборщик в подвале и учит, как Клеймо устроено. */
+  case object TameBrand extends Achievement("Ручное Клеймо",
+    s"+${AchievementRates.PathStatPct}% к интеллекту")
+
   // ── Собранные наборы ────────────────────────────────────────────────────────
   // За каждый набор, надетый целиком — все двенадцать вещей разом, — своё
   // достижение: прибавка к главному стату набора, та же, что у его двойки, но
@@ -396,20 +408,20 @@ object Achievement extends Enum[Achievement] {
   /** +% к защите, атаке, уклонению и точности от собранных наборов, путей,
     * выбранных на рубежах, и «Всего в золоте». */
   def defencePct(hero: Hero): Long  = setPct(hero, StoneGuardSet) + pathPct(hero, ShieldPath) + goldPct(hero)
-  def attackPct(hero: Hero): Long   = setPct(hero, WildFlameSet) + pathPct(hero, OwnPath) + goldPct(hero)
+  def attackPct(hero: Hero): Long   = setPct(hero, WildFlameSet) + pathPct(hero, OwnPath) + pathPct(hero, FedBrand) + goldPct(hero)
   def evasionPct(hero: Hero): Long  = setPct(hero, GhoulSet) + pathPct(hero, ShadowPath) + goldPct(hero)
   def accuracyPct(hero: Hero): Long = setPct(hero, HunterSet) + goldPct(hero)
 
-  /** +% к потолку брони от «Своего среди крыс», «Холодной крови» и «Всего в
-    * золоте» — как и у двойки «Крысы», в потолок, иначе прибавку срезала бы
-    * первая же починка. */
-  def armorPct(hero: Hero): Long = setPct(hero, RatSet) + setPct(hero, FrostSet) + goldPct(hero)
+  /** +% к потолку брони от «Своего среди крыс», «Холодной крови», «Тихого
+    * Клейма» и «Всего в золоте» — как и у двойки «Крысы», в потолок, иначе
+    * прибавку срезала бы первая же починка. */
+  def armorPct(hero: Hero): Long = setPct(hero, RatSet) + setPct(hero, FrostSet) + pathPct(hero, CalmBrand) + goldPct(hero)
 
   /** +% к потолку энергии от «Ловца молний». */
   def energyPct(hero: Hero): Long = setPct(hero, StormSet)
 
-  /** +% к интеллекту от «Повелителя мёртвых». */
-  def intPct(hero: Hero): Long = setPct(hero, NecromancerSet)
+  /** +% к интеллекту от «Повелителя мёртвых» и «Ручного Клейма». */
+  def intPct(hero: Hero): Long = setPct(hero, NecromancerSet) + pathPct(hero, TameBrand)
 
   /** Сколько интеллекта прибавляет «Зельевар I». */
   val BrewerIntBonus: Long = 2L

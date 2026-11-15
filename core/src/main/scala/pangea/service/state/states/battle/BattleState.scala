@@ -7,7 +7,7 @@ import pangea.domain.Rng
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.generator.loot.LootGenerator
 import pangea.generator.monster.MonsterGenerator
-import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Convoy, Element, Formation, GroupState, HealCurse, HealedWounds, MonsterSlot, Nature, Poison, PowderKeg, RaceTactics, Regen, RedSpider, SlainMonster, SoloPveBattle, SkillSlotState, SpiderWeb, TimedDefenceDebuff, Wagon, Ward}
+import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Convoy, Element, Formation, GroupState, HealCurse, HealedWounds, MonsterSlot, Nature, Poison, PatternPull, PowderKeg, RaceTactics, Regen, RedSpider, SlainMonster, SoloPveBattle, SkillSlotState, SpiderWeb, TimedDefenceDebuff, Wagon, Ward}
 import pangea.model.cave.CaveGenerator
 import pangea.model.item.ItemSet
 import pangea.model.squad.AllySkill
@@ -265,9 +265,12 @@ case class BattleState(
       // павших от неё разбираем тем же порядком, что павших от ауры.
       blasted  <- kegBlast(promoted4, now)
       promoted5 = promoteAfterKill(joeRises(blasted))
+      // Сборщик тянет узор из героя (Рубеж II): раз в несколько раундов —
+      // атака героя ниже, сам он лечится. Лежачего героя это не касается.
+      pulledOut = patternPull(promoted5)
       // Охрана вся полегла — стрелкам некого прикрывать: они бросают башни и
       // уходят, бой на этом кончается победой.
-      abandoned = towersAlone(promoted5)
+      abandoned = towersAlone(pulledOut)
       ended   <- endRound(battle, abandoned).map(preyFlees)
       // «Крыса» (порог 6): раз в раунд у героя из-под ног может выскочить своя.
       ratted  <- ratCall(hero, ended)
@@ -1664,12 +1667,16 @@ case class BattleState(
     // земля — точность и уклонение. Уклонению может достаться от обоих сразу.
     val stunned  = if (battle.effects.heroStunned) MiniBoss.StoneElemental.BurstDebuffPct else 0L
     val grounded = if (battle.effects.heroGrounded) MiniBoss.StoneElemental.GroundCutPct else 0L
-    if (stunned == 0L && grounded == 0L) fs
-    else fs.copy(
-      defence  = fs.defence * (100L - stunned) / 100L,
-      evasion  = fs.evasion * (100L - stunned - grounded).max(0L) / 100L,
-      accuracy = fs.accuracy * (100L - grounded) / 100L
-    )
+    val debuffed =
+      if (stunned == 0L && grounded == 0L) fs
+      else fs.copy(
+        defence  = fs.defence * (100L - stunned) / 100L,
+        evasion  = fs.evasion * (100L - stunned - grounded).max(0L) / 100L,
+        accuracy = fs.accuracy * (100L - grounded) / 100L
+      )
+    // Сборщик тянет узор (см. PatternPull): атака героя ниже, пока держится.
+    if (!battle.effects.heroDrained) debuffed
+    else debuffed.copy(atk = PatternPull.drainedAtk(debuffed.atk))
   }
 
   /** «Упырь» (порог 12): каждый убитый враг — пир, и герой восстанавливает часть
@@ -5266,7 +5273,7 @@ case class BattleState(
           val cleaned = battle.effects.copy(
             heroBurn = None, heroPoison = None, heroBleed = None,
             heroStunnedTurns = 0, heroGroundedTurns = 0, heroColdDefenceCut = 0, heroWebTurns = None,
-            heroSkillJammed = None, heroCursedTurns = None, heroFrozenTurns = None)
+            heroSkillJammed = None, heroCursedTurns = None, heroFrozenTurns = None, heroDrainTurns = None)
           TurnResult(hero, battle.copy(effects = cleaned),
             Vector(content.text("battle.flaskCleanse")) ++ qhLog, Outcome.Continue, endsRound = false)
 
@@ -5986,6 +5993,40 @@ case class BattleState(
       else stood.copy(outcome = Outcome.Victory)
     }
 
+  // ── Узор Сборщика ───────────────────────────────────────────────────────────
+
+  /** «Тянет узор» (см. [[PatternPull]]): раз в несколько раундов, в конце
+    * раунда, тот, кто это умеет (`SoloPveBattle.puller`), тянет Клеймо героя —
+    * только героя, стоящего на ногах. Атака героя падает на свои раунды, а сам
+    * он восстанавливает долю своего максимума HP — где бы ни стоял: в полях или
+    * в строю. Его нет на поле, раунд не кончился или бой решён — ничего. */
+  private[battle] def patternPull(res: TurnResult): TurnResult = {
+    val b = res.battle
+    b.puller match {
+      case Some(name) if res.outcome == Outcome.Continue && res.endsRound && PatternPull.due(b.roundsFought) &&
+                         !b.group.heroDown && res.hero.fightStats.hp > 0L =>
+        val atActive = b.monsterCurrentHp > 0L && b.customName.contains(name)
+        val slotIdx  = b.group.others.indexWhere(s => s.alive && s.customName.contains(name))
+        val healed: Option[(SoloPveBattle, Long)] =
+          if (atActive) {
+            val hp = (b.monsterCurrentHp + PatternPull.healOn(b.monsterStats.hp)).min(b.monsterStats.hp)
+            Some((b.copy(monsterCurrentHp = hp), hp - b.monsterCurrentHp))
+          }
+          else b.group.others.lift(slotIdx).map { s =>
+            val hp = (s.currentHp + PatternPull.healOn(s.stats.hp)).min(s.stats.hp)
+            (b.copy(group = b.group.copy(others = b.group.others.updated(slotIdx, s.copy(currentHp = hp)))), hp - s.currentHp)
+          }
+        healed match {
+          case None => res
+          case Some((after, gained)) =>
+            val drained = after.copy(effects = after.effects.copy(heroDrainTurns = Some(PatternPull.Turns)))
+            res.copy(battle = drained, log = res.log :+ content.format("battle.patternPull", "name" -> name,
+              "pct" -> PatternPull.AttackCutPct.toString, "turns" -> PatternPull.Turns.toString, "hp" -> gained.toString))
+        }
+      case _ => res
+    }
+  }
+
   // ── Бочки с порохом ─────────────────────────────────────────────────────────
 
   /** Бочки с порохом на поле (см. [[PowderKeg]]): в конце раунда одна может
@@ -6599,6 +6640,8 @@ case class BattleState(
           case pangea.model.squad.AllyKind.CouncilEnvoy => s
           // Э. встал рядом на одну ночь — и уходит по своим делам.
           case pangea.model.squad.AllyKind.BrotherhoodAgent => s
+          // Сойка спрыгнула с крыши на одну драку — и уходит по крышам.
+          case pangea.model.squad.AllyKind.Sojka => s
           case pangea.model.squad.AllyKind.Rat        => s.summonRat(form, a.lvl, nowMs, near = a.position + toSquad)
           case _                                      => s.admitRisen(form, a.lvl, nowMs)
         }
@@ -7733,7 +7776,8 @@ case class BattleState(
         Option.when(heroFx.heroWebbed)(SpiderWeb.Icon),
         Option.when(heroFx.heroCursed)(HealCurse.Icon),
         // Вмёрз в лёд (ледопад Ледяного элементаля).
-        Option.when(heroFx.heroFrozen)(MiniBoss.IceElemental.FrozenIcon)
+        Option.when(heroFx.heroFrozen)(MiniBoss.IceElemental.FrozenIcon),
+        Option.when(heroFx.heroDrained)(PatternPull.Icon)
       ).flatten
       if (parts.isEmpty) "" else " (" + parts.mkString(" ") + ")"
     }
@@ -8014,7 +8058,7 @@ object BattleState {
       Villages.SpidersStory, Villages.CaravanStory, pangea.service.state.BartiRoofQuest.FightStory,
       pangea.service.state.BartiDoorQuest.FightStory, pangea.service.state.StoryClearingQuest.FightStory,
       pangea.service.state.BartiDeliveryQuest.FightStory, pangea.service.state.BartiSaltQuest.FightStory,
-      pangea.service.state.BartiPitQuest.FightStory) ++
+      pangea.service.state.BartiPitQuest.FightStory, pangea.service.state.StoryFeedQuest.FightStory) ++
       pangea.service.state.StoryCollectorQuest.FightStories ++
       pangea.service.state.StoryFurnaceQuest.FightStories ++
       pangea.service.state.StoryMorningQuest.FightStories ++ pangea.service.state.StoryNewcomerQuest.FightStories
@@ -8093,6 +8137,7 @@ object BattleState {
     else if (a.kind == pangea.model.squad.AllyKind.Informant) "battle.ally.informantDown"
     else if (a.kind == pangea.model.squad.AllyKind.CouncilEnvoy) "battle.ally.councilEnvoyDown"
     else if (a.kind == pangea.model.squad.AllyKind.BrotherhoodAgent) "battle.ally.brotherhoodAgentDown"
+    else if (a.kind == pangea.model.squad.AllyKind.Sojka) "battle.ally.sojkaDown"
     else if (a.undead.isDefined) "battle.ally.crumbled"
     else "battle.ally.scroll"
 

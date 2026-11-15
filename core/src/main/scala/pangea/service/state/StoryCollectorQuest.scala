@@ -113,16 +113,17 @@ object StoryCollectorQuest {
       List.fill(Henchmen)(MonsterGenerator.generateOfRaceAndRarity(Level, FoeRace, HenchRarity))
 
   /** Кто встаёт в строй гостем: у Тени — Э., у Щита — Горн и двое искателей,
-    * у одиночки — Барти со сковородой; все — уровня задания. */
-  def guests(content: SceneContent, q: NpcQuests): List[BattleAlly] = path(q) match {
+    * у одиночки — Барти со сковородой; все — уровня задания (`lvl`: на Рубеже II
+    * те же гости встают его уровнем). */
+  def guests(content: SceneContent, q: NpcQuests, lvl: Int = Level): List[BattleAlly] = path(q) match {
     case Path.Shadow =>
-      List(StoryMorningQuest.guest(AllyKind.BrotherhoodAgent, content.text("story.storyCollector.agentName"), AgentRarity, Level))
+      List(StoryMorningQuest.guest(AllyKind.BrotherhoodAgent, content.text("story.storyCollector.agentName"), AgentRarity, lvl))
     case Path.Shield =>
       StoryMorningQuest.guest(AllyKind.GuildMaster, content.text("story.storyMorning.cellar.hornName"),
-        StoryMorningQuest.HornRarity, Level) ::
+        StoryMorningQuest.HornRarity, lvl) ::
         content.list("story.storyMorning.cellar.seekers").map(name =>
-          StoryMorningQuest.guest(AllyKind.GuildSeeker, name, StoryMorningQuest.SeekerRarity, Level))
-    case Path.Alone => List(StoryMorningQuest.bartiGuest(content, Level))
+          StoryMorningQuest.guest(AllyKind.GuildSeeker, name, StoryMorningQuest.SeekerRarity, lvl))
+    case Path.Alone => List(StoryMorningQuest.bartiGuest(content, lvl))
   }
 
   /** Строка карточки книги печи — что делать сейчас, по пути и шагу, пока склад

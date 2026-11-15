@@ -20,7 +20,7 @@ import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.{AzatData, BarrelThievesQuest, BartiDeliveryQuest, BartiDoorQuest, BartiPitQuest, BartiRoofQuest, BartiSaltQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HotGoodsQuest, JorgenQuest, LostSquadQuest, MarisaQuest,
-  FaelinQuest, MurlocQuest, PlukhQuest, QuestOutcomeLog, State, StoryFaceQuest, StoryClearingQuest, StoryCollectorQuest, StoryFurnaceQuest, StoryListQuest, StoryMarkQuest, StoryMorningQuest, StoryNewcomerQuest, StoryPowderQuest,
+  FaelinQuest, MurlocQuest, PlukhQuest, QuestOutcomeLog, State, StoryFaceQuest, StoryClearingQuest, StoryCollectorQuest, StoryFeedQuest, StoryFurnaceQuest, StoryListQuest, StoryMarkQuest, StoryMorningQuest, StoryNewcomerQuest, StoryPowderQuest,
   StoryToolQuest,
   StrayCasketQuest, UserAction, VillageLair, Villages}
 import zio.{Random, Task, ZIO}
@@ -147,6 +147,9 @@ case class DeathState(
       collectorNight = battle.exists(_.story.contains(StoryCollectorQuest.NightStory))
       collectorHall  = battle.exists(_.story.contains(StoryCollectorQuest.HallStory))
       collectorCheck = battle.exists(_.story.contains(StoryCollectorQuest.CheckStory))
+      // Смерть на складе, Рубеж II: шаг тот же — проснуться в городе, купчая
+      // поведёт снова.
+      feedFight      = battle.exists(_.story.contains(StoryFeedQuest.FightStory))
       // Смерть у изгороди, где звери зажали Барти: задание так и не начато —
       // Барти встретится снова; проснуться в лабиринте.
       barti         = battle.exists(_.story.contains(HotGoodsQuest.FightStory))
@@ -287,6 +290,9 @@ case class DeathState(
                       else if (collectorCheck) Json.obj(
                         "wakeTo"    -> (StateType.MarketSquare: StateType).asJson,
                         "wakeLines" -> List("story.storyCollector.night.deathAlone").asJson)
+                      else if (feedFight) Json.obj(
+                        "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
+                        "wakeLines" -> List("story.storyFeed.death").asJson)
                       else if (bartiDoor) Json.obj(
                         "wakeTo"    -> (StateType.MarketSquare: StateType).asJson,
                         "wakeLines" -> List("barti.door.death").asJson)

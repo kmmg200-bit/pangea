@@ -32,7 +32,7 @@ import zio.{Task, ZIO}
   * Горном и искателями; одиночка — проверка Сборщика у Барти, Барти в строю.
   * Дальше у всех — дегтярный склад за 250 000 у Торгового дома, Сойка по
   * главе 4 и глава Братства: место, покой или ни то, ни другое — выбор в «как
-  * и вы». В сумке остаётся купчая, Рубеж II висит до обновления. */
+  * и вы». В сумке остаётся купчая — она ведёт Рубеж II. */
 object StoryCollectorSpec extends ZIOSpecDefault {
 
   private val userId   = UserId(1L)
@@ -261,7 +261,7 @@ object StoryCollectorSpec extends ZIOSpecDefault {
                 label(deedCard._1, "StoryWarehouseGo").contains("🏚 На склад") && deedCard._2 == StateType.StoryCollector)
     },
 
-    test("договор закрывает главу: книга печи уходит, купчая остаётся, выбор — в главу и в «как и вы», Рубеж II висит") {
+    test("договор закрывает главу: книга печи уходит, купчая остаётся, выбор — в главу и в «как и вы», Рубеж II взят") {
       def decide(path: Path, n: Int, deal: Deal) =
         for {
           c     <- content
@@ -287,7 +287,7 @@ object StoryCollectorSpec extends ZIOSpecDefault {
                   q.isDone(NpcQuest.StoryCollector) && StoryCollectorQuest.deal(q).contains(deal) && q.isTaken(NpcQuest.StoryFeed) &&
                   mine.contains(deal.outcome) && h.silver == 100L + StoryCollectorQuest.silver && h.exp > 0L &&
                   !bag.exists(_.questItem.contains(QuestItemKind.StoryLedger)) && bag.exists(_.questItem.contains(QuestItemKind.StoryDeed)) &&
-                  soon.contains("Рубеж II откроется с обновлением 🔜")
+                  soon.contains("Сборщик придёт на склад на третью ночь")
               }) &&
               assertTrue(told.headOption.exists(s => s.contains("«Разумно, — говорит старик") && s.contains("«Про Э. я тоже не забуду»") &&
                 s.contains("Э. оставил под дверью"))) &&
@@ -298,7 +298,7 @@ object StoryCollectorSpec extends ZIOSpecDefault {
               assertTrue(told.lift(4).exists(_.contains("Ящика, на котором он сидел, на складе раньше не было")))
     },
 
-    test("смерть в бою главы — проснуться, шаг тот же; журнал — по пути; после главы — «Чем кормить Клеймо» висит") {
+    test("смерть в бою главы — проснуться, шаг тот же; журнал — по пути; после главы — «Чем кормить Клеймо»") {
       def die(q: NpcQuests, story: String) =
         for {
           c    <- content
@@ -325,7 +325,7 @@ object StoryCollectorSpec extends ZIOSpecDefault {
                 line(collector(Path.Shield, 1)).contains("узнать у Юноны Кинтслев, что решил совет") &&
                 line(collector(Path.Shield, 4)).contains("встретить на складе тех, кто придёт") &&
                 line(collector(Path.Alone, 2)).contains("купить дегтярный склад у Торгового дома — 250 000 🪙")) &&
-              assertTrue(line(closed).contains("📌 «Чем кормить Клеймо»") && line(closed).contains("Рубеж II откроется с обновлением 🔜"))
+              assertTrue(line(closed).contains("📌 «Чем кормить Клеймо»") && line(closed).contains("встретить Сборщика на складе и взять живым"))
     }
   )
 }

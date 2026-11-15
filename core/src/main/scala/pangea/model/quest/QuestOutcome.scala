@@ -118,6 +118,17 @@ object QuestOutcome extends Enum[QuestOutcome] {
   /** Отказался от обоих. */
   case object CollectorRefuse extends QuestOutcome("refuse", NpcQuest.StoryCollector.key)
 
+  // ── Рубеж II «Чем кормить Клеймо»: что стало с узором Сборщика ──────────────
+
+  /** Накормил: Клеймо героя забрало украденный узор, Сборщик пуст. */
+  case object FeedFed extends QuestOutcome("feed", NpcQuest.StoryFeed.key)
+
+  /** Усмирил: Сборщика отдал живым, своё Клеймо заглушил. */
+  case object FeedCalmed extends QuestOutcome("calm", NpcQuest.StoryFeed.key)
+
+  /** Приручил: Сборщик в подвале склада и рассказывает, как Клеймо устроено. */
+  case object FeedTamed extends QuestOutcome("tame", NpcQuest.StoryFeed.key)
+
   // ── «Большое дело» Барти: чем кончилась засада ночной стражи у каравана ─────
 
   /** Отбился от стражи сам — каджиты заплатили сполна. */

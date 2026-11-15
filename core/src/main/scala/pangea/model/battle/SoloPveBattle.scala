@@ -171,7 +171,11 @@ case class SoloPveBattle(
   // Сколько бочек с порохом ещё стоит на поле (см. PowderKeg): в конце раунда
   // одна может рвануть. Ставит их сюжет; в прочих боях и в записях до этого
   // поля — ноль.
-  kegs: Int = 0
+  kegs: Int = 0,
+  // Кто тянет узор из героя (см. PatternPull): имя того, кто это умеет, —
+  // Сборщика на Рубеже II. Ставит сюжет; в прочих боях и в записях до этого
+  // поля — никто.
+  puller: Option[String] = None
 ) {
 
   /** Множитель Стены трофеев к урону героя по тому, кто сейчас в полях. */
@@ -943,6 +947,8 @@ case class SoloPveBattle(
       monsterRootedTurns   = (effects.monsterRootedTurns - 1).max(0),
       // Разогнанная ветром туча Громового собирается обратно за свои раунды.
       mobDispersedTurns    = effects.mobDispersedTurns.map(_ - 1).filter(_ > 0),
+      // Узор, что тянет Сборщик, возвращается к герою за свои раунды.
+      heroDrainTurns       = effects.heroDrainTurns.map(_ - 1).filter(_ > 0),
       monsterDefenceDebuff = effects.monsterDefenceDebuff.flatMap(_.ticked)
     )
   )
@@ -1112,6 +1118,8 @@ object SoloPveBattle {
       preyLeft            <- c.getOrElse[Boolean]("preyLeft")(false)
       // Бой, сохранённый до бочек с порохом, — без них.
       kegs                <- c.getOrElse[Int]("kegs")(0)
+      // Бой, сохранённый до Рубежа II, — узор в нём никто не тянет.
+      puller              <- c.getOrElse[Option[String]]("puller")(None)
     } yield SoloPveBattle(monsterLvl, monsterRace, monsterRarity, monsterStats,
                          monsterCurrentHp, monsterCurrentArmor, heroBattleState, consumableUsed, monsterMarked,
                          monsterUndead,
@@ -1121,7 +1129,7 @@ object SoloPveBattle {
                          heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall,
                          monsterLastAllyHit, heroStruck, roundsFought, secondWindUsed, preyName, preyGone,
                          monsterDodgeBonus, comboUsed, bossArmorTaken, squadTaken, monsterBreed,
-                         chainUsed, preyLeft, kegs).cycleToBossSlot
+                         chainUsed, preyLeft, kegs, puller).cycleToBossSlot
       // ↑ Бой, сохранённый до того, как круг минибосса переехал на слот: круг
       // того, кто стоит в строю, забираем с боя на его слот.
 

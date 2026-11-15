@@ -24,7 +24,7 @@ import pangea.service.state.states.home.Racks
 import pangea.service.state.{BarrelThievesQuest, BartiRoofQuest, BartiSaltQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HerbLore, HotGoodsQuest, ItemMenu,
   JorgenQuest,
   FaelinQuest, MarisaQuest, MurlocQuest, NpcQuestLog, PlukhQuest, QuestCard, QuestGoods, SlotChoice, StackMove, State,
-  StoryBrandQuest, StoryClearingQuest, StoryCollectorQuest, StoryFaceQuest, StoryFurnaceQuest, StoryListQuest, StoryMarkQuest,
+  StoryBrandQuest, StoryClearingQuest, StoryCollectorQuest, StoryFaceQuest, StoryFeedQuest, StoryFurnaceQuest, StoryListQuest, StoryMarkQuest,
   StoryMorningQuest,
   StoryNewcomerQuest, StoryPowderQuest,
   StoryToolQuest, StrayCasketQuest, UiScene, UserAction, Villages}
@@ -130,7 +130,7 @@ case class InventoryState(
         StateType.StoryGraveyard, StateType.BartiHouse, StateType.BartiCaravan, StateType.JorgenLair, StateType.VillageTrail,
         StateType.PlukhHunt, StateType.FaelinRoots, StateType.Village, StateType.VillageBandits, StateType.VillageSpiders,
         StateType.VillageCaravan, StateType.StoryDen, StateType.StoryCellar, StateType.BartiShop,
-        StateType.StorySquare, StateType.StoryClearing, StateType.StoryFurnace, StateType.StoryCollector) ++ BackpackOrigins
+        StateType.StorySquare, StateType.StoryClearing, StateType.StoryFurnace, StateType.StoryCollector, StateType.StoryFeed) ++ BackpackOrigins
 
   // С экрана добычи и с находки сюда ведёт «🎒 Рюкзак» — он и кладёт свой экран
   // в return_state.
@@ -1451,8 +1451,9 @@ object InventoryState {
         else s"${item.displayTitle}\n${difficulty(StoryCollectorQuest.Level)}\n\n${QuestItemKind.StoryLedger.description}\n\n$now"
       // Купчая на дегтярный склад: на склад — и дальше зацепка Рубежа II.
       case Some(QuestItemKind.StoryDeed) =>
-        val now = StoryCollectorQuest.deedLine(content, quests)
-        s"${item.displayTitle}\n\n${QuestItemKind.StoryDeed.description}" + (if (now.isEmpty) "" else "\n\n" + now)
+        val now  = StoryCollectorQuest.deedLine(content, quests)
+        val head = if (StoryFeedQuest.open(quests)) s"${item.displayTitle}\n${difficulty(StoryFeedQuest.Level)}" else item.displayTitle
+        s"$head\n\n${QuestItemKind.StoryDeed.description}" + (if (now.isEmpty) "" else "\n\n" + now)
       case Some(QuestItemKind.BartiPlan) =>
         val now = HotGoodsQuest.cardLine(content, quests)
         s"${item.displayTitle}\n${difficulty(HotGoodsQuest.Level)}\n\n${QuestItemKind.BartiPlan.description}" +
