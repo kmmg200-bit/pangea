@@ -95,7 +95,7 @@ case class BartiHouseState(
                   renderer.show(user, Screen(content.text("barti.salt.waiting").trim, List(leave.copy(row = Some(0)))))
                 // «Долговая яма» (все пути): Барти в долговой яме, дом опечатан.
                 else if (StoryFight.won(data, PitWonKey) && BartiPitQuest.toNight(quests)) pitFreed(user, Way.Breakout, renderer)
-                else if (BartiPitQuest.available(quests)) pitBegin(user, quests, renderer)
+                else if (BartiPitQuest.available(quests, hero)) pitBegin(user, quests, renderer)
                 else if (quests.isTaken(NpcQuest.BartiPit)) renderer.show(user, pitScreen(quests, None))
                 else if (BartiDoorQuest.available(quests)) doorBegin(user, quests, renderer)
                 else if (BigDealQuest.canBegin(quests) && QuestSupport.hasItem(items, QuestItemKind.BartiAddress))

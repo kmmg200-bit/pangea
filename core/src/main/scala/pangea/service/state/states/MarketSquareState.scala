@@ -34,14 +34,16 @@ case class MarketSquareState(content: SceneContent, heroDao: Option[HeroDao] = N
   override def targetStates: Set[StateType] = branch.gotoTargets
 
   override def enter(user: User, renderer: Renderer): Task[Unit] =
-    ZIO.foreach(heroDao)(dao => NpcQuestLog.load(dao, user.userId)).flatMap { quests =>
-      val byId  = content.screen("marketSquare.enter").choices.map(c => c.id -> c).toMap
-      val barti = Option.when(quests.exists(q => BartiRoofQuest.shopOpen(q) || BartiDeliveryQuest.shopOpen(q)))(
+    ZIO.foreach(heroDao)(dao => NpcQuestLog.load(dao, user.userId) <*> dao.getHeroByUserId(user.userId)).flatMap { loaded =>
+      val quests = loaded.map(_._1)
+      val byId   = content.screen("marketSquare.enter").choices.map(c => c.id -> c).toMap
+      val barti  = Option.when(quests.exists(q => BartiRoofQuest.shopOpen(q) || BartiDeliveryQuest.shopOpen(q)))(
         content.choice("BartiShop", "marketSquare.bartiShopLabel").copy(color = ChoiceColor.Positive, row = Some(1)))
+      // «Долговая яма» — только с BartiPitQuest.MinHeroLvl-го уровня героя.
+      val pit = loaded.exists { case (q, hero) => hero.exists(BartiPitQuest.houseOpen(q, _)) }
       // «Синяя дверь» (только одиночка): дом Барти — пока задание доступно или
       // идёт; и пока у одиночки «Соль» ждёт разговора с Барти.
-      val door = Option.when(quests.exists(q => BartiDoorQuest.houseOpen(q) || BartiSaltQuest.available(q) ||
-        BartiPitQuest.houseOpen(q)))(
+      val door = Option.when(pit || quests.exists(q => BartiDoorQuest.houseOpen(q) || BartiSaltQuest.available(q)))(
         content.choice("BartiHome", "marketSquare.bartiHomeLabel").copy(color = ChoiceColor.Positive, row = Some(1)))
       val choices = List(
         byId("StreetMerchants").copy(row = Some(0)),

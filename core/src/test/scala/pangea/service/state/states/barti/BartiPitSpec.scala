@@ -98,6 +98,31 @@ object BartiPitSpec extends ZIOSpecDefault {
                 !early.contains("BartiHome"))
     },
 
+    test("с 35-го уровня героя: раньше нет ни «Дома Барти», ни опечатанной двери; уже взятая «Яма» идёт на любом уровне") {
+      def visit(q: NpcQuests, lvl: Long) =
+        for {
+          c      <- content
+          d      <- dao(q, hero().copy(lvl = lvl))
+          r      <- TestRenderer.make
+          _      <- MarketSquareState(c, Some(d)).enter(testUser, r)
+          square <- r.sentScreens.map(_.last)
+          r2     <- TestRenderer.make
+          _      <- house(d, TestInventoryRepository.withItems(Nil), c).enter(testUser, r2)
+          door   <- r2.sentScreens.map(_.last)
+          after  <- questOf(d)
+        } yield (square.choices.map(_.id), door, after)
+      for {
+        low   <- visit(ready(Path.Shield), BartiPitQuest.MinHeroLvl - 1L)
+        exact <- visit(ready(Path.Shield), BartiPitQuest.MinHeroLvl)
+        going <- visit(taken(Path.Alone), 20L)
+      } yield assertTrue(!low._1.contains("BartiHome") && !low._2.text.contains("Имущество под залогом") &&
+                !low._3.isTaken(NpcQuest.BartiPit)) &&
+              assertTrue(exact._1.contains("BartiHome") && exact._2.text.contains("Имущество под залогом") &&
+                exact._3.isTaken(NpcQuest.BartiPit)) &&
+              assertTrue(going._1.contains("BartiHome") && BartiPitQuest.toNight(going._3) &&
+                going._2.choices.map(_.id) == List("PitFight", "BartiLeave"))
+    },
+
     test("впервые: дверь опечатана, записка Барти — задание взято на шаге своего пути: Тени — Братство, Щиту — к Юноне, одиночке — ночью") {
       def first(path: Path) =
         for {

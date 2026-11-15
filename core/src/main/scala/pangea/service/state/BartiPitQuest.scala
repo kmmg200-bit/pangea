@@ -23,7 +23,8 @@ import java.util.concurrent.TimeUnit
   * ([[NpcQuest.BartiPit]], задание 44-го уровня, все пути). Барти занял у
   * Торгового дома под залог своего дома, вложился в «одно дело» и прогорел:
   * дом опечатан, сам он — в долговой яме совета. Берётся у синей двери — кнопкой
-  * «Дом Барти» с Торговой площади, — когда «Большая поставка» закрыта.
+  * «Дом Барти» с Торговой площади, — когда «Большая поставка» закрыта, а герой
+  * дорос до [[MinHeroLvl]]-го уровня.
   *
   * Как вытащить — по пути Рубежа I, и выбор помним ([[Way]] — в `counter`):
   *  - Тень (шаг 1): у дома ждёт человек Братства — оно заплатит, и Барти станет
@@ -78,12 +79,20 @@ object BartiPitQuest {
     val all: List[Way] = List(Self, Junona, Brotherhood, Breakout)
   }
 
-  /** Задание можно взять: «Большая поставка» закрыта, «Ямы» ещё не было. */
-  def available(q: NpcQuests): Boolean =
-    q.isDone(NpcQuest.BartiDelivery) && !q.isTaken(NpcQuest.BartiPit) && !q.isDone(NpcQuest.BartiPit)
+  /** С какого уровня героя «Яма» появляется: раньше её нет вовсе — ни кнопки
+    * «Дом Барти», ни опечатанной двери, «рано» не говорим. Так решил
+    * пользователь — исключение из «задание по уровню героя не запираем», как
+    * «Большое дело» до 11-го. Уже взятая «Яма» идёт дальше на любом уровне. */
+  val MinHeroLvl: Long = 35L
+
+  /** Задание можно взять: герой не ниже [[MinHeroLvl]], «Большая поставка»
+    * закрыта, «Ямы» ещё не было. */
+  def available(q: NpcQuests, hero: Hero): Boolean =
+    hero.lvl >= MinHeroLvl && q.isDone(NpcQuest.BartiDelivery) && !q.isTaken(NpcQuest.BartiPit) &&
+      !q.isDone(NpcQuest.BartiPit)
 
   /** Кнопка «Дом Барти» на Торговой площади: задание доступно или идёт. */
-  def houseOpen(q: NpcQuests): Boolean = available(q) || q.isTaken(NpcQuest.BartiPit)
+  def houseOpen(q: NpcQuests, hero: Hero): Boolean = available(q, hero) || q.isTaken(NpcQuest.BartiPit)
 
   /** Шаг — по пути Рубежа I: Тень — у дома (1), Щит — у Юноны (2), одиночка —
     * ночью в яму (3). */
