@@ -4,7 +4,7 @@ import io.circe.Json
 import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.hero.Hero
-import pangea.model.item.QuestItemKind
+import pangea.model.item.{Item, QuestItemKind}
 import pangea.model.quest.{Difficulty, NpcQuest, NpcQuests}
 import pangea.model.state.StateType
 import pangea.model.user.User
@@ -13,7 +13,7 @@ import pangea.repository.item.ItemRepository
 import pangea.service.state.BartiRoofQuest.Deal
 import pangea.service.state.StoryToolQuest.Path
 import pangea.service.state.states.story.StoryFight
-import pangea.service.state.{BartiRoofQuest, NpcQuestLog, QuestSupport, State, StoryToolQuest, UserAction}
+import pangea.service.state.{BartiDeliveryQuest, BartiRoofQuest, NpcQuestLog, QuestSupport, State, StoryToolQuest, UserAction}
 import zio.{Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -28,7 +28,14 @@ import java.util.concurrent.TimeUnit
   * «Драться» — сюжетный бой, без «Сбежать», награда как за обычный бой, Барти
   * прячется под прилавком; добыча вернёт сюда с отметкой победы — задание
   * закрыто. Ушёл или погиб — стража придёт следующей ночью. «Уйти» — на
-  * Торговую площадь. */
+  * Торговую площадь.
+  *
+  * После «Крыши» здесь же — «Большая поставка» (см. BartiDeliveryQuest):
+  * впервые Барти показывает доски, которыми ему заплатили вперёд, и рассказывает
+  * рецепт самогона — задание взято. Самогон носят ему по бутыли («Отдать
+  * самогон»); собран — «Везти в лагерь»: сюжетный бой с пьяной бригадой
+  * Чернолома, без «Сбежать», Барти — под телегой; добыча вернёт сюда с
+  * отметкой победы — задание на шаге Гуннара (доски — на городскую стройку). */
 case class BartiShopState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
@@ -42,6 +49,8 @@ case class BartiShopState(
       "RoofBrotherhood" -> Target.Run { (u, _, r) => letBrotherhood(u, r) },
       "RoofSelf"        -> Target.Run { (u, _, r) => bySelf(u, r) },
       "RoofFight"       -> Target.Run { (u, _, r) => fight(u, r) },
+      "DeliveryGive"    -> Target.Run { (u, _, r) => give(u, r) },
+      "DeliveryGo"      -> Target.Run { (u, _, r) => deliver(u, r) },
       "RoofLeave"       -> Target.Goto(StateType.MarketSquare)
     ),
     fallback = Target.Run { (u, _, r) => enter(u, r).as(StateType.BartiShop) }
@@ -56,6 +65,13 @@ case class BartiShopState(
       quests <- NpcQuestLog.load(heroDao, user.userId)
       _      <- if (StoryFight.won(data, WonKey) && BartiRoofQuest.toNight(quests)) won(user, quests, renderer)
                 else if (BartiRoofQuest.available(quests)) begin(user, quests, renderer)
+                // «Большая поставка» — после «Крыши».
+                else if (StoryFight.won(data, DeliveryWonKey) && BartiDeliveryQuest.toCamp(quests)) deliveryWon(user, quests, renderer)
+                else if (BartiDeliveryQuest.available(quests)) deliveryBegin(user, quests, renderer)
+                else if (BartiDeliveryQuest.toCollect(quests)) bag(user).flatMap(items => renderer.show(user, collectScreen(None, quests, items)))
+                else if (BartiDeliveryQuest.toCamp(quests)) renderer.show(user, cartScreen(None))
+                else if (BartiDeliveryQuest.toGunnar(quests))
+                  renderer.show(user, Screen(content.text("barti.delivery.toGunnar").trim, List(leave.copy(row = Some(0)))))
                 else renderer.show(user, stepScreen(quests, None))
     } yield ()
 
@@ -152,6 +168,87 @@ case class BartiShopState(
                   List(leave.copy(row = Some(0)))))
     } yield ()
 
+  // ── «Большая поставка» ──────────────────────────────────────────────────────
+
+  private def deliveryDifficulty: String =
+    content.format("marisa.difficulty", "difficulty" -> Difficulty.render(BartiDeliveryQuest.Level))
+
+  /** Впервые: доски вместо платы, заказ и рецепт самогона — задание взято,
+    * рецепт — в книгу. Дальше — сколько у Барти сложено. */
+  private def deliveryBegin(user: User, quests: NpcQuests, renderer: Renderer): Task[Unit] =
+    for {
+      now   <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+      taken  = quests.take(NpcQuest.BartiDelivery, now).withRecipe(BartiDeliveryQuest.Recipe)
+      _     <- NpcQuestLog.save(heroDao, user.userId, taken)
+      items <- bag(user)
+      line   = content.format("barti.taken", "title" -> content.text("journal.quests.bartiDelivery.title"),
+                 "step" -> content.list("journal.quests.bartiDelivery.steps").headOption.getOrElse(""))
+      _     <- renderer.show(user, collectScreen(Some(content.text("barti.delivery.pitch").trim + "\n\n" + line), taken, items))
+    } yield ()
+
+  /** Сколько бутылей у Барти уже сложено, и — если в сумке есть самогон, —
+    * «Отдать самогон». `lead` — что сказать перед этим. */
+  private def collectScreen(lead: Option[String], quests: NpcQuests, items: List[Item]): Screen = {
+    val have = BartiDeliveryQuest.stock(quests)
+    val line = content.format("barti.delivery.stock", "have" -> have.toString, "goal" -> BartiDeliveryQuest.Goal.toString)
+    val give = Option.when(BartiDeliveryQuest.takeable(items, have).nonEmpty)(
+      content.choice("DeliveryGive", "barti.delivery.giveLabel").copy(color = ChoiceColor.Positive, row = Some(0)))
+    Screen((lead.toList :+ line :+ deliveryDifficulty).mkString("\n\n"), give.toList :+ leave)
+  }
+
+  /** «Отдать самогон»: Барти берёт из сумки бутыли по одной — сколько ему ещё
+    * нужно. Собрал все — телега гружёная, пора в лагерь. */
+  private def give(user: User, renderer: Renderer): Task[StateType] =
+    for {
+      hero   <- getHero(user)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      items  <- bag(user)
+      have    = BartiDeliveryQuest.stock(quests)
+      take    = BartiDeliveryQuest.takeable(items, have)
+      _      <- if (!BartiDeliveryQuest.toCollect(quests)) enter(user, renderer)
+                else if (take.isEmpty) renderer.show(user, collectScreen(Some(content.text("barti.delivery.nothing").trim), quests, items))
+                else for {
+                  _     <- ZIO.foreachDiscard(take)(i => inventoryRepo.removeItem(i.id, hero.id).mapError(e => new Throwable(e.toString)))
+                  next   = have + take.size
+                  stored = BartiDeliveryQuest.withStock(quests, next)
+                  full   = next >= BartiDeliveryQuest.Goal
+                  saved  = if (full) BartiDeliveryQuest.step(stored, 2) else stored
+                  _     <- NpcQuestLog.save(heroDao, user.userId, saved)
+                  said   = content.format("barti.delivery.given", "have" -> next.toString, "goal" -> BartiDeliveryQuest.Goal.toString)
+                  left   = items.filterNot(i => take.exists(_.id == i.id))
+                  _     <- if (full) renderer.show(user, cartScreen(Some(said)))
+                           else renderer.show(user, collectScreen(Some(said), saved, left))
+                } yield ()
+    } yield StateType.BartiShop
+
+  /** Самогон собран: телега гружёная, Барти на козлах — «Везти в лагерь». */
+  private def cartScreen(lead: Option[String]): Screen =
+    Screen((lead.toList :+ content.text("barti.delivery.cart").trim :+ deliveryDifficulty).mkString("\n\n"),
+      List(content.choice("DeliveryGo", "barti.delivery.goLabel").copy(row = Some(0)), leave.copy(row = Some(0))))
+
+  /** В лагерь: бригада вскрывает ящики до расчёта и дерётся за бутыли — бой с
+    * пьяным десятником и четырьмя, Барти под телегой. Добыча вернёт сюда с
+    * отметкой победы. */
+  private def deliver(user: User, renderer: Renderer): Task[StateType] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (!BartiDeliveryQuest.toCamp(quests)) enter(user, renderer).as(StateType.BartiShop)
+      else for {
+        hero <- getHero(user)
+        _    <- StoryFight.start(heroDao, user, hero, BartiDeliveryQuest.foes(content.text("barti.delivery.foremanName")), Nil,
+                  BartiDeliveryQuest.FightStory, StateType.BartiShop, DeliveryWonKey)
+        _    <- renderer.show(user, Screen(content.text("barti.delivery.camp").trim, Nil))
+      } yield StateType.Battle
+    }
+
+  /** Отбились: остаток — тоже досками, и доски — Гуннару. Задание на третьем шаге. */
+  private def deliveryWon(user: User, quests: NpcQuests, renderer: Renderer): Task[Unit] =
+    heroDao.writeSceneData(user.userId, Json.Null) *>
+      NpcQuestLog.save(heroDao, user.userId, BartiDeliveryQuest.step(quests, 3)) *>
+      renderer.show(user, Screen(content.text("barti.delivery.won").trim, List(leave.copy(row = Some(0)))))
+
+  private def bag(user: User): Task[List[Item]] =
+    getHero(user).flatMap(hero => inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)).map(_.items.data))
+
   private def getHero(user: User): Task[Hero] =
     heroDao.getHeroByUserId(user.userId).flatMap(ZIO.fromOption(_))
       .orElseFail(new Throwable(s"No hero for user ${user.userId}"))
@@ -161,4 +258,7 @@ object BartiShopState {
 
   /** Отметка в `scene_data`: ночная стража у лавки Барти побита. */
   val WonKey: String = "bartiRoofWon"
+
+  /** Отметка в `scene_data`: пьяная бригада в лагере у Старой вырубки побита. */
+  val DeliveryWonKey: String = "bartiDeliveryWon"
 }

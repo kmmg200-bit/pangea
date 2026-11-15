@@ -15,7 +15,8 @@ import pangea.model.schedule.TaskKind
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.service.schedule.Scheduler
-import pangea.service.state.{AppButton, BramblQuest, CityExit, LostSquadQuest, NpcQuestLog, QuestOutcomeLog, QuestSupport, State,
+import pangea.service.state.{AppButton, BartiDeliveryQuest, BramblQuest, CityExit, LostSquadQuest, NpcQuestDialog, NpcQuestLog,
+  QuestOutcomeLog, QuestSupport, State,
   StoryBrandQuest, UserAction}
 import zio.{Random, Task, ZIO}
 
@@ -79,6 +80,7 @@ case class ConstructionState(
       },
       "BramblForge"     -> Target.Run((user, _, renderer) => offShift(user, renderer)(showForge(user, renderer))),
       "BramblForgeGive" -> Target.Run((user, _, renderer) => offShift(user, renderer)(forgeLock(user, renderer))),
+      "BartiPlanks"     -> Target.Run((user, _, renderer) => offShift(user, renderer)(sellPlanks(user, renderer))),
       "LeaveConstruction" -> Target.Goto(StateType.MarketSquare),
       CityExit.route
     ),
@@ -106,6 +108,8 @@ case class ConstructionState(
     NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
       // Слепок с гробницы у героя — к отцу Брамбла, в мастерскую за складами.
       val forge = Option.when(forgeOpen(quests))(content.choice("BramblForge", "bramblLock.forge.label"))
+      // «Большая поставка»: доски Барти — Гуннару.
+      val planks = Option.when(BartiDeliveryQuest.toGunnar(quests))(content.choice("BartiPlanks", "barti.delivery.gunnar.label"))
       renderer.show(
         user,
         Screen(
@@ -127,12 +131,32 @@ case class ConstructionState(
               "duration" -> formatHours(Job.BuildWall.hours)
             ),
             content.choice("Foreman", "construction.foremanLabel")
-          ) ++ forge.toList ++ List(
+          ) ++ forge.toList ++ planks.toList ++ List(
             content.choice("LeaveConstruction", "construction.back"),
             CityExit.button(content)
           )
         )
       )
+    }
+
+  /** «Большая поставка»: Гуннар смотрит доски Барти — живое дерево из изгороди
+    * ему на леса не годится, но он знает, кто за такое платит, — и платит
+    * золотом. Задание закрыто. Не тот шаг — меню. */
+  private def sellPlanks(user: User, renderer: Renderer): Task[StateType] =
+    NpcQuestLog.load(heroDao, user.userId).flatMap { quests =>
+      if (!BartiDeliveryQuest.toGunnar(quests)) enter(user, renderer).as(StateType.Construction)
+      else for {
+        hero <- getHero(user)
+        paid  = hero.copy(doubloons = hero.doubloons + BartiDeliveryQuest.Doubloons)
+        _    <- heroDao.updateDoubloons(user.userId, paid.doubloons)
+        done <- NpcQuestDialog(heroDao, content, NpcQuest.BartiDelivery, "BartiDelivery").complete(user, paid, identity)
+        (_, expLine) = done
+        _    <- renderer.show(user, Screen(List(
+                  content.text("barti.delivery.gunnar.text").trim,
+                  content.format("barti.delivery.reward", "doubloons" -> BartiDeliveryQuest.Doubloons.toString, "exp" -> expLine),
+                  content.text("barti.delivery.questDone")).mkString("\n\n"),
+                  List(content.choice("BackFromForeman", "construction.back"))))
+      } yield StateType.Construction
     }
 
   /** Мастерская Медноусов открыта: слепок на руках, и замок есть из чего создать. */

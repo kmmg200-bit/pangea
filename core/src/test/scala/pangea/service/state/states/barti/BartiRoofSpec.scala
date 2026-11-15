@@ -75,7 +75,7 @@ object BartiRoofSpec extends ZIOSpecDefault {
 
   override def spec = suite("«Крыша»: лавка Барти и ночная стража")(
 
-    test("Торговая площадь: «Лавка Барти» — когда Рубеж I пройден и «Большое дело» закрыто, пока задание идёт; после — нет") {
+    test("Торговая площадь: «Лавка Барти» — когда Рубеж I пройден и «Большое дело» закрыто, пока задание идёт; после — уже ради «Большой поставки»") {
       def buttons(q: NpcQuests) =
         for {
           c <- content
@@ -88,13 +88,17 @@ object BartiRoofSpec extends ZIOSpecDefault {
         early  <- buttons(ready(Path.Alone).update(NpcQuest.BigDeal)(_.copy(done = false)))
         open   <- buttons(ready(Path.Alone))
         going  <- buttons(roof(Path.Alone, 3))
-        closed <- buttons(roof(Path.Alone, 3).finish(NpcQuest.BartiRoof))
+        // «Крыша» закрыта — лавка остаётся ради «Большой поставки», а закрыта и
+        // она — кнопки нет.
+        next   <- buttons(roof(Path.Alone, 3).finish(NpcQuest.BartiRoof))
+        closed <- buttons(roof(Path.Alone, 3).finish(NpcQuest.BartiRoof).take(NpcQuest.BartiDelivery, 0L)
+                    .finish(NpcQuest.BartiDelivery))
         c      <- content
         r      <- TestRenderer.make
         _      <- MarketSquareState(c).enter(testUser, r)
         old    <- r.sentScreens.map(_.last)
       } yield assertTrue(!early.contains("BartiShop") && open.contains("BartiShop") && going.contains("BartiShop") &&
-                !closed.contains("BartiShop") && !old.choices.exists(_.id == "BartiShop"))
+                next.contains("BartiShop") && !closed.contains("BartiShop") && !old.choices.exists(_.id == "BartiShop"))
     },
 
     test("лавка впервые: квитанция в сумке, задание взято на шаге своего пути — Щиту к Юноне, Тени — Братство, одиночке — сразу ночь") {

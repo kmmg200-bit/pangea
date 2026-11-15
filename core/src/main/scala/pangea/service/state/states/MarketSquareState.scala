@@ -4,12 +4,13 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, ChoiceColor, Renderer, SceneContent, Screen, Target}
 import pangea.model.state.StateType
 import pangea.model.user.User
-import pangea.service.state.{BartiDoorQuest, BartiRoofQuest, NpcQuestLog, State, UserAction}
+import pangea.service.state.{BartiDeliveryQuest, BartiDoorQuest, BartiRoofQuest, NpcQuestLog, State, UserAction}
 import zio.{Task, ZIO}
 
-/** Торговая площадь. Пока «Крыша» доступна или идёт (см. BartiRoofQuest), здесь
-  * же — лавка Барти, а пока идёт «Синяя дверь» (BartiDoorQuest) — его дом; без
-  * журнала заданий (`heroDao` — в старых тестах) их нет. */
+/** Торговая площадь. Пока «Крыша» или «Большая поставка» доступна или идёт (см.
+  * BartiRoofQuest, BartiDeliveryQuest), здесь же — лавка Барти, а пока идёт
+  * «Синяя дверь» (BartiDoorQuest) — его дом; без журнала заданий (`heroDao` — в
+  * старых тестах) их нет. */
 case class MarketSquareState(content: SceneContent, heroDao: Option[HeroDao] = None) extends State {
 
   private val branch = new Branch(
@@ -34,7 +35,7 @@ case class MarketSquareState(content: SceneContent, heroDao: Option[HeroDao] = N
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     ZIO.foreach(heroDao)(dao => NpcQuestLog.load(dao, user.userId)).flatMap { quests =>
       val byId  = content.screen("marketSquare.enter").choices.map(c => c.id -> c).toMap
-      val barti = Option.when(quests.exists(BartiRoofQuest.shopOpen))(
+      val barti = Option.when(quests.exists(q => BartiRoofQuest.shopOpen(q) || BartiDeliveryQuest.shopOpen(q)))(
         content.choice("BartiShop", "marketSquare.bartiShopLabel").copy(color = ChoiceColor.Positive, row = Some(1)))
       // «Синяя дверь» (только одиночка): дом Барти — пока задание доступно или идёт.
       val door = Option.when(quests.exists(BartiDoorQuest.houseOpen))(
