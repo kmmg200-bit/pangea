@@ -68,6 +68,8 @@ export const api = {
   tradePropose: (partner: string, d: TradeDraft) =>
     post<TradeActionView>(`trade/propose?partner=${encodeURIComponent(partner)}&${tradeQuery(d)}`),
   tradeAnswer: (id: number, d: TradeDraft) => post<TradeActionView>(`trade/answer?id=${id}&${tradeQuery(d)}`),
+  tradeAgree: (id: number) => post<TradeActionView>(`trade/agree?id=${id}`),
+  /** Подтвердить, когда партнёр уже согласился. */
   tradeAccept: (id: number) => post<TradeActionView>(`trade/accept?id=${id}`),
   tradeCancel: (id: number) => post<TradeActionView>(`trade/cancel?id=${id}`),
   character: () => get<CharacterView>('character'),

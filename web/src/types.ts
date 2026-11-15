@@ -447,6 +447,10 @@ export interface TradeOfferView {
   mine: TradeSideView
   theirs: TradeSideView
   yourTurn: boolean
+  /** Партнёр согласен с нынешними условиями — осталось подтвердить. */
+  partnerAgreed: boolean
+  /** Сам согласился и ждёт подтверждения партнёра. */
+  youAgreed: boolean
   proposed: boolean
   leftMs: number
 }

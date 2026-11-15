@@ -83,6 +83,22 @@ function Side(props: { title: string; side: TradeSideView; onOpen: (i: ItemView)
   )
 }
 
+/** Чей ход коротко: свой — «ваш ход» или, если партнёр согласен, «подтвердите»;
+  * партнёра — ждём ответа или, если сами согласились, подтверждения. */
+function turnBadge(o: TradeOfferView): string {
+  if (o.yourTurn) return o.partnerAgreed ? 'подтвердите' : 'ваш ход'
+  return o.youAgreed ? 'ждём подтверждения' : 'ждём ответа'
+}
+
+/** Чей ход и что можно сделать — строкой на карточке. */
+function turnNote(o: TradeOfferView): string {
+  if (o.yourTurn && o.partnerAgreed)
+    return 'Партнёр согласен на эти условия. Подтвердите — и обмен состоится. Измените своё — и понадобится новое согласие.'
+  if (o.yourTurn) return 'Ход ваш: согласитесь, измените своё или откажитесь. Согласитесь — останется подтверждение партнёра.'
+  if (o.youAgreed) return 'Вы согласились — ждём, когда партнёр подтвердит.'
+  return 'Ждём ответа партнёра.'
+}
+
 /** Строка предложения в списке: с кем, что отдаёте, что получаете, чей ход. */
 function OfferRow(props: { offer: TradeOfferView; onOpen: () => void }) {
   const o = props.offer
@@ -90,7 +106,7 @@ function OfferRow(props: { offer: TradeOfferView; onOpen: () => void }) {
     <button className={o.yourTurn ? 'trade-offer trade-yours' : 'trade-offer'} onClick={props.onOpen}>
       <span className="trade-head">
         <span className="row-title">{o.partner}</span>
-        <span className={o.yourTurn ? 'badge badge-on' : 'badge'}>{o.yourTurn ? 'ваш ход' : 'ждём ответа'}</span>
+        <span className={o.yourTurn ? 'badge badge-on' : 'badge'}>{turnBadge(o)}</span>
       </span>
       <span className="row-sub">Вы отдаёте: {o.mine.summary}</span>
       <span className="row-sub">Вы получаете: {o.theirs.summary}</span>
@@ -299,8 +315,9 @@ export function TradeTab(props: { data: TradeView; onChange: (v: TradeView) => v
     <>
       {data.away && <section className="card card-warn storage-note">{data.away}</section>}
       <p className="muted-note">
-        Меняйтесь с другими героями вещами и деньгами. Положенное в обмен ждёт в закладе: отказ, отзыв или срок вернут
-        всё. С серебра и дублонов — комиссия {data.feePct}% сверху.
+        Меняйтесь с другими героями вещами и деньгами. Один предлагает, другой соглашается или отвечает своим, а
+        подтверждает тот, чьи условия последние. Положенное в обмен ждёт в закладе: отказ, отзыв или срок вернут всё.
+        С серебра и дублонов — комиссия {data.feePct}% сверху.
       </p>
       <button
         className="trade-new"
@@ -337,14 +354,15 @@ export function TradeTab(props: { data: TradeView; onChange: (v: TradeView) => v
           <Side title="Вы отдаёте" side={offer.mine} onOpen={setCard} />
           <Side title="Вы получаете" side={offer.theirs} onOpen={setCard} />
           <p className="sheet-note">
-            {offer.yourTurn ? 'Ход ваш: можно принять, изменить своё или отказаться.' : 'Ждём ответа партнёра.'} Ждёт
-            ещё {left(offer.leftMs)}.
+            {turnNote(offer)} Ждёт ещё {left(offer.leftMs)}.
           </p>
           {refusal && <p className="card card-warn trade-refusal">{refusal}</p>}
           {accepting ? (
             <div className="buy-confirm">
               <p className="buy-ask">
-                Принять обмен? Вы отдаёте: {offer.mine.summary}. Вы получаете: {offer.theirs.summary}.
+                {offer.partnerAgreed ? 'Подтвердить обмен?' : 'Согласиться на обмен?'} Вы отдаёте: {offer.mine.summary}.
+                Вы получаете: {offer.theirs.summary}.
+                {!offer.partnerAgreed && ' Обмен состоится, когда партнёр подтвердит.'}
               </p>
               <div className="buy-row">
                 <button
@@ -352,12 +370,12 @@ export function TradeTab(props: { data: TradeView; onChange: (v: TradeView) => v
                   disabled={busy}
                   onClick={() =>
                     run(
-                      () => api.tradeAccept(offer.id),
+                      () => (offer.partnerAgreed ? api.tradeAccept(offer.id) : api.tradeAgree(offer.id)),
                       () => setOpenId(null),
                     )
                   }
                 >
-                  Меняемся
+                  {offer.partnerAgreed ? 'Меняемся' : 'Соглашаюсь'}
                 </button>
                 <button className="buy-no" onClick={() => setAccepting(false)}>
                   Назад
@@ -368,7 +386,7 @@ export function TradeTab(props: { data: TradeView; onChange: (v: TradeView) => v
             <div className="equip-acts trade-acts">
               {offer.yourTurn && (
                 <button className="equip-off trade-accept" disabled={busy || !!data.away} onClick={() => setAccepting(true)}>
-                  Принять
+                  {offer.partnerAgreed ? 'Подтвердить' : 'Согласиться'}
                 </button>
               )}
               {offer.yourTurn && (
