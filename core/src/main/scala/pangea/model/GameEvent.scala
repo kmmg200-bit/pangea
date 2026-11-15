@@ -21,4 +21,8 @@ object GameEvent {
   /** Куплен Набор успешного искателя у Фета: он один на игрока, и по этой
     * строке лавка его больше не предлагает (см. FetShopState). */
   val FetStarterPack: String = "fet_starter_pack"
+
+  /** Куплен мешок наудачу у Барти — серебряная лотерея. По этим записям лимит
+    * мешков на сутки и учёт в админ-панели (см. BartiLottery, `AdminDao.stats`). */
+  val BartiLottery: String = "barti_lottery"
 }

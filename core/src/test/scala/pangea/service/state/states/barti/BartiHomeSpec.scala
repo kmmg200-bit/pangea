@@ -36,7 +36,7 @@ object BartiHomeSpec extends ZIOSpecDefault {
           BartiHome.errands(deal(done = true), story = true) == List(BartiHome.Errand.Morning))
     },
 
-    test("после «Большого дела»: на площади «Дом Барти», в доме — Барти у себя; заданий нет — только «Уйти» на площадь") {
+    test("после «Большого дела»: на площади «Дом Барти», в доме — Барти у себя; заданий нет — мешок наудачу и «Уйти» на площадь") {
       for {
         c      <- content
         d      <- TestHeroDao.withHero(userId, TestFixtures.hero(userId, state = StateType.MarketSquare))
@@ -53,7 +53,7 @@ object BartiHomeSpec extends ZIOSpecDefault {
       } yield assertTrue(square.choices.exists(_.id == "BartiHome") && !square.choices.exists(_.id == "BartiShop") &&
                 go == StateType.BartiHouse) &&
               assertTrue(home.text.contains("Дом Барти за синей дверью") && home.text.contains("Ну, почти всегда") &&
-                home.choices.map(_.id) == List("BartiLeave") && out == StateType.MarketSquare)
+                home.choices.map(_.id) == List("BartiLottery", "BartiLeave") && out == StateType.MarketSquare)
     }
   )
 }

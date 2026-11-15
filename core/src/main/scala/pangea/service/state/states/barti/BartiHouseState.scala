@@ -1,26 +1,32 @@
 package pangea.service.state.states.barti
 
 import io.circe.Json
+import io.circe.syntax.EncoderOps
 import pangea.dao.hero.HeroDao
 import pangea.dao.quest.QuestOutcomeDao
-import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
+import pangea.domain.Rng
+import pangea.engine.{Branch, Choice, ChoiceColor, Journal, Renderer, SceneContent, Screen, Target}
+import pangea.model.GameEvent
 import pangea.model.hero.Hero
 import pangea.model.item.{Item, QuestItemKind}
 import pangea.model.quest.{Difficulty, NpcQuest, NpcQuests}
 import pangea.model.state.StateType
 import pangea.model.user.User
+import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.bank.BankRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
+import pangea.service.activity.ActivityContest
+import pangea.service.artifact.{ArtifactIntake, Intake}
 import pangea.service.parcel.Parcels
 import pangea.service.purse.Purse
 import pangea.service.state.StoryToolQuest.Path
 import pangea.service.state.states.story.StoryFight
 import pangea.service.state.BartiPitQuest.Way
 import pangea.service.state.BartiHome.Errand
-import pangea.service.state.{BartiDoorQuest, BartiHome, BartiPitQuest, BartiSaltQuest, BigDealQuest, NpcQuestLog, QuestSupport,
-  State, StoryMorningQuest, UserAction}
-import zio.{Task, ZIO}
+import pangea.service.state.{BartiDoorQuest, BartiHome, BartiLottery, BartiPitQuest, BartiSaltQuest, BigDealQuest, HerbLore,
+  InventoryFeedback, NpcQuestLog, QuestSupport, State, StoryMorningQuest, UserAction}
+import zio.{Random, Task, ZIO}
 
 import java.util.concurrent.TimeUnit
 
@@ -30,6 +36,11 @@ import java.util.concurrent.TimeUnit
   * («Наутро», «Соль», «Синяя дверь», а «Крыша» и «Большая поставка» — в лавку).
   * Отметка победы после боя — раньше экрана: добыча вернула сюда, чтобы
   * закончить задание. Пока Барти в «Долговой яме», дом опечатан — экрана нет.
+  *
+  * На экране дома — и серебряная лотерея Барти (см. BartiLottery): мешок
+  * конфиската наудачу. Без хранилища вещей (`itemRepo`) её нет — вещам не
+  * дать номеров; без журнала (`journal`) нет и лимита на сутки. Травы из
+  * мешка ловит Живая сумка (`artifacts`), как и с поляны.
   *
   * «Большое дело» (см. BigDealQuest): сюда ведёт карточка адреса, из города.
   * Впервые — затея с контрабандой: каджитам
@@ -60,7 +71,11 @@ case class BartiHouseState(
   parcels:       Option[Parcels] = None,
   bank:          Option[BankRepository] = None,
   // «Долговая яма»: как вытащили Барти — в подсчёт «как и вы».
-  outcomes:      Option[QuestOutcomeDao] = None
+  outcomes:      Option[QuestOutcomeDao] = None,
+  // Лотерея: каждый мешок — строка журнала, по ним лимит на сутки и учёт.
+  journal:       Option[Journal] = None,
+  // Лотерея: травы — в Живую сумку, камни — в Ларец, как и прочая добыча.
+  artifacts:     Option[ArtifactRepository] = None
 ) extends State {
   import BartiHouseState._
 
@@ -80,6 +95,10 @@ case class BartiHouseState(
       Errand.Salt.id    -> Target.Run { (u, _, r) => saltErrand(u, r) },
       Errand.Door.id    -> Target.Run { (u, _, r) => doorErrand(u, r) },
       Errand.Roof.id    -> Target.Goto(StateType.BartiShop),
+      // Серебряная лотерея: рассказ Барти, мешок наудачу, назад — к экрану дома.
+      "BartiLottery"    -> Target.Run { (u, _, r) => showLottery(u, r) },
+      "BartiSackBuy"    -> Target.Run { (u, _, r) => buySack(u, r) },
+      "BartiBack"       -> Target.Run { (u, _, r) => enter(u, r).as(StateType.BartiHouse) },
       "BartiLeave"      -> Target.Goto(StateType.MarketSquare)
     ),
     fallback = Target.Run { (u, _, r) => enter(u, r).as(StateType.BartiHouse) }
@@ -129,15 +148,119 @@ case class BartiHouseState(
 
   // ── Дом Барти — его место ──────────────────────────────────────────────────
 
-  /** Экран дома: Барти у себя, кнопка на каждое его задание, что можно взять
-    * или что идёт (`story` — у Барти ждёт «Наутро»); по две в ряд. */
+  /** Экран дома: Барти у себя; первым рядом — лотерея (если есть где дать
+    * вещам номера), под ней — кнопка на каждое его задание, что можно взять
+    * или что идёт (`story` — у Барти ждёт «Наутро»), по две в ряд. */
   private def homeScreen(quests: NpcQuests, story: Boolean): Screen = {
+    val lottery = itemRepo.map(_ => Choice("BartiLottery", content.text("barti.lottery.label"),
+                    color = ChoiceColor.Positive, row = Some(0))).toList
+    val first   = lottery.size
     val errands = BartiHome.errands(quests, story).zipWithIndex.map { case (e, i) =>
-      Choice(e.id, Choice.fit(content.format("barti.home.questLabel", "title" -> content.text(e.titleKey))), row = Some(i / 2))
+      Choice(e.id, Choice.fit(content.format("barti.home.questLabel", "title" -> content.text(e.titleKey))),
+        row = Some(first + i / 2))
     }
-    val lastRow = errands.flatMap(_.row).maxOption.fold(0)(_ + 1)
-    Screen(content.text("barti.home.text").trim, errands :+ leave.copy(row = Some(lastRow)))
+    val lastRow = (lottery ++ errands).flatMap(_.row).maxOption.fold(0)(_ + 1)
+    Screen(content.text("barti.home.text").trim, lottery ++ errands :+ leave.copy(row = Some(lastRow)))
   }
+
+  // ── Серебряная лотерея ─────────────────────────────────────────────────────
+
+  /** Лотерея открыта: есть где дать вещам номера, Барти дома и дом не опечатан.
+    * Ответ — герой, иначе None (старая кнопка — снова дом). */
+  private def lotteryOpen(user: User): Task[Option[Hero]] =
+    for {
+      hero   <- getHero(user)
+      quests <- NpcQuestLog.load(heroDao, user.userId)
+      story   = itemRepo.isDefined && StoryMorningQuest.atBarti(quests)
+    } yield Option.when(itemRepo.isDefined && BartiHome.atHome(quests, hero, story))(hero)
+
+  /** Рассказ Барти: его собственная лотерея, что внутри — не знает сам. */
+  private def showLottery(user: User, renderer: Renderer): Task[StateType] =
+    lotteryOpen(user).flatMap {
+      case None    => enter(user, renderer)
+      case Some(_) =>
+        sacksLeft(user).flatMap(left => renderer.show(user, lotteryScreen(content.format("barti.lottery.pitch",
+          "price" -> BartiLottery.Price.toString, "count" -> BartiLottery.Size.toString).trim, left)))
+    }.as(StateType.BartiHouse)
+
+  /** Экран лотереи: `lead`, сколько мешков у Барти на сегодня — и купить мешок. */
+  private def lotteryScreen(lead: String, left: Long): Screen =
+    Screen(lead + "\n\n" + content.format("barti.lottery.left",
+      "left" -> left.toString, "limit" -> BartiLottery.DailyLimit.toString), List(
+      Choice("BartiSackBuy", Choice.fit(content.format("barti.lottery.buyLabel", "price" -> BartiLottery.Price.toString)),
+        color = ChoiceColor.Positive, row = Some(0)),
+      Choice("BartiBack", content.text("barti.lottery.backLabel"), color = ChoiceColor.Negative, row = Some(0))))
+
+  /** Отказ Барти — и назад к экрану дома. */
+  private def refusal(text: String): Screen =
+    Screen(text, List(Choice("BartiBack", content.text("barti.lottery.backLabel"), color = ChoiceColor.Negative,
+      row = Some(0))))
+
+  /** Сколько мешков у Барти для героя на сегодня (сутки — по Москве). Считаем по
+    * журналу событий: каждый мешок — своя строка. Без журнала лимита нет. */
+  private def sacksLeft(user: User): Task[Long] =
+    for {
+      now   <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+      today <- journal.fold[Task[Long]](ZIO.succeed(0L))(_.count(user.userId, GameEvent.BartiLottery,
+                 ActivityContest.dayStart(now)))
+    } yield (BartiLottery.DailyLimit - today).max(0L)
+
+  /** Купить мешок — сразу, без подтверждения: цена на кнопке. Мешков на сегодня
+    * не осталось — «конфиската нет»; в сумке меньше мест, чем вещей в мешке, или
+    * серебра не хватает даже с ячейкой — отказ, ничего не тратим. */
+  private def buySack(user: User, renderer: Renderer): Task[StateType] =
+    lotteryOpen(user).flatMap {
+      case None => enter(user, renderer)
+      case Some(hero) =>
+        ZIO.foreachDiscard(itemRepo) { items =>
+          for {
+            left <- sacksLeft(user)
+            inv  <- inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString))
+            _    <- if (left <= 0L) renderer.show(user, refusal(content.text("barti.lottery.limit").trim))
+                    else if (inv.freeSlots < BartiLottery.Size.toLong)
+                      renderer.show(user, refusal(content.format("barti.lottery.noRoom",
+                        "count" -> BartiLottery.Size.toString, "free" -> inv.freeSlots.toString).trim))
+                    else purse.charge(user.userId, hero, BartiLottery.Price).flatMap {
+                      case None       => renderer.show(user, refusal(content.format("barti.lottery.notEnough",
+                                           "price" -> BartiLottery.Price.toString).trim))
+                      case Some(paid) => openSack(user, paid, items, left, renderer)
+                    }
+          } yield ()
+        }
+    }.as(StateType.BartiHouse)
+
+  /** Мешок оплачен: вещи — уровня героя, травы — какими он их видит; каждая со
+    * своим номером из базы, по местам — как добыча: травы в Живую сумку, камни в
+    * Ларец, прочее — в сумку. Что не влезло (невесомого уже предел) — строкой
+    * отказа, как в добыче. Мешок — строкой в журнал. */
+  private def openSack(user: User, hero: Hero, items: ItemRepository, left: Long, renderer: Renderer): Task[Unit] =
+    for {
+      lore      <- HerbLore.readLore(heroDao, user.userId)
+      seed      <- Random.nextLong
+      sack       = BartiLottery.sack(hero.lvl, lore, Rng(seed))._1
+      persisted <- ZIO.foreach(sack)(items.persist(hero.id, _))
+      results   <- ZIO.foreach(persisted)(i => ArtifactIntake.accept(artifacts, inventoryRepo, hero.id, i).map(i -> _))
+      _         <- logSack(user, persisted)
+      lines      = results.collect {
+                     case (i, Intake.ToInventory)            => "• " + i.displayTitle
+                     case (i, Intake.ToArtifact(kind, free)) => "• " + ArtifactIntake.line(content, i, kind, free)
+                   }
+      lost       = results.collect { case (i, Intake.Refused) => InventoryFeedback.refusalLine(content, i) }.distinct
+      slots     <- InventoryFeedback.freeSlotsLine(inventoryRepo, content, hero.id)
+      luck       = Option.when(BartiLottery.jackpot(persisted))(content.text("barti.lottery.jackpot").trim)
+      opened     = content.text("barti.lottery.opened").trim + "\n" + lines.mkString("\n")
+      text       = (List(opened) ++ Option.when(lost.nonEmpty)(lost.mkString("\n")).toList ++ luck.toList :+ slots)
+                     .mkString("\n\n")
+      _         <- renderer.show(user, lotteryScreen(text, (left - 1L).max(0L)))
+    } yield ()
+
+  /** Мешок — в журнал событий: по нему лимит на сутки и учёт в админ-панели. Не
+    * записался — покупка от этого не рушится, только в лог. */
+  private def logSack(user: User, sack: List[Item]): Task[Unit] =
+    journal.fold(ZIO.unit)(_.append(GameEvent(user.userId, GameEvent.BartiLottery, Json.obj(
+      "price" -> BartiLottery.Price.asJson,
+      "items" -> sack.map(_.name).asJson)))
+      .catchAllCause(cause => ZIO.logErrorCause("мешок Барти не записан в журнал", cause)))
 
   /** «Наутро» с экрана дома: Барти читает о себе в книге — или в дверь уже
     * стучат. Главы у Барти нет — снова экран дома. */

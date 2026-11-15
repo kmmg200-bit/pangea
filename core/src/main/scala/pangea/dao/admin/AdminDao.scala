@@ -24,6 +24,8 @@ import zio.{Task, ZLayer}
   * @param levels      по каким уровням разошлись те, кто заходил за неделю
   * @param fetLottery     сколько раз сыграли в беспроигрышную лотерею Фета — всего
   * @param fetLottery7d   то же за неделю
+  * @param bartiLottery   сколько мешков наудачу купили у Барти — всего
+  * @param bartiLottery7d то же за неделю
   */
 final case class AdminStats(
   heroes:       Long,
@@ -34,7 +36,9 @@ final case class AdminStats(
   doubloons:    Long,
   levels:       List[AdminStats.LevelRow],
   fetLottery:   Long = 0L,
-  fetLottery7d: Long = 0L
+  fetLottery7d: Long = 0L,
+  bartiLottery:   Long = 0L,
+  bartiLottery7d: Long = 0L
 ) {
   def silverTotal: Long = heroSilver + vaultSilver
 }
@@ -180,6 +184,11 @@ class AdminDaoLive(xa: transactor.Transactor[Task]) extends AdminDao {
                                 count(*) filter (where occurred_at > now() - interval '7 days')
                          from event_log where event_type = ${GameEvent.FetRuneLottery}"""
                      .query[(Long, Long)].unique.transact(xa)
+      // Мешки наудачу у Барти — так же: каждый мешок — строка журнала.
+      sacks     <- sql"""select count(*),
+                                count(*) filter (where occurred_at > now() - interval '7 days')
+                         from event_log where event_type = ${GameEvent.BartiLottery}"""
+                     .query[(Long, Long)].unique.transact(xa)
     } yield AdminStats(
       heroes      = heroes,
       activeToday = day,
@@ -189,7 +198,9 @@ class AdminDaoLive(xa: transactor.Transactor[Task]) extends AdminDao {
       doubloons   = money._2,
       levels      = AdminStats.levelRows(alive, AdminDao.LevelStep, AdminDao.MaxLevel),
       fetLottery   = lottery._1,
-      fetLottery7d = lottery._2)
+      fetLottery7d = lottery._2,
+      bartiLottery   = sacks._1,
+      bartiLottery7d = sacks._2)
 
   // Те же «живые», что у уровней: заходили за неделю.
   override def gameStats: Task[GameStats] =

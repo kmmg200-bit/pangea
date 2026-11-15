@@ -487,6 +487,10 @@ object AdminPanel {
        |  сыграли всего: ${s.fetLottery}
        |  за неделю: ${s.fetLottery7d}
        |
+       |🎲 Мешки наудачу у Барти
+       |  куплено всего: ${s.bartiLottery}
+       |  за неделю: ${s.bartiLottery7d}
+       |
        |📈 Уровни тех, кто заходил за неделю
        |$levels""".stripMargin
   }
