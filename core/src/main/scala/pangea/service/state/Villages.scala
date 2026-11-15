@@ -307,11 +307,13 @@ object Villages {
 
   /** Бывший пленник с заставы — союзник отряда: имя с его расой
     * (`village.bandits.captive.allyName`), уровень — задания, сила — как моб его
-    * расы редкости [[VillageRates.CaptiveRarity]] того же уровня. */
+    * расы редкости [[VillageRates.CaptiveRarity]] того же уровня. Раса — и в
+    * форме: эльф стреляет издалека (см. BattleAlly.reach). */
   def freedCaptive(content: SceneContent, contract: VillageContract, race: Race): UndeadForm = {
     val lvl = contract.level.max(1)
     UndeadForm(content.format("village.bandits.captive.allyName", "race" -> race.toString.toLowerCase), lvl.toLong,
-      MonsterGenerator.generateOfRaceAndRarity(lvl, race, VillageRates.CaptiveRarity).fightStats)
+      MonsterGenerator.generateOfRaceAndRarity(lvl, race, VillageRates.CaptiveRarity).fightStats,
+      race = Some(race.entryName))
   }
 
   /** Охотники за головами на выходе с заставы — уровня задания: четверо
@@ -392,13 +394,16 @@ object Villages {
   }
 
   /** Караванщик в строю героя: по силе — редкий той же расы, что деревня, уровня
-    * задания. Имя, уровень и статы лежат на самом союзнике (UndeadForm), как у
-    * капитанов каджитов в «Большом деле»; после боя в отряд он не встаёт. */
+    * задания. Имя, уровень, статы и раса лежат на самом союзнике (UndeadForm),
+    * как у капитанов каджитов в «Большом деле»; после боя в отряд он не встаёт.
+    * Караванщик эльфийской деревни стреляет издалека — прямо с повозки (см.
+    * BattleAlly.reach). */
   def caravanGuard(contract: VillageContract, name: String): BattleAlly = {
     val lvl   = contract.level.max(1)
     val stats = MonsterGenerator.generateOfRaceAndRarity(lvl, contract.race, VillageRates.CaravanGuardRarity).fightStats
     BattleAlly(AllyKind.CaravanGuard, position = 0, hp = stats.hp, armor = stats.armor, energy = stats.energy,
-      stats = stats, lvl = lvl.toLong, undead = Some(UndeadForm(name, lvl.toLong, stats)), home = 0)
+      stats = stats, lvl = lvl.toLong, undead = Some(UndeadForm(name, lvl.toLong, stats, race = Some(contract.race.entryName))),
+      home = 0)
   }
 
   /** Поставить караванщиков в строй: каждого — на свою повозку, которую никто
