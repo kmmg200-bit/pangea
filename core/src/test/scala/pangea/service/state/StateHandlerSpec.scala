@@ -66,7 +66,8 @@ object StateHandlerSpec extends ZIOSpecDefault {
     } yield (new StateHandler(api, userRepo, heroRepo, heroDao, payouts, parcels, transfers, states,
                        admin, content, lock), heroDao, heroRepo, api)
 
-  /** Панель-заглушка для пересылки /home: «Админ 1» — те, кого вернёт `watchers`. */
+  /** Панель-заглушка для пересылки /home и /restart: «Админ 1» — те, кого вернёт
+    * `watchers`. */
   private def watchedBy(watchers: UserId => Task[List[VkId]]): AdminPanel = new AdminPanel {
     def intercept(user: User, hero: Hero, action: UserAction, renderer: Renderer): Task[Boolean] = ZIO.succeed(false)
     def homeWatchers(except: UserId): Task[List[VkId]] = watchers(except)
@@ -287,15 +288,68 @@ object StateHandlerSpec extends ZIOSpecDefault {
         messages <- api.sentMessages
       } yield assertTrue(still.exists(_.silver == 123L)) &&
               assertTrue(!messages.exists(_._1.contains("сотрёт героя")))
+    },
+
+    test("/restart без подтверждения «Админ 1» не уходит: игрок только спросил, герой цел") {
+      for {
+        t <- makeRestartHandler(StateType.GlobalMap, admin = watchedBy(_ => ZIO.succeed(List(VkId("777")))))
+        (handler, heroDao, api) = t
+        _      <- handler.makeActionVK(vkId, eventId = 42L, UserAction("/restart", None))
+        still  <- heroDao.getHeroByUserId(userId)
+        warned <- api.sentMessages.map(_.exists(_._1.contains("сотрёт героя")))
+        sent   <- api.forwards
+      } yield assertTrue(still.exists(_.silver == 123L) && warned && sent.isEmpty)
+    },
+
+    test("подтверждение /restart уходит «Админ 1», как /home: само нажатие и подпись — героя какого уровня стёрли") {
+      val admin1 = VkId("777")
+      val admin2 = VkId("888")
+      for {
+        t <- makeRestartHandler(StateType.Battle, admin = watchedBy(_ => ZIO.succeed(List(admin1, admin2))),
+               customize = _.copy(lvl = 37L))
+        (handler, heroDao, api) = t
+        // как в жизни: сперва команда, потом кнопка под предупреждением
+        _     <- handler.makeActionVK(vkId, eventId = 42L, UserAction("/restart", None))
+        _     <- handler.makeActionVK(vkId, eventId = 43L,
+                   UserAction("💀 Да, стереть всё и начать заново", Some(s"""{"action":"${StateHandler.RestartConfirmId}"}""")))
+        fresh <- heroDao.getHeroByUserId(userId)
+        sent  <- api.forwards
+        wiped  = HomeAlert.wipeCaption(vkId, 37L, StateType.Battle)
+      } yield assertTrue(fresh.exists(h => h.exp == 0L && h.state == StateType.Registration)) &&
+              // пересылается только нажатие — по его номеру в диалоге сообщества
+              assertTrue(sent == List((admin1, wiped, Some(43L)), (admin2, wiped, Some(43L)))) &&
+              assertTrue(wiped == "💀 /restart подтверждён: vk.com/idvk_test стёр героя 37-го уровня\nСцена: бой")
+    },
+
+    test("свой подтверждённый /restart админу не пересылается, а сбой пересылки не мешает стиранию") {
+      val confirm = UserAction("", Some(s"""{"action":"${StateHandler.RestartConfirmId}"}"""))
+      for {
+        // панель исключает самого игрока — и других «Админ 1» нет
+        t <- makeRestartHandler(StateType.GlobalMap,
+               admin = watchedBy(except => ZIO.succeed(List(VkId("777")).filter(_ => except != userId))))
+        (self, _, selfApi) = t
+        _      <- self.makeActionVK(vkId, eventId = 1L, UserAction("/restart", None))
+        _      <- self.makeActionVK(vkId, eventId = 2L, confirm)
+        toSelf <- selfApi.forwards
+        d <- makeRestartHandler(StateType.GlobalMap, admin = watchedBy(_ => ZIO.fail(new Throwable("база недоступна"))))
+        (broken, brokenDao, brokenApi) = d
+        _      <- broken.makeActionVK(vkId, eventId = 1L, UserAction("/restart", None))
+        warned <- brokenApi.sentMessages.map(_.exists(_._1.contains("сотрёт героя")))
+        _      <- broken.makeActionVK(vkId, eventId = 2L, confirm)
+        fresh  <- brokenDao.getHeroByUserId(userId)
+      } yield assertTrue(toSelf.isEmpty) &&
+              assertTrue(warned) &&
+              assertTrue(fresh.exists(h => h.silver == 0L && h.state == StateType.Registration))
     }
   )
 
   /** Обвязка для /restart: репозиторий поверх DAO, как в проде, — иначе удаление
     * в DAO не было бы видно репозиторию, и цепочка «стёрли → завели нового» не
     * сошлась бы. Регистрация в наборе состояний — на неё уходит новый герой. */
-  private def makeRestartHandler(startState: StateType) =
+  private def makeRestartHandler(startState: StateType, admin: AdminPanel = AdminPanel.disabled,
+                                 customize: Hero => Hero = identity) =
     for {
-      baseHero <- ZIO.succeed(hero.copy(state = startState))
+      baseHero <- ZIO.succeed(customize(hero.copy(state = startState)))
       heroDao  <- TestHeroDao.withHero(userId, baseHero)
       _        <- heroDao.writeActiveBattle(userId, battle.asJson)
       heroRepo  = TestHeroRepository.backedBy(heroDao)
@@ -318,5 +372,5 @@ object StateHandlerSpec extends ZIOSpecDefault {
       transfers = pangea.service.parcel.Transfers(TestInventoryRepository.accepting, userRepo, parcels,
                     new pangea.test.TestPlayers, content, heroDao, TestBankRepository.empty, payouts, lock)
     } yield (new StateHandler(api, userRepo, heroRepo, heroDao, payouts, parcels, transfers, states,
-                       pangea.service.admin.AdminPanel.disabled, content, lock), heroDao, api)
+                       admin, content, lock), heroDao, api)
 }

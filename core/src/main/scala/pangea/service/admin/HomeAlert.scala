@@ -3,15 +3,22 @@ package pangea.service.admin
 import pangea.model.state.StateType
 import pangea.model.user.VkId
 
-/** Пересылка /home «Админ 1»: группа пересылает в личку админу само сообщение
-  * игрока, а подпись к нему говорит, кто это и из какой сцены он выбирался. По
-  * сцене проще найти, где игрок застрял. */
+/** Пересылка /home и /restart «Админ 1»: группа пересылает в личку админу само
+  * сообщение игрока, а подпись к нему говорит, кто это и из какой сцены он
+  * выбирался. По сцене проще найти, где игрок застрял. /restart пересылается
+  * только подтверждённый — нажатое «Да, стереть всё»: так решил пользователь,
+  * админу нужны те, кто и правда стёр героя, а не те, кто только спросил. */
 object HomeAlert {
 
   /** Подпись к пересланному /home. Ссылка на игрока — на случай, если ВК не
     * примет саму пересылку и уйдёт одна подпись. */
   def caption(player: VkId, from: StateType): String =
     s"🆘 /home от vk.com/id${player.value}\nСцена: ${sceneName(from)}"
+
+  /** Подпись к пересланному подтверждению /restart: героя `lvl`-го уровня больше
+    * нет. */
+  def wipeCaption(player: VkId, lvl: Long, from: StateType): String =
+    s"💀 /restart подтверждён: vk.com/id${player.value} стёр героя $lvl-го уровня\nСцена: ${sceneName(from)}"
 
   /** Сцена по-русски; новая, ещё не названная здесь, — именем из кода. */
   def sceneName(state: StateType): String = SceneNames.getOrElse(state, state.entryName)

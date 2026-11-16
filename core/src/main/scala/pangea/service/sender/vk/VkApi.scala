@@ -119,8 +119,8 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
           .orElse(ZIO.unit)
     }
 
-  // Пересылка /home админам. Пересылку ВК может и не принять — тогда шлём хотя
-  // бы подпись: в ней ссылка на игрока, и админ всё равно узнает, кто застрял.
+  // Пересылка /home и /restart админам. Пересылку ВК может и не принять — тогда
+  // шлём хотя бы подпись: в ней ссылка на игрока, и админ всё равно узнает, кто это.
   override def forwardToUser(to: VkId, message: String, forwarded: Option[Long]): Task[Unit] = {
     val letter = Map("message" -> List(message), "user_id" -> List(to.value))
     forwarded.filter(_ > 0L) match {

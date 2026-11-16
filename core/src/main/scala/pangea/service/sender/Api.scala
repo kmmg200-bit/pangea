@@ -26,7 +26,8 @@ trait Api {
 
   /** Написать `to` от сообщества и приложить пересланным сообщение `forwarded` —
     * номер сообщения в диалоге сообщества, — если оно есть. Так «Админ 1»
-    * получает /home игроков (см. [[pangea.service.admin.HomeAlert]]). */
+    * получает /home и подтверждённые /restart игроков (см.
+    * [[pangea.service.admin.HomeAlert]]). */
   def forwardToUser(to: VkId, message: String, forwarded: Option[Long]): Task[Unit]
 }
 

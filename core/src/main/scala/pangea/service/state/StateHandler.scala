@@ -406,8 +406,8 @@ class StateHandler(
     }
   }
 
-  /** `messageId` — номер сообщения игрока в диалоге сообщества: его /home
-    * пересылается «Админ 1». */
+  /** `messageId` — номер сообщения игрока в диалоге сообщества: его /home и
+    * подтверждение /restart пересылаются «Админ 1». */
   private def makeActionSafe(
       user: User,
       action: UserAction,
@@ -460,11 +460,13 @@ class StateHandler(
       _ <-
         if (inPanel || byCode) ZIO.unit
         else if (StateHandler.isHomeCommand(action))
-          goHome(user, renderer) *> homeToAdmins(user, hero.state, messageId)
+          goHome(user, renderer) *>
+            toAdmins(user, "/home", HomeAlert.caption(user.vkId, hero.state), messageId)
         else if (StateHandler.isRestartCommand(action))
           offerRestart(user, renderer)
         else if (StateHandler.isRestartConfirm(action))
-          restart(user, renderer)
+          restart(user, renderer) *>
+            toAdmins(user, "/restart", HomeAlert.wipeCaption(user.vkId, hero.lvl, hero.state), messageId)
         else
           for {
             state <- ZIO
@@ -526,16 +528,19 @@ class StateHandler(
       _ <- heroRepo.updateState(user.userId, StateType.GlobalMap)
     } yield ()
 
-  /** /home уходит всем «Админ 1», кроме самого игрока: группа пересылает его
-    * сообщение с подписью, из какой сцены он выбирался. Игрок к этому моменту
-    * уже в городе, и сбой пересылки его не касается. */
-  private def homeToAdmins(user: User, from: StateType, messageId: Option[Long]): Task[Unit] =
+  /** /home и подтверждённый /restart уходят всем «Админ 1», кроме самого
+    * игрока: группа пересылает его сообщение с подписью `caption` — кто и из
+    * какой сцены (см. HomeAlert). Сама команда /restart, без подтверждения, не
+    * пересылается: админу нужны те, кто и правда стёр героя. Игрок к этому
+    * моменту уже получил свой ответ, и сбой пересылки его не касается.
+    * `command` — для строки в логе. */
+  private def toAdmins(user: User, command: String, caption: String, messageId: Option[Long]): Task[Unit] =
     admin.homeWatchers(user.userId)
       .flatMap(ZIO.foreachDiscard(_)(to =>
         // Один недоступный админ не должен оставить без письма остальных.
-        api.forwardToUser(to, HomeAlert.caption(user.vkId, from), messageId)
-          .catchAll(err => ZIO.logWarning(s"/home не переслан админу ${to.value}: ${err.getMessage}"))))
-      .catchAll(err => ZIO.logWarning(s"/home не переслан админам: ${err.getMessage}"))
+        api.forwardToUser(to, caption, messageId)
+          .catchAll(err => ZIO.logWarning(s"$command не переслан админу ${to.value}: ${err.getMessage}"))))
+      .catchAll(err => ZIO.logWarning(s"$command не переслан админам: ${err.getMessage}"))
 
   /** Performs a state transition (enter + persist) and follows any
     * `autoAdvance` chain so effect nodes route onward without a player action.

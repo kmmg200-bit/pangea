@@ -154,7 +154,7 @@ object AdminPanelSpec extends ZIOSpecDefault {
       } yield assertTrue(ask.text.contains("Пришлите пароль") && says.contains(AdminConfig.EnvName))
     },
 
-    test("кому пересылать /home: всем «Админ 1», кроме самого игрока") {
+    test("кому пересылать /home и подтверждённый /restart: всем «Админ 1», кроме самого игрока") {
       val other = UserId(2L)
       for {
         t <- leveled(Map(userId -> AdminPanel.Level1, other -> AdminPanel.Level1, UserId(3L) -> 0))
