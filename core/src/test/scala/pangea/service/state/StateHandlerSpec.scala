@@ -4,7 +4,8 @@ import io.circe.Json
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
 import pangea.model.battle.SoloPveBattle
-import pangea.model.hero.Hero
+import pangea.model.hero.{Hero, HeroId}
+import pangea.model.trade.{TradeOffer, TradeSide, TradeStatus}
 import pangea.model.item.{BeltSlot, FlaskKind, Item, ItemDetails, ItemType, Rarity => ItemRarity}
 import pangea.model.monster.{Race, Rarity}
 import pangea.model.state.StateType
@@ -340,8 +341,71 @@ object StateHandlerSpec extends ZIOSpecDefault {
       } yield assertTrue(toSelf.isEmpty) &&
               assertTrue(warned) &&
               assertTrue(fresh.exists(h => h.silver == 0L && h.state == StateType.Registration))
+    },
+
+    test("подтверждение /restart закрывает обмены: партнёру — его заклад, а заклад стёртого не вернётся и новому герою") {
+      // комиссия — десятая часть, как у передачи денег
+      def side(silver: Long = 0L, doubloons: Long = 0L) =
+        TradeSide(Nil, silver, silver / 10L, doubloons, doubloons / 10L, None)
+      def offer(from: UserId, to: UserId, fromSide: TradeSide, toSide: TradeSide) =
+        TradeOffer(0L, from, to, fromSide, toSide, to, None, TradeStatus.Open, 1L, 1L, 1000L, None, 0)
+      for {
+        t <- makeTradeRestartHandler
+        (handler, heroDao, tradeDao, trades, payoutDao, parcelDao) = t
+        // своё предложение партнёру и его — игроку
+        mine   <- tradeDao.insert(offer(userId, partner.userId, side(silver = 300L), side(silver = 200L)))
+        theirs <- tradeDao.insert(offer(partner.userId, userId, side(doubloons = 40L), TradeSide.empty))
+        _      <- handler.makeActionVK(vkId, eventId = 1L,
+                    UserAction("", Some(s"""{"action":"${StateHandler.RestartConfirmId}"}""")))
+        fresh  <- heroDao.getHeroByUserId(userId)
+        // срок потом выходит — а отдавать новому герою нечего: оба закрыты
+        _      <- trades.expire(2000L)
+        all     = tradeDao.snapshot
+      } yield assertTrue(all.find(_.id == mine).exists(_.status == TradeStatus.Cancelled)) &&
+              assertTrue(all.find(_.id == theirs).exists(_.status == TradeStatus.Declined)) &&
+              // партнёру — 200 серебра и 40 дублонов с комиссией: ячейки нет, ждут в городе
+              assertTrue(payoutDao.snapshot.get(partnerHero).contains((220L, 44L))) &&
+              // игроку — ни старому герою, ни новому: 300 серебра с комиссией сгорели
+              assertTrue(payoutDao.snapshot.get(hero.id).isEmpty && parcelDao.snapshot.isEmpty) &&
+              assertTrue(fresh.exists(h => h.state == StateType.Registration && h.silver == 0L && h.doubloons == 0L))
     }
   )
+
+  /** Партнёр по обмену: второй игрок со своим героем. */
+  private val partner     = User(UserId(2L), VkId("vk_partner"), TelegramId("tg_partner"))
+  private val partnerHero = HeroId(2L)
+
+  /** Обвязка для /restart с обменами: как [[makeRestartHandler]], плюс партнёр
+    * в Торговом доме и сами обмены. Ячеек нет: деньги, что вернулись
+    * партнёру, ждут его в городе. */
+  private def makeTradeRestartHandler =
+    for {
+      heroDao  <- TestHeroDao.withHero(userId, hero.copy(state = StateType.TradeHouse))
+      _        <- heroDao.insertHero(TestFixtures.hero(partner.userId, state = StateType.TradeHouse).copy(id = partnerHero))
+      heroRepo  = TestHeroRepository.backedBy(heroDao)
+      userRepo <- TestUserRepository.withUsers(testUser, partner)
+      api      <- TestApi.make
+      content  <- ZIO.attempt(SceneContent.load())
+      players   = new pangea.test.TestPlayers
+      journal  <- pangea.test.TestJournal.make
+      states = Map[StateType, State](
+        StateType.Registration -> pangea.service.state.states.registration.RegistrationState(
+                                    players, heroDao, TestInventoryRepository.accepting, TestItemRepository.make, journal, content)
+      )
+      lock     <- PlayerLock.make
+      bg       <- pangea.service.Background.make(zio.Duration.fromSeconds(1L))
+      payoutDao = TestPayoutDao.empty
+      payouts   = Payouts(payoutDao, heroDao, content)
+      bank      = TestBankRepository.empty
+      parcelDao = TestParcelDao.empty
+      parcels   = pangea.service.parcel.Parcels(parcelDao, bank, content)
+      transfers = pangea.service.parcel.Transfers(TestInventoryRepository.accepting, userRepo, parcels, players, content,
+                    heroDao, bank, payouts, lock)
+      tradeDao  = new pangea.test.TestTradeDao
+      trades    = new pangea.service.trade.Trades(tradeDao, transfers, parcels, bank, payouts, heroDao, userRepo, players,
+                    content, lock, bg)
+    } yield (new StateHandler(api, userRepo, heroRepo, heroDao, payouts, parcels, transfers, states,
+                       AdminPanel.disabled, content, lock, trades = Some(trades)), heroDao, tradeDao, trades, payoutDao, parcelDao)
 
   /** Обвязка для /restart: репозиторий поверх DAO, как в проде, — иначе удаление
     * в DAO не было бы видно репозиторию, и цепочка «стёрли → завели нового» не

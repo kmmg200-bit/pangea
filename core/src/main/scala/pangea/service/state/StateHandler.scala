@@ -25,6 +25,7 @@ import pangea.service.state.states.parcel.TransferState
 import pangea.service.sender.{Api, ChatTarget}
 import pangea.service.sender.vk.{VkPlayers, VkRenderer}
 import pangea.service.state.states.StatesMap
+import pangea.service.trade.Trades
 import zio.{Task, ZIO, ZLayer}
 
 import java.util.concurrent.TimeUnit
@@ -46,7 +47,10 @@ class StateHandler(
   // платится, промокод уходит сцене обычным текстом.
   activity: Option[ActivityContest] = None,
   referrals: Option[Referrals] = None,
-  promo: Option[PromoCodes] = None
+  promo: Option[PromoCodes] = None,
+  // Обмены: /restart закрывает открытые. Без них (тесты) /restart обмены не
+  // трогает.
+  trades: Option[Trades] = None
 ) extends SceneDoor {
 
   /** Чат игрока с ботом — для двери из приложения ([[SceneDoor]]). */
@@ -503,9 +507,15 @@ class StateHandler(
   /** `/restart`, второй шаг: герой и всё, что к нему привязано, удаляются одной
     * транзакцией. Запись пользователя остаётся, поэтому тут же прогоняем пустое
     * действие через обычный диспетчер — он не найдёт героя, заведёт нового и
-    * покажет первый экран регистрации, как при самом первом входе. */
+    * покажет первый экран регистрации, как при самом первом входе.
+    *
+    * Обмены привязаны к игроку, а не к герою, и сами со стиранием не уйдут:
+    * их закрываем до него (см. Trades.forfeit) — партнёру его заклад, а
+    * заклад игрока пропадает вместе с героем. */
   private def restart(user: User, renderer: Renderer): Task[Unit] =
     for {
+      now <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+      _ <- ZIO.foreachDiscard(trades)(_.forfeit(user.userId, now))
       _ <- heroDao.deleteHero(user.userId)
       _ <- api.sendMessage(user, StateHandler.RestartDone, List.empty, None)
       _ <- makeAction(user, UserAction("", None), renderer)
@@ -630,7 +640,7 @@ object StateHandler {
   val live: ZLayer[
     Api with StatesMap with HeroRepository with UserRepository with HeroDao with Payouts with Parcels
       with Transfers with AdminPanel with SceneContent with ActivityContest with Referrals with PromoCodes
-      with PlayerLock,
+      with PlayerLock with Trades,
     Nothing,
     StateHandler
   ] =
@@ -652,7 +662,8 @@ object StateHandler {
         // Тот же лок, что у доставки посылок (см. Transfers): ход игрока и
         // посылка ему в ячейку не должны идти одновременно.
         lock      <- ZIO.service[PlayerLock]
+        trades    <- ZIO.service[Trades]
       } yield new StateHandler(api, userRepo, heroRepo, heroDao, payouts, parcels, transfers, statesMap.states,
-                               admin, content, lock, Some(activity), Some(referrals), Some(promo))
+                               admin, content, lock, Some(activity), Some(referrals), Some(promo), Some(trades))
     )
 }

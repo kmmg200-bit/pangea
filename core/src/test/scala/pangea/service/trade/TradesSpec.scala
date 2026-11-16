@@ -274,6 +274,47 @@ object TradesSpec extends ZIOSpecDefault {
       )
     },
 
+    test("/restart: своё предложение отозвано, чужое отклонено; партнёру — его заклад и письмо, заклад стёртого пропал") {
+      for {
+        f      <- fx()
+        a      <- f.hero(alice)
+        mine   <- f.trades.propose(alice, a, "Борис", draft(List(sword), silver = 100L), now).map(offerOf)
+        b      <- f.hero(bob)
+        _      <- f.trades.answer(bob, b, mine.id, draft(List(shield)), now)
+        b2     <- f.hero(bob)
+        theirs <- f.trades.propose(bob, b2, "Алиса", draft(silver = 200L), now).map(offerOf)
+        _      <- f.trades.forfeit(alice.userId, now + 1L)
+        wiped   = s"${f.content.format("trade.wiped", "name" -> "Иван Иванов")} ${f.content.text("trade.returns")}"
+        toB    <- eventually(f.letters(bob))(_.count(_.startsWith(wiped)) == 2)
+        // срок потом выходит — а возвращать уже нечего: оба закрыты
+        _      <- f.trades.expire(now + Trades.LifetimeMs + 1L)
+        a2     <- f.hero(alice)
+        all    <- ZIO.succeed(f.dao.snapshot)
+      } yield assertTrue(
+        all.find(_.id == mine.id).exists(_.status == TradeStatus.Cancelled),
+        all.find(_.id == theirs.id).exists(_.status == TradeStatus.Declined),
+        // Борису — щит посылкой и 200 серебра с комиссией
+        f.sentTo(bHero) == List("Щит"), f.payouts.snapshot.get(bHero).contains((220L, 0L)),
+        toB.count(_.startsWith(wiped)) == 2,
+        // Алисе — ничего: ни меча, ни 100 серебра с комиссией, ни письма о закрытии
+        f.sentTo(aHero).isEmpty, f.payouts.snapshot.get(aHero).isEmpty,
+        f.bags.of(aHero) == List(axe, ring, fang), a2.silver == 890L,
+        !f.letters(alice).exists(_.contains(f.content.format("trade.wiped", "name" -> "Иван Иванов")))
+      )
+    },
+
+    test("/restart без открытых обменов ничего не трогает и никому не пишет") {
+      for {
+        f     <- fx()
+        a     <- f.hero(alice)
+        offer <- f.trades.propose(alice, a, "Борис", draft(List(sword)), now).map(offerOf)
+        _     <- f.trades.cancel(alice, offer.id, now + 1L)
+        sent   = f.players.sentLetters.size
+        _     <- f.trades.forfeit(alice.userId, now + 2L)
+        _     <- f.trades.forfeit(bob.userId, now + 2L)
+      } yield assertTrue(f.players.sentLetters.size == sent, f.dao.snapshot.forall(_.status == TradeStatus.Cancelled))
+    },
+
     test("сторона из старой записи без новых полей читается: недостающее — нулём и пусто") {
       assertTrue(decode[TradeSide]("""{"items":[],"silver":100}""") == Right(TradeSide(Nil, 100L, 0L, 0L, 0L, None)))
     }

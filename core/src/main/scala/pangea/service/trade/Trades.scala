@@ -176,6 +176,28 @@ final class Trades(dao: TradeDao, transfers: Transfers, parcels: Parcels, bank: 
       }).unit.catchAllCause(cause => ZIO.logErrorCause(s"Обмен ${offer.id}: срок вышел, а закрыть не вышло", cause))
     })
 
+  /** /restart: открытые обмены игрока закрываются — свои отозваны, чужие
+    * отклонены. Партнёру — его заклад целиком, с комиссией, и письмо; заклад
+    * самого игрока пропадает вместе с героем, как его лоты на аукционе (так
+    * решил пользователь): обмен привязан к игроку, а не к герою, и иначе отзыв
+    * или срок вернули бы заклад новому герою.
+    *
+    * Зовётся до стирания, под локом игрока: имя в письме — то, которое партнёр
+    * знает, и новых предложений игрок тем временем не сделает. Ошибка не
+    * глотается: стирание тогда не идёт, а повторный /restart закроет то, что
+    * осталось открытым. */
+  def forfeit(userId: UserId, now: Long): Task[Unit] =
+    dao.openOf(userId).flatMap(offers => ZIO.when(offers.nonEmpty)(nameOf(userId).flatMap(name =>
+      ZIO.foreachDiscard(offers) { offer =>
+        val status  = if (userId == offer.from) TradeStatus.Cancelled else TradeStatus.Declined
+        val partner = offer.partnerOf(userId)
+        val side    = offer.sideOf(partner)
+        // Не записалось — предложение уже закрыли с той стороны (приняли,
+        // отклонили, вышел срок): заклады разошлись без нас.
+        dao.update(offer.copy(status = status, updatedAt = now, doneAt = Some(now))).flatMap(ok => ZIO.when(ok)(
+          giveBack(side, partner, Some(userId), now, Some(closed(content.format("trade.wiped", "name" -> name), side)))))
+      }))).unit
+
   /** Что сказать тому, кто отозвал или отклонил. */
   def closedNote(user: UserId, offer: TradeOffer): String =
     closed(content.text(if (offer.status == TradeStatus.Cancelled) "trade.done.cancelled" else "trade.done.declined"),
