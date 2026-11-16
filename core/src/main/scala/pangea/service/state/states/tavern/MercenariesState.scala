@@ -384,6 +384,7 @@ object MercenariesState {
     case AllyKind.CouncilEnvoy   => "councilEnvoy"
     case AllyKind.BrotherhoodAgent => "brotherhoodAgent"
     case AllyKind.Sojka            => "sojka"
+    case AllyKind.GuildLackey      => "guildLackey"
   }
 
   /** Кто сейчас за столом. Пока идёт «Пропавшая дружина» (`bramblCalled`),

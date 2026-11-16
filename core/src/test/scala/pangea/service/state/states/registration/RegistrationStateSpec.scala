@@ -87,7 +87,7 @@ object RegistrationStateSpec extends ZIOSpecDefault {
     },
 
     // ── Пролог ───────────────────────────────────────────────────────────────
-    test("«Начать» ведёт в первый пассаж, а не в выбор расы") {
+    test("«Начать» ведёт в бой перед прологом (см. PrologueFightSpec), а первый пассаж — не выбор расы") {
       for {
         quad                   <- makeState
         (state, renderer, _, _) = quad
@@ -95,7 +95,7 @@ object RegistrationStateSpec extends ZIOSpecDefault {
         welcome <- renderer.sentScreens.map(_.last)
         _       <- state.action(testUser, tap("P1_Intro"), renderer)
         intro   <- renderer.sentScreens.map(_.last)
-      } yield assertTrue(welcome.choices.map(_.id) == List("P1_Intro")) &&
+      } yield assertTrue(welcome.choices.map(_.id) == List("PrologueFight")) &&
               assertTrue(intro.text.contains("Всякая жизнь заканчивается смертью")) &&
               assertTrue(intro.choices.map(_.id) == List("P2_Dagger"))
     },

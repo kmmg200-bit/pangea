@@ -64,8 +64,22 @@ final case class BattleAlly(
   /** Ледопад Ледяного элементаля: сколько концов раунда он ещё вмёрз в лёд и с
     * места не сходит (см. `MiniBoss.IceElemental.FrozenTurns`). Своё поле, а не
     * `rooted`: тот — «пригвождён» с арены. */
-  frozen:      Int             = 0
+  frozen:      Int             = 0,
+  /** Страховка: ниже стольких HP его не опустить — ни ударом, ни раной, ни
+    * чем другим (см. [[lose]]). Так в прологе стоит Элиас: он ещё должен
+    * воткнуть герою кинжал в спину. 0 — падает, как все. */
+  spare:       Long            = 0L
 ) {
+  /** Сколько HP у него останется, если снять `lost`. Со страховкой
+    * ([[spare]]) — не ниже её, а если он и так под ней, не ниже того, что
+    * есть; ниже двух страховок удары вдвое мягче (см.
+    * [[BattleAlly.cushioned]]): HP не застывает на одной цифре, а сползает к
+    * ней. */
+  def lose(lost: Long): Long = {
+    val raw = (hp - lost.max(0L)).max(0L)
+    if (spare <= 0L) raw else BattleAlly.cushioned(hp, raw, spare)
+  }
+
   /** Держит ли его проклятие Некроманта: HP он сейчас не восстанавливает. */
   def healBlocked: Boolean = cursed > 0
 
@@ -108,6 +122,16 @@ final case class BattleAlly(
 }
 
 object BattleAlly {
+
+  /** HP того, кого держит страховка `spare`, после удара: было `was`, удар
+    * оставил бы `raw`. Выше двух страховок — как есть; ниже — потеря под этой
+    * чертой вдвое меньше, но не ниже самой страховки (а под ней — не ниже
+    * того, что было). Так HP у края сползает, а не обрывается. */
+  def cushioned(was: Long, raw: Long, spare: Long): Long = {
+    val line = was.min(spare * 2L)
+    val soft = if (raw >= line) raw else line - (line - raw) / 2L
+    soft.max(spare.min(was))
+  }
 
   /** Союзники, которых зовут по виду, а не по имени: имя у них целиком (см.
     * [[BattleAlly.callName]]). */
@@ -177,8 +201,9 @@ object BattleAlly {
       jammed   <- c.getOrElse[Boolean]("skillJammed")(false)
       cursed   <- c.getOrElse[Int]("cursed")(0)
       frozen   <- c.getOrElse[Int]("frozen")(0)
+      spare    <- c.getOrElse[Long]("spare")(0L)
     } yield BattleAlly(kind, position, hp, armor, energy, stats, lvl, undead, home, poison, bleed, burn, stood,
-                       coldCut, kills, hitBy, rooted, grown, strike, webbed, jammed, cursed, frozen)
+                       coldCut, kills, hitBy, rooted, grown, strike, webbed, jammed, cursed, frozen, spare)
 }
 
 /** Моб группы, стоящий НЕ в паре с героем: всё, что описывает его и его текущее

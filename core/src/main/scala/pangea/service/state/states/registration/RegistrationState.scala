@@ -18,8 +18,9 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.chat.Links
 import pangea.service.state.states.InventoryState
-import pangea.service.state.{FirstStepsQuest, NamePick, NpcQuestLog, State, UserAction}
+import pangea.service.state.{FirstStepsQuest, NamePick, NpcQuestLog, PrologueFight, State, UserAction}
 import zio.{Random, Task, ZIO}
+import java.util.concurrent.TimeUnit
 
 case class RegistrationState(
   players:       Players,
@@ -30,7 +31,14 @@ case class RegistrationState(
   content:       SceneContent
 ) extends State {
 
-  override def enter(user: User, renderer: Renderer): Task[Unit] = ZIO.unit
+  /** Сюда возвращает бой перед прологом (см. [[PrologueFight]]): с отметкой
+    * победы — строка после боя и первый пассаж, одним сообщением. Других
+    * входов с экраном у регистрации нет: её экраны показывают сами кнопки. */
+  override def enter(user: User, renderer: Renderer): Task[Unit] =
+    heroDao.readSceneData(user.userId).flatMap { scene =>
+      ZIO.when(PrologueFight.won(scene))(
+        heroDao.writeSceneData(user.userId, Json.Null) *> showIntro(user, renderer)).unit
+    }
 
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     branch.act(user, ua, renderer)
@@ -90,6 +98,7 @@ case class RegistrationState(
 
   private lazy val branch: Branch = new Branch(
     routes = prologue.toRoutes(Registration) ++ arrival ++ pickRoutes ++ arrivalRoutes ++ Map(
+      "PrologueFight"   -> Target.Run { (user, _, renderer)   => fight(user, renderer) },
       "ConfirmRace"     -> Target.Run { (user, ua, renderer)  => confirmRace(user, ua, renderer) },
       "RaceDescription" -> Target.Run { (user, ua, renderer)  => getRaceDescription(user, ua.text, renderer) },
       "Race"            -> Target.Run { (user, _, renderer)   => getRace(user, renderer) }
@@ -101,6 +110,30 @@ case class RegistrationState(
       })
     }
   )
+
+  /** «Начать»: прежде пролога — последнее дело Лео, бой в его прежнем теле
+    * (см. [[PrologueFight]]). Победа вернёт сюда, к первому пассажу. Старая
+    * кнопка «Начать» (`P1_Intro`) ведёт в пролог сразу, как раньше. */
+  private def fight(user: User, renderer: Renderer): Task[StateType] =
+    heroDao.getHeroByUserId(user.userId).flatMap {
+      case None => showWelcome(user, renderer)
+      case Some(hero) =>
+        for {
+          now <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
+          _   <- PrologueFight.start(heroDao, user, hero, content, now)
+          _   <- renderer.show(user, Screen(content.text("registration.prologueFight.start"), Nil))
+        } yield StateType.Battle
+    }
+
+  /** После боя: что было после драки — и первый пассаж пролога с его кнопкой. */
+  private def showIntro(user: User, renderer: Renderer): Task[Unit] =
+    content.beats("registration.prologue").collectFirst { case ("P1_Intro", beat) => beat } match {
+      case None => ZIO.unit
+      case Some(beat) =>
+        beat.buildChoices(user).flatMap(choices =>
+          renderer.show(user, Screen(Screen.joined(content.text("registration.prologueFight.won").trim,
+            beat.text.trim), choices)))
+    }
 
   /** Раса выбрана и подтверждена — герой падает на крышу сторожки в лабиринте
     * (см. [[arrival]]). Ветка пролога (какой смертью прошёл) переезжает из
