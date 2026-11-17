@@ -17,12 +17,15 @@ import pangea.service.chat.ChatButtons
 import pangea.service.sender.{Api, ChatTarget}
 import pangea.service.sender.vk.config.VkConfig
 import zio.interop.catz._
-import zio.{Duration, Ref, Schedule, Task, ZIO, durationInt}
+import zio.{Duration, Ref, Schedule, Task, UIO, ZIO, durationInt}
 
 import java.util.concurrent.TimeUnit
 import scala.util.Random
 
-class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) extends Api {
+/** Вызовы API ВК. `limit` — окно частоты ключа каждого сообщества (см.
+  * [[VkRateLimit]]): им проходит любой вызов этим ключом, и повтор тоже. */
+class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao, limit: Community => VkRateLimit)
+    extends Api {
 
   private val uri = uri"https://api.vk.com/method/"
   private def auth(token: String): Map[String, List[String]] = Map(
@@ -48,7 +51,7 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
     // Счётчик попыток для записи в журнал инцидентов.
     for {
       attempts <- Ref.make(0)
-      _ <- (attempts.update(_ + 1) *> call(config.token, VkApi.SendMethod, fields))
+      _ <- (attempts.update(_ + 1) *> call(Community.Main, config.token, VkApi.SendMethod, fields))
              .retry(VkApi.SendRetry)
              .tapError(err => recordFailure(user, message, keyboard.map(_.getJson), err, attempts).orElse(ZIO.unit))
     } yield ()
@@ -78,7 +81,7 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
         )
 
         def send(fields: Map[String, List[String]]): Task[Unit] =
-          call(token, VkApi.SendMethod, fields).unit.retry(VkApi.SendRetry)
+          call(VkApi.communityOf(to), token, VkApi.SendMethod, fields).unit.retry(VkApi.SendRetry)
 
         VkApi.chatKeyboard(config, to)
           .fold(send(fields)) { keys =>
@@ -105,9 +108,11 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
   /** messages.send основным токеном с этими полями, своим random_id (один на
     * все повторы, чтобы повтор не задвоил письмо) и теми же повторами. */
   private def post(fields: Map[String, List[String]]): Task[Unit] =
-    call(config.token, VkApi.SendMethod, fields + ("random_id" -> List(randomId.toString))).unit.retry(VkApi.SendRetry)
+    call(Community.Main, config.token, VkApi.SendMethod, fields + ("random_id" -> List(randomId.toString))).unit.retry(VkApi.SendRetry)
 
-  /** Одна попытка вызвать `method` токеном `token`; ответ — поле `response`.
+  /** Одна попытка вызвать `method` токеном `token` сообщества `community`;
+    * ответ — поле `response`. Сначала — место в окне частоты этого ключа; ВК
+    * ответил «слишком часто» — окно закрыто на паузу (см. [[VkRateLimit]]).
     * Ошибка ВК, ответ не 2xx или не JSON и сбой сети — поломка, и каждая — в
     * метрику ошибок по коду ([[VkApi.errorCode]]). Успешный ответ не логируем
     * (шумно), ошибочный — да. Повторы — у вызывающего: каждый идёт сюда же.
@@ -116,13 +121,14 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
     * экраны (лавка Ришелье — 3 предмета со сравнением с надетым + клавиатура) в
     * percent-encoding раздувались до ~7-8 КБ и упирались в лимит строки запроса
     * на стороне ВК; ответ 414 приходил HTML-ом и молча считался успехом. */
-  private def call(token: String, method: String, fields: Map[String, List[String]]): Task[Json] = {
+  private def call(community: Community, token: String, method: String, fields: Map[String, List[String]]): Task[Json] = {
     val request = Request[Task](
       method = Method.POST,
       uri = uri / method
     ).withEntity(UrlForm((fields ++ auth(token)).map { case (k, vs) => k -> Chain.fromSeq(vs) }))
+    val window = limit(community)
 
-    GameMetrics.vkCall(method)(
+    window(GameMetrics.vkCall(method)(
       client
         .run(request)
         .use(res => res.bodyText.compile.string.map(res.status -> _))
@@ -131,7 +137,10 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
           VkApi.responseOf(status, body).tapError(err =>
             ZIO.logError(s"vk $method response: ${VkApi.snippet(body)}") *>
               GameMetrics.vkError(method, VkApi.errorCode(status, err)))
-        })
+        })).tapError {
+      case VkApi.VkApiError(VkApi.TooFast, _) => window.tooFast
+      case _                                  => ZIO.unit
+    }
   }
 
   private def recordFailure(
@@ -162,13 +171,29 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
     } yield ()
 
   override def getName(user: User): Task[UserResponse] =
-    call(config.token, "users.get", Map("user_ids" -> List(user.vkId.value)))
+    call(Community.Main, config.token, "users.get", Map("user_ids" -> List(user.vkId.value)))
       .flatMap(response => ZIO.fromEither(response.as[List[VkUser]]).map(UserResponse(_)))
 
   private def randomId = Random.between(Int.MinValue, Int.MaxValue)
 }
 
 object VkApi {
+
+  /** Вызовы API ВК с окном частоты на ключ каждого сообщества. */
+  def make(client: Client[Task], config: VkConfig, failures: SendFailureDao): UIO[VkApi] =
+    (VkRateLimit.make(Community.Main) <*> VkRateLimit.make(Community.Guilds)).map { case (main, guilds) =>
+      new VkApi(client, config, failures, {
+        case Community.Main   => main
+        case Community.Guilds => guilds
+      })
+    }
+
+  /** От имени какого сообщества писать в беседу `to`: в беседы гильдейского —
+    * от него, всё прочее — от основного. */
+  def communityOf(to: ChatTarget): Community = to match {
+    case ChatTarget.Peer(_, community) => community
+    case _                             => Community.Main
+  }
 
   /** `peer_id` беседы `to`. Торговая не настроена — пишем в общую: объявления
     * не должны пропадать из-за пустой настройки. */
@@ -180,9 +205,9 @@ object VkApi {
 
   /** Чьим токеном писать: в беседы гильдейского сообщества — его, а нет его —
     * нечем; всё прочее — основного. */
-  def tokenFor(config: VkConfig, to: ChatTarget): Option[String] = to match {
-    case ChatTarget.Peer(_, Community.Guilds) => config.guilds
-    case _                                    => Some(config.token)
+  def tokenFor(config: VkConfig, to: ChatTarget): Option[String] = communityOf(to) match {
+    case Community.Main   => Some(config.token)
+    case Community.Guilds => config.guilds
   }
 
   /** Кнопки под полем ввода — только в общей и торговой беседе основного
@@ -203,6 +228,9 @@ object VkApi {
   /** Версия API ВК: от неё зависит вид событий и ответов. */
   val Version = "5.199"
 
+  /** «Слишком много запросов в секунду»: окно ключа закрывается на паузу. */
+  val TooFast: Int = 6
+
   /** Ошибка API VK: тело ответа содержит объект `error`. */
   final case class VkApiError(code: Int, message: String) extends RuntimeException(s"VK API error $code: $message")
 
@@ -219,9 +247,11 @@ object VkApi {
   val UnreachableRetryDelay: Duration = 5.seconds
 
   // Транзиентные сбои VK/сети — лечим повтором: до 3 попыток с задержкой
-  // 250 → 500 мс. «Игрок закрыл сообщения» — одна попытка через
-  // UnreachableRetryDelay. После — пишем инцидент в send_failures и
-  // пробрасываем ошибку, чтобы catchAll в StateHandler мог отработать.
+  // 250 → 500 мс. «Слишком часто» (6) — так же, но окно ключа уже закрыто на
+  // секунду (VkRateLimit.Pause), и повтор ждёт его. «Игрок закрыл сообщения» —
+  // одна попытка через UnreachableRetryDelay. После — пишем инцидент в
+  // send_failures и пробрасываем ошибку, чтобы catchAll в StateHandler мог
+  // отработать.
   private[vk] val SendRetry: Schedule[Any, Throwable, Any] =
     ((Schedule.recurs(2) && Schedule.exponential(250.millis)) +++
       (Schedule.recurs(1) && Schedule.spaced(UnreachableRetryDelay)))

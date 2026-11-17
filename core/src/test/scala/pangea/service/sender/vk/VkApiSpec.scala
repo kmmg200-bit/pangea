@@ -102,7 +102,7 @@ object VkApiSpec extends ZIOSpecDefault {
     test("в общую и торговую беседу — с кнопками; в чужую беседу — без") {
       for {
         seen <- Ref.make(List.empty[Map[String, String]])
-        api   = new VkApi(fakeVk(seen, refuseKeys = false), chats, NoFailures)
+        api  <- VkApi.make(fakeVk(seen, refuseKeys = false), chats, NoFailures)
         _    <- api.sendToChat(ChatTarget.General, "итоги")
         _    <- api.sendToChat(ChatTarget.Trade, "лот")
         _    <- api.sendToChat(ChatTarget.Peer(2000000007L, Community.Main), "ответ")
@@ -114,7 +114,7 @@ object VkApiSpec extends ZIOSpecDefault {
     test("ВК не принял кнопки — то же сообщение уходит без них, с тем же random_id") {
       for {
         seen  <- Ref.make(List.empty[Map[String, String]])
-        api    = new VkApi(fakeVk(seen, refuseKeys = true), chats, NoFailures)
+        api   <- VkApi.make(fakeVk(seen, refuseKeys = true), chats, NoFailures)
         fiber <- api.sendToChat(ChatTarget.Trade, "лот").fork
         _     <- TestClock.adjust(1.minute)
         _     <- fiber.join
@@ -142,11 +142,11 @@ object VkApiSpec extends ZIOSpecDefault {
     test("в беседу гильдейского — его токеном и без кнопок; без токена — не пишем вовсе") {
       for {
         seen <- Ref.make(List.empty[Map[String, String]])
-        api   = new VkApi(fakeVk(seen, refuseKeys = false), chats.copy(guildsToken = Some("g")), NoFailures)
+        api  <- VkApi.make(fakeVk(seen, refuseKeys = false), chats.copy(guildsToken = Some("g")), NoFailures)
         _    <- api.sendToChat(ChatTarget.Peer(2000000001L, Community.Guilds), "ответ гильдии")
         _    <- api.sendToChat(ChatTarget.General, "итоги")
         none <- Ref.make(List.empty[Map[String, String]])
-        bare  = new VkApi(fakeVk(none, refuseKeys = false), chats, NoFailures)
+        bare <- VkApi.make(fakeVk(none, refuseKeys = false), chats, NoFailures)
         _    <- bare.sendToChat(ChatTarget.Peer(2000000001L, Community.Guilds), "ответ гильдии")
         sent <- seen.get
         lost <- none.get
@@ -233,7 +233,7 @@ object VkApiSpec extends ZIOSpecDefault {
       val down = Client.fromHttpApp(HttpApp[Task](_ => ZIO.fail(new RuntimeException("connection reset"))))
       for {
         before <- errorsOf("users.get", VkApi.NoResponse)
-        failed <- new VkApi(down, chats, NoFailures).getName(player).either
+        failed <- VkApi.make(down, chats, NoFailures).flatMap(_.getName(player)).either
         after  <- errorsOf("users.get", VkApi.NoResponse)
       } yield assertTrue(failed.isLeft, after - before == 1.0)
     },
@@ -241,7 +241,8 @@ object VkApiSpec extends ZIOSpecDefault {
       for {
         seen   <- Ref.make(List.empty[Map[String, String]])
         before <- errorsOf("messages.send", "911")
-        fiber  <- new VkApi(fakeVk(seen, refuseKeys = true), chats, NoFailures).sendToChat(ChatTarget.Trade, "лот").fork
+        api    <- VkApi.make(fakeVk(seen, refuseKeys = true), chats, NoFailures)
+        fiber  <- api.sendToChat(ChatTarget.Trade, "лот").fork
         _      <- TestClock.adjust(1.minute)
         _      <- fiber.join
         after  <- errorsOf("messages.send", "911")
@@ -256,7 +257,7 @@ object VkApiSpec extends ZIOSpecDefault {
           else BadRequest()
         }
       })
-      new VkApi(vk, chats, NoFailures).getName(player)
+      VkApi.make(vk, chats, NoFailures).flatMap(_.getName(player))
         .map(r => assertTrue(r == UserResponse(List(VkUser("Лео", "Вейн")))))
     }
   )

@@ -24,6 +24,11 @@ object GameMetrics {
   private val Lag = MetricKeyType.Histogram.Boundaries.fromChunk(
     Chunk(0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 12.0, 15.0, 20.0, 30.0, 60.0, 120.0, 300.0, 600.0))
 
+  /** Границы для занятости окна частоты ВК: сколько вызовов за секунду, до
+    * лимита в 20; у края — через один. */
+  private val WindowFill = MetricKeyType.Histogram.Boundaries.fromChunk(
+    Chunk(1.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 17.0, 18.0, 19.0, 20.0))
+
   // ── Ходы ─────────────────────────────────────────────────────────────────────
 
   val turnSeconds: Metric.Histogram[Double] =
@@ -64,6 +69,22 @@ object GameMetrics {
 
   val vkSendFailures: Metric.Counter[Long] =
     Metric.counter("pangea_vk_send_failures_total", "Сообщения игрокам, не ушедшие и после повторов (как send_failures)")
+
+  // Окно частоты ключа сообщества (VkRateLimit): у всех метка `community` —
+  // main, guilds. Окно у каждого бота своё.
+
+  /** Сколько вызов API ВК ждал места в окне частоты. Почти всегда ноль; не
+    * ноль — упёрлись в лимит. Число значений — сколько вызовов прошло окно. */
+  val vkLimiterWaitSeconds: Metric.Histogram[Double] =
+    Metric.histogram("pangea_vk_limiter_wait_seconds", "Вызов API ВК: ожидание места в окне частоты", Latency)
+
+  /** Сколько вызовов было за последнюю секунду вместе с этим, когда он занял
+    * место: пики короче опроса Prometheus видны здесь. 20 — окно полно. */
+  val vkLimiterWindowCalls: Metric.Histogram[Double] =
+    Metric.histogram("pangea_vk_limiter_window_calls", "Вызов API ВК: вызовов за последнюю секунду вместе с ним", WindowFill)
+
+  val vkLimiterWaiting: Metric.Gauge[Double] =
+    Metric.gauge("pangea_vk_limiter_waiting", "Вызовов API ВК ждут места в окне частоты или занимают его")
 
   // ── Несколько ботов: локи игроков и ведущий ─────────────────────────────────
 

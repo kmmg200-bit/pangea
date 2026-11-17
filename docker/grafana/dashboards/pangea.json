@@ -442,7 +442,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "API ВК — ошибки в минуту",
-      "description": "Каждая неудачная попытка — по методу и коду ошибки ВК: 6 — слишком часто (лимит 20 запросов в секунду), 9 — flood control, 901/902 — игрок закрыл сообщения, 911 — клавиатура; http_* — ответ не 2xx, not_json — не JSON, net — ответа нет. Повторы идут через 250 и 500 мс, после 901/902 — через 5 с.",
+      "description": "Каждая неудачная попытка — по методу и коду ошибки ВК: 6 — слишком часто (лимит 20 запросов в секунду), 9 — flood control, 901/902 — игрок закрыл сообщения, 911 — клавиатура; http_* — ответ не 2xx, not_json — не JSON, net — ответа нет. Повторы идут через 250 и 500 мс, после 901/902 — через 5 с; после 6 окно ключа закрыто на секунду (ряд «Лимит ВК»).",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1283,6 +1283,256 @@
           },
           "expr": "pangea_leader",
           "legendFormat": "{{instance}}"
+        }
+      ]
+    },
+    {
+      "id": 27,
+      "type": "row",
+      "title": "Лимит ВК",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 61,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 28,
+      "type": "timeseries",
+      "title": "Лимит ВК — запросов в секунду",
+      "description": "Вызовы API ВК через окно частоты ключа, в среднем за минуту, сумма по ботам. Лимит ВК — 20 в секунду на ключ сообщества; пики короче минуты — на панели «занятость окна».",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 62,
+        "w": 6,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "spanNulls": true
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (community) (rate(pangea_vk_limiter_wait_seconds_count[1m]))",
+          "legendFormat": "{{community}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "vector(20)",
+          "legendFormat": "лимит ВК"
+        }
+      ]
+    },
+    {
+      "id": 29,
+      "type": "timeseries",
+      "title": "Лимит ВК — занятость окна",
+      "description": "Сколько вызовов было за последнюю секунду вместе с этим, когда он занял место в окне (у каждого бота окно своё). 20 — окно полно: следующий ждёт.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 62,
+        "w": 6,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "spanNulls": true
+          },
+          "min": 0,
+          "max": 20
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le, community) (rate(pangea_vk_limiter_window_calls_bucket[5m])))",
+          "legendFormat": "медиана: {{community}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le, community) (rate(pangea_vk_limiter_window_calls_bucket[5m])))",
+          "legendFormat": "p99: {{community}}"
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Лимит ВК — ожидание места: p95 и p99",
+      "description": "Сколько вызов API ВК ждал места в окне частоты. Почти всегда ноль; не ноль — упёрлись в лимит, и игрок видит ответ позже на это время.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 62,
+        "w": 6,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "spanNulls": true
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, community) (rate(pangea_vk_limiter_wait_seconds_bucket[5m])))",
+          "legendFormat": "p95: {{community}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le, community) (rate(pangea_vk_limiter_wait_seconds_bucket[5m])))",
+          "legendFormat": "p99: {{community}}"
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Лимит ВК — задержано и ждут",
+      "description": "Задержано — вызовов в минуту, что ждали места в окне дольше миллисекунды. Ждут — сколько стоят в очереди к окну сейчас (на момент опроса).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 62,
+        "w": 6,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "spanNulls": true
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "(sum by (community) (rate(pangea_vk_limiter_wait_seconds_count[5m])) - sum by (community) (rate(pangea_vk_limiter_wait_seconds_bucket{le=\"0.001\"}[5m]))) * 60",
+          "legendFormat": "задержано в минуту: {{community}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (community) (pangea_vk_limiter_waiting)",
+          "legendFormat": "ждут: {{community}}"
         }
       ]
     }

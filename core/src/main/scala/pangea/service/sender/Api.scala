@@ -40,10 +40,11 @@ object Api {
   }
 
   // Клиент живёт, пока жив слой: пул соединений с ВК не закрывается сразу
-  // после создания (см. Client.scoped).
+  // после создания (см. Client.scoped). Окна частоты ключей — одни на бота.
   val vk: ZLayer[VkConfig with SendFailureDao, Throwable, VkApi] = ZLayer.scoped(for {
     config   <- ZIO.service[VkConfig]
     failures <- ZIO.service[SendFailureDao]
     client   <- pangea.client.Client.scoped
-  } yield new VkApi(client, config, failures))
+    api      <- VkApi.make(client, config, failures)
+  } yield api)
 }
