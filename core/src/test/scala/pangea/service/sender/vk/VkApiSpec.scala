@@ -7,8 +7,10 @@ import org.http4s.dsl.Http4sDsl
 import org.http4s.{HttpApp, Status, UrlForm}
 import pangea.dao.sendfailure.SendFailureDao
 import pangea.engine.SceneContent
-import pangea.model.user.UserId
+import pangea.metrics.GameMetrics
+import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.model.vk.Community
+import pangea.model.vk.model.{UserResponse, User => VkUser}
 import pangea.service.chat.{ChatButtons, Links}
 import pangea.service.sender.ChatTarget
 import zio.interop.catz._
@@ -19,7 +21,10 @@ object VkApiSpec extends ZIOSpecDefault {
 
   private val htmlBody = "<html><head><title>414 Request-URI Too Large</title></head></html>"
 
-  def spec = suite("VkApi")(chatPeerSpec, chatKeysSpec, chatSendSpec, tokenSpec, failSpec)
+  // По порядку: метрики ошибок глобальные, и тесты, что считают их приращение,
+  // не должны видеть чужие попытки.
+  def spec = suite("VkApi")(chatPeerSpec, chatKeysSpec, chatSendSpec, tokenSpec, failSpec, errorCodeSpec) @@
+    TestAspect.sequential
 
   private val dsl = Http4sDsl[Task]
   import dsl._
@@ -209,6 +214,50 @@ object VkApiSpec extends ZIOSpecDefault {
         _      <- fiber.join
         after  <- n.get
       } yield assertTrue(early.isEmpty, before == 1, after == 2)
+    }
+  )
+
+  private val player = User(UserId(1L), VkId("7"), TelegramId("tg"))
+
+  /** Сколько попыток `method` с кодом `code` записано в метрику ошибок. */
+  private def errorsOf(method: String, code: String) =
+    GameMetrics.vkApiErrors.tagged("method", method).tagged("code", code).value.map(_.count)
+
+  private def errorCodeSpec = suite("Ошибки ВК в метрике")(
+    test("код — номер ошибки ВК; ответ не 2xx — статус; 2xx не JSON — not_json") {
+      assertTrue(VkApi.errorCode(Status.Ok, VkApi.VkApiError(6, "Too many requests per second")) == "6") &&
+      assertTrue(VkApi.errorCode(Status.UriTooLong, VkApi.VkApiError(414, htmlBody)) == "http_414") &&
+      assertTrue(VkApi.errorCode(Status.Ok, new RuntimeException("VK non-JSON response")) == "not_json")
+    },
+    test("ответа нет — попытка в метрике как net") {
+      val down = Client.fromHttpApp(HttpApp[Task](_ => ZIO.fail(new RuntimeException("connection reset"))))
+      for {
+        before <- errorsOf("users.get", VkApi.NoResponse)
+        failed <- new VkApi(down, chats, NoFailures).getName(player).either
+        after  <- errorsOf("users.get", VkApi.NoResponse)
+      } yield assertTrue(failed.isLeft, after - before == 1.0)
+    },
+    test("ошибка ВК — в метрике её номер, каждая попытка") {
+      for {
+        seen   <- Ref.make(List.empty[Map[String, String]])
+        before <- errorsOf("messages.send", "911")
+        fiber  <- new VkApi(fakeVk(seen, refuseKeys = true), chats, NoFailures).sendToChat(ChatTarget.Trade, "лот").fork
+        _      <- TestClock.adjust(1.minute)
+        _      <- fiber.join
+        after  <- errorsOf("messages.send", "911")
+      } yield assertTrue(after - before == 3.0)
+    },
+    test("имя из ВК — полем response, токеном основного сообщества") {
+      val vk = Client.fromHttpApp(HttpApp[Task] { req =>
+        req.as[UrlForm].flatMap { form =>
+          if (req.uri.path.renderString.endsWith("/users.get") && form.getFirst("user_ids").contains("7") &&
+              form.getFirst("access_token").contains("t"))
+            Ok("""{"response":[{"id":7,"first_name":"Лео","last_name":"Вейн"}]}""")
+          else BadRequest()
+        }
+      })
+      new VkApi(vk, chats, NoFailures).getName(player)
+        .map(r => assertTrue(r == UserResponse(List(VkUser("Лео", "Вейн")))))
     }
   )
 }

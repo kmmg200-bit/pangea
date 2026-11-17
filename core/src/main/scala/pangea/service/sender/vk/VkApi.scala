@@ -3,7 +3,6 @@ package pangea.service.sender.vk
 import cats.data.Chain
 import io.circe.Json
 import io.circe.parser.parse
-import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 import org.http4s.client.Client
 import org.http4s.implicits.http4sLiteralsSyntax
 import org.http4s.{Method, Request, Status, UrlForm}
@@ -12,7 +11,7 @@ import pangea.dao.sendfailure.SendFailureDao
 import pangea.model.user.{User, VkId}
 import pangea.model.vk.{Attachment, Community}
 import pangea.model.vk.keyboard.Keyboard
-import pangea.model.vk.model.UserResponse
+import pangea.model.vk.model.{UserResponse, User => VkUser}
 import pangea.service.ErrorLog
 import pangea.service.chat.ChatButtons
 import pangea.service.sender.{Api, ChatTarget}
@@ -31,48 +30,27 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
     "v"            -> List(VkApi.Version)
   )
 
-  private val baseQueryParams: Map[String, List[String]] = auth(config.token)
-
-  // Параметры уходят телом POST (form-urlencoded), а не в query string: длинные
-  // экраны (лавка Ришелье — 3 предмета со сравнением с надетым + клавиатура) в
-  // percent-encoding раздувались до ~7-8 КБ и упирались в лимит строки запроса
-  // на стороне ВК; ответ 414 приходил HTML-ом и молча считался успехом.
   override def sendMessage(
       user: User,
       message: String,
       attachments: List[Attachment],
       keyboard: Option[Keyboard]
   ): Task[Unit] = {
-    val formParams =
+    val fields =
       Map(
         "message"   -> List(message),
         "user_id"   -> List(user.vkId.value),
         "random_id" -> List(randomId.toString)
       ) ++
-        baseQueryParams ++
         keyboard.map(k => "keyboard" -> List(k.getJson)).toMap ++
         Option.when(attachments.nonEmpty)("attachment" -> List(attachments.mkString(","))).toMap
-
-    val request = Request[Task](
-      method = Method.POST,
-      uri = uri / "messages.send"
-    ).withEntity(UrlForm(formParams.map { case (k, vs) => k -> Chain.fromSeq(vs) }))
 
     // Счётчик попыток для записи в журнал инцидентов.
     for {
       attempts <- Ref.make(0)
-      send      = GameMetrics.vkCall(VkApi.SendMethod)(client.run(request).use { res =>
-        for {
-          _    <- attempts.update(_ + 1)
-          body <- res.bodyText.compile.toList.map(_.mkString(""))
-          // успешный ответ ВК не логируем (шумно). При ошибке тело попадёт
-          // в сообщение исключения через [[VkApiError]].
-          _    <- VkApi.failOnBadResponse(res.status, body).tapError(_ => ZIO.logError(s"vk response: $body"))
-        } yield ()
-      })
-      _ <- send.retry(VkApi.SendRetry).tapError(err =>
-        recordFailure(user, message, keyboard.map(_.getJson), err, attempts).orElse(ZIO.unit)
-      )
+      _ <- (attempts.update(_ + 1) *> call(config.token, VkApi.SendMethod, fields))
+             .retry(VkApi.SendRetry)
+             .tapError(err => recordFailure(user, message, keyboard.map(_.getJson), err, attempts).orElse(ZIO.unit))
     } yield ()
   }
 
@@ -93,27 +71,19 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
       case (Some(peerId), None) =>
         ZIO.logWarning(s"Беседа $peerId гильдейского сообщества: VK_TOKEN_FOR_GROUP_CHATS не задан — писать нечем")
       case (Some(peerId), Some(token)) =>
-        val formParams = Map(
+        val fields = Map(
           "message"   -> List(message),
           "peer_id"   -> List(peerId.toString),
           "random_id" -> List(randomId.toString)
-        ) ++ auth(token)
+        )
 
-        def send(fields: Map[String, List[String]]): Task[Unit] = {
-          val request = Request[Task](
-            method = Method.POST,
-            uri = uri / "messages.send"
-          ).withEntity(UrlForm(fields.map { case (k, vs) => k -> Chain.fromSeq(vs) }))
-          GameMetrics.vkCall(VkApi.SendMethod)(client
-            .run(request)
-            .use(res => res.bodyText.compile.toList.map(_.mkString("")).flatMap(VkApi.failOnBadResponse(res.status, _))))
-            .retry(VkApi.SendRetry)
-        }
+        def send(fields: Map[String, List[String]]): Task[Unit] =
+          call(token, VkApi.SendMethod, fields).unit.retry(VkApi.SendRetry)
 
         VkApi.chatKeyboard(config, to)
-          .fold(send(formParams)) { keys =>
-            send(formParams + ("keyboard" -> List(keys.getJson))).catchAll(err =>
-              ZIO.logWarning(s"vk chat keyboard refused, sending without it: ${err.getMessage}") *> send(formParams))
+          .fold(send(fields)) { keys =>
+            send(fields + ("keyboard" -> List(keys.getJson))).catchAll(err =>
+              ZIO.logWarning(s"vk chat keyboard refused, sending without it: ${err.getMessage}") *> send(fields))
           }
           .tapErrorCause(ErrorLog.logged("vk chat announce failed"))
           .orElse(ZIO.unit)
@@ -132,19 +102,36 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
     }
   }
 
-  /** messages.send с этими полями — с токеном, версией, своим random_id (один
-    * на все повторы, чтобы повтор не задвоил письмо) и теми же повторами. */
-  private def post(fields: Map[String, List[String]]): Task[Unit] = {
-    val formParams = fields ++ baseQueryParams + ("random_id" -> List(randomId.toString))
+  /** messages.send основным токеном с этими полями, своим random_id (один на
+    * все повторы, чтобы повтор не задвоил письмо) и теми же повторами. */
+  private def post(fields: Map[String, List[String]]): Task[Unit] =
+    call(config.token, VkApi.SendMethod, fields + ("random_id" -> List(randomId.toString))).unit.retry(VkApi.SendRetry)
+
+  /** Одна попытка вызвать `method` токеном `token`; ответ — поле `response`.
+    * Ошибка ВК, ответ не 2xx или не JSON и сбой сети — поломка, и каждая — в
+    * метрику ошибок по коду ([[VkApi.errorCode]]). Успешный ответ не логируем
+    * (шумно), ошибочный — да. Повторы — у вызывающего: каждый идёт сюда же.
+    *
+    * Параметры уходят телом POST (form-urlencoded), а не в query string: длинные
+    * экраны (лавка Ришелье — 3 предмета со сравнением с надетым + клавиатура) в
+    * percent-encoding раздувались до ~7-8 КБ и упирались в лимит строки запроса
+    * на стороне ВК; ответ 414 приходил HTML-ом и молча считался успехом. */
+  private def call(token: String, method: String, fields: Map[String, List[String]]): Task[Json] = {
     val request = Request[Task](
       method = Method.POST,
-      uri = uri / "messages.send"
-    ).withEntity(UrlForm(formParams.map { case (k, vs) => k -> Chain.fromSeq(vs) }))
+      uri = uri / method
+    ).withEntity(UrlForm((fields ++ auth(token)).map { case (k, vs) => k -> Chain.fromSeq(vs) }))
 
-    GameMetrics.vkCall(VkApi.SendMethod)(client
-      .run(request)
-      .use(res => res.bodyText.compile.toList.map(_.mkString("")).flatMap(VkApi.failOnBadResponse(res.status, _))))
-      .retry(VkApi.SendRetry)
+    GameMetrics.vkCall(method)(
+      client
+        .run(request)
+        .use(res => res.bodyText.compile.string.map(res.status -> _))
+        .tapError(_ => GameMetrics.vkError(method, VkApi.NoResponse))
+        .flatMap { case (status, body) =>
+          VkApi.responseOf(status, body).tapError(err =>
+            ZIO.logError(s"vk $method response: ${VkApi.snippet(body)}") *>
+              GameMetrics.vkError(method, VkApi.errorCode(status, err)))
+        })
   }
 
   private def recordFailure(
@@ -174,18 +161,9 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao) ex
            )
     } yield ()
 
-  override def getName(user: User): Task[UserResponse] = {
-    val queryParams = baseQueryParams ++ Map(
-      "user_ids" -> List(user.vkId.value)
-    )
-
-    val request = Request[Task](
-      method = Method.GET,
-      uri = uri / "users.get" =? queryParams
-    )
-
-    GameMetrics.vkCall("users.get")(client.expect[UserResponse](request))
-  }
+  override def getName(user: User): Task[UserResponse] =
+    call(config.token, "users.get", Map("user_ids" -> List(user.vkId.value)))
+      .flatMap(response => ZIO.fromEither(response.as[List[VkUser]]).map(UserResponse(_)))
 
   private def randomId = Random.between(Int.MinValue, Int.MaxValue)
 }
@@ -281,4 +259,17 @@ object VkApi {
 
   private def snippet(body: String): String =
     if (body.length <= BodySnippetLimit) body else body.take(BodySnippetLimit) + "…"
+
+  /** Код ошибки для метрики (см. [[GameMetrics.vkApiErrors]]): ответ не 2xx —
+    * `http_<статус>`; 2xx с полем `error` — номер ошибки ВК; 2xx не JSON —
+    * `not_json`. */
+  def errorCode(status: Status, err: Throwable): String =
+    if (!status.isSuccess) s"http_${status.code}"
+    else err match {
+      case VkApiError(code, _) => code.toString
+      case _                   => "not_json"
+    }
+
+  /** Код ошибки для метрики, когда ответа нет вовсе: сеть, тайм-аут. */
+  val NoResponse = "net"
 }

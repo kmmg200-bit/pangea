@@ -55,6 +55,13 @@ object GameMetrics {
   val vkApiSeconds: Metric.Histogram[Double] =
     Metric.histogram("pangea_vk_api_seconds", "Вызов API ВК, одна попытка", Latency)
 
+  /** С метками `method` и `code`: номер ошибки ВК (6 — слишком часто, 901 —
+    * игрок закрыл сообщения, 911 — клавиатура), `http_<статус>` — ответ не 2xx,
+    * `not_json` — 2xx не JSON, `net` — ответа нет (сеть, тайм-аут). Одна
+    * неудачная попытка — одна единица. */
+  val vkApiErrors: Metric.Counter[Long] =
+    Metric.counter("pangea_vk_api_errors_total", "Ошибки вызовов API ВК по коду, одна попытка")
+
   val vkSendFailures: Metric.Counter[Long] =
     Metric.counter("pangea_vk_send_failures_total", "Сообщения игрокам, не ушедшие и после повторов (как send_failures)")
 
@@ -148,6 +155,10 @@ object GameMetrics {
           .tagged("outcome", if (exit.isSuccess) "ok" else "error")
           .update(secondsSince(start)))
     }
+
+  /** Неудачная попытка вызова API ВК: метод и код ошибки (см. [[vkApiErrors]]). */
+  def vkError(method: String, code: String): UIO[Unit] =
+    vkApiErrors.tagged("method", method).tagged("code", code).increment
 
   /** Сообщение из ВК, пришедшее путём `source`: счётчик — если пришло первым,
     * и — если ВК прислал время отправки (`date`, секунды) — сколько шло до нас. */

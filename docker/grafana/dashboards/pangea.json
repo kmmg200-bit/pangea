@@ -442,7 +442,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "API ВК — ошибки в минуту",
-      "description": "Каждая неудачная попытка; повторы идут через 250, 500 и 1000 мс.",
+      "description": "Каждая неудачная попытка — по методу и коду ошибки ВК: 6 — слишком часто (лимит 20 запросов в секунду), 9 — flood control, 901/902 — игрок закрыл сообщения, 911 — клавиатура; http_* — ответ не 2xx, not_json — не JSON, net — ответа нет. Повторы идут через 250 и 500 мс, после 901/902 — через 5 с.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -482,8 +482,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (method) (rate(pangea_vk_api_seconds_count{outcome=\"error\"}[5m])) * 60",
-          "legendFormat": "ошибки: {{method}}"
+          "expr": "sum by (method, code) (rate(pangea_vk_api_errors_total[5m])) * 60",
+          "legendFormat": "{{method}}: {{code}}"
         },
         {
           "refId": "B",
