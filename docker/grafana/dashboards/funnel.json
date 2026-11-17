@@ -524,6 +524,393 @@
       ]
     },
     {
+      "id": 103,
+      "type": "row",
+      "title": "Пролог: кто не доходит до игры",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 15,
+      "type": "barchart",
+      "title": "Пролог по дням регистрации — сколько где сейчас",
+      "description": "Игроки по дню регистрации (по Москве) и где они сейчас: в бою перед прологом (или на добыче после него), после боя, но ещё в прологе, или прошли пролог. Бой перед прологом появился 16.11: у пришедших раньше фаза «после боя» значит просто «в прологе». К ней же относятся и те, кто ещё не нажал «Начать». Дата регистрации — users.created_at. У тех, кто пришёл раньше, чем она появилась, дата восстановлена по первой вещи и первому сообщению боту и может сдвинуться на несколько часов.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 12,
+        "h": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 1,
+            "gradientMode": "none"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "В бою пролога"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "dark-red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "После боя, не прошли пролог"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Прошли пролог"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "vertical",
+        "xField": "День",
+        "showValue": "never",
+        "groupWidth": 0.8,
+        "barWidth": 0.9,
+        "stacking": "normal",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 40,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "WITH x AS (\n  SELECT (u.created_at AT TIME ZONE 'Europe/Moscow')::date AS day,\n         CASE\n           WHEN h.state <> 'Registration' AND h.scene_data -> 'eventData' ? 'prologueFightWon' THEN 1\n           WHEN h.state = 'Registration' THEN 2\n           ELSE 3\n         END AS phase\n  FROM users u\n  JOIN heroes h ON h.user_id = u.id\n),\ndays AS (\n  SELECT generate_series(min(day), (now() AT TIME ZONE 'Europe/Moscow')::date, interval '1 day')::date AS day\n  FROM x\n)\nSELECT to_char(d.day, 'DD.MM') AS \"День\",\n       count(x.phase) FILTER (WHERE x.phase = 1) AS \"В бою пролога\",\n       count(x.phase) FILTER (WHERE x.phase = 2) AS \"После боя, не прошли пролог\",\n       count(x.phase) FILTER (WHERE x.phase = 3) AS \"Прошли пролог\"\nFROM days d\nLEFT JOIN x ON x.day = d.day\nGROUP BY d.day\nORDER BY d.day"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "barchart",
+      "title": "Пролог по дням регистрации — доли",
+      "description": "То же в долях от пришедших в этот день: какая часть ещё в бою, какая — после боя в прологе, какая прошла пролог. Бой перед прологом появился 16.11: у пришедших раньше фаза «после боя» значит просто «в прологе». К ней же относятся и те, кто ещё не нажал «Начать». ",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 14,
+        "w": 12,
+        "h": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 0,
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 1,
+            "gradientMode": "none"
+          },
+          "max": 100
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "В бою пролога"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "dark-red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "После боя, не прошли пролог"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Прошли пролог"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "vertical",
+        "xField": "День",
+        "showValue": "never",
+        "groupWidth": 0.8,
+        "barWidth": 0.9,
+        "stacking": "normal",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 40,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "WITH x AS (\n  SELECT (u.created_at AT TIME ZONE 'Europe/Moscow')::date AS day,\n         CASE\n           WHEN h.state <> 'Registration' AND h.scene_data -> 'eventData' ? 'prologueFightWon' THEN 1\n           WHEN h.state = 'Registration' THEN 2\n           ELSE 3\n         END AS phase\n  FROM users u\n  JOIN heroes h ON h.user_id = u.id\n),\ndays AS (\n  SELECT generate_series(min(day), (now() AT TIME ZONE 'Europe/Moscow')::date, interval '1 day')::date AS day\n  FROM x\n)\nSELECT to_char(d.day, 'DD.MM') AS \"День\",\n       round(100.0 * count(x.phase) FILTER (WHERE x.phase = 1) / nullif(count(x.phase), 0), 1) AS \"В бою пролога\",\n       round(100.0 * count(x.phase) FILTER (WHERE x.phase = 2) / nullif(count(x.phase), 0), 1) AS \"После боя, не прошли пролог\",\n       round(100.0 * count(x.phase) FILTER (WHERE x.phase = 3) / nullif(count(x.phase), 0), 1) AS \"Прошли пролог\"\nFROM days d\nLEFT JOIN x ON x.day = d.day\nGROUP BY d.day\nORDER BY d.day"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "table",
+      "title": "Пролог по дням регистрации",
+      "description": "Сколько игроков пришло в этот день (по Москве) и где они сейчас — числами и долей от пришедших: в бою перед прологом, после боя, но ещё в прологе, прошли пролог. Бой перед прологом появился 16.11: у пришедших раньше фаза «после боя» значит просто «в прологе». К ней же относятся и те, кто ещё не нажал «Начать». Дата регистрации — users.created_at. У тех, кто пришёл раньше, чем она появилась, дата восстановлена по первой вещи и первому сообщению боту и может сдвинуться на несколько часов.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "В бою, %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-GrYlRd"
+                }
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "После боя, в прологе, %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-GrYlRd"
+                }
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Прошли, %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-RdYlGr"
+                }
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": true,
+          "reducer": [
+            "sum"
+          ],
+          "fields": [
+            "Пришло",
+            "В бою",
+            "После боя, в прологе",
+            "Прошли"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "WITH x AS (\n  SELECT (u.created_at AT TIME ZONE 'Europe/Moscow')::date AS day,\n         CASE\n           WHEN h.state <> 'Registration' AND h.scene_data -> 'eventData' ? 'prologueFightWon' THEN 1\n           WHEN h.state = 'Registration' THEN 2\n           ELSE 3\n         END AS phase\n  FROM users u\n  JOIN heroes h ON h.user_id = u.id\n)\nSELECT to_char(day, 'YYYY-MM-DD') AS \"День\",\n       count(*) AS \"Пришло\",\n       count(*) FILTER (WHERE phase = 1) AS \"В бою\",\n       count(*) FILTER (WHERE phase = 2) AS \"После боя, в прологе\",\n       count(*) FILTER (WHERE phase = 3) AS \"Прошли\",\n       round(100.0 * count(*) FILTER (WHERE phase = 1) / count(*)) AS \"В бою, %\",\n       round(100.0 * count(*) FILTER (WHERE phase = 2) / count(*)) AS \"После боя, в прологе, %\",\n       round(100.0 * count(*) FILTER (WHERE phase = 3) / count(*)) AS \"Прошли, %\"\nFROM x\nGROUP BY day\nORDER BY day DESC"
+        }
+      ]
+    },
+    {
       "id": 9,
       "type": "bargauge",
       "title": "Уровни тех, кто заходил за неделю",
@@ -590,7 +977,7 @@
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 13,
+        "y": 38,
         "w": 24,
         "h": 1
       }
@@ -606,7 +993,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 14,
+        "y": 39,
         "w": 12,
         "h": 14
       },
@@ -665,7 +1052,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 14,
+        "y": 39,
         "w": 12,
         "h": 14
       },
@@ -729,7 +1116,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 53,
         "w": 24,
         "h": 12
       },
@@ -845,7 +1232,7 @@
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 40,
+        "y": 65,
         "w": 24,
         "h": 1
       }
@@ -861,7 +1248,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 41,
+        "y": 66,
         "w": 24,
         "h": 14
       },
@@ -1061,7 +1448,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 55,
+        "y": 80,
         "w": 24,
         "h": 14
       },
