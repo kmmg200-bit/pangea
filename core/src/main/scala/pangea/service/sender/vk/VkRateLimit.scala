@@ -26,7 +26,8 @@ final class VkRateLimit private (
     gate:      Semaphore,
     sent:      Ref[Queue[Long]],
     closed:    Ref[Long],
-    waiting:   Ref[Int]
+    waiting:   Ref[Int],
+    peaks:     Ref[Map[Long, Int]]
 ) {
   import VkRateLimit._
 
@@ -35,6 +36,20 @@ final class VkRateLimit private (
 
   /** ВК ответил «слишком часто»: окно закрыто на паузу. */
   def tooFast: UIO[Unit] = now.flatMap(t => closed.update(_ max (t + Pause.toMillis)))
+
+  /** Пик за секунду — в метрику; бот зовёт раз в секунду (см. `Api.vk`). */
+  def publish: UIO[Unit] =
+    peak.flatMap(n => GameMetrics.vkLimiterPeakCalls.tagged("community", community).set(n.toDouble))
+
+  /** Больше всего вызовов за одну секунду за последние [[PeakSpan]]: сколько
+    * было в окне, когда вызов занял место, — наибольшее по секундам. Секунды
+    * старше — забыты. */
+  private[vk] def peak: UIO[Int] =
+    now.flatMap(t =>
+      peaks.modify { bySecond =>
+        val fresh = bySecond.filter { case (second, _) => second * 1000L >= t - PeakSpan.toMillis }
+        (fresh.values.maxOption.getOrElse(0), fresh)
+      })
 
   private def slot: UIO[Unit] =
     for {
@@ -56,9 +71,13 @@ final class VkRateLimit private (
       full    = recent.headOption.filter(_ => recent.sizeIs >= PerSecond).map(_ + Window.toMillis - t)
       delay   = full.getOrElse(0L) max (until - t)
       _      <- if (delay > 0) ZIO.sleep(Duration.fromMillis(delay)) *> take
-                else sent.set(recent.enqueue(t)) *>
-                  GameMetrics.vkLimiterWindowCalls.tagged("community", community).update((recent.size + 1).toDouble)
+                else sent.set(recent.enqueue(t)) *> taken(t, recent.size + 1)
     } yield ()
+
+  /** Место занято в `t`, в окне теперь `calls` вызовов: в метрику и в пик секунды. */
+  private def taken(t: Long, calls: Int): UIO[Unit] =
+    peaks.update(bySecond => bySecond.updated(t / 1000L, bySecond.getOrElse(t / 1000L, 0) max calls)) *>
+      GameMetrics.vkLimiterWindowCalls.tagged("community", community).update(calls.toDouble)
 
   private def count(delta: Int): UIO[Unit] =
     waiting.updateAndGet(_ + delta).flatMap(n => GameMetrics.vkLimiterWaiting.tagged("community", community).set(n.toDouble))
@@ -78,13 +97,19 @@ object VkRateLimit {
   /** На сколько закрыть окно, когда ВК ответил «слишком часто», — на его окно. */
   val Pause: Duration = 1.second
 
+  /** За сколько последних секунд пик за секунду идёт в метрику: чуть больше
+    * опроса Prometheus (15 с) и снимка метрик (5 с) — каждый пик попадёт хотя
+    * бы в один опрос. */
+  val PeakSpan: Duration = 20.seconds
+
   def make(community: Community): UIO[VkRateLimit] =
     for {
       gate    <- Semaphore.make(1)
       sent    <- Ref.make(Queue.empty[Long])
       closed  <- Ref.make(0L)
       waiting <- Ref.make(0)
-    } yield new VkRateLimit(label(community), gate, sent, closed, waiting)
+      peaks   <- Ref.make(Map.empty[Long, Int])
+    } yield new VkRateLimit(label(community), gate, sent, closed, waiting, peaks)
 
   /** Метка сообщества в метриках. */
   private def label(community: Community): String = community match {

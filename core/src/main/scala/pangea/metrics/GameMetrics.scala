@@ -86,6 +86,11 @@ object GameMetrics {
   val vkLimiterWaiting: Metric.Gauge[Double] =
     Metric.gauge("pangea_vk_limiter_waiting", "Вызовов API ВК ждут места в окне частоты или занимают его")
 
+  /** Больше всего вызовов за одну секунду за последние 20 секунд — посекундная
+    * частота, которую Prometheus сам не видит: опрашивает раз в 15 секунд. */
+  val vkLimiterPeakCalls: Metric.Gauge[Double] =
+    Metric.gauge("pangea_vk_limiter_peak_calls", "Вызовов API ВК за одну секунду: пик за последние 20 секунд")
+
   // ── Несколько ботов: локи игроков и ведущий ─────────────────────────────────
 
   /** Пул соединений под локи игроков (AdvisoryLocks) по состоянию: active —

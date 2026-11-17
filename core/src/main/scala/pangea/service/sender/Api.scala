@@ -7,7 +7,7 @@ import pangea.model.vk.model.UserResponse
 import pangea.dao.sendfailure.SendFailureDao
 import pangea.service.sender.vk.VkApi
 import pangea.service.sender.vk.config.VkConfig
-import zio.{Task, ZIO, ZLayer}
+import zio.{Schedule, Task, ZIO, ZLayer, durationInt}
 
 trait Api {
   def getName(user: User): Task[UserResponse]
@@ -40,11 +40,13 @@ object Api {
   }
 
   // Клиент живёт, пока жив слой: пул соединений с ВК не закрывается сразу
-  // после создания (см. Client.scoped). Окна частоты ключей — одни на бота.
+  // после создания (см. Client.scoped). Окна частоты ключей — одни на бота;
+  // их пик за секунду идёт в метрику раз в секунду, пока жив слой.
   val vk: ZLayer[VkConfig with SendFailureDao, Throwable, VkApi] = ZLayer.scoped(for {
     config   <- ZIO.service[VkConfig]
     failures <- ZIO.service[SendFailureDao]
     client   <- pangea.client.Client.scoped
     api      <- VkApi.make(client, config, failures)
+    _        <- api.publishPeaks.repeat(Schedule.spaced(1.second)).forkScoped
   } yield api)
 }

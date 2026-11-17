@@ -174,6 +174,10 @@ class VkApi(client: Client[Task], config: VkConfig, failures: SendFailureDao, li
     call(Community.Main, config.token, "users.get", Map("user_ids" -> List(user.vkId.value)))
       .flatMap(response => ZIO.fromEither(response.as[List[VkUser]]).map(UserResponse(_)))
 
+  /** Пики за секунду окон частоты обоих ключей — в метрику (см. [[VkRateLimit.publish]]). */
+  def publishPeaks: UIO[Unit] =
+    ZIO.foreachDiscard(List(Community.Main, Community.Guilds))(limit(_).publish)
+
   private def randomId = Random.between(Int.MinValue, Int.MaxValue)
 }
 

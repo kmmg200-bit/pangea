@@ -1302,8 +1302,8 @@
     {
       "id": 28,
       "type": "timeseries",
-      "title": "Лимит ВК — запросов в секунду",
-      "description": "Вызовы API ВК через окно частоты ключа, в среднем за минуту, сумма по ботам. Лимит ВК — 20 в секунду на ключ сообщества; пики короче минуты — на панели «занятость окна».",
+      "title": "Лимит ВК — вызовов за секунду",
+      "description": "Пик — больше всего вызовов API ВК за одну секунду (любую, не календарную) за последние 20 с: бот считает сам, а Prometheus посекундно не видит — опрашивает раз в 15 с. При выкладке пики двух ботов складываются — это оценка сверху. Для сравнения — среднее за минуту. Лимит ВК — 20 за секунду на ключ.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1344,8 +1344,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (community) (rate(pangea_vk_limiter_wait_seconds_count[1m]))",
-          "legendFormat": "{{community}}"
+          "expr": "sum by (community) (max_over_time(pangea_vk_limiter_peak_calls[$__interval]))",
+          "legendFormat": "пик за секунду: {{community}}"
         },
         {
           "refId": "B",
@@ -1353,10 +1353,20 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
+          "expr": "sum by (community) (rate(pangea_vk_limiter_wait_seconds_count[1m]))",
+          "legendFormat": "в среднем за минуту: {{community}}"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "expr": "vector(20)",
           "legendFormat": "лимит ВК"
         }
-      ]
+      ],
+      "interval": "15s"
     },
     {
       "id": 29,

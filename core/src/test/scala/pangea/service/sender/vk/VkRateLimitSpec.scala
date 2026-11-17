@@ -73,6 +73,27 @@ object VkRateLimitSpec extends ZIOSpecDefault {
         seen   <- order.get
       } yield assertTrue(seen == Vector("a", "b", "c"))
     },
+    test("пик за секунду: двадцать разом — 20; держится 20 секунд, потом забыт") {
+      for {
+        window <- VkRateLimit.make(Community.Main)
+        _      <- ZIO.foreachDiscard(1 to limit)(_ => window(ZIO.unit))
+        burst  <- window.peak
+        _      <- TestClock.adjust(VkRateLimit.PeakSpan)
+        kept   <- window.peak
+        _      <- TestClock.adjust(1.second)
+        gone   <- window.peak
+      } yield assertTrue(burst == limit, kept == limit, gone == 0)
+    },
+    test("пик — за любую секунду, не за календарную: 10 в конце одной и 10 в начале другой — 20") {
+      for {
+        window <- VkRateLimit.make(Community.Main)
+        _      <- TestClock.adjust(500.millis)
+        _      <- ZIO.foreachDiscard(1 to 10)(_ => window(ZIO.unit))
+        _      <- TestClock.adjust(700.millis)
+        _      <- ZIO.foreachDiscard(1 to 10)(_ => window(ZIO.unit))
+        peak   <- window.peak
+      } yield assertTrue(peak == 20)
+    },
     test("ВК ответил «слишком часто» — окно закрыто на секунду") {
       for {
         window <- VkRateLimit.make(Community.Main)
