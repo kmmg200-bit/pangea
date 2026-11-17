@@ -1,7 +1,7 @@
 {
   "uid": "pangea-funnel",
   "title": "Воронка",
-  "description": "Сколько героев дошло до какого уровня и кто из них заходит: прямо из базы, снимок «как сейчас». Заходил — писал боту или жал кнопки (users.last_seen_at); действия в приложении не в счёт.",
+  "description": "Сколько героев дошло до какого уровня и кто из них заходит: прямо из базы, снимок «как сейчас». Заходил — писал боту или жал кнопки (users.last_seen_at); действия в приложении не в счёт. Внизу — игроки по дню регистрации и стадия, на которой они сейчас.",
   "tags": [
     "pangea"
   ],
@@ -834,6 +834,373 @@
           "rawQuery": true,
           "format": "table",
           "rawSql": "WITH x AS (\n  SELECT h.lvl, u.last_seen_at AS seen\n  FROM heroes h\n  JOIN users u ON u.id = h.user_id\n  WHERE h.state <> 'Registration'\n)\nSELECT CASE WHEN g = 0 THEN '1–4' ELSE (g * 5) || '–' || (g * 5 + 4) END AS \"Уровни\",\n       count(x.lvl) AS \"Героев\",\n       count(x.lvl) FILTER (WHERE x.seen > now() - interval '24 hours') AS \"Заходили за 24 часа\",\n       count(x.lvl) FILTER (WHERE x.seen > now() - interval '7 days') AS \"Заходили за 7 дней\",\n       coalesce(round(100.0 * count(x.lvl) FILTER (WHERE x.seen > now() - interval '24 hours')\n                      / nullif(count(x.lvl), 0)), 0) AS \"Доля за 24 часа, %\",\n       coalesce(round(100.0 * count(x.lvl) FILTER (WHERE x.seen > now() - interval '7 days')\n                      / nullif(count(x.lvl), 0)), 0) AS \"Доля за 7 дней, %\",\n       (SELECT count(*) FROM x x2 WHERE x2.lvl >= greatest(g * 5, 1)) AS \"Дошли сюда и выше\"\nFROM generate_series(0, (SELECT coalesce(max(lvl), 0) FROM x) / 5) g\nLEFT JOIN x ON x.lvl / 5 = g\nGROUP BY g\nORDER BY g"
+        }
+      ]
+    },
+    {
+      "id": 102,
+      "type": "row",
+      "title": "Кто когда пришёл",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 13,
+      "type": "barchart",
+      "title": "Докуда дошли — по дню регистрации",
+      "description": "Игроки по дню регистрации (по Москве). Столбик дня разбит по стадиям, на которых эти игроки сейчас: ещё в прологе (бьются в бою перед ним, не выбрали смерть, выбрали, нашли тайник) или вышли из него — и на каком уровне. Дата регистрации — users.created_at. У тех, кто пришёл раньше, чем она появилась, дата восстановлена по первой вещи и первому сообщению боту и может сдвинуться на несколько часов.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 24,
+        "h": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 1,
+            "gradientMode": "none"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Бой перед прологом"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "dark-red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Пролог: ещё не выбрал смерть"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Пролог: выбрал смерть"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Пролог: нашёл тайник"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Прошёл пролог, 1 ур."
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "light-green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "2–4 ур."
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "5–9 ур."
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "10–24 ур."
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "25+ ур."
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "dark-purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "vertical",
+        "xField": "День",
+        "showValue": "never",
+        "groupWidth": 0.8,
+        "barWidth": 0.9,
+        "stacking": "normal",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 40,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "WITH x AS (\n  SELECT (u.created_at AT TIME ZONE 'Europe/Moscow')::date AS day,\n         h.lvl,\n         CASE\n           WHEN h.state <> 'Registration' AND h.scene_data -> 'eventData' ? 'prologueFightWon' THEN 1\n           WHEN h.state <> 'Registration' THEN\n             CASE WHEN h.lvl < 2 THEN 5 WHEN h.lvl < 5 THEN 6 WHEN h.lvl < 10 THEN 7 WHEN h.lvl < 25 THEN 8 ELSE 9 END\n           WHEN h.scene_data ? 'kitFound' THEN 4\n           WHEN h.scene_data ? 'prologueBranch' THEN 3\n           ELSE 2\n         END AS stage\n  FROM users u\n  JOIN heroes h ON h.user_id = u.id\n),\ndays AS (\n  SELECT generate_series(min(day), (now() AT TIME ZONE 'Europe/Moscow')::date, interval '1 day')::date AS day\n  FROM x\n)\nSELECT to_char(d.day, 'DD.MM') AS \"День\",\n       count(x.stage) FILTER (WHERE x.stage = 1) AS \"Бой перед прологом\",\n       count(x.stage) FILTER (WHERE x.stage = 2) AS \"Пролог: ещё не выбрал смерть\",\n       count(x.stage) FILTER (WHERE x.stage = 3) AS \"Пролог: выбрал смерть\",\n       count(x.stage) FILTER (WHERE x.stage = 4) AS \"Пролог: нашёл тайник\",\n       count(x.stage) FILTER (WHERE x.stage = 5) AS \"Прошёл пролог, 1 ур.\",\n       count(x.stage) FILTER (WHERE x.stage = 6) AS \"2–4 ур.\",\n       count(x.stage) FILTER (WHERE x.stage = 7) AS \"5–9 ур.\",\n       count(x.stage) FILTER (WHERE x.stage = 8) AS \"10–24 ур.\",\n       count(x.stage) FILTER (WHERE x.stage = 9) AS \"25+ ур.\"\nFROM days d\nLEFT JOIN x ON x.day = d.day\nGROUP BY d.day\nORDER BY d.day"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "table",
+      "title": "По дням регистрации",
+      "description": "Сколько игроков пришло в этот день (по Москве) и докуда они дошли к сегодняшнему дню: сколько ещё в прологе, сколько прошли его, сколько дошли до 5 и до 10 уровня. Проценты — от пришедших в этот день. Дата регистрации — users.created_at. У тех, кто пришёл раньше, чем она появилась, дата восстановлена по первой вещи и первому сообщению боту и может сдвинуться на несколько часов.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 55,
+        "w": 24,
+        "h": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Прошли пролог, %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-RdYlGr"
+                }
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "До 5 ур., %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-RdYlGr"
+                }
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "До 10 ур., %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-RdYlGr"
+                }
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": true,
+          "reducer": [
+            "sum"
+          ],
+          "fields": [
+            "Пришло",
+            "Ещё в прологе",
+            "Прошли пролог",
+            "Дошли до 5 ур.",
+            "Дошли до 10 ур."
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "WITH x AS (\n  SELECT (u.created_at AT TIME ZONE 'Europe/Moscow')::date AS day,\n         h.lvl,\n         CASE\n           WHEN h.state <> 'Registration' AND h.scene_data -> 'eventData' ? 'prologueFightWon' THEN 1\n           WHEN h.state <> 'Registration' THEN\n             CASE WHEN h.lvl < 2 THEN 5 WHEN h.lvl < 5 THEN 6 WHEN h.lvl < 10 THEN 7 WHEN h.lvl < 25 THEN 8 ELSE 9 END\n           WHEN h.scene_data ? 'kitFound' THEN 4\n           WHEN h.scene_data ? 'prologueBranch' THEN 3\n           ELSE 2\n         END AS stage\n  FROM users u\n  JOIN heroes h ON h.user_id = u.id\n)\nSELECT to_char(day, 'YYYY-MM-DD') AS \"День\",\n       count(*) AS \"Пришло\",\n       count(*) FILTER (WHERE stage <= 4) AS \"Ещё в прологе\",\n       count(*) FILTER (WHERE stage > 4) AS \"Прошли пролог\",\n       count(*) FILTER (WHERE stage > 4 AND lvl >= 5) AS \"Дошли до 5 ур.\",\n       count(*) FILTER (WHERE stage > 4 AND lvl >= 10) AS \"Дошли до 10 ур.\",\n       round(100.0 * count(*) FILTER (WHERE stage > 4) / count(*)) AS \"Прошли пролог, %\",\n       round(100.0 * count(*) FILTER (WHERE stage > 4 AND lvl >= 5) / count(*)) AS \"До 5 ур., %\",\n       round(100.0 * count(*) FILTER (WHERE stage > 4 AND lvl >= 10) / count(*)) AS \"До 10 ур., %\"\nFROM x\nGROUP BY day\nORDER BY day DESC"
         }
       ]
     }
