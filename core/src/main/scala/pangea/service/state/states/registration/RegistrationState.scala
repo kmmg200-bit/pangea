@@ -20,7 +20,6 @@ import pangea.service.chat.Links
 import pangea.service.state.states.InventoryState
 import pangea.service.state.{FirstStepsQuest, NamePick, NpcQuestLog, PrologueFight, State, UserAction}
 import zio.{Random, Task, ZIO}
-import java.util.concurrent.TimeUnit
 
 case class RegistrationState(
   players:       Players,
@@ -32,8 +31,10 @@ case class RegistrationState(
 ) extends State {
 
   /** Сюда возвращает бой перед прологом (см. [[PrologueFight]]): с отметкой
-    * победы — строка после боя и первый пассаж, одним сообщением. Других
-    * входов с экраном у регистрации нет: её экраны показывают сами кнопки. */
+    * победы — строка после боя и первый пассаж, одним сообщением. Сам бой
+    * убран; остался на одну выкладку — довести тот, что успел начать прежний
+    * бот, пока работал рядом с новым. Других входов с экраном у регистрации
+    * нет: её экраны показывают сами кнопки. */
   override def enter(user: User, renderer: Renderer): Task[Unit] =
     heroDao.readSceneData(user.userId).flatMap { scene =>
       ZIO.when(PrologueFight.won(scene))(
@@ -96,9 +97,13 @@ case class RegistrationState(
     "ArrivalStand"   -> Target.Run { (user, _, renderer) => stand(user, renderer) }
   )
 
+  private lazy val prologueRoutes: Map[String, Target] = prologue.toRoutes(Registration)
+
   private lazy val branch: Branch = new Branch(
-    routes = prologue.toRoutes(Registration) ++ arrival ++ pickRoutes ++ arrivalRoutes ++ Map(
-      "PrologueFight"   -> Target.Run { (user, _, renderer)   => fight(user, renderer) },
+    routes = prologueRoutes ++ arrival ++ pickRoutes ++ arrivalRoutes ++
+      // «Начать» из приветствий 16–19.11, когда перед прологом был бой, — сразу
+      // в первый пассаж, как нынешняя.
+      prologueRoutes.get("P1_Intro").map("PrologueFight" -> _) ++ Map(
       "ConfirmRace"     -> Target.Run { (user, ua, renderer)  => confirmRace(user, ua, renderer) },
       "RaceDescription" -> Target.Run { (user, ua, renderer)  => getRaceDescription(user, ua.text, renderer) },
       "Race"            -> Target.Run { (user, _, renderer)   => getRace(user, renderer) }
@@ -110,20 +115,6 @@ case class RegistrationState(
       })
     }
   )
-
-  /** «Начать»: прежде пролога — последнее дело Лео, бой в его прежнем теле
-    * (см. [[PrologueFight]]). Победа вернёт сюда, к первому пассажу. Старая
-    * кнопка «Начать» (`P1_Intro`) ведёт в пролог сразу, как раньше. */
-  private def fight(user: User, renderer: Renderer): Task[StateType] =
-    heroDao.getHeroByUserId(user.userId).flatMap {
-      case None => showWelcome(user, renderer)
-      case Some(hero) =>
-        for {
-          now <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
-          _   <- PrologueFight.start(heroDao, user, hero, content, now)
-          _   <- renderer.show(user, Screen(content.text("registration.prologueFight.start"), Nil))
-        } yield StateType.Battle
-    }
 
   /** После боя: что было после драки — и первый пассаж пролога с его кнопкой. */
   private def showIntro(user: User, renderer: Renderer): Task[Unit] =

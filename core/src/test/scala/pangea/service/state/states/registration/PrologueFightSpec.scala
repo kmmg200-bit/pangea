@@ -17,11 +17,13 @@ import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestItem
 import zio.test._
 import zio.{Task, ZIO}
 
-/** Бой перед прологом: «Начать» ставит героя в прежнее тело Лео — ассасина
-  * 25-го уровня с четырьмя умениями и легендарным поясом, — рядом Элиас и три
-  * шестёрки гильдии, против — десять человек дворянской стражи. Проиграть
-  * нельзя ни одной тактикой, Элиас не падает, а настоящий герой после боя тот
-  * же, что до него; дальше — пролог как был. */
+/** Бой перед прологом убран: «Начать» — и её прежняя кнопка из чатов — ведёт
+  * сразу в пролог. Но бой, что успел начать прежний бот при выкладке, новый
+  * доводит до конца: герой в прежнем теле Лео — ассасина 25-го уровня с
+  * четырьмя умениями и легендарным поясом, — рядом Элиас и три шестёрки
+  * гильдии, против — десять человек дворянской стражи. Проиграть нельзя ни
+  * одной тактикой, Элиас не падает, а настоящий герой после боя тот же, что до
+  * него; дальше — пролог как был. */
 object PrologueFightSpec extends ZIOSpecDefault {
 
   private val userId   = UserId(1L)
@@ -138,25 +140,24 @@ object PrologueFightSpec extends ZIOSpecDefault {
                   r.deaths + (if (st == StateType.Death) 1 else 0))
     }
 
+  /** Бой, что начал прежний бот: вход в него из регистрации убран. */
+  private def fightStarted(w: World): Task[Unit] =
+    PrologueFight.start(w.dao, testUser, fresh, w.content, 0L)
+
   private def started(seed: Long): Task[World] =
     for {
-      _  <- TestRandom.setSeed(seed)
-      w  <- world
-      st <- w.reg.action(testUser, act("PrologueFight"), w.renderer)
-      _  <- ZIO.when(st != StateType.Battle)(ZIO.fail(new Throwable(s"не бой: $st")))
-      _  <- w.battle.enter(testUser, w.renderer)
+      _ <- TestRandom.setSeed(seed)
+      w <- world
+      _ <- fightStarted(w)
+      _ <- w.battle.enter(testUser, w.renderer)
     } yield w
 
   override def spec = suite("Бой перед прологом")(
 
-    test("«Начать» ведёт в бой: Лео 25-го уровня, четыре умения, огненные клинки и легендарные фляги") {
+    test("бой, начатый прежним ботом: Лео 25-го уровня, четыре умения, огненные клинки и легендарные фляги") {
       for {
         w       <- world
-        _       <- w.reg.action(testUser, UserAction("привет", None), w.renderer)
-        welcome <- w.renderer.sentScreens.map(_.last)
-        _       <- w.renderer.reset
-        st      <- w.reg.action(testUser, act("PrologueFight"), w.renderer)
-        lead    <- w.renderer.sentScreens.map(_.map(_.text).mkString("\n"))
+        _       <- fightStarted(w)
         b       <- battleOf(w.dao).map(_.get)
         real    <- heroOf(w.dao)
         body     = b.body.get
@@ -166,9 +167,7 @@ object PrologueFightSpec extends ZIOSpecDefault {
                      case _                       => Nil
                    }
         rubies   = (body.equipment.weapon.sockets ++ body.equipment.leftHand.sockets).flatten
-      } yield assertTrue(welcome.choices.map(_.id) == List("PrologueFight") && st == StateType.Battle) &&
-              assertTrue(lead.contains("дома Ардевилей") && lead.contains("Элиас")) &&
-              assertTrue(body.lvl == 25L && body.sparePct == PrologueFight.SparePct && b.story.contains(PrologueFight.Story)) &&
+      } yield assertTrue(body.lvl == 25L && body.sparePct == PrologueFight.SparePct && b.story.contains(PrologueFight.Story)) &&
               assertTrue(b.skillSlots.map(_.skill).toSet ==
                 Set[Skill](Skill.QuickStrike, Skill.CunningStrike, Skill.BladeWhirl, Skill.Reinforcement)) &&
               assertTrue(belt.collect { case f: BeltSlot.Flask => (f.kind, f.rarity, f.charges) } ==
@@ -185,7 +184,7 @@ object PrologueFightSpec extends ZIOSpecDefault {
     test("строй: Элиас у плеча Лео, равный ему и со страховкой, три шестёрки-«рабы»; против — десять стражников, все с разными именами") {
       for {
         w      <- world
-        _      <- w.reg.action(testUser, act("PrologueFight"), w.renderer)
+        _      <- fightStarted(w)
         b      <- battleOf(w.dao).map(_.get)
         scene  <- w.dao.readSceneData(userId)
         allies  = b.group.allies
@@ -243,16 +242,21 @@ object PrologueFightSpec extends ZIOSpecDefault {
               assertTrue(dagger.text.contains("Прости, брат"))
     },
 
-    test("старая кнопка «Начать» ведёт в пролог сразу, а вход в регистрацию без победы ничего не показывает") {
+    test("«Начать» и её прежняя кнопка из чатов — сразу в пролог, без боя; вход в регистрацию без победы молчит") {
       for {
-        w     <- world
-        _     <- w.reg.enter(testUser, w.renderer)
-        quiet <- w.renderer.sentScreens
-        _     <- w.reg.action(testUser, act("P1_Intro"), w.renderer)
-        intro <- w.renderer.sentScreens.map(_.last)
-        b     <- battleOf(w.dao)
-      } yield assertTrue(quiet.isEmpty && b.isEmpty) &&
-              assertTrue(intro.text.contains("Всякая жизнь заканчивается смертью"))
+        w       <- world
+        _       <- w.reg.enter(testUser, w.renderer)
+        quiet   <- w.renderer.sentScreens
+        _       <- w.reg.action(testUser, UserAction("привет", None), w.renderer)
+        welcome <- w.renderer.sentScreens.map(_.last)
+        st      <- ZIO.foreach(List("P1_Intro", "PrologueFight"))(id => w.reg.action(testUser, act(id), w.renderer))
+        shown   <- w.renderer.sentScreens.map(_.takeRight(2))
+        b       <- battleOf(w.dao)
+        scene   <- w.dao.readSceneData(userId)
+      } yield assertTrue(quiet.isEmpty && welcome.choices.map(_.id) == List("P1_Intro")) &&
+              assertTrue(st == List(StateType.Registration, StateType.Registration) && b.isEmpty && scene.isEmpty) &&
+              assertTrue(shown.size == 2 && shown.forall(s => s.text.contains("Всякая жизнь заканчивается смертью") &&
+                s.choices.map(_.id) == List("P2_Dagger")))
     },
 
     test("страховка союзника: удар, рана, взрыв — не ниже своей доли; под ней — не ниже того, что есть; без неё — до нуля") {
@@ -268,7 +272,7 @@ object PrologueFightSpec extends ZIOSpecDefault {
     test("бой и союзник, записанные до пролога с боем, читаются: тела нет, страховки нет") {
       for {
         w <- world
-        _ <- w.reg.action(testUser, act("PrologueFight"), w.renderer)
+        _ <- fightStarted(w)
         b <- battleOf(w.dao).map(_.get)
       } yield {
         val stored = b.asJson

@@ -540,7 +540,7 @@
       "id": 15,
       "type": "barchart",
       "title": "Пролог по дням регистрации — сколько где сейчас",
-      "description": "Игроки по дню регистрации (по Москве) и где они сейчас: в бою перед прологом (или на добыче после него), после боя, но ещё в прологе, или прошли пролог. Бой перед прологом появился 16.11: у пришедших раньше фаза «после боя» значит просто «в прологе». К ней же относятся и те, кто ещё не нажал «Начать». Дата регистрации — users.created_at. У тех, кто пришёл раньше, чем она появилась, дата восстановлена по первой вещи и первому сообщению боту и может сдвинуться на несколько часов.",
+      "description": "Игроки по дню регистрации (по Москве) и где они сейчас: ещё в прологе (в том числе не нажавшие «Начать») или прошли его. Дата регистрации — users.created_at. У тех, кто пришёл раньше, чем она появилась, дата восстановлена по первой вещи и первому сообщению боту и может сдвинуться на несколько часов.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "pangea-db"
@@ -569,22 +569,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "В бою пролога"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "dark-red"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "После боя, не прошли пролог"
+              "options": "Не прошли пролог"
             },
             "properties": [
               {
@@ -642,7 +627,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "WITH x AS (\n  SELECT (u.created_at AT TIME ZONE 'Europe/Moscow')::date AS day,\n         CASE\n           WHEN h.state <> 'Registration' AND h.scene_data -> 'eventData' ? 'prologueFightWon' THEN 1\n           WHEN h.state = 'Registration' THEN 2\n           ELSE 3\n         END AS phase\n  FROM users u\n  JOIN heroes h ON h.user_id = u.id\n),\ndays AS (\n  SELECT generate_series(min(day), (now() AT TIME ZONE 'Europe/Moscow')::date, interval '1 day')::date AS day\n  FROM x\n)\nSELECT to_char(d.day, 'DD.MM') AS \"День\",\n       count(x.phase) FILTER (WHERE x.phase = 1) AS \"В бою пролога\",\n       count(x.phase) FILTER (WHERE x.phase = 2) AS \"После боя, не прошли пролог\",\n       count(x.phase) FILTER (WHERE x.phase = 3) AS \"Прошли пролог\"\nFROM days d\nLEFT JOIN x ON x.day = d.day\nGROUP BY d.day\nORDER BY d.day"
+          "rawSql": "WITH x AS (\n  SELECT (u.created_at AT TIME ZONE 'Europe/Moscow')::date AS day,\n         CASE\n           WHEN h.state = 'Registration' THEN 2\n           ELSE 3\n         END AS phase\n  FROM users u\n  JOIN heroes h ON h.user_id = u.id\n),\ndays AS (\n  SELECT generate_series(min(day), (now() AT TIME ZONE 'Europe/Moscow')::date, interval '1 day')::date AS day\n  FROM x\n)\nSELECT to_char(d.day, 'DD.MM') AS \"День\",\n       count(x.phase) FILTER (WHERE x.phase = 2) AS \"Не прошли пролог\",\n       count(x.phase) FILTER (WHERE x.phase = 3) AS \"Прошли пролог\"\nFROM days d\nLEFT JOIN x ON x.day = d.day\nGROUP BY d.day\nORDER BY d.day"
         }
       ]
     },
@@ -650,7 +635,7 @@
       "id": 16,
       "type": "barchart",
       "title": "Пролог по дням регистрации — доли",
-      "description": "То же в долях от пришедших в этот день: какая часть ещё в бою, какая — после боя в прологе, какая прошла пролог. Бой перед прологом появился 16.11: у пришедших раньше фаза «после боя» значит просто «в прологе». К ней же относятся и те, кто ещё не нажал «Начать». ",
+      "description": "То же в долях от пришедших в этот день: какая часть ещё в прологе (в том числе не нажавшие «Начать»), какая прошла его. ",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "pangea-db"
@@ -680,22 +665,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "В бою пролога"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "dark-red"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "После боя, не прошли пролог"
+              "options": "Не прошли пролог"
             },
             "properties": [
               {
@@ -753,7 +723,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "WITH x AS (\n  SELECT (u.created_at AT TIME ZONE 'Europe/Moscow')::date AS day,\n         CASE\n           WHEN h.state <> 'Registration' AND h.scene_data -> 'eventData' ? 'prologueFightWon' THEN 1\n           WHEN h.state = 'Registration' THEN 2\n           ELSE 3\n         END AS phase\n  FROM users u\n  JOIN heroes h ON h.user_id = u.id\n),\ndays AS (\n  SELECT generate_series(min(day), (now() AT TIME ZONE 'Europe/Moscow')::date, interval '1 day')::date AS day\n  FROM x\n)\nSELECT to_char(d.day, 'DD.MM') AS \"День\",\n       round(100.0 * count(x.phase) FILTER (WHERE x.phase = 1) / nullif(count(x.phase), 0), 1) AS \"В бою пролога\",\n       round(100.0 * count(x.phase) FILTER (WHERE x.phase = 2) / nullif(count(x.phase), 0), 1) AS \"После боя, не прошли пролог\",\n       round(100.0 * count(x.phase) FILTER (WHERE x.phase = 3) / nullif(count(x.phase), 0), 1) AS \"Прошли пролог\"\nFROM days d\nLEFT JOIN x ON x.day = d.day\nGROUP BY d.day\nORDER BY d.day"
+          "rawSql": "WITH x AS (\n  SELECT (u.created_at AT TIME ZONE 'Europe/Moscow')::date AS day,\n         CASE\n           WHEN h.state = 'Registration' THEN 2\n           ELSE 3\n         END AS phase\n  FROM users u\n  JOIN heroes h ON h.user_id = u.id\n),\ndays AS (\n  SELECT generate_series(min(day), (now() AT TIME ZONE 'Europe/Moscow')::date, interval '1 day')::date AS day\n  FROM x\n)\nSELECT to_char(d.day, 'DD.MM') AS \"День\",\n       round(100.0 * count(x.phase) FILTER (WHERE x.phase = 2) / nullif(count(x.phase), 0), 1) AS \"Не прошли пролог\",\n       round(100.0 * count(x.phase) FILTER (WHERE x.phase = 3) / nullif(count(x.phase), 0), 1) AS \"Прошли пролог\"\nFROM days d\nLEFT JOIN x ON x.day = d.day\nGROUP BY d.day\nORDER BY d.day"
         }
       ]
     },
@@ -761,7 +731,7 @@
       "id": 17,
       "type": "table",
       "title": "Пролог по дням регистрации",
-      "description": "Сколько игроков пришло в этот день (по Москве) и где они сейчас — числами и долей от пришедших: в бою перед прологом, после боя, но ещё в прологе, прошли пролог. Бой перед прологом появился 16.11: у пришедших раньше фаза «после боя» значит просто «в прологе». К ней же относятся и те, кто ещё не нажал «Начать». Дата регистрации — users.created_at. У тех, кто пришёл раньше, чем она появилась, дата восстановлена по первой вещи и первому сообщению боту и может сдвинуться на несколько часов.",
+      "description": "Сколько игроков пришло в этот день (по Москве) и где они сейчас — числами и долей от пришедших: ещё в прологе (в том числе не нажавшие «Начать») или прошли его. Дата регистрации — users.created_at. У тех, кто пришёл раньше, чем она появилась, дата восстановлена по первой вещи и первому сообщению боту и может сдвинуться на несколько часов.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "pangea-db"
@@ -782,40 +752,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "В бою, %"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "percent"
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-background",
-                  "mode": "gradient"
-                }
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "continuous-GrYlRd"
-                }
-              },
-              {
-                "id": "min",
-                "value": 0
-              },
-              {
-                "id": "max",
-                "value": 100
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "После боя, в прологе, %"
+              "options": "В прологе, %"
             },
             "properties": [
               {
@@ -890,8 +827,7 @@
           ],
           "fields": [
             "Пришло",
-            "В бою",
-            "После боя, в прологе",
+            "В прологе",
             "Прошли"
           ]
         }
@@ -906,7 +842,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "WITH x AS (\n  SELECT (u.created_at AT TIME ZONE 'Europe/Moscow')::date AS day,\n         CASE\n           WHEN h.state <> 'Registration' AND h.scene_data -> 'eventData' ? 'prologueFightWon' THEN 1\n           WHEN h.state = 'Registration' THEN 2\n           ELSE 3\n         END AS phase\n  FROM users u\n  JOIN heroes h ON h.user_id = u.id\n)\nSELECT to_char(day, 'YYYY-MM-DD') AS \"День\",\n       count(*) AS \"Пришло\",\n       count(*) FILTER (WHERE phase = 1) AS \"В бою\",\n       count(*) FILTER (WHERE phase = 2) AS \"После боя, в прологе\",\n       count(*) FILTER (WHERE phase = 3) AS \"Прошли\",\n       round(100.0 * count(*) FILTER (WHERE phase = 1) / count(*)) AS \"В бою, %\",\n       round(100.0 * count(*) FILTER (WHERE phase = 2) / count(*)) AS \"После боя, в прологе, %\",\n       round(100.0 * count(*) FILTER (WHERE phase = 3) / count(*)) AS \"Прошли, %\"\nFROM x\nGROUP BY day\nORDER BY day DESC"
+          "rawSql": "WITH x AS (\n  SELECT (u.created_at AT TIME ZONE 'Europe/Moscow')::date AS day,\n         CASE\n           WHEN h.state = 'Registration' THEN 2\n           ELSE 3\n         END AS phase\n  FROM users u\n  JOIN heroes h ON h.user_id = u.id\n)\nSELECT to_char(day, 'YYYY-MM-DD') AS \"День\",\n       count(*) AS \"Пришло\",\n       count(*) FILTER (WHERE phase = 2) AS \"В прологе\",\n       count(*) FILTER (WHERE phase = 3) AS \"Прошли\",\n       round(100.0 * count(*) FILTER (WHERE phase = 2) / count(*)) AS \"В прологе, %\",\n       round(100.0 * count(*) FILTER (WHERE phase = 3) / count(*)) AS \"Прошли, %\"\nFROM x\nGROUP BY day\nORDER BY day DESC"
         }
       ]
     },
@@ -1241,7 +1177,7 @@
       "id": 13,
       "type": "barchart",
       "title": "Докуда дошли — по дню регистрации",
-      "description": "Игроки по дню регистрации (по Москве). Столбик дня разбит по стадиям, на которых эти игроки сейчас: ещё в прологе (бьются в бою перед ним, не выбрали смерть, выбрали, нашли тайник) или вышли из него — и на каком уровне. Дата регистрации — users.created_at. У тех, кто пришёл раньше, чем она появилась, дата восстановлена по первой вещи и первому сообщению боту и может сдвинуться на несколько часов.",
+      "description": "Игроки по дню регистрации (по Москве). Столбик дня разбит по стадиям, на которых эти игроки сейчас: ещё в прологе (не выбрали смерть, выбрали, нашли тайник) или вышли из него — и на каком уровне. Дата регистрации — users.created_at. У тех, кто пришёл раньше, чем она появилась, дата восстановлена по первой вещи и первому сообщению боту и может сдвинуться на несколько часов.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "pangea-db"
@@ -1267,21 +1203,6 @@
           }
         },
         "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Бой перед прологом"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "dark-red"
-                }
-              }
-            ]
-          },
           {
             "matcher": {
               "id": "byName",
@@ -1433,7 +1354,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "WITH x AS (\n  SELECT (u.created_at AT TIME ZONE 'Europe/Moscow')::date AS day,\n         h.lvl,\n         CASE\n           WHEN h.state <> 'Registration' AND h.scene_data -> 'eventData' ? 'prologueFightWon' THEN 1\n           WHEN h.state <> 'Registration' THEN\n             CASE WHEN h.lvl < 2 THEN 5 WHEN h.lvl < 5 THEN 6 WHEN h.lvl < 10 THEN 7 WHEN h.lvl < 25 THEN 8 ELSE 9 END\n           WHEN h.scene_data ? 'kitFound' THEN 4\n           WHEN h.scene_data ? 'prologueBranch' THEN 3\n           ELSE 2\n         END AS stage\n  FROM users u\n  JOIN heroes h ON h.user_id = u.id\n),\ndays AS (\n  SELECT generate_series(min(day), (now() AT TIME ZONE 'Europe/Moscow')::date, interval '1 day')::date AS day\n  FROM x\n)\nSELECT to_char(d.day, 'DD.MM') AS \"День\",\n       count(x.stage) FILTER (WHERE x.stage = 1) AS \"Бой перед прологом\",\n       count(x.stage) FILTER (WHERE x.stage = 2) AS \"Пролог: ещё не выбрал смерть\",\n       count(x.stage) FILTER (WHERE x.stage = 3) AS \"Пролог: выбрал смерть\",\n       count(x.stage) FILTER (WHERE x.stage = 4) AS \"Пролог: нашёл тайник\",\n       count(x.stage) FILTER (WHERE x.stage = 5) AS \"Прошёл пролог, 1 ур.\",\n       count(x.stage) FILTER (WHERE x.stage = 6) AS \"2–4 ур.\",\n       count(x.stage) FILTER (WHERE x.stage = 7) AS \"5–9 ур.\",\n       count(x.stage) FILTER (WHERE x.stage = 8) AS \"10–24 ур.\",\n       count(x.stage) FILTER (WHERE x.stage = 9) AS \"25+ ур.\"\nFROM days d\nLEFT JOIN x ON x.day = d.day\nGROUP BY d.day\nORDER BY d.day"
+          "rawSql": "WITH x AS (\n  SELECT (u.created_at AT TIME ZONE 'Europe/Moscow')::date AS day,\n         h.lvl,\n         CASE\n           WHEN h.state <> 'Registration' THEN\n             CASE WHEN h.lvl < 2 THEN 5 WHEN h.lvl < 5 THEN 6 WHEN h.lvl < 10 THEN 7 WHEN h.lvl < 25 THEN 8 ELSE 9 END\n           WHEN h.scene_data ? 'kitFound' THEN 4\n           WHEN h.scene_data ? 'prologueBranch' THEN 3\n           ELSE 2\n         END AS stage\n  FROM users u\n  JOIN heroes h ON h.user_id = u.id\n),\ndays AS (\n  SELECT generate_series(min(day), (now() AT TIME ZONE 'Europe/Moscow')::date, interval '1 day')::date AS day\n  FROM x\n)\nSELECT to_char(d.day, 'DD.MM') AS \"День\",\n       count(x.stage) FILTER (WHERE x.stage = 2) AS \"Пролог: ещё не выбрал смерть\",\n       count(x.stage) FILTER (WHERE x.stage = 3) AS \"Пролог: выбрал смерть\",\n       count(x.stage) FILTER (WHERE x.stage = 4) AS \"Пролог: нашёл тайник\",\n       count(x.stage) FILTER (WHERE x.stage = 5) AS \"Прошёл пролог, 1 ур.\",\n       count(x.stage) FILTER (WHERE x.stage = 6) AS \"2–4 ур.\",\n       count(x.stage) FILTER (WHERE x.stage = 7) AS \"5–9 ур.\",\n       count(x.stage) FILTER (WHERE x.stage = 8) AS \"10–24 ур.\",\n       count(x.stage) FILTER (WHERE x.stage = 9) AS \"25+ ур.\"\nFROM days d\nLEFT JOIN x ON x.day = d.day\nGROUP BY d.day\nORDER BY d.day"
         }
       ]
     },
@@ -1587,7 +1508,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "WITH x AS (\n  SELECT (u.created_at AT TIME ZONE 'Europe/Moscow')::date AS day,\n         h.lvl,\n         CASE\n           WHEN h.state <> 'Registration' AND h.scene_data -> 'eventData' ? 'prologueFightWon' THEN 1\n           WHEN h.state <> 'Registration' THEN\n             CASE WHEN h.lvl < 2 THEN 5 WHEN h.lvl < 5 THEN 6 WHEN h.lvl < 10 THEN 7 WHEN h.lvl < 25 THEN 8 ELSE 9 END\n           WHEN h.scene_data ? 'kitFound' THEN 4\n           WHEN h.scene_data ? 'prologueBranch' THEN 3\n           ELSE 2\n         END AS stage\n  FROM users u\n  JOIN heroes h ON h.user_id = u.id\n)\nSELECT to_char(day, 'YYYY-MM-DD') AS \"День\",\n       count(*) AS \"Пришло\",\n       count(*) FILTER (WHERE stage <= 4) AS \"Ещё в прологе\",\n       count(*) FILTER (WHERE stage > 4) AS \"Прошли пролог\",\n       count(*) FILTER (WHERE stage > 4 AND lvl >= 5) AS \"Дошли до 5 ур.\",\n       count(*) FILTER (WHERE stage > 4 AND lvl >= 10) AS \"Дошли до 10 ур.\",\n       round(100.0 * count(*) FILTER (WHERE stage > 4) / count(*)) AS \"Прошли пролог, %\",\n       round(100.0 * count(*) FILTER (WHERE stage > 4 AND lvl >= 5) / count(*)) AS \"До 5 ур., %\",\n       round(100.0 * count(*) FILTER (WHERE stage > 4 AND lvl >= 10) / count(*)) AS \"До 10 ур., %\"\nFROM x\nGROUP BY day\nORDER BY day DESC"
+          "rawSql": "WITH x AS (\n  SELECT (u.created_at AT TIME ZONE 'Europe/Moscow')::date AS day,\n         h.lvl,\n         CASE\n           WHEN h.state <> 'Registration' THEN\n             CASE WHEN h.lvl < 2 THEN 5 WHEN h.lvl < 5 THEN 6 WHEN h.lvl < 10 THEN 7 WHEN h.lvl < 25 THEN 8 ELSE 9 END\n           WHEN h.scene_data ? 'kitFound' THEN 4\n           WHEN h.scene_data ? 'prologueBranch' THEN 3\n           ELSE 2\n         END AS stage\n  FROM users u\n  JOIN heroes h ON h.user_id = u.id\n)\nSELECT to_char(day, 'YYYY-MM-DD') AS \"День\",\n       count(*) AS \"Пришло\",\n       count(*) FILTER (WHERE stage <= 4) AS \"Ещё в прологе\",\n       count(*) FILTER (WHERE stage > 4) AS \"Прошли пролог\",\n       count(*) FILTER (WHERE stage > 4 AND lvl >= 5) AS \"Дошли до 5 ур.\",\n       count(*) FILTER (WHERE stage > 4 AND lvl >= 10) AS \"Дошли до 10 ур.\",\n       round(100.0 * count(*) FILTER (WHERE stage > 4) / count(*)) AS \"Прошли пролог, %\",\n       round(100.0 * count(*) FILTER (WHERE stage > 4 AND lvl >= 5) / count(*)) AS \"До 5 ур., %\",\n       round(100.0 * count(*) FILTER (WHERE stage > 4 AND lvl >= 10) / count(*)) AS \"До 10 ур., %\"\nFROM x\nGROUP BY day\nORDER BY day DESC"
         }
       ]
     }
