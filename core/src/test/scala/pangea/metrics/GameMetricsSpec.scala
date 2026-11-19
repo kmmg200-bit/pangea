@@ -3,7 +3,7 @@ package pangea.metrics
 import com.zaxxer.hikari.metrics.PoolStats
 import zio.metrics.{Metric, MetricKeyType}
 import zio.test._
-import zio.{Chunk, Clock, ZIO, durationInt}
+import zio.{Chunk, Clock, Promise, ZIO, durationInt}
 
 import java.util.concurrent.TimeUnit
 
@@ -28,11 +28,14 @@ object GameMetricsSpec extends ZIOSpecDefault {
     test("время пишется и при успехе, и при поломке, и при прерывании") {
       val h = Metric.histogram("test_timed_seconds", bounds)
       for {
-        _     <- GameMetrics.timed(h)(ZIO.unit)
-        _     <- GameMetrics.timed(h)(ZIO.fail("поломка")).ignore
-        fiber <- GameMetrics.timed(h)(ZIO.never).fork
-        _     <- ZIO.yieldNow.repeatN(10) *> fiber.interrupt
-        state <- h.value
+        _       <- GameMetrics.timed(h)(ZIO.unit)
+        _       <- GameMetrics.timed(h)(ZIO.fail("поломка")).ignore
+        // Прерываем, только когда замер начался: под нагрузкой файбер иначе
+        // прерывался, не начав, — и замера не было вовсе.
+        started <- Promise.make[Nothing, Unit]
+        fiber   <- GameMetrics.timed(h)(started.succeed(()) *> ZIO.never).fork
+        _       <- started.await *> fiber.interrupt
+        state   <- h.value
       } yield assertTrue(state.count == 3L)
     },
 

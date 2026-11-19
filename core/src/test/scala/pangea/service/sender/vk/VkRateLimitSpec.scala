@@ -125,7 +125,9 @@ object VkRateLimitSpec extends ZIOSpecDefault {
         calls <- Ref.make(Vector.empty[(String, Long)])
         api   <- VkApi.make(tooFastOnce(calls), config, NoFailures)
         main  <- api.sendMessage(player, "экран", Nil, None).fork
-        _     <- calls.get.repeatUntil(_.nonEmpty)
+        // Ответ 6 разобран, окно закрыто, повтор уснул — только теперь можно
+        // двигать часы: раньше повтор уснул бы уже после сдвига и не проснулся.
+        _     <- TestClock.sleeps.repeatUntil(_.nonEmpty)
         _     <- api.sendToChat(ChatTarget.Peer(2000000001L, Community.Guilds), "гильдии")
         _     <- TestClock.adjust(1.second)
         _     <- main.join
