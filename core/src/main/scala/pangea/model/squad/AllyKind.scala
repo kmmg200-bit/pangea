@@ -263,14 +263,6 @@ object AllyKind extends Enum[AllyKind] {
     hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
     accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
 
-  /** Шестёрка гильдии — мелкая сошка Братства в прологе: идёт с Лео и
-    * Элиасом вырезать знатный дом. По силе — как человек-раб, обычный человек
-    * уровня боя; имя и статы — на самом союзнике, после боя в отряд не встаёт.
-    * Стихии нет. */
-  case object GuildLackey extends AllyKind("Шестёрка гильдии", Race.Human, None, maxLvl = 150L,
-    hpPerLvl = 0L, armorPerLvl = 0L, atkPerLvl = 0L, energyPerLvl = 0L,
-    accuracyPerLvl = 0L, defencePerLvl = 0L, evasionPerLvl = 0L)
-
   val values: IndexedSeq[AllyKind] = findValues
 
   /** Кого можно нанять за столом таверны. Нежить и крысы туда не садятся. */

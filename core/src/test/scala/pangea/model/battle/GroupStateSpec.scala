@@ -450,6 +450,20 @@ object GroupStateSpec extends ZIOSpecDefault {
       assertTrue(noPos.as[SoloPveBattle].toOption.exists(_.group.paired))
     },
 
+    // С 16 по 19.11 в игре был бой перед прологом: в те дни каждый бой писался с
+    // полем "body" (обычно null, в бою пролога — чужое тело), а союзник — со
+    // "spare". Бой убран, а записи в базе остались — читаются как прежде.
+    test("бой, записанный при бое перед прологом, читается: тело и страховка союзника не мешают") {
+      val b      = SoloPveBattle.fromGroup(trio, hero, List(1L, 2L, 3L))
+      val allied = b.copy(group = b.group.copy(allies = List(fighter(AllyKind.BrotherhoodAgent, 2))))
+      def stored(body: io.circe.Json) =
+        allied.asJson.mapObject(_.add("body", body)).hcursor.downField("group").downField("allies")
+          .withFocus(_.mapArray(_.map(_.mapObject(_.add("spare", 150L.asJson))))).top
+      val worn = io.circe.Json.obj("lvl" -> 25L.asJson, "race" -> "Human".asJson, "sparePct" -> 15L.asJson)
+      assertTrue(stored(io.circe.Json.Null).flatMap(_.as[SoloPveBattle].toOption).contains(allied)) &&
+      assertTrue(stored(worn).flatMap(_.as[SoloPveBattle].toOption).contains(allied))
+    },
+
     test("мерцающий настой: свободное место — оно само; заняли — ближайшее; ближе свободного нет — где стоял") {
       val g = GroupState(heroPos = 1, allies = List(fighter(AllyKind.Rat, 5), fighter(AllyKind.Rat, 6)))
       val b = SoloPveBattle.fromGroup(trio, hero, Nil)

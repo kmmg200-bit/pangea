@@ -18,7 +18,7 @@ import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.chat.Links
 import pangea.service.state.states.InventoryState
-import pangea.service.state.{FirstStepsQuest, NamePick, NpcQuestLog, PrologueFight, State, UserAction}
+import pangea.service.state.{FirstStepsQuest, NamePick, NpcQuestLog, State, UserAction}
 import zio.{Random, Task, ZIO}
 
 case class RegistrationState(
@@ -30,16 +30,7 @@ case class RegistrationState(
   content:       SceneContent
 ) extends State {
 
-  /** Сюда возвращает бой перед прологом (см. [[PrologueFight]]): с отметкой
-    * победы — строка после боя и первый пассаж, одним сообщением. Сам бой
-    * убран; остался на одну выкладку — довести тот, что успел начать прежний
-    * бот, пока работал рядом с новым. Других входов с экраном у регистрации
-    * нет: её экраны показывают сами кнопки. */
-  override def enter(user: User, renderer: Renderer): Task[Unit] =
-    heroDao.readSceneData(user.userId).flatMap { scene =>
-      ZIO.when(PrologueFight.won(scene))(
-        heroDao.writeSceneData(user.userId, Json.Null) *> showIntro(user, renderer)).unit
-    }
+  override def enter(user: User, renderer: Renderer): Task[Unit] = ZIO.unit
 
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     branch.act(user, ua, renderer)
@@ -115,16 +106,6 @@ case class RegistrationState(
       })
     }
   )
-
-  /** После боя: что было после драки — и первый пассаж пролога с его кнопкой. */
-  private def showIntro(user: User, renderer: Renderer): Task[Unit] =
-    content.beats("registration.prologue").collectFirst { case ("P1_Intro", beat) => beat } match {
-      case None => ZIO.unit
-      case Some(beat) =>
-        beat.buildChoices(user).flatMap(choices =>
-          renderer.show(user, Screen(Screen.joined(content.text("registration.prologueFight.won").trim,
-            beat.text.trim), choices)))
-    }
 
   /** Раса выбрана и подтверждена — герой падает на крышу сторожки в лабиринте
     * (см. [[arrival]]). Ветка пролога (какой смертью прошёл) переезжает из

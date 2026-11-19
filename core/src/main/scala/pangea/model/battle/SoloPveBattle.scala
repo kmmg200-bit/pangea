@@ -175,12 +175,7 @@ case class SoloPveBattle(
   // Кто тянет узор из героя (см. PatternPull): имя того, кто это умеет, —
   // Сборщика на Рубеже II. Ставит сюжет; в прочих боях и в записях до этого
   // поля — никто.
-  puller: Option[String] = None,
-  // Тело, в котором герой дерётся этот бой (см. BattleBody): в прологе — Лео,
-  // ассасин 25-го уровня. Бой читает героя через него и пишет в него же, а
-  // настоящий герой этого боя не касается. В прочих боях и в записях до этого
-  // поля — своё тело героя.
-  body: Option[BattleBody] = None
+  puller: Option[String] = None
 ) {
 
   /** Множитель Стены трофеев к урону героя по тому, кто сейчас в полях. */
@@ -1125,8 +1120,6 @@ object SoloPveBattle {
       kegs                <- c.getOrElse[Int]("kegs")(0)
       // Бой, сохранённый до Рубежа II, — узор в нём никто не тянет.
       puller              <- c.getOrElse[Option[String]]("puller")(None)
-      // Бой, сохранённый до пролога с боем, — в своём теле.
-      body                <- c.getOrElse[Option[BattleBody]]("body")(None)
     } yield SoloPveBattle(monsterLvl, monsterRace, monsterRarity, monsterStats,
                          monsterCurrentHp, monsterCurrentArmor, heroBattleState, consumableUsed, monsterMarked,
                          monsterUndead,
@@ -1136,7 +1129,7 @@ object SoloPveBattle {
                          heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall,
                          monsterLastAllyHit, heroStruck, roundsFought, secondWindUsed, preyName, preyGone,
                          monsterDodgeBonus, comboUsed, bossArmorTaken, squadTaken, monsterBreed,
-                         chainUsed, preyLeft, kegs, puller, body).cycleToBossSlot
+                         chainUsed, preyLeft, kegs, puller).cycleToBossSlot
       // ↑ Бой, сохранённый до того, как круг минибосса переехал на слот: круг
       // того, кто стоит в строю, забираем с боя на его слот.
 

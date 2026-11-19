@@ -7,7 +7,7 @@ import pangea.domain.Rng
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.generator.loot.LootGenerator
 import pangea.generator.monster.MonsterGenerator
-import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleBody, BattleEffects, Bleed, Buff, Burn, Convoy, Element, Formation, GroupState, HealCurse, HealedWounds, MonsterSlot, Nature, Poison, PatternPull, PowderKeg, RaceTactics, Regen, RedSpider, SlainMonster, SoloPveBattle, SkillSlotState, SpiderWeb, TimedDefenceDebuff, Wagon, Ward}
+import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Convoy, Element, Formation, GroupState, HealCurse, HealedWounds, MonsterSlot, Nature, Poison, PatternPull, PowderKeg, RaceTactics, Regen, RedSpider, SlainMonster, SoloPveBattle, SkillSlotState, SpiderWeb, TimedDefenceDebuff, Wagon, Ward}
 import pangea.model.cave.CaveGenerator
 import pangea.model.item.ItemSet
 import pangea.model.squad.AllySkill
@@ -224,8 +224,7 @@ case class BattleState(
       // «Некромант» (порог 12): добитый героем может встать и пойти за ним.
       result <- necroRise(battle, pushed)
       // «Первопроходец» (порог 12): смертельный удар пары — второе дыхание.
-      // Чужое тело со страховкой (пролог): не ниже своей доли HP, смерти нет.
-      breathed = spared(secondWind(result, side = false), now)
+      breathed = secondWind(result, side = false)
       // «Каменный страж» (порог 12) смотрит на ход целиком: важно не то, какой
       // именно источник добил героя до полоски, а что за этот ход он её перешёл.
       guarded = stoneGuardRescue(hero, breathed, now)
@@ -248,7 +247,7 @@ case class BattleState(
       promoted2 = promoteAfterKill(joeRises(allied))
       sided   <- sideMobsPhase(promoted2, now)
       // Добил удар сбоку — второе дыхание и тут, если его ещё не было.
-      sidedUp  = spared(secondWind(sided, side = true), now)
+      sidedUp  = secondWind(sided, side = true)
       // Арена: раны на чужих бойцах тикают в конце хода того, кто их наложил.
       wounded  = arenaWounds(sidedUp)
       // Активный вне пары мог истечь ранами на своём ходу — тогда следующий
@@ -287,9 +286,7 @@ case class BattleState(
       hinted  = plainSteelHint(hero, unwebbed)
       // Раунд не кончился — герой ещё в нём (см. SoloPveBattle.midRound).
       marked   = hinted.copy(battle = hinted.battle.copy(midRound = hinted.outcome == Outcome.Continue && !hinted.endsRound))
-      // Страховка тела — и от всего, что сняло HP после ударов сбоку; у самого
-      // края удары за ход вдвое мягче (см. cushioned).
-      state  <- commit(user, cushioned(hero, spared(marked, now), now), now, renderer, hero, note)
+      state  <- commit(user, marked, now, renderer, hero, note)
     } yield state
 
   /** Крыса из-под ног героя встаёт в строй на его стороне — если там есть
@@ -460,37 +457,6 @@ case class BattleState(
         sideLog = if (side) res.sideLog :+ line else res.sideLog)
     }
 
-  /** Страховка чужого тела (см. BattleBody.sparePct): в нём герой не падает —
-    * HP не опускается ниже своей доли максимума, удар, что опустил бы ниже,
-    * оставляет ровно её, и смерти нет. Ловим там же, где «Второе дыхание», и
-    * ещё раз перед записью хода — что бы ни сняло HP. Строки нет: со стороны
-    * это просто удачно выдержанный удар. */
-  private def spared(res: TurnResult, nowMs: Long): TurnResult =
-    res.battle.body.filter(_.sparePct > 0L) match {
-      case None => res
-      case Some(body) =>
-        val floor = (res.hero.effectiveMaxHp(nowMs) * body.sparePct / 100L).max(1L)
-        val hero  =
-          if (res.hero.fightStats.hp >= floor) res.hero
-          else res.hero.copy(fightStats = res.hero.fightStats.copy(hp = floor))
-        res.copy(hero = hero, outcome = if (res.outcome == Outcome.Death) Outcome.Continue else res.outcome)
-    }
-
-  /** У края страховки удары за ход мягче (см. BattleAlly.cushioned): HP
-    * героя в чужом теле не застывает на одной цифре, а сползает к ней. Считаем
-    * по всему ходу — от HP до хода (`before`) до того, что оставили все удары. */
-  private def cushioned(before: Hero, res: TurnResult, nowMs: Long): TurnResult =
-    res.battle.body.filter(_.sparePct > 0L) match {
-      case None => res
-      case Some(body) =>
-        val floor = (res.hero.effectiveMaxHp(nowMs) * body.sparePct / 100L).max(1L)
-        val was   = before.fightStats.hp
-        val hp    = res.hero.fightStats.hp
-        if (hp >= was) res
-        else res.copy(hero = res.hero.copy(fightStats = res.hero.fightStats.copy(
-          hp = BattleAlly.cushioned(was, hp, floor))))
-    }
-
   /** Единственная точка записи и показа за ход. Персист итоговых
     * снаряжения+статов героя выполняется ВСЕГДА и вне ветвления по исходу —
     * поэтому ни одна ветка не может «забыть» сохранить изменённый стат.
@@ -558,50 +524,6 @@ case class BattleState(
       "names" -> BeltContents.counted(names)), Nil))).unit
 
   private def dungeonCommit(
-      user: User,
-      raw: TurnResult,
-      nowMs: Long,
-      renderer: Renderer,
-      before: Hero
-  ): Task[StateType] =
-    raw.battle.body match {
-      case Some(body) => bodyCommit(user, raw, body, nowMs, renderer)
-      case None       => ownBodyCommit(user, raw, nowMs, renderer, before)
-    }
-
-  /** Ход в чужом теле (см. BattleBody): пишется в само тело — в запись боя, —
-    * а настоящий герой не меняется. Кончился бой — тело уходит вместе с
-    * записью: ни опыта, ни добычи, ни убитых в счёт, ни отряда, ни
-    * пополненного пояса. Дальше — туда, куда звал сюжет: `returnState` и
-    * отметка в scene_data, как после экрана добычи, только без него — с
-    * чужого боя добычи нет, а что было, скажет сама сцена. Пасть в таком теле
-    * нельзя (см. [[spared]]), но и любой другой исход сюжет ведёт дальше тем
-    * же путём. */
-  private def bodyCommit(user: User, res: TurnResult, body: BattleBody, nowMs: Long,
-                         renderer: Renderer): Task[StateType] = {
-    val worn      = res.battle.copy(body = Some(body.after(res.hero)))
-    val msg       = res.log.mkString("\n")
-    val showLog   = ZIO.when(msg.nonEmpty)(renderer.show(user, Screen(msg, Nil)))
-    val standing  = if (res.outcome == Outcome.Continue && worn.group.hasFormation) groupLines(worn) else Vector.empty
-    val groupMsg  = (res.sideLog ++ standing).mkString("\n")
-    val showGroup = ZIO.when(groupMsg.nonEmpty)(renderer.show(user, Screen(groupMsg, Nil)))
-    if (res.outcome == Outcome.Continue)
-      heroDao.writeActiveBattle(user.userId, worn.asJson) *> showLog *> showGroup *>
-        mixCount(res.hero).flatMap(mixes =>
-          renderer.show(user, buildBattleScreen(res.hero, worn, res.hero.effectiveMaxHp(nowMs), nowMs, mixes)))
-          .as(StateType.Battle)
-    else
-      for {
-        routing <- heroDao.readSceneData(user.userId).map(_.flatMap(_.as[LootState.LootData].toOption))
-        _       <- (heroDao.clearActiveBattle(user.userId) *>
-                     heroDao.writeSceneData(user.userId, routing.flatMap(_.eventData).getOrElse(Json.Null)))
-                     .uninterruptible
-        _       <- showLog *> showGroup
-      } yield routing.flatMap(_.returnState).getOrElse(StateType.Dungeon)
-  }
-
-  /** Ход в своём теле: запись героя, отряда и исхода боя. */
-  private def ownBodyCommit(
       user: User,
       raw: TurnResult,
       nowMs: Long,
@@ -2059,7 +1981,7 @@ case class BattleState(
           case None => (hero, battle, 0L)
           case Some(a) =>
             val reduced = (damage * (1.0 - allyReduction(a, battle.monsterStats.atk))).toLong.max(1L)
-            val hurt    = a.copy(hp = a.lose(reduced), lastHitBy = Some(battle.monsterName))
+            val hurt    = a.copy(hp = (a.hp - reduced).max(0L), lastHitBy = Some(battle.monsterName))
             (hero, battle.copy(group = battle.group.updateAlly(pos)(_ => hurt)), reduced)
         }
     }
@@ -2746,7 +2668,7 @@ case class BattleState(
           case Some(a) =>
             val reduced           = (damage * (1.0 - allyReduction(a, battle.monsterStats.atk))).toLong.max(1L)
             val (armorDmg, hpDmg) = allyHitSplit(battle, a, reduced)
-            val hurt = a.copy(armor = a.armor - armorDmg, hp = a.lose(hpDmg),
+            val hurt = a.copy(armor = a.armor - armorDmg, hp = (a.hp - hpDmg).max(0L),
                          lastHitBy = Some(battle.monsterName))
             (hero, battle.copy(group = battle.group.updateAlly(pos)(_ => hurt)), armorDmg + hpDmg)
         }
@@ -3110,22 +3032,14 @@ case class BattleState(
     if (lost * 100L <= ceiling * BattleState.HitTraumaMinPct || after.fightStats.hp <= 0L ||
         after.traumaNames != before.traumaNames || after.sets.steadfast(after.fightStats.armor))
       ZIO.succeed((after, None))
-    else bodyOf(after.userId).flatMap {
-      // Чужое тело (см. BattleBody) травм не уносит: травма пишется в героя
-      // сразу, а настоящий герой этого боя не касается.
-      case Some(_) => ZIO.succeed((after, None))
-      case None    => rollHitTrauma(lost, ceiling, after, nowMs)
-    }
-  }
-
-  /** Бросок на травму от ощутимого удара (см. [[hitTrauma]]). */
-  private def rollHitTrauma(lost: Long, ceiling: Long, after: Hero, nowMs: Long): Task[(Hero, Option[String])] = {
-    val crushing = lost * 100L > ceiling * BattleState.HitTraumaCrushPct
-    val chance   = if (crushing) BattleState.HitTraumaCrushChancePct else BattleState.HitTraumaChancePct
-    val key      = if (crushing) "battle.hitTraumaCrush" else "battle.hitTrauma"
-    chanceRoll(active = true, chance).flatMap { hit =>
-      if (hit) giveTrauma(after, nowMs, key).map { case (h, l) => (h, Some(l)) }
-      else ZIO.succeed((after, None))
+    else {
+      val crushing = lost * 100L > ceiling * BattleState.HitTraumaCrushPct
+      val chance   = if (crushing) BattleState.HitTraumaCrushChancePct else BattleState.HitTraumaChancePct
+      val key      = if (crushing) "battle.hitTraumaCrush" else "battle.hitTrauma"
+      chanceRoll(active = true, chance).flatMap { hit =>
+        if (hit) giveTrauma(after, nowMs, key).map { case (h, l) => (h, Some(l)) }
+        else ZIO.succeed((after, None))
+      }
     }
   }
 
@@ -3318,7 +3232,7 @@ case class BattleState(
             val reduced  = (damage * (1.0 - allyReduction(a, battle.monsterStats.atk))).toLong.max(1L)
             val toArmor  = reduced.min(a.armor)
             val toHp     = reduced - toArmor
-            val hurt     = a.copy(armor = a.armor - toArmor, hp = a.lose(toHp), lastHitBy = Some(battle.monsterName))
+            val hurt     = a.copy(armor = a.armor - toArmor, hp = (a.hp - toHp).max(0L), lastHitBy = Some(battle.monsterName))
             (hero, battle.copy(group = battle.group.updateAlly(pos)(_ => hurt)), reduced)
         }
     }
@@ -3415,19 +3329,19 @@ case class BattleState(
           }
           ally.poison.foreach { p =>
             val dmg = p.damageOn(maxHp)
-            ally = ally.copy(hp = ally.lose(dmg), poison = p.decayed)
+            ally = ally.copy(hp = (ally.hp - dmg).max(0L), poison = p.decayed)
             out   = out :+ allyDotTick(Poison.Icon, Poison.Label, dmg, a0.name)
           }
           ally.bleed.foreach { b =>
             val dmg = b.damageOn(maxHp)
-            ally = ally.copy(hp = ally.lose(dmg))
+            ally = ally.copy(hp = (ally.hp - dmg).max(0L))
             out   = out :+ allyDotTick(Bleed.Icon, Bleed.Label, dmg, a0.name)
           }
           ally.burn.foreach { bn =>
             val fire  = if (a0.isUndead) ItemSet.Necromancer.UndeadFireTakenPct else 0L
             val dmg   = bn.damageOn(maxHp) * (100L + fire) / 100L
             val steps = if (a0.isUndead) ItemSet.Necromancer.UndeadBurnGrowthMult else 1L
-            ally = ally.copy(hp = ally.lose(dmg),
+            ally = ally.copy(hp = (ally.hp - dmg).max(0L),
                              burn = Some((1L to steps).foldLeft(bn)((b, _) => b.grown)))
             out   = out :+ allyDotTick(Burn.Icon, Burn.Label, dmg, a0.name)
           }
@@ -4073,7 +3987,7 @@ case class BattleState(
         val (struck, dealt) =
           if (hit.ignoresArmor)
             (battle.copy(group = battle.group.updateAlly(pos)(x =>
-              x.copy(hp = x.lose(raw), lastHitBy = Some(battle.monsterName)))), raw)
+              x.copy(hp = (x.hp - raw).max(0L), lastHitBy = Some(battle.monsterName)))), raw)
           else {
             val (_, b, d) = hurtVictim(Victim.Ally(pos), hero, battle, raw, nowMs)
             (b, d)
@@ -6180,8 +6094,7 @@ case class BattleState(
         b.group.allyAt(pos).filter(_.alive) match {
           case None    => (h, b, ps, gs, fs)
           case Some(a) =>
-            // Страховка (см. BattleAlly.spare) держит и от взрыва.
-            val dmg  = a.hp - a.lose(PowderKeg.damageOn(a.stats.hp))
+            val dmg  = PowderKeg.damageOn(a.stats.hp).min(a.hp)
             val hurt = b.copy(group = b.group.updateAlly(pos)(x => x.copy(hp = x.hp - dmg)))
             if (a.hp - dmg <= 0L)
               (h, hurt.copy(group = hurt.group.withoutAlly(pos)), ps :+ part(a.name, dmg, dead), gs :+ a, fs)
@@ -6328,7 +6241,7 @@ case class BattleState(
       sign match {
         case s if s > 0 && a.healBlocked => a
         case s if s > 0 => a.copy(hp = (a.hp + power(a.stats.hp)).min(a.stats.hp).max(a.hp))
-        case s if s < 0 => a.copy(hp = a.lose(power(a.stats.hp)))
+        case s if s < 0 => a.copy(hp = (a.hp - power(a.stats.hp)).max(0L))
         case _          => a
       }
     }
@@ -6618,7 +6531,7 @@ case class BattleState(
           bites    = mobProc && procElement.contains(Element.Cold)
           quenched = bites && (a.burn.isDefined || (ignites && !thawed))
           airy     = mobProc && procElement.contains(Element.Air)
-          struck   = a.copy(armor = a.armor - armorDmg, hp = a.lose(hpDmg), lastHitBy = Some(tmp.monsterName),
+          struck   = a.copy(armor = a.armor - armorDmg, hp = (a.hp - hpDmg).max(0L), lastHitBy = Some(tmp.monsterName),
                        energy = (a.energy - zapped).max(0L))
           burned   =
             if (!ignites) struck
@@ -6741,8 +6654,6 @@ case class BattleState(
           case pangea.model.squad.AllyKind.BrotherhoodAgent => s
           // Сойка спрыгнула с крыши на одну драку — и уходит по крышам.
           case pangea.model.squad.AllyKind.Sojka => s
-          // Шестёрки гильдии шли с Лео в прологе — в отряд героя им не встать.
-          case pangea.model.squad.AllyKind.GuildLackey => s
           case pangea.model.squad.AllyKind.Rat        => s.summonRat(form, a.lvl, nowMs, near = a.position + toSquad)
           case _                                      => s.admitRisen(form, a.lvl, nowMs)
         }
@@ -8083,19 +7994,11 @@ case class BattleState(
     if (battle.arena.isDefined) ZIO.succeed(Map.empty)
     else heroDao.readHomeData(user.userId).map(_.flatMap(_.as[HomeData].toOption).fold(Map.empty[String, Int])(_.wallPct))
 
-  /** Герой, каким он сейчас в бою: дерётся в чужом теле (см. BattleBody) — в
-    * нём. */
   private def getHero(user: User): Task[Hero] =
-    for {
-      hero <- heroDao.getHeroByUserId(user.userId).flatMap(ZIO.fromOption(_))
-                .orElseFail(new Throwable(s"No hero for user ${user.userId}"))
-      body <- bodyOf(hero.userId)
-    } yield body.fold(hero)(_.on(hero))
-
-  /** Тело, в котором герой дерётся этот бой, если оно не его (см.
-    * BattleBody): из записи боя читаем одно это поле. Боя нет — тело своё. */
-  private def bodyOf(userId: UserId): Task[Option[BattleBody]] =
-    heroDao.readActiveBattle(userId).map(_.flatMap(_.hcursor.get[Option[BattleBody]]("body").toOption.flatten))
+    heroDao
+      .getHeroByUserId(user.userId)
+      .flatMap(ZIO.fromOption(_))
+      .orElseFail(new Throwable(s"No hero for user ${user.userId}"))
 
   private def getBattle(user: User): Task[SoloPveBattle] =
     heroDao
@@ -8247,7 +8150,6 @@ object BattleState {
     else if (a.kind == pangea.model.squad.AllyKind.CouncilEnvoy) "battle.ally.councilEnvoyDown"
     else if (a.kind == pangea.model.squad.AllyKind.BrotherhoodAgent) "battle.ally.brotherhoodAgentDown"
     else if (a.kind == pangea.model.squad.AllyKind.Sojka) "battle.ally.sojkaDown"
-    else if (a.kind == pangea.model.squad.AllyKind.GuildLackey) "battle.ally.guildLackeyDown"
     else if (a.undead.isDefined) "battle.ally.crumbled"
     else "battle.ally.scroll"
 

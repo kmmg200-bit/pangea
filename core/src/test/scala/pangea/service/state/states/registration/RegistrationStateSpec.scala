@@ -100,6 +100,21 @@ object RegistrationStateSpec extends ZIOSpecDefault {
               assertTrue(intro.choices.map(_.id) == List("P2_Dagger"))
     },
 
+    // 16–19.11 перед прологом был бой, и «Начать» в приветствиях тех дней —
+    // кнопка PrologueFight. Боя больше нет; такая кнопка в чате ведёт туда же.
+    test("прежняя «Начать» из чатов (бой перед прологом) — сразу в первый пассаж, без боя") {
+      for {
+        quad                     <- makeStateWithHero
+        (state, renderer, dao, _) = quad
+        st     <- state.action(testUser, tap("PrologueFight"), renderer)
+        intro  <- renderer.sentScreens.map(_.last)
+        battle <- dao.readActiveBattle(userId)
+        scene  <- dao.readSceneData(userId)
+      } yield assertTrue(st == StateType.Registration && battle.isEmpty && scene.isEmpty) &&
+              assertTrue(intro.text.contains("Всякая жизнь заканчивается смертью")) &&
+              assertTrue(intro.choices.map(_.id) == List("P2_Dagger"))
+    },
+
     test("«Кинжал в спину»: четыре смерти, подписи без подсказок о расе и не длиннее 40 знаков") {
       for {
         quad                   <- makeState
