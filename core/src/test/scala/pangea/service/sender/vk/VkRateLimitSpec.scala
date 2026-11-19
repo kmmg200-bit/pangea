@@ -30,6 +30,14 @@ object VkRateLimitSpec extends ZIOSpecDefault {
       case _                         => false
     }
 
+  /** Дождаться, пока файбер прошёл окно или встал к нему: только тогда двигать
+    * часы — иначе под нагрузкой он дойдёт до окна, когда они уже ушли вперёд. */
+  private def settled(fiber: Fiber.Runtime[_, _]) =
+    fiber.status.repeatUntil {
+      case Fiber.Status.Done | _: Fiber.Status.Suspended => true
+      case _                                             => false
+    }
+
   def spec = suite("Окно частоты ВК")(
     test("за секунду — 20 вызовов сразу, 21-й — когда из окна выйдет первый") {
       for {
@@ -49,29 +57,36 @@ object VkRateLimitSpec extends ZIOSpecDefault {
       for {
         window <- VkRateLimit.make(Community.Main)
         times  <- Ref.make(Vector.empty[Long])
-        fiber  <- ZIO.foreachParDiscard(1 to 50)(_ => window(now.flatMap(t => times.update(_ :+ t)))).fork
+        fibers <- ZIO.foreach(1 to 50)(_ => window(now.flatMap(t => times.update(_ :+ t))).fork)
+        _      <- ZIO.foreachDiscard(fibers)(settled)
         _      <- TestClock.adjust(3.seconds)
-        _      <- fiber.join
+        _      <- ZIO.foreachDiscard(fibers)(_.join)
         seen   <- times.get.map(_.sorted)
       } yield assertTrue(seen.size == 50) &&
               assertTrue(seen.forall(t => seen.count(u => u >= t && u < t + 1000L) <= limit)) &&
               assertTrue(seen.groupBy(identity).view.mapValues(_.size).toMap == Map(0L -> 20, 1000L -> 20, 2000L -> 10))
     },
-    test("ждущие проходят по порядку прихода") {
+    // Место окно выдаёт по очереди, а сам вызов идёт уже после, вне неё: трое,
+    // получившие место в одну миллисекунду, могут выполниться в любом порядке.
+    // Поэтому окно заполнено по вызову в миллисекунду — места освобождаются в
+    // 1000, 1001 и 1002, и порядок их выдачи виден по времени.
+    test("ждущие получают места по порядку прихода") {
       for {
         window <- VkRateLimit.make(Community.Main)
-        order  <- Ref.make(Vector.empty[String])
-        _      <- ZIO.foreachDiscard(1 to limit)(_ => window(ZIO.unit))
-        a      <- window(order.update(_ :+ "a")).fork
+        order  <- Ref.make(Vector.empty[(String, Long)])
+        _      <- ZIO.foreachDiscard(1 to limit)(i =>
+                    window(ZIO.unit) *> ZIO.when(i < limit)(TestClock.adjust(1.milli)))
+        mark    = (name: String) => window(now.flatMap(t => order.update(_ :+ (name -> t))))
+        a      <- mark("a").fork
         _      <- parked(a)
-        b      <- window(order.update(_ :+ "b")).fork
+        b      <- mark("b").fork
         _      <- parked(b)
-        c      <- window(order.update(_ :+ "c")).fork
+        c      <- mark("c").fork
         _      <- parked(c)
         _      <- TestClock.adjust(1.second)
         _      <- a.join *> b.join *> c.join
-        seen   <- order.get
-      } yield assertTrue(seen == Vector("a", "b", "c"))
+        seen   <- order.get.map(_.sortBy(_._2))
+      } yield assertTrue(seen == Vector("a" -> 1000L, "b" -> 1001L, "c" -> 1002L))
     },
     test("пик за секунду: двадцать разом — 20; держится 20 секунд, потом забыт") {
       for {
