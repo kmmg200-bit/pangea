@@ -2,8 +2,7 @@ package pangea.service.state.states.battle
 
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.model.arena.{ArenaFight, ArenaSide, ArenaStatus}
-import pangea.model.battle.{BattleAlly, Buff, HeroBattleState, SoloPveBattle}
+import pangea.model.battle.{BattleAlly, SoloPveBattle}
 import pangea.model.hero.Hero
 import pangea.model.item.{Grip, Item, ItemDetails, ItemType, Rarity => ItemRarity}
 import pangea.model.monster.{Monster, Race, Rarity}
@@ -13,7 +12,6 @@ import pangea.model.squad.AllyKind
 import pangea.model.stats.FightStats
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.state.UserAction
-import pangea.service.state.states.arena.ArenaBattle
 import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestRenderer}
 import zio.ZIO
 import zio.test._
@@ -127,16 +125,6 @@ object RollSkillSpec extends ZIOSpecDefault {
                 List("Место 2: +5% к уклонению", "Место 3: +10% к уклонению", "Место 4: +15% к уклонению")) &&
               assertTrue(after.group.heroPos == 3 && after.group.paired) &&
               assertTrue(after.monsterCurrentHp < full && after.heroBattleState.dodgeBonus == 10L)
-    },
-
-    test("на арене прибавка к уклонению соперника доходит до его зеркала — и «Переката», и зелья") {
-      val me    = TestFixtures.hero(UserId(1L))
-      val foe   = TestFixtures.hero(UserId(2L))
-      val dodge = HeroBattleState(List(Buff(0L, 0L, 0L, dodgePct = 15L, defencePct = 0L, turnsLeft = Some(0))))
-      val fight = ArenaFight(7L, "1234", ArenaStatus.Fighting,
-        ArenaSide(UserId(1L), me.id, "Я", 10L), Some(ArenaSide(UserId(2L), foe.id, "Соперник", 10L, buffs = dodge)))
-      val b     = ArenaBattle.assemble(fight, fight.a, fight.b.get, me, foe, 0L)
-      assertTrue(b.monsterDodgeBonus == 15L && b.foeDodgeBonus == 15L)
     },
 
     test("«Отбросить» бьёт плечом, а не щитом; у «Переката» свой рунный камень") {

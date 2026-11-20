@@ -41,10 +41,9 @@ final case class BattleAlly(
   /** Кто из врагов задел его последним. Выбыл — значит, этот его и добил:
     * ударом, умением или раной, которую оставил. */
   lastHitBy:  Option[String]   = None,
-  /** Сколько своих ходов он не сходит с места сам: его пригвоздили. Пока так
-    * бывает только на арене — соперник «Пригвоздил» его или накрыл
-    * «Заградительным залпом» (см. `ArenaBattle.foeAfterTurn`); отходит на
-    * стороне боя, ход за ходом, как у самого героя. */
+  /** Сколько своих ходов он не сходит с места сам: его пригвоздили — сеть
+    * ловцов Братства (см. `BattleState.netFight`); отходит ход за ходом, как у
+    * самого героя. */
   rooted:     Int              = 0,
   /** На сколько уровней вырос его потолок у героя (см. `Ally.grown`): по нему
     * же он и восстанавливает энергию. */
@@ -63,7 +62,7 @@ final case class BattleAlly(
   cursed:      Int             = 0,
   /** Ледопад Ледяного элементаля: сколько концов раунда он ещё вмёрз в лёд и с
     * места не сходит (см. `MiniBoss.IceElemental.FrozenTurns`). Своё поле, а не
-    * `rooted`: тот — «пригвождён» с арены. */
+    * `rooted`: тот — сеть ловцов Братства. */
   frozen:      Int             = 0
 ) {
   /** Держит ли его проклятие Некроманта: HP он сейчас не восстанавливает. */
@@ -203,10 +202,6 @@ final case class MonsterSlot(
   customName:    Option[String] = None,
   /** Поднятый некромантом: раса своя, природа могильная (см. [[Nature]]). */
   undead:        Boolean        = false,
-  /** На арене: кто это из бойцов соперника — сам он
-    * ([[SoloPveBattle.ArenaHeroUnit]]) или его союзник под своим номером. По
-    * этому номеру урон и путы возвращаются его стороне. */
-  arenaUnit:     Option[Int]    = None,
   /** Кто из отряда бил его последним (имя союзника). Истёк он ранами — пламенем,
     * ядом, кровью, — значит, этот его и добил: ему и в счёт (см. `BattleAlly.kills`). */
   lastAllyHit:   Option[String] = None,
@@ -240,8 +235,7 @@ final case class MonsterSlot(
     boss.flatMap(pangea.model.monster.MiniBoss.byName).map(_.monsterName).getOrElse(toMonster.name)
 
   /** Как зовут моба на кнопке выбора цели. Именного — по имени: легендарного,
-    * минибосса и того, кому имя дала сцена (на арене так зовут бойцов
-    * соперника). Остальных — коротким именем: тем же, что на экране боя, а
+    * минибосса и того, кому имя дала сцена. Остальных — коротким именем: тем же, что на экране боя, а
     * длинное — сокращённым («Хобгоблин», см. [[Monster.shortName]]). Отмеченного
     * тьмой выделяет [[Monster.MarkedBadge]] впереди: «⚫ Ловкий гоблин»; полное
     * имя с меткой — на экране боя, над кнопками. */
@@ -282,7 +276,6 @@ object MonsterSlot {
       boss          <- c.getOrElse[Option[String]]("boss")(None)
       customName    <- c.getOrElse[Option[String]]("customName")(None)
       undead        <- c.getOrElse[Boolean]("undead")(false)
-      arenaUnit     <- c.getOrElse[Option[Int]]("arenaUnit")(None)
       lastAllyHit   <- c.getOrElse[Option[String]]("lastAllyHit")(None)
       // Круг минибосса на слоте — с тех пор, как минибоссов в бою может быть
       // двое; в старых записях его нет — нули (см. SoloPveBattle.cycleToBossSlot).
@@ -295,7 +288,7 @@ object MonsterSlot {
       // Порода — с сетеплётов; в старых записях её нет, чужое имя — тоже нет.
       breed         <- pangea.model.monster.Breed.read(c, "breed")
     } yield MonsterSlot(lvl, race, rarity, stats, currentHp, currentArmor, marked, currentEnergy, effects,
-                        boss, customName, undead, arenaUnit, lastAllyHit,
+                        boss, customName, undead, lastAllyHit,
                         bossTurn, bossCharges, bossRevives, firstSkill, bossTaken, bossArmor, breed)
 }
 

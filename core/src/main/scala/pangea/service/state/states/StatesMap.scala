@@ -1,6 +1,5 @@
 package pangea.service.state.states
 
-import pangea.dao.arena.ArenaDao
 import pangea.dao.hero.HeroDao
 import pangea.engine.{GraphValidator, Journal, Players, SceneContent}
 import pangea.model.state.StateType
@@ -210,7 +209,6 @@ object StatesMap {
   val live: ZLayer[
     Players
       with HeroDao
-      with ArenaDao
       with InventoryRepository
       with BarrelRepository
       with BankRepository
@@ -251,7 +249,6 @@ object StatesMap {
         journal       <- ZIO.service[Journal]
         content       <- ZIO.service[SceneContent]
         scheduler     <- ZIO.service[Scheduler]
-        arenaDao      <- ZIO.service[ArenaDao]
         referrals     <- ZIO.service[Referrals]
         background    <- ZIO.service[Background]
         outcomeDao    <- ZIO.service[QuestOutcomeDao]
@@ -283,7 +280,7 @@ object StatesMap {
             content
           ),
           Dungeon   -> DungeonState(heroDao, inventoryRepo, scheduler, content),
-          Arena     -> ArenaState(heroDao, arenaDao, content, scheduler, Some(players)),
+          Arena     -> ArenaState(content),
           HeroStats -> HeroStatsState(heroDao, content, artifacts),
           FriendCode -> FriendCodeState(heroDao, referrals, content),
           FoundItem -> FoundItemState(
@@ -294,7 +291,7 @@ object StatesMap {
             content,
             artifacts
           ),
-          Battle -> BattleState(heroDao, inventoryRepo, itemRepo, content, scheduler, Some(arenaDao), bank),
+          Battle -> BattleState(heroDao, inventoryRepo, itemRepo, content, scheduler, bank),
           Death  -> DeathState(heroDao, inventoryRepo, content, artifacts, outcomes, Some(itemRepo), Some(parcels)),
           Rest   -> RestState(heroDao, scheduler, content),
           Inventory -> InventoryState(

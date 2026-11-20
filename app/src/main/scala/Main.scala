@@ -4,7 +4,6 @@ import cats.syntax.semigroupk._
 import org.http4s.HttpRoutes
 import pangea.dao.activity.ActivityDao
 import pangea.dao.quest.QuestOutcomeDao
-import pangea.dao.arena.ArenaDao
 import pangea.dao.Transactor
 import pangea.dao.config.PostgresConfig
 import pangea.dao.admin.AdminDao
@@ -117,7 +116,6 @@ object Main extends ZIOAppDefault {
       InventoryDao.live,
       BarrelDao.live,
       BankVaultDao.live,
-      ArenaDao.live,
       AuctionDao.live,
       ArtifactDao.live,
       PayoutDao.live,

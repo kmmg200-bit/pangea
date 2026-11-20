@@ -3,7 +3,7 @@ package pangea.service.state.states.battle
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
 import pangea.generator.monster.MonsterGenerator
-import pangea.model.battle.{ArenaRef, SoloPveBattle}
+import pangea.model.battle.SoloPveBattle
 import pangea.model.hero.Hero
 import pangea.model.monster.{Race, Rarity}
 import pangea.model.skill.MonsterSkill
@@ -79,17 +79,15 @@ object CatcherNetSpec extends ZIOSpecDefault {
                 onAlly._2.exists(_.group.allies.exists(_.rooted > 0)) && onAlly._2.exists(!_.effects.heroRooted))
     },
 
-    test("конец раунда: в бою с ловцами сеть держит на раунд меньше — на герое и на союзнике; на арене и в прочих боях пригвождение не трогаем") {
+    test("конец раунда: в бою с ловцами сеть держит на раунд меньше — на герое и на союзнике; в прочих боях пригвождение не трогаем") {
       val netted = catcher(fighter(front))
       val start  = netted.copy(effects = netted.effects.copy(heroRootedTurns = 2),
                      group = netted.group.copy(allies = netted.group.allies.map(_.copy(rooted = 2))))
       val once   = BattleState.webTicked(start)
       val twice  = BattleState.webTicked(once)
-      val arena  = BattleState.webTicked(start.copy(arena = Some(ArenaRef(1L, 2L))))
       val other  = BattleState.webTicked(start.copy(story = None))
       assertTrue(once.effects.heroRootedTurns == 1 && once.effects.heroRooted && once.group.allies.forall(_.rooted == 1)) &&
       assertTrue(twice.effects.heroRootedTurns == 0 && !twice.effects.heroRooted && twice.group.allies.forall(_.rooted == 0)) &&
-      assertTrue(arena.effects.heroRootedTurns == 2 && arena.group.allies.forall(_.rooted == 2)) &&
       assertTrue(other.effects.heroRootedTurns == 2 && other.group.allies.forall(_.rooted == 2))
     },
 

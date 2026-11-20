@@ -65,12 +65,6 @@ object TaskKind extends Enum[TaskKind] with DoobieEnum[TaskKind] {
   case object VillageCaravan extends TaskKind
   // Переход по следу воров артефакта деревни (3–6 минут) — следующий переход или их стан.
   case object VillageTrail extends TaskKind
-
-  /** Соперник сходил — зовём другого к экрану боя. */
-  case object ArenaPoke extends TaskKind
-
-  /** Минута на ход вышла — бьём за зевнувшего обычной атакой. */
-  case object ArenaTurn extends TaskKind
 }
 
 sealed trait TaskStatus extends EnumEntry

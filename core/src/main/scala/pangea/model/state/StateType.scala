@@ -75,7 +75,7 @@ object StateType extends Enum[StateType] with DoobieEnum[StateType] {
   case object GemVault         extends StateType // хранилище камней на острове: по видам и качествам, улучшение 3 к 1
   case object TrophyWall       extends StateType // стена трофеев на острове: уникальные трофеи именных, прибавка к урону по расам
   case object TempleAzat       extends StateType // Храм Азата (Жрец / Зал / Уйти)
-  case object Arena            extends StateType // арена: запись на бой с другим игроком
+  case object Arena            extends StateType // арена: закрыта, экран-заглушка (бои игроков строятся заново)
   case object HallAzat         extends StateType // Зал Азата (кубы, заряды)
   case object Cube             extends StateType // крафт в кубе Азата
   case object UnassumingBarrel extends StateType

@@ -3,7 +3,6 @@ package pangea.service.state.states.battle
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
 import pangea.generator.monster.MonsterGenerator
-import pangea.model.arena.{ArenaAlly, ArenaFight, ArenaSide, ArenaStatus}
 import pangea.model.battle.{BattleEffects, MonsterSlot, SoloPveBattle}
 import pangea.model.hero.{Equipment, Hero, HeroSets}
 import pangea.model.item.{Item, ItemSet, ItemType, Rarity => ItemRarity}
@@ -13,7 +12,6 @@ import pangea.model.state.StateType
 import pangea.model.stats.{BaseStats, FightStats}
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.state.UserAction
-import pangea.service.state.states.arena.ArenaBattle
 import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestRenderer}
 import zio.test.TestRandom
 import zio.test._
@@ -170,17 +168,6 @@ object RaceSetMurlocGnomeSpec extends ZIOSpecDefault {
               assertTrue(won._1 == StateType.Loot && won._3.squad.allies.isEmpty)
     },
 
-    test("на арене собратья выходят вместе с героем — по числу бойцов напротив") {
-      val murloc = hero(Race.Murloc, ItemSet.DeepMother, 12)
-      val me     = ArenaSide(userId, murloc.id, "Я", 10L)
-      val lone   = ArenaSide(UserId(2L), murloc.id, "Соперник", 10L)
-      val crowd  = lone.copy(allies = List(ArenaAlly(1, BattleState.kinAlly(murloc, 2)), ArenaAlly(2, BattleState.kinAlly(murloc, 3))))
-      val one    = ArenaBattle.withStartingKin(me, murloc, lone)
-      val two    = ArenaBattle.withStartingKin(me, murloc, crowd)
-      assertTrue(one.allies.map(_.ally.kind) == List(AllyKind.MurlocKin)) &&
-      assertTrue(two.allies.size == 2 && two.allies.map(_.ally.position).distinct.size == 2 && two.nextAlly == 3)
-    },
-
     test("«Подгорный мастер» 12 — только гному: пока цела броня, камни не сбивают с ног и удары не травмируют") {
       def under(race: Race, armor: Long, hp: Long) = {
         val h = underRocks(race, armor, hp)
@@ -199,19 +186,5 @@ object RaceSetMurlocGnomeSpec extends ZIOSpecDefault {
               assertTrue(bare._2.exists(_.effects.heroStunnedTurns == MiniBoss.StoneElemental.BurstDebuffTurns))
     },
 
-    test("«Подгорный мастер» 12: гнома, пока на нём броня, на арене не пригвоздить") {
-      val foe = TestFixtures.hero(UserId(2L))
-      def pinned(h: Hero): Int = {
-        val me    = ArenaSide(userId, h.id, "Я", 10L, rooted = 2)
-        val other = ArenaSide(UserId(2L), foe.id, "Соперник", 10L)
-        val fight = ArenaFight(7L, "1234", ArenaStatus.Fighting, me, Some(other))
-        ArenaBattle.assemble(fight, me, other, h, foe, 0L).effects.heroRootedTurns
-      }
-      assertTrue(pinned(hero(Race.Gnome, ItemSet.MountainMaster, 12, armor = 100L)) == 0) &&
-      assertTrue(pinned(hero(Race.Gnome, ItemSet.MountainMaster, 12, armor = 0L)) == 2) &&
-      assertTrue(pinned(hero(Race.Human, ItemSet.MountainMaster, 12, armor = 100L)) == 2) &&
-      assertTrue(HeroSets(Map(ItemSet.MountainMaster -> 12), Some(Race.Gnome)).steadfast(1L) &&
-                 !HeroSets(Map(ItemSet.MountainMaster -> 12), Some(Race.Gnome)).steadfast(0L))
-    }
   )
 }

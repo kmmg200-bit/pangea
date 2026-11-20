@@ -2,7 +2,6 @@ package pangea.service.state.states.battle
 
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.model.arena.ArenaSide
 import pangea.model.battle.SoloPveBattle
 import pangea.model.hero.Hero
 import pangea.model.item.{Grip, Item, ItemDetails, ItemType, Rarity => ItemRarity}
@@ -12,7 +11,6 @@ import pangea.model.skill.Skill
 import pangea.model.stats.FightStats
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.state.UserAction
-import pangea.service.state.states.arena.ArenaBattle
 import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestRenderer}
 import zio.ZIO
 import zio.test._
@@ -196,14 +194,6 @@ object PowerShotSpec extends ZIOSpecDefault {
               assertTrue(said.contains("Стрела уходит мимо: стрелять было не в кого.")) &&
               assertTrue(shotSlot(after).aim.isEmpty && shotSlot(after).cooldown == Skill.PowerShot.cooldown) &&
               assertTrue(after.monsterCurrentHp == full)
-    },
-
-    test("на арене тетива держится между ходами: натяжка едет со слотами стороны") {
-      val aimed = paired.updateSlot(101L)(_.copy(aim = Some(2)))
-      val side  = ArenaBattle.harvest(ArenaSide(userId, hero.id, "Я", lvl), aimed)
-      val back  = side.asJson.as[ArenaSide].toOption
-      assertTrue(side.slots.exists(_.aim.contains(2))) &&
-      assertTrue(back.exists(_.slots.exists(_.aim.contains(2))))
     },
 
     test("руна и описание: свой камень, лук и арбалет, натяжка в описании") {

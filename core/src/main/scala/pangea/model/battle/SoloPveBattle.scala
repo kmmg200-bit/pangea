@@ -17,7 +17,7 @@ case class SkillSlotState(
   cooldown: Int = 0,
   uses:     Int = 0,
   // Тетива «Мощного выстрела» натянута: сколько раз герой тянул дальше (см.
-  // Skill.Effect.Charge). None — не целится. На арене едет со слотами стороны.
+  // Skill.Effect.Charge). None — не целится.
   aim:      Option[Int] = None
 )
 
@@ -75,9 +75,6 @@ case class SoloPveBattle(
   // Звать некого: ни подкрепления со стороны, ни сородичей на клич. Так дерутся
   // обитатели пещеры — она посчитана до последнего, и лишним взяться неоткуда.
   noKin:          Boolean = false,
-  // Бой на арене: какая это строка боя и кто напротив. Пока оно есть, в ответ
-  // на ход никто не бьёт — соперник ответит своим ходом, а итог решает арена.
-  arena:          Option[ArenaRef] = None,
   // Уровень тех, кого минибосс зовёт себе на помощь: у Крысиного короля это
   // уровень задания, по которому катается вся канализация. 0 — звать некого.
   minionLvl:      Long = 0L,
@@ -101,18 +98,9 @@ case class SoloPveBattle(
   // режутся удары и умения врагов по нему — по редкости щита (см. Skill.Block,
   // Equipment.blockPct). 0 — щит опущен.
   heroBlockPct:   Long = 0L,
-  // На арене: соперник — «моб» этого зеркала — поднял щит своим ходом, и удары
-  // героя по нему режутся на столько процентов (см. ArenaBattle). 0 — опущен.
-  monsterBlockPct: Long = 0L,
   // Кинжал героя наизготовку (Контрудар): первый удар врага, от которого он
   // увернётся до своего следующего хода, получит ответ наверняка.
   heroCounterReady: Boolean = false,
-  // На арене: соперник держит парирующий кинжал наготове — промах героя, и он
-  // ответит ударом этой силы (см. ArenaBattle.counterPower). 0 — не держит.
-  monsterCounterPower: Long = 0L,
-  // На арене: кто это из бойцов соперника стоит в полях — сам он
-  // (`SoloPveBattle.ArenaHeroUnit`) или его союзник (см. MonsterSlot.arenaUnit).
-  monsterArenaUnit: Option[Int] = None,
   // Раунд героя ещё идёт: прошлое его действие раунд не закончило (пояс, Блок,
   // Контрудар). Щит и стойку прошлого раунда снимает только первое действие
   // нового (см. BattleState.resolveLoaded).
@@ -140,10 +128,6 @@ case class SoloPveBattle(
   // Приговорённый ушёл, пока стоял в паре, а бой на этом кончился победой над
   // его сородичами: в полях всё ещё он, но в павшие он не идёт.
   preyGone:       Boolean = false,
-  // На арене: прибавка к уклонению соперника от его бафов — «Перекат», зелье
-  // уворота (см. ArenaBattle). Он здесь «моб», и своих бафов у него в этом
-  // зеркале нет. Держится только за самим соперником, не за его союзниками.
-  monsterDodgeBonus: Long = 0L,
   // Комбо стихий (Огонь+Воздух, Молния+Холод) за этот ход героя уже было: второе
   // не срабатывает — стихии ложатся поодиночке. Сбрасывается в начале каждого
   // хода героя (см. BattleState.resolveLoaded).
@@ -154,7 +138,7 @@ case class SoloPveBattle(
   // Отряд героя взяли в этот бой — пусть даже строй был пуст (см. `from`).
   // Пав в таком бою, герой теряет и резерв (см. DeathState). В бой один на
   // один — девица, охота Марисы, хозяин бродячего ларца — отряд не брали: он
-  // оставался дома, и резерв цел. Арена тоже его не берёт — на песке копии.
+  // оставался дома, и резерв цел.
   // В записях до этого поля его нет: такой бой читается как бой без отряда —
   // начат по старым правилам, и резерв из него не уходит.
   squadTaken: Boolean = false,
@@ -191,7 +175,7 @@ case class SoloPveBattle(
     lvl = monsterLvl, race = monsterRace, rarity = monsterRarity, stats = monsterStats,
     currentHp = monsterCurrentHp, currentArmor = monsterCurrentArmor, marked = monsterMarked,
     currentEnergy = monsterCurrentEnergy, effects = effects.monsterPart, boss = bossKind,
-    customName = customName, undead = monsterUndead, arenaUnit = monsterArenaUnit,
+    customName = customName, undead = monsterUndead,
     lastAllyHit = monsterLastAllyHit,
     bossTurn = bossTurn, bossCharges = bossCharges, bossRevives = bossRevives,
     bossFirstSkillSpent = bossFirstSkillSpent, bossTaken = bossTaken, bossArmorTaken = bossArmorTaken,
@@ -210,7 +194,7 @@ case class SoloPveBattle(
     monsterCurrentHp = slot.currentHp, monsterCurrentArmor = slot.currentArmor, monsterMarked = slot.marked,
     monsterCurrentEnergy = slot.currentEnergy, effects = effects.withMonsterPart(slot.effects),
     bossKind = slot.boss, customName = slot.customName, monsterUndead = slot.undead,
-    monsterArenaUnit = slot.arenaUnit, monsterLastAllyHit = slot.lastAllyHit,
+    monsterLastAllyHit = slot.lastAllyHit,
     bossTurn = slot.bossTurn, bossCharges = slot.bossCharges, bossRevives = slot.bossRevives,
     bossFirstSkillSpent = slot.bossFirstSkillSpent, bossTaken = slot.bossTaken, bossArmorTaken = slot.bossArmorTaken,
     monsterBreed = slot.breed)
@@ -308,37 +292,8 @@ case class SoloPveBattle(
       Option.when(to != from)((stepActiveTo(to), to))
     }
 
-  /** Живые бойцы соперника на арене — с местами: тот, кто в полях, и строй. */
-  def arenaUnits: List[(Int, MonsterSlot)] =
-    ((group.activePos, activeSlot) :: group.entries).filter { case (_, s) => s.alive && s.arenaUnit.isDefined }
-
-  /** Боец соперника на арене с номером `id`: его место и он сам. Павшего здесь
-    * уже нет. */
-  def arenaUnit(id: Int): Option[(Int, MonsterSlot)] =
-    arenaUnits.find { case (_, s) => s.arenaUnit.contains(id) }
-
   /** Поднят ли щит героя (Блок). */
   def heroShieldUp: Boolean = heroBlockPct > 0L
-
-  /** Поднят ли щит у соперника на арене. */
-  def monsterShieldUp: Boolean = monsterBlockPct > 0L
-
-  /** Поднят ли щит у того, кто в полях. На арене щит держит только сам
-    * соперник, а не его союзник, вставший в поля на удар. */
-  def foeShieldUp: Boolean = monsterShieldUp && monsterArenaUnit.forall(_ == SoloPveBattle.ArenaHeroUnit)
-
-  /** На сколько процентов щит того, кто в полях, режет удар героя (0 — не режет). */
-  def foeBlockPct: Long = if (foeShieldUp) monsterBlockPct else 0L
-
-  /** Сила контрудара того, кто в полях: на арене кинжал держит только сам
-    * соперник. */
-  def foeCounterPower: Long =
-    if (monsterArenaUnit.forall(_ == SoloPveBattle.ArenaHeroUnit)) monsterCounterPower else 0L
-
-  /** Прибавка к уклонению того, кто в полях: на арене она есть только у самого
-    * соперника. */
-  def foeDodgeBonus: Long =
-    if (monsterArenaUnit.forall(_ == SoloPveBattle.ArenaHeroUnit)) monsterDodgeBonus else 0L
 
   /** Пара пуста: активный моб стоит не напротив героя. */
   def unpaired: Boolean = !group.paired
@@ -641,7 +596,7 @@ case class SoloPveBattle(
     * герой не переставит его сам. Когда шагать, решает раунд: в конце, после
     * шагов мобов. Возвращает бой и кто куда шагнул. */
   def squadAdvance: (SoloPveBattle, List[(BattleAlly, Int)]) = {
-    // Пригвождённый (арена) с места не сходит, даже когда бить ему некого.
+    // Пригвождённый (сеть ловцов) с места не сходит, даже когда бить ему некого.
     // Опутанный паутиной — тоже.
     // Караванщик на своей повозке её не бросает: стоит и ждёт, кто к ней сунется.
     val idle  = group.allies.filter(a => a.alive && a.rooted <= 0 && a.webbed <= 0 && a.frozen <= 0 && allyTarget(a).isEmpty &&
@@ -1088,17 +1043,13 @@ object SoloPveBattle {
       divineUsed          <- c.getOrElse[Boolean]("divineUsedThisRound")(false)
       escapesAfter        <- c.getOrElse[Int]("escapesAfter")(0)
       noKin               <- c.getOrElse[Boolean]("noKin")(false)
-      arena               <- c.getOrElse[Option[ArenaRef]]("arena")(None)
       minionLvl           <- c.getOrElse[Long]("minionLvl")(0L)
       bossTaken           <- c.getOrElse[Long]("bossTaken")(0L)
       noFlee              <- c.getOrElse[Boolean]("noFlee")(false)
       lootLevel           <- c.getOrElse[Option[Long]]("lootLevel")(None)
       holyWater           <- c.getOrElse[Boolean]("holyWater")(false)
       heroBlockPct        <- c.getOrElse[Long]("heroBlockPct")(0L)
-      monsterBlockPct     <- c.getOrElse[Long]("monsterBlockPct")(0L)
       heroCounterReady    <- c.getOrElse[Boolean]("heroCounterReady")(false)
-      monsterCounterPower <- c.getOrElse[Long]("monsterCounterPower")(0L)
-      monsterArenaUnit    <- c.getOrElse[Option[Int]]("monsterArenaUnit")(None)
       midRound            <- c.getOrElse[Boolean]("midRound")(false)
       bonusSlots          <- c.getOrElse[List[Long]]("bonusSlots")(Nil)
       trophyWall          <- c.getOrElse[Map[String, Int]]("trophyWall")(Map.empty)
@@ -1108,7 +1059,6 @@ object SoloPveBattle {
       secondWindUsed      <- c.getOrElse[Boolean]("secondWindUsed")(false)
       preyName            <- c.getOrElse[Option[String]]("preyName")(None)
       preyGone            <- c.getOrElse[Boolean]("preyGone")(false)
-      monsterDodgeBonus   <- c.getOrElse[Long]("monsterDodgeBonus")(0L)
       comboUsed           <- c.getOrElse[Boolean]("comboUsed")(false)
       bossArmorTaken      <- c.getOrElse[Long]("bossArmorTaken")(0L)
       // Бой, начатый до этого поля, — без отряда: резерв из него не уходит.
@@ -1124,18 +1074,14 @@ object SoloPveBattle {
                          monsterCurrentHp, monsterCurrentArmor, heroBattleState, consumableUsed, monsterMarked,
                          monsterUndead,
                          skillSlots, effects, toughnessUsed, bossKind, bossTurn, charges, revives, firstSkill, monsterEnergy, group,
-                         story, customName, divineUsed, escapesAfter, noKin, arena, minionLvl, bossTaken,
-                         noFlee, lootLevel, holyWater, heroBlockPct, monsterBlockPct,
-                         heroCounterReady, monsterCounterPower, monsterArenaUnit, midRound, bonusSlots, trophyWall,
+                         story, customName, divineUsed, escapesAfter, noKin, minionLvl, bossTaken,
+                         noFlee, lootLevel, holyWater, heroBlockPct,
+                         heroCounterReady, midRound, bonusSlots, trophyWall,
                          monsterLastAllyHit, heroStruck, roundsFought, secondWindUsed, preyName, preyGone,
-                         monsterDodgeBonus, comboUsed, bossArmorTaken, squadTaken, monsterBreed,
+                         comboUsed, bossArmorTaken, squadTaken, monsterBreed,
                          chainUsed, preyLeft, kegs, puller).cycleToBossSlot
       // ↑ Бой, сохранённый до того, как круг минибосса переехал на слот: круг
       // того, кто стоит в строю, забираем с боя на его слот.
-
-  /** Номер самого соперника среди «мобов» зеркала арены; его союзники — от
-    * единицы (см. `ArenaSide.allies`). */
-  val ArenaHeroUnit: Int = 0
 
   /** Отметка в данных события сцены (`LootData.eventData`), что приговорённый
     * ушёл из боя живым (см. `preyLeft`): её кладёт победа, читает сцена, куда
