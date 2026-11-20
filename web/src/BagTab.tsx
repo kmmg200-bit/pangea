@@ -3,7 +3,7 @@ import { groupLabels, kindOf, presentGroups, type Group } from './kinds'
 import type { InventoryView, ItemView } from './types'
 import { Chips, Empty, ItemRow, Toolbar } from './ui'
 
-const sorts = [
+export const sorts = [
   { id: 'bag', label: 'Как в сумке' },
   { id: 'rarity', label: 'По редкости' },
   { id: 'lvl', label: 'По уровню' },

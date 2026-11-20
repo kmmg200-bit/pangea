@@ -495,8 +495,8 @@ object MiniAppViewSpec extends ZIOSpecDefault {
       val hero   = TestFixtures.hero(UserId(1L), state = StateType.TradeHouse)
       val lot    = AuctionLot(3L, HeroId(2L), sword, 300L, AuctionCurrency.Doubloons, 0L, AuctionLot.LifetimeMs)
       val funds  = MiniAppView.Funds(silver = 1200L, bagFree = 4L)
-      val inCity = MiniAppView.auction(hero, List(lot), Nil, 0L, _ => "", funds, c)
-      val away   = MiniAppView.auction(hero.copy(state = StateType.Battle), List(lot), Nil, 0L, _ => "", funds, c)
+      val inCity = MiniAppView.auction(hero, List(lot), Nil, 0L, Nil, _ => "", funds, c)
+      val away   = MiniAppView.auction(hero.copy(state = StateType.Battle), List(lot), Nil, 0L, Nil, _ => "", funds, c)
       assertTrue(
         inCity.lots.map(l => (l.id, l.currency, l.mine)) == List((3L, "doubloons", false)),
         inCity.silver == 1200L && inCity.bagFree == 4L,
@@ -512,11 +512,37 @@ object MiniAppViewSpec extends ZIOSpecDefault {
       val bundle = pangea.model.item.Bundling.pack(gems).get.copy(id = 60L)
       val pack   = AuctionLot(3L, HeroId(2L), bundle, 300L, AuctionCurrency.Silver, 0L, AuctionLot.LifetimeMs)
       val one    = AuctionLot(4L, hero.id, sword, 300L, AuctionCurrency.Silver, 0L, AuctionLot.LifetimeMs)
-      val view   = MiniAppView.auction(hero, List(pack, one), List(one), 0L, _ => "",
+      val view   = MiniAppView.auction(hero, List(pack, one), List(one), 0L, Nil, _ => "",
                      MiniAppView.Funds(silver = 0L, bagFree = 1L), c)
       assertTrue(
         view.lots.map(_.item.title) == List("📦 Надколотый рубин ×5", sword.displayTitle),
         view.mine.map(_.item.title) == List(sword.displayTitle)
+      )
+    },
+
+    test("аукцион: выставить — что взял бы Рахадим, стопками, стопка со счётом; вне города — почему нельзя") {
+      import pangea.generator.item.MaterialGenerator
+      import pangea.model.item.{Bundling, MaterialKind, QuestItemKind}
+      val c      = SceneContent.load()
+      val hero   = TestFixtures.hero(UserId(1L), state = StateType.TradeHouse)
+      val trophy = Item(9L, "Мешок с пожитками (Орк)", lvl = 10L, Rarity.Gray, ItemType.Trophy,
+                     attack = 0, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0)
+      val key    = QuestItemKind.item(QuestItemKind.RackKey1).copy(id = 91L)
+      val dust   = (101L to 105L).toList.map(i => MaterialGenerator.item(MaterialKind.RubyDust).copy(id = i))
+      val bundle = Bundling.pack(dust).get.copy(id = 7L)
+      val story  = greatsword.asStoryGear.copy(id = 21L)
+      val bag    = List(sword, ruby(1L), ruby(2L), trophy, key, dust.head, bundle, story)
+      val funds  = MiniAppView.Funds(silver = 0L, bagFree = 1L)
+      val view   = MiniAppView.auction(hero, Nil, Nil, 0L, bag, _ => "", funds, c)
+      val away   = MiniAppView.auction(hero.copy(state = StateType.Battle), Nil, Nil, 0L, bag, _ => "", funds, c)
+      assertTrue(
+        view.sell.items.map(i => (i.title, i.count)) ==
+          List((sword.displayTitle, 1), (ruby(1L).displayTitle, 2), ("📦 Рубиновая пыль ×5", 1)),
+        view.sell.minPrice == AuctionLot.MinPrice && view.sell.maxPrice == AuctionLot.MaxPrice,
+        view.sell.feePct == AuctionLot.FeePct && view.sell.maxLots == AuctionLot.MaxLots,
+        view.sell.empty == c.text("bank.auction.nothingToSell"),
+        view.sell.away.isEmpty,
+        away.sell.away.contains(c.text("miniapp.auction.sellAway"))
       )
     }
   )

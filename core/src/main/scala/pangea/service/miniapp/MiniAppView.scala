@@ -17,6 +17,7 @@ import pangea.model.squad.AllyRates
 import pangea.model.top.{TopBoard, TopKind}
 import pangea.model.trade.{TradeOffer, TradeSide}
 import pangea.model.user.UserId
+import pangea.service.auction.AuctionSale
 import pangea.service.chat.Links
 import pangea.service.cube.AzatCube
 import pangea.service.equipment.{BeltWork, BrewWork}
@@ -248,12 +249,29 @@ object MiniAppView {
     * @param silver  сколько серебра наберётся на покупку: на руках вместе с ячейкой
     * @param bagFree свободных мест в сумке: купленное ложится туда
     * @param away    почему сейчас нельзя покупать: герой не в городе
+    * @param sell    что и как выставить
     */
   final case class AuctionView(hero: HeroView, lots: List[LotView], mine: List[LotView], silver: Long, bagFree: Long,
-                               away: Option[String])
+                               away: Option[String], sell: SellView)
+
+  /** Выставление — правила те же, что у Рахадима в боте
+    * ([[pangea.service.auction.AuctionSale]]).
+    *
+    * @param items   что из сумки можно выставить — стопками, как в сумке; стопка
+    *                (📦) — со счётом, как на торгах
+    * @param feePct  сбор Торгового дома, % от цены: не меньше 1 в монете лота
+    * @param maxLots сколько своих лотов держат на торгах разом, с непроданными
+    * @param empty   почему выставлять нечего — словами бота
+    * @param away    почему сейчас нельзя выставлять: герой не в городе
+    */
+  final case class SellView(items: List[ItemView], minPrice: Long, maxPrice: Long, feePct: Long, maxLots: Int,
+                            empty: String, away: Option[String])
 
   /** Ответ на покупку: витрина после неё, что сказал Рахадим и куплено ли. */
   final case class AuctionActionView(auction: AuctionView, note: String, bought: Boolean)
+
+  /** Ответ на выставление: витрина после него, что сказал Рахадим и выставлено ли. */
+  final case class AuctionSellView(auction: AuctionView, note: String, listed: Boolean)
 
   /** Чем платить и куда класть: серебро на руках вместе с ячейкой и свободные
     * места в сумке. */
@@ -439,8 +457,10 @@ object MiniAppView {
   implicit val inventoryActionEncoder: Encoder[InventoryActionView] = deriveEncoder
   implicit val questActionEncoder: Encoder[QuestActionView] = deriveEncoder
   implicit val lotEncoder:       Encoder[LotView]       = deriveEncoder
+  implicit val sellEncoder:      Encoder[SellView]      = deriveEncoder
   implicit val auctionEncoder:   Encoder[AuctionView]   = deriveEncoder
   implicit val auctionActionEncoder: Encoder[AuctionActionView] = deriveEncoder
+  implicit val auctionSellEncoder:   Encoder[AuctionSellView]   = deriveEncoder
   implicit val tradeItemEncoder:   Encoder[TradeItemView]   = deriveEncoder
   implicit val tradeSideEncoder:   Encoder[TradeSideView]   = deriveEncoder
   implicit val tradeOfferEncoder:  Encoder[TradeOfferView]  = deriveEncoder
@@ -826,9 +846,9 @@ object MiniAppView {
     )
   }
 
-  /** Витрина и свои лоты. Описание вещи в лоте — со сравнением с надетым на
-    * герое, как в карточке бота. */
-  def auction(h: Hero, onSale: List[AuctionLot], mine: List[AuctionLot], now: Long,
+  /** Витрина, свои лоты и что из сумки `bag` можно выставить. Описание вещи —
+    * со сравнением с надетым на герое, как в карточке бота. */
+  def auction(h: Hero, onSale: List[AuctionLot], mine: List[AuctionLot], now: Long, bag: List[Item],
               describe: Item => String, funds: Funds, content: SceneContent): AuctionView = {
     def lot(l: AuctionLot): LotView =
       LotView(
@@ -841,9 +861,24 @@ object MiniAppView {
         mine      = l.sellerId == h.id,
         unsold    = l.unsold(now)
       )
+    val away = !MiniApp.inCity(h)
+    val sell = SellView(
+      items    = ItemStack.grouped(bag.filter(AuctionSale.sellable)).map { case (it, count) =>
+                   view(it, count, describe(it)).copy(title = AuctionLot.titleOf(it))
+                 },
+      minPrice = AuctionLot.MinPrice,
+      maxPrice = AuctionLot.MaxPrice,
+      feePct   = AuctionLot.FeePct,
+      maxLots  = AuctionLot.MaxLots,
+      empty    = content.text("bank.auction.nothingToSell"),
+      away     = Option.when(away)(content.text("miniapp.auction.sellAway")))
     AuctionView(hero(h), onSale.map(lot), mine.map(lot), funds.silver, funds.bagFree,
-      Option.unless(MiniApp.inCity(h))(content.text("miniapp.auction.away")))
+      Option.when(away)(content.text("miniapp.auction.away")), sell)
   }
+
+  /** Монета лота из запроса приложения — обратное к [[currency]]. */
+  def currencyOf(s: String): Option[AuctionCurrency] =
+    AuctionCurrency.values.find(c => currency(c) == s)
 
   /** «Персонаж». Благословение и быстрые отдыхи — из состояния храма (`azat`),
     * знания — из `lore`, остальное — с героя: карточка, эффекты, достижения. */

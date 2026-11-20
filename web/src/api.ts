@@ -1,10 +1,12 @@
 import { launchParams } from './platform'
 import type {
   AuctionActionView,
+  AuctionSellView,
   AuctionView,
   CharacterView,
   CraftActionView,
   CraftView,
+  Currency,
   InventoryActionView,
   InventoryView,
   QuestActionView,
@@ -116,6 +118,8 @@ export const api = {
     post<InventoryActionView>(`storages/drop?from=${from}&item=${item}&all=${all}`),
   auction: () => get<AuctionView>('auction'),
   auctionBuy: (lot: number) => post<AuctionActionView>(`auction/buy?lot=${lot}`),
+  auctionSell: (item: number, currency: Currency, price: number) =>
+    post<AuctionSellView>(`auction/sell?item=${item}&currency=${currency}&price=${price}`),
   craft: () => get<CraftView>('craft'),
   cubeDeposit: (item: number) => post<CraftActionView>(`craft/cube/deposit?item=${item}`),
   cubeWithdraw: (item: number) => post<CraftActionView>(`craft/cube/withdraw?item=${item}`),

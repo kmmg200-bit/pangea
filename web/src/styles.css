@@ -1291,6 +1291,26 @@ button.row:active {
   font-weight: 600;
 }
 
+/* Выставление из карточки вещи: монета, цена и сбор. */
+.sell-form {
+  margin-top: 16px;
+}
+
+.sell-form .segment {
+  margin-bottom: 8px;
+}
+
+.sell-price input {
+  flex: 1 1 0;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+}
+
+.sell-away {
+  margin-bottom: 8px;
+}
+
 /* ── Загрузка и ошибки ─────────────────────────────────── */
 
 .spinner {

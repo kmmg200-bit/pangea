@@ -237,6 +237,24 @@ export interface AuctionView {
   bagFree: number
   /** Почему сейчас нельзя покупать: герой не в городе. */
   away: string | null
+  /** Что и как выставить. */
+  sell: SellView
+}
+
+/** Выставление — правила те же, что у Рахадима в боте. */
+export interface SellView {
+  /** Что из сумки можно выставить — стопками, как в сумке; стопка (📦) — со счётом, как на торгах. */
+  items: ItemView[]
+  minPrice: number
+  maxPrice: number
+  /** Сбор Торгового дома, % от цены: не меньше 1 в монете лота. */
+  feePct: number
+  /** Сколько своих лотов держат на торгах разом, с непроданными. */
+  maxLots: number
+  /** Почему выставлять нечего — словами бота. */
+  empty: string
+  /** Почему сейчас нельзя выставлять: герой не в городе. */
+  away: string | null
 }
 
 /** Ответ на покупку: витрина после неё, что сказал Рахадим и куплено ли. */
@@ -244,6 +262,13 @@ export interface AuctionActionView {
   auction: AuctionView
   note: string
   bought: boolean
+}
+
+/** Ответ на выставление: витрина после него, что сказал Рахадим и выставлено ли. */
+export interface AuctionSellView {
+  auction: AuctionView
+  note: string
+  listed: boolean
 }
 
 /** Характеристика: сейчас — со всем, что действует, и родная — до расы, травм и зелий. */

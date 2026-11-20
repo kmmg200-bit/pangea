@@ -8,7 +8,7 @@ import org.http4s.{HttpRoutes, Request, Response}
 import org.typelevel.ci.CIStringSyntax
 import pangea.model.hero.Hero
 import pangea.model.top.TopKind
-import pangea.service.miniapp.{MiniApp, VkLaunchParams}
+import pangea.service.miniapp.{MiniApp, MiniAppView, VkLaunchParams}
 import pangea.service.miniapp.MiniApp.{CubeAct, Denied, GearAct, SquadAct, TradeAct}
 import pangea.service.trade.Trades
 import pangea.service.miniapp.MiniAppView._
@@ -172,6 +172,11 @@ final class MiniAppRoutes(app: MiniApp) {
     case req @ POST -> Root / "api" / "app" / "auction" / "buy" :? LotParam(id) =>
       asPlayer(req)(hero => app.buy(hero, id).flatMap(view => Ok(view.asJson)))
 
+    // Выставить вещь из сумки: монета — `silver` или `doubloons`. Меняет игру — только POST.
+    case req @ POST -> Root / "api" / "app" / "auction" / "sell" :? ItemParam(id) +& CurrencyParam(cur) +& PriceParam(price) =>
+      MiniAppView.currencyOf(cur).fold(NotFound(error("off")))(c =>
+        asPlayer(req)(hero => app.sell(hero, id, c, price).flatMap(view => Ok(view.asJson))))
+
     case req @ GET -> Root / "api" / "app" / "craft" =>
       asPlayer(req)(hero => app.craft(hero).flatMap(view => Ok(view.asJson)))
 
@@ -226,6 +231,8 @@ final class MiniAppRoutes(app: MiniApp) {
   private object ItemParam extends QueryParamDecoderMatcher[Long]("item")
   private object ActParam  extends QueryParamDecoderMatcher[String]("act")
   private object LotParam  extends QueryParamDecoderMatcher[Long]("lot")
+  private object CurrencyParam extends QueryParamDecoderMatcher[String]("currency")
+  private object PriceParam    extends QueryParamDecoderMatcher[Long]("price")
   private object SlotParam extends QueryParamDecoderMatcher[Int]("slot")
   private object SocketParam extends QueryParamDecoderMatcher[Int]("socket")
   private object BeltCellParam extends OptionalQueryParamDecoderMatcher[Int]("slot")

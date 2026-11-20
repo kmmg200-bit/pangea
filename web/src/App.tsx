@@ -299,12 +299,13 @@ export function App() {
             {(d) => (
               <AuctionTab
                 data={d}
-                onChange={(v, bought) => {
-                  // Деньги в шапке — из свежей витрины. Купленное легло в сумку —
-                  // «Вещи» и «Крафт», если их уже открывали, перечитают её.
+                onChange={(v, bagChanged) => {
+                  // Деньги в шапке — из свежей витрины. Купленное легло в сумку,
+                  // выставленное ушло из неё — «Вещи» и «Крафт», если их уже
+                  // открывали, перечитают её.
                   auction.set(v)
-                  if (bought && inventory.data) inventory.reload()
-                  if (bought && craft.data) craft.reload()
+                  if (bagChanged && inventory.data) inventory.reload()
+                  if (bagChanged && craft.data) craft.reload()
                 }}
               />
             )}

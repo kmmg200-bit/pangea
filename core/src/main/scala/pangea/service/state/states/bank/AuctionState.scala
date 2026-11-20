@@ -7,20 +7,18 @@ import pangea.dao.hero.HeroDao
 import pangea.engine.{Branch, Choice, ChoiceColor, Players, Renderer, SceneContent, Screen, Target}
 import pangea.model.auction.{AuctionCurrency, AuctionLot}
 import pangea.model.hero.Hero
-import pangea.model.item.{Item, ItemType}
+import pangea.model.item.Item
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.auction.{AuctionRepoError, AuctionRepository}
 import pangea.repository.bank.BankRepository
-import pangea.service.auction.AuctionPurchase
+import pangea.service.auction.{AuctionPurchase, AuctionSale}
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.user.UserRepository
 import pangea.service.payout.Payouts
-import pangea.service.purse.Purse
 import pangea.service.chat.Links
 import pangea.service.state.states.bank.AuctionState._
-import pangea.model.quest.{DailyKind, DailyNpc}
-import pangea.service.state.{CityExit, DailyQuestLog, ItemMenu, State, UserAction}
+import pangea.service.state.{CityExit, ItemMenu, State, UserAction}
 import zio.{Task, ZIO}
 
 import java.util.concurrent.TimeUnit
@@ -49,11 +47,10 @@ case class AuctionState(
   content:       SceneContent
 ) extends State {
 
-  /** Кошель: своё серебро, а следом — то, что лежит в ячейке Торгового дома. */
-  private val purse = Purse(heroDao, Some(bankRepo))
-
   private val purchase =
     new AuctionPurchase(heroDao, inventoryRepo, auctionRepo, userRepo, bankRepo, payouts, players, content)
+
+  private val sale = new AuctionSale(heroDao, inventoryRepo, auctionRepo, bankRepo, players)
 
   private val branch = new Branch(
     routes = Map(
@@ -250,17 +247,8 @@ case class AuctionState(
            }
     } yield ()
 
-  /** Что можно выставить: не сюжетное (ни предмет, ни экипировка — см.
-    * `Item.isStoryGear`), не трофей и занимающее место (пыль и малые руны места
-    * не занимают, поэтому на торги не идут). Стопка место занимает — её
-    * выставляют целиком, даже если в ней пыль (см. `Bundling`).
-    *
-    * Трофеи и сюжетная экипировка — личное: трофеи сдают в Гильдии за
-    * репутацию, сюжетную экипировку носят сами или продают Ришелье, а не
-    * продают друг другу, — ровно по той же причине, по которой их не передают
-    * из рук в руки (см. [[pangea.service.parcel.Transfers.sendable]]). */
-  private def sellable(item: Item): Boolean =
-    !item.isQuestItem && !item.isStoryGear && !item.weightless && item.itemType != ItemType.Trophy && !item.isNamedTrophy
+  /** Что можно выставить — то же, что и из приложения: [[AuctionSale.sellable]]. */
+  private def sellable(item: Item): Boolean = AuctionSale.sellable(item)
 
   private def turnSellPage(user: User, renderer: Renderer, delta: Int): Task[Unit] =
     for {
@@ -334,59 +322,38 @@ case class AuctionState(
       }
     } yield ()
 
-  /** Плата за выставление, вещь из сумки — в лот, объявление в торговую беседу. */
+  /** Выставление — в [[AuctionSale]], общем с Mini App: сбор, вещь из сумки —
+    * в лот, объявление в торговую беседу. Здесь — что показать. */
   private def listLot(user: User, renderer: Renderer): Task[Unit] =
     for {
-      now    <- nowMs
-      scene  <- readScene(user)
-      hero   <- getHero(user)
-      inv    <- inventoryRepo.get(hero.id).mapError(asThrowable)
-      wallet <- purse.wallet(hero)
-      item    = scene.itemId.flatMap(id => inv.items.data.find(i => i.id == id && sellable(i)))
-      cur     = scene.currency.flatMap(AuctionCurrency.withNameOption)
-      mine   <- auctionRepo.mineCount(hero.id).mapError(asThrowable)
-      _ <- (item, cur, scene.price) match {
-        case (Some(_), _, _) if mine >= AuctionLot.MaxLots.toLong =>
-          renderer.show(user, Screen(content.format("bank.auction.tooManyLots",
-            "max" -> AuctionLot.MaxLots.toString), backRow))
-        case (Some(it), Some(c), Some(price)) =>
-          val fee = AuctionLot.fee(price)
-          if (!hasFee(c, fee, hero, wallet.total))
-            renderer.show(user, Screen(content.format("bank.auction.noFee", "fee" -> s"${c.emoji} $fee"), backRow))
-          else
-            chargeFee(user, hero, c, fee) *>
-              // Вещь уходит из сумки в лот одной транзакцией с ним самим.
-              auctionRepo.sell(hero.id, it, price, c, now).foldZIO(
-                {
-                  // Лот не записался — вещь осталась в сумке, деньги за сбор
-                  // уже ушли; о сборе честно говорим в сообщении об отказе.
-                  case e => renderer.show(user, Screen(content.text("bank.auction.listFailed"), backRow)) *>
-                              ZIO.logError(s"auction sell failed: $e")
-                },
-                lot => players.announceTrade(AuctionLot.announcement(lot)).ignore *>
-                         // Рахадиму нужно, чтобы торги шли, — лот идёт ему в книгу.
-                         DailyQuestLog.add(heroDao, user.userId, DailyNpc.Rakhadim, DailyKind.BankLot, 1L) *>
-                         resetScene(user) *>
-                         renderer.show(user, Screen(content.format("bank.auction.listed",
-                           "id" -> lot.id.toString, "name" -> AuctionLot.titleOf(it), "price" -> lot.priceLine,
-                           "fee" -> s"${c.emoji} $fee"), Nil)) *>
-                         showMenu(user, renderer)
-              )
+      scene <- readScene(user)
+      hero  <- getHero(user)
+      cur    = scene.currency.flatMap(AuctionCurrency.withNameOption)
+      _ <- (scene.itemId, cur, scene.price) match {
+        case (Some(itemId), Some(c), Some(price)) =>
+          sale.list(user, hero, itemId, c, price).flatMap {
+            case AuctionSale.Result.Gone         => resetScene(user) *> showMenu(user, renderer)
+            case AuctionSale.Result.PriceTooLow  =>
+              renderer.show(user, Screen(content.format("bank.auction.priceTooLow", "min" -> AuctionLot.MinPrice.toString), backRow))
+            case AuctionSale.Result.PriceTooHigh =>
+              renderer.show(user, Screen(content.format("bank.auction.priceTooHigh", "max" -> AuctionLot.MaxPrice.toString), backRow))
+            case AuctionSale.Result.TooManyLots  =>
+              renderer.show(user, Screen(content.format("bank.auction.tooManyLots",
+                "max" -> AuctionLot.MaxLots.toString), backRow))
+            case AuctionSale.Result.NoFee(fee)   =>
+              renderer.show(user, Screen(content.format("bank.auction.noFee", "fee" -> s"${c.emoji} $fee"), backRow))
+            case AuctionSale.Result.Failed       =>
+              renderer.show(user, Screen(content.text("bank.auction.listFailed"), backRow))
+            case AuctionSale.Result.Listed(lot, fee) =>
+              resetScene(user) *>
+                renderer.show(user, Screen(content.format("bank.auction.listed",
+                  "id" -> lot.id.toString, "name" -> lot.title, "price" -> lot.priceLine,
+                  "fee" -> s"${c.emoji} $fee"), Nil)) *>
+                showMenu(user, renderer)
+          }
         case _ => resetScene(user) *> showMenu(user, renderer)
       }
     } yield ()
-
-  private def hasFee(c: AuctionCurrency, fee: Long, hero: Hero, silverAvailable: Long): Boolean =
-    c match {
-      case AuctionCurrency.Silver    => silverAvailable >= fee
-      case AuctionCurrency.Doubloons => hero.doubloons >= fee
-    }
-
-  private def chargeFee(user: User, hero: Hero, c: AuctionCurrency, fee: Long): Task[Unit] =
-    c match {
-      case AuctionCurrency.Silver    => purse.charge(user.userId, hero, fee).unit
-      case AuctionCurrency.Doubloons => heroDao.updateDoubloons(user.userId, hero.doubloons - fee)
-    }
 
   // ── Свои лоты ──────────────────────────────────────────────────────────────
 

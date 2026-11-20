@@ -8,7 +8,7 @@ import pangea.dao.quest.QuestOutcomeDao
 import pangea.dao.top.TopDao
 import pangea.engine.{Players, Renderer, SceneContent, Screen}
 import pangea.model.artifact.HeroArtifacts
-import pangea.model.auction.AuctionLot
+import pangea.model.auction.{AuctionCurrency, AuctionLot}
 import pangea.model.bank.BankVault
 import pangea.model.barrel.Barrel
 import pangea.model.home.HomeData
@@ -27,10 +27,11 @@ import pangea.repository.hero.HeroRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.repository.user.UserRepository
-import pangea.service.auction.AuctionPurchase
+import pangea.service.auction.{AuctionPurchase, AuctionSale}
 import pangea.service.cube.AzatCube
 import pangea.service.equipment.{BeltWork, BrewWork, BundleWork, GemWork, Outfit}
-import pangea.service.miniapp.MiniAppView.{HeroNamesView, TradeActionView, TradeView, AuctionActionView, AuctionView, CharacterView, CraftActionView, CraftView,
+import pangea.service.miniapp.MiniAppView.{HeroNamesView, TradeActionView, TradeView, AuctionActionView, AuctionSellView, AuctionView, CharacterView,
+  CraftActionView, CraftView,
   InventoryActionView, InventoryView, QuestActionView, QuestsView, SquadActionView, SquadView, TopView}
 import pangea.service.parcel.Transfers
 import pangea.service.payout.Payouts
@@ -49,9 +50,9 @@ import java.util.concurrent.TimeUnit
 /** VK Mini App: персонаж, задания, отряд, инвентарь, крафт, топ и аукцион вне
   * чата. Просмотр безопасен из любого места, даже из боя: сцены, лок игрока и
   * `hero.state` не трогаются, а данные только читаются. Что меняет игру, идёт
-  * под локом игрока — тем же, что и ходы в чате: куб Азата и покупка на
-  * аукционе — только когда герой в городе, снаряжение и отряд — когда он не
-  * в бою. */
+  * под локом игрока — тем же, что и ходы в чате: куб Азата, покупка и
+  * выставление на аукционе — только когда герой в городе, снаряжение и отряд —
+  * когда он не в бою. */
 trait MiniApp {
 
   /** Игрок по параметрам запуска приложения. Героя здесь не заводим: игру
@@ -85,6 +86,11 @@ trait MiniApp {
   /** Купить лот — как в Торговом доме: вещь в сумку. Ответ — витрина после
     * покупки и что сказать. */
   def buy(hero: Hero, lotId: Long): Task[AuctionActionView]
+
+  /** Выставить вещь `itemId` из сумки за `price` в монете `currency` — как у
+    * Рахадима в боте, с тем же сбором и объявлением в торговой беседе. Ответ —
+    * витрина после этого и что сказать. */
+  def sell(hero: Hero, itemId: Long, currency: AuctionCurrency, price: Long): Task[AuctionSellView]
 
   /** Топ: первые [[MiniApp.TopSize]] и место самого героя. */
   def top(hero: Hero, kind: TopKind): Task[TopView]
@@ -269,8 +275,8 @@ object MiniApp {
   }
 
   /** Герой в городе — только тогда из приложения можно работать с кубом,
-    * покупать на аукционе и трогать хранилища города и дома, как и передавать
-    * вещи. */
+    * покупать и выставлять на аукционе и трогать хранилища города и дома, как и
+    * передавать вещи. */
   def inCity(hero: Hero): Boolean = StateType.cityStates.contains(hero.state)
 
   /** Герой в бою — тогда снаряжение, комплект со стойки и строй из приложения
@@ -334,6 +340,7 @@ object MiniApp {
       } yield new MiniAppLive(config, users, heroes, inventories, lots, heroDao, artifacts, barrels, vaults, content,
         tops, topCache, outcomes, new AzatCube(heroDao, inventories, items, content),
         new AuctionPurchase(heroDao, inventories, lots, users, bank, payouts, players, content),
+        new AuctionSale(heroDao, inventories, lots, bank, players),
         new Outfit(heroDao, inventories, items, content), new GemWork(heroDao, inventories, items, content),
         new BrewWork(heroDao, inventories, content), new BeltWork(heroDao, inventories, items, content),
         new BundleWork(inventories, items, content), new SquadOrders(heroDao, content),
@@ -360,6 +367,7 @@ final class MiniAppLive(
   outcomes:    QuestOutcomeDao,
   azatCube:    AzatCube,
   purchase:    AuctionPurchase,
+  sale:        AuctionSale,
   outfit:      Outfit,
   gemWork:     GemWork,
   brewWork:    BrewWork,
@@ -462,7 +470,8 @@ final class MiniAppLive(
       describeWith(hero, quests), ms, quests)
 
   /** С витриной — чем платить и куда класть: серебро на руках вместе с
-    * ячейкой (её читаем без записи) и свободные места в сумке. */
+    * ячейкой (её читаем без записи) и свободные места в сумке, — и что из
+    * сумки можно выставить. */
   override def auction(hero: Hero): Task[AuctionView] =
     for {
       ms     <- now
@@ -472,7 +481,7 @@ final class MiniAppLive(
       vault  <- vaults.find(hero.id).map(_.fold(0L)(_.silver))
       inv    <- inventories.get(hero.id).mapError(e => new Throwable(e.toString))
       describe <- describer(hero)
-    } yield MiniAppView.auction(hero, onSale, mine, ms, describe,
+    } yield MiniAppView.auction(hero, onSale, mine, ms, inv.items.data, describe,
       MiniAppView.Funds(hero.silver + vault, inv.freeSlots), content)
 
   /** Обмен: открытые предложения с именами партнёров, что при герое передаётся
@@ -529,6 +538,22 @@ final class MiniAppLive(
     }.flatMap { case (fresh, (note, bought)) =>
       heroes.getHero(fresh.userId).map(_.getOrElse(fresh)).flatMap(auction)
         .map(AuctionActionView(_, note, bought))
+    }
+
+  /** Под локом продавца, героя перечитываем уже под ним. Не в городе —
+    * ничего не трогаем, говорим почему. Правила и слова — те же, что у
+    * Рахадима в боте ([[AuctionSale]]). */
+  override def sell(hero: Hero, itemId: Long, currency: AuctionCurrency, price: Long): Task[AuctionSellView] =
+    lock.withLock(hero.userId) {
+      for {
+        fresh <- heroes.getHero(hero.userId).someOrFail(new Throwable(s"Нет героя у игрока ${hero.userId.value}"))
+        said  <- if (!MiniApp.inCity(fresh)) ZIO.succeed(content.text("miniapp.auction.sellAway") -> false)
+                 else users.getUserById(fresh.userId).someOrFail(new Throwable(s"Нет игрока ${fresh.userId.value}"))
+                        .flatMap(sale.list(_, fresh, itemId, currency, price)).map(saleNote(currency, _))
+      } yield fresh -> said
+    }.flatMap { case (fresh, (note, listed)) =>
+      heroes.getHero(fresh.userId).map(_.getOrElse(fresh)).flatMap(auction)
+        .map(AuctionSellView(_, note, listed))
     }
 
   override def gear(hero: Hero, act: GearAct): Task[InventoryActionView] =
@@ -832,6 +857,19 @@ final class MiniAppLive(
     case AuctionPurchase.Result.NoRoom       => content.text("bank.auction.noRoom") -> false
     case AuctionPurchase.Result.Bought(lot)  =>
       content.format("bank.auction.bought", "name" -> lot.title, "price" -> lot.priceLine) -> true
+  }
+
+  /** Те же слова, что у Рахадима в боте, и выставлено ли. */
+  private def saleNote(c: AuctionCurrency, result: AuctionSale.Result): (String, Boolean) = result match {
+    case AuctionSale.Result.Gone         => content.text("stack.gone") -> false
+    case AuctionSale.Result.PriceTooLow  => content.format("bank.auction.priceTooLow", "min" -> AuctionLot.MinPrice.toString) -> false
+    case AuctionSale.Result.PriceTooHigh => content.format("bank.auction.priceTooHigh", "max" -> AuctionLot.MaxPrice.toString) -> false
+    case AuctionSale.Result.TooManyLots  => content.format("bank.auction.tooManyLots", "max" -> AuctionLot.MaxLots.toString) -> false
+    case AuctionSale.Result.NoFee(fee)   => content.format("bank.auction.noFee", "fee" -> s"${c.emoji} $fee") -> false
+    case AuctionSale.Result.Failed       => content.text("bank.auction.listFailed") -> false
+    case AuctionSale.Result.Listed(lot, fee) =>
+      content.format("bank.auction.listed", "id" -> lot.id.toString, "name" -> lot.title,
+        "price" -> lot.priceLine, "fee" -> s"${c.emoji} $fee") -> true
   }
 
   /** Список и место героя — из одного снимка в памяти: база на открытие топа
