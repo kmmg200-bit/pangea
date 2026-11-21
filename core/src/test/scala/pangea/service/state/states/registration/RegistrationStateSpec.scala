@@ -7,7 +7,7 @@ import pangea.model.monster.Race
 import pangea.model.state.StateType
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.state.UserAction
-import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestJournal, TestPlayers, TestRenderer}
+import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestJournal, TestPlayers, TestPrologueReminderDao, TestRenderer}
 import zio.test._
 import zio.ZIO
 
@@ -32,7 +32,8 @@ object RegistrationStateSpec extends ZIOSpecDefault {
       journal  <- TestJournal.make
       content  <- ZIO.attempt(SceneContent.load())
       invRepo   = TestInventoryRepository.accepting
-    } yield (RegistrationState(new TestPlayers, heroDao, invRepo, TestItemRepository.make, journal, content), renderer, heroDao, invRepo)
+    } yield (RegistrationState(new TestPlayers, heroDao, invRepo, TestItemRepository.make, journal, content,
+               TestPrologueReminderDao.silent), renderer, heroDao, invRepo)
 
   private def makeStateWithHero =
     for {
@@ -41,7 +42,20 @@ object RegistrationStateSpec extends ZIOSpecDefault {
       journal  <- TestJournal.make
       content  <- ZIO.attempt(SceneContent.load())
       invRepo   = TestInventoryRepository.accepting
-    } yield (RegistrationState(new TestPlayers, heroDao, invRepo, TestItemRepository.make, journal, content), renderer, heroDao, invRepo)
+    } yield (RegistrationState(new TestPlayers, heroDao, invRepo, TestItemRepository.make, journal, content,
+               TestPrologueReminderDao.silent), renderer, heroDao, invRepo)
+
+  /** Пролог с учётом напоминаний: отметки — в `marks`; `broken` — база учёта
+    * недоступна. */
+  private def makeMarked(broken: Boolean = false) =
+    for {
+      renderer <- TestRenderer.make
+      heroDao  <- TestHeroDao.withHero(userId, TestFixtures.hero(userId))
+      journal  <- TestJournal.make
+      content  <- ZIO.attempt(SceneContent.load())
+      marks    <- TestPrologueReminderDao.make(broken = broken)
+    } yield (RegistrationState(new TestPlayers, heroDao, TestInventoryRepository.accepting, TestItemRepository.make, journal,
+               content, marks), renderer, marks)
 
   /** Сообщение текстом, без кнопки. */
   private def typed(t: String): UserAction = UserAction(t, None)
@@ -386,6 +400,37 @@ object RegistrationStateSpec extends ZIOSpecDefault {
         last   <- renderer.sentScreens.map(_.last)
       } yield assertTrue(stand == StateType.Registration && ask.text.contains("Напишите имя героя")) &&
               assertTrue(hero.exists(_.name.isEmpty) && !last.text.contains("Отныне меня зовут"))
+    },
+
+    test("учёт напоминаний: любое нажатие — «вернулся», подтверждение расы — «выбрал расу», выход из сторожки — «прошёл»") {
+      for {
+        t <- makeMarked()
+        (state, renderer, marks) = t
+        _      <- state.action(testUser, tap("P1_Intro"), renderer)
+        _      <- state.action(testUser, confirmRace(Race.Human), renderer)
+        _      <- ZIO.foreach(arrivalPath)(ua => state.action(testUser, ua, renderer))
+        result <- state.action(testUser, tap("ArrivalStand"), renderer)
+        seen   <- marks.marks
+        kinds   = seen.map(_._1)
+      } yield assertTrue(result == StateType.Dungeon, seen.forall(_._2 == userId)) &&
+              // по «вернулся» на каждое нажатие: «Начать», раса, шесть шагов сторожки и «Встать»
+              assertTrue(kinds.count(_ == TestPrologueReminderDao.Returned) == 2 + arrivalPath.size + 1) &&
+              assertTrue(kinds.count(_ == TestPrologueReminderDao.Race) == 1, kinds.count(_ == TestPrologueReminderDao.Completed) == 1) &&
+              // раса — после нажатия, которым её выбрали; «прошёл» — последним
+              assertTrue(kinds.take(3) == Vector(TestPrologueReminderDao.Returned, TestPrologueReminderDao.Returned, TestPrologueReminderDao.Race)) &&
+              assertTrue(kinds.lastOption.contains(TestPrologueReminderDao.Completed))
+    },
+
+    test("учёт напоминаний недоступен — пролог идёт как шёл: раса выбрана, герой выходит в лабиринт") {
+      for {
+        t <- makeMarked(broken = true)
+        (state, renderer, marks) = t
+        first  <- state.action(testUser, tap("P1_Intro"), renderer)
+        _      <- state.action(testUser, confirmRace(Race.Human), renderer)
+        _      <- ZIO.foreach(arrivalPath)(ua => state.action(testUser, ua, renderer))
+        result <- state.action(testUser, tap("ArrivalStand"), renderer)
+        seen   <- marks.marks
+      } yield assertTrue(first == StateType.Registration, result == StateType.Dungeon, seen.isEmpty)
     }
   )
 }

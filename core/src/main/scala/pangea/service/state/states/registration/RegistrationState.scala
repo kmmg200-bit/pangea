@@ -3,6 +3,7 @@ package pangea.service.state.states.registration
 import io.circe.{Json, JsonObject}
 import io.circe.jawn.decode
 import io.circe.syntax.EncoderOps
+import pangea.dao.admin.PrologueReminderDao
 import pangea.dao.hero.HeroDao
 import pangea.domain.Rng
 import pangea.engine.{Beat, Branch, Choice, Journal, Narrative, Players, Renderer, SceneContent, Screen, Target}
@@ -27,13 +28,21 @@ case class RegistrationState(
   inventoryRepo: InventoryRepository,
   itemRepo:      ItemRepository,
   journal:       Journal,
-  content:       SceneContent
+  content:       SceneContent,
+  reminders:     PrologueReminderDao
 ) extends State {
 
   override def enter(user: User, renderer: Renderer): Task[Unit] = ZIO.unit
 
+  /** Любое нажатие в прологе — «вернулся» для напоминания о прологе, если оно
+    * игроку было (см. [[PrologueReminderDao.returned]]). */
   override def action(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
-    branch.act(user, ua, renderer)
+    noted(reminders.returned(user.userId)) *> branch.act(user, ua, renderer)
+
+  /** Отметка для учёта напоминаний — не часть хода: не записалась — ход идёт
+    * дальше, сбой только в лог. */
+  private def noted(mark: Task[Unit]): Task[Unit] =
+    mark.catchAll(err => ZIO.logWarning(s"Напоминание о прологе: отметка не записана: ${err.getMessage}"))
 
   /** Ветки пролога: какой из четырёх смертей игрок выбрал в «Кинжале в спину».
     * Ключ — суффикс битов `Pick_*` / `Wake_*` в scenes.yaml. */
@@ -120,6 +129,7 @@ case class RegistrationState(
       _      <- heroDao.writeLoreData(user.userId, lore.copy(prologueBranch = branch).asJson)
       _      <- journal.append(GameEvent(user.userId, "race_selected",
                   Json.obj("race" -> race.entryName.asJson, "prologueBranch" -> branch.asJson)))
+      _      <- noted(reminders.choseRace(user.userId))
       _      <- heroDao.writeSceneData(user.userId, Json.obj())
       res    <- showArrival("Landing", user, ua, renderer)
     } yield res
@@ -251,6 +261,7 @@ case class RegistrationState(
       _      <- renderer.show(user, Screen(content.format("registration.tutorial",
                   "tutorial" -> Links.Tutorial, "chat" -> Links.Chat), Nil))
       _      <- heroDao.writeSceneData(user.userId, Json.Null)
+      _      <- noted(reminders.completed(user.userId))
     } yield StateType.Dungeon
 
   private def showArrival(key: String, user: User, ua: UserAction, renderer: Renderer): Task[StateType] =

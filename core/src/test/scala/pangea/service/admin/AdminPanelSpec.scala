@@ -1,6 +1,6 @@
 package pangea.service.admin
 
-import pangea.dao.admin.{AdminDao, AdminStats, GameStats}
+import pangea.dao.admin.{AdminDao, AdminStats, GameStats, PrologueReminderDao}
 import pangea.model.hero.Hero
 import pangea.model.item.{GemKind, Item, ItemDetails, ItemSet, ItemType, Rarity}
 import pangea.model.rune.RuneData
@@ -54,12 +54,12 @@ object AdminPanelSpec extends ZIOSpecDefault {
 
   private val ReminderText = "💭 Герой задумался — пора продолжить."
 
-  /** Напоминание о прологе через тестовый ВК. */
-  private def reminder(admin: AdminDao, api: TestApi) =
+  /** Напоминание о прологе через тестовый ВК; учёт — в `dao`. */
+  private def reminder(admin: AdminDao, api: TestApi, dao: PrologueReminderDao = TestPrologueReminderDao.silent) =
     for {
       bg      <- Background.make(Background.Grace)
       running <- Ref.make(false)
-    } yield new PrologueReminder(admin, api, bg, ReminderText, running)
+    } yield new PrologueReminder(admin, dao, api, bg, ReminderText, running)
 
   /** Имена из ВК без пауз: в тестах время не идёт. */
   private def names(dao: TestHeroDao) =
@@ -96,8 +96,9 @@ object AdminPanelSpec extends ZIOSpecDefault {
     } yield (new AdminPanelLive(dao, TestInventoryRepository.accepting, TestItemRepository.make, admin,
                Map.empty, AdminConfig(password), sessions, backfill, remind), levels, r)
 
-  /** Панель, у которой в прологе застряли `stuck`; письма — в `api`. */
-  private def withPrologue(stuck: List[User]) =
+  /** Панель, у которой в прологе застряли `stuck`; письма — в `api`; кому
+    * напоминали за неделю и прошлая рассылка — в учёте `ledger`. */
+  private def withPrologue(stuck: List[User], ledger: PrologueReminderDao = TestPrologueReminderDao.silent) =
     for {
       dao      <- TestHeroDao.withHero(userId, TestFixtures.hero(userId))
       sessions <- Ref.make(Map.empty[UserId, AdminScreen])
@@ -106,7 +107,7 @@ object AdminPanelSpec extends ZIOSpecDefault {
       backfill <- names(dao)
       api      <- TestApi.make
       admin     = new StubAdminDao(levels, stuck)
-      remind   <- reminder(admin, api)
+      remind   <- reminder(admin, api, ledger)
     } yield (new AdminPanelLive(dao, TestInventoryRepository.accepting, TestItemRepository.make, admin,
                Map.empty, AdminConfig(Some(Password)), sessions, backfill, remind), api, r)
 
@@ -312,7 +313,40 @@ object AdminPanelSpec extends ZIOSpecDefault {
         _      <- p.intercept(testUser, TestFixtures.hero(userId), tap(AdminPanel.ReminderId), r)
         nobody <- r.sentScreens.map(_.last)
         sent   <- api.sentMessages
-      } yield assertTrue(nobody.text == AdminPanel.ReminderNobody, nobody.choices.map(_.id) == List("AdminMain"), sent.isEmpty)
+      } yield assertTrue(nobody.text == AdminPanel.reminderNobody(0, None), nobody.choices.map(_.id) == List("AdminMain"),
+                         sent.isEmpty)
+    },
+
+    test("кому напоминали за неделю — пропущены, и сказано скольких; прошлая рассылка — с тем, что было после") {
+      val stuck = (2L to 5L).toList.map(n => User(UserId(n), VkId(s"vk$n"), TelegramId(s"tg$n")))
+      // 21.11 20:45 по Москве
+      val last  = PrologueReminderDao.Last(startedAt = 1795283100000L, recipients = 409, sent = 375, closed = 34,
+                                           returned = 14, race = 3, completed = 4)
+      for {
+        dao <- TestPrologueReminderDao.make(recent = Set(UserId(2L), UserId(3L)), last = Some(last))
+        t   <- withPrologue(stuck, dao)
+        (p, api, r) = t
+        _      <- enter(p, r)
+        _      <- p.intercept(testUser, TestFixtures.hero(userId), tap(AdminPanel.ReminderId), r)
+        ask    <- r.sentScreens.map(_.last)
+        _      <- p.intercept(testUser, TestFixtures.hero(userId), tap(AdminPanel.ReminderSendId), r)
+        _      <- api.sentMessages.repeatUntil(_.exists(_._1.startsWith("💭 Напоминание о прологе разослано")))
+        runs   <- dao.runs
+      } yield assertTrue(ask.text.contains("Получат: 2") && ask.text.contains("Пропущено: 2")) &&
+              assertTrue(ask.text.contains("Прошлая рассылка 21.11 20:45: дошло 375 из 409, вернулись 14, выбрали расу 3, прошли пролог 4.")) &&
+              assertTrue(runs.map(_.recipients) == Vector(List(UserId(4L), UserId(5L))), runs.map(_.skipped) == Vector(2))
+    },
+
+    test("всем застрявшим уже напоминали за неделю — напоминать некому, так и сказано") {
+      val stuck = List(User(UserId(2L), VkId("vk2"), TelegramId("tg2")))
+      for {
+        dao <- TestPrologueReminderDao.make(recent = Set(UserId(2L)))
+        t   <- withPrologue(stuck, dao)
+        (p, _, r) = t
+        _      <- enter(p, r)
+        _      <- p.intercept(testUser, TestFixtures.hero(userId), tap(AdminPanel.ReminderId), r)
+        nobody <- r.sentScreens.map(_.last)
+      } yield assertTrue(nobody.text.contains("уже напоминали за последние 7 дней"), nobody.choices.map(_.id) == List("AdminMain"))
     },
 
     test("деньги начисляются кнопками номиналов") {

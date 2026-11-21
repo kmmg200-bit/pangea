@@ -161,7 +161,8 @@ trait AdminDao {
 
   /** Кто ещё в прологе — герой в регистрации — и не заходил дольше `idle`
     * (или не заходил вовсе с тех пор, как бот это помнит): им — напоминание
-    * (см. [[pangea.service.admin.PrologueReminder]]). */
+    * (см. [[pangea.service.admin.PrologueReminder]]). Только игроки ВК: у
+    * пришедших из Телеграма `vk_id` — «-1», в ВК им не написать. */
   def inPrologue(idle: Duration): Task[List[User]]
 }
 
@@ -245,6 +246,7 @@ class AdminDaoLive(xa: transactor.Transactor[Task]) extends AdminDao {
     sql"""select u.id, u.vk_id, u.telegram_id, u.receipt_email from heroes h
           join users u on u.id = h.user_id
           where h.state = ${StateType.Registration: StateType}
+            and u.vk_id ~ '^[0-9]+$$'
             and (u.last_seen_at is null or u.last_seen_at < now() - ${idle.toSeconds} * interval '1 second')
           order by u.id"""
       .query[User].to[List].transact(xa)

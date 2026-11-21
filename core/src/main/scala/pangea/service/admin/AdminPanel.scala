@@ -1,6 +1,6 @@
 package pangea.service.admin
 
-import pangea.dao.admin.{AdminDao, AdminStats, GameStats}
+import pangea.dao.admin.{AdminDao, AdminStats, GameStats, PrologueReminderDao}
 import pangea.dao.hero.HeroDao
 import pangea.domain.Rng
 import pangea.engine.{Choice, ChoiceColor, Renderer, Screen}
@@ -255,13 +255,13 @@ class AdminPanelLive(
       }
 
     case AdminScreen.Reminder =>
-      reminder.recipients.either.flatMap {
+      (reminder.plan <*> reminder.last).either.flatMap {
         case Left(e) =>
           renderer.show(user, Screen(s"Не посчитал, кому напомнить: ${e.getMessage}", List(back("AdminMain", 0))))
-        case Right(Nil) =>
-          renderer.show(user, Screen(ReminderNobody, List(back("AdminMain", 0))))
-        case Right(users) =>
-          renderer.show(user, Screen(reminderAsk(users.size, reminder.message), List(
+        case Right((plan, last)) if plan.recipients.isEmpty =>
+          renderer.show(user, Screen(reminderNobody(plan.skipped, last), List(back("AdminMain", 0))))
+        case Right((plan, last)) =>
+          renderer.show(user, Screen(reminderAsk(plan.recipients.size, plan.skipped, last, reminder.message), List(
             Choice(ReminderSendId, "✅ Разослать", color = ChoiceColor.Positive, row = Some(0)),
             back("AdminMain", 1))))
       }
@@ -480,16 +480,32 @@ object AdminPanel {
   val Level1Revoked: String =
     "Права «Админ 1» сняты: для входа снова нужен пароль, а /home и подтверждённые /restart игроков больше не придут."
 
-  val ReminderNobody: String =
-    "💭 Напоминать некому: в прологе нет никого, кто не заходил бы дольше часа."
+  /** Напоминать некому: в прологе никого (кто не заходил дольше часа) или
+    * всем уже напоминали за неделю. */
+  def reminderNobody(skipped: Int, last: Option[PrologueReminderDao.Last]): String =
+    (if (skipped > 0) s"💭 Напоминать некому: всем, кто застрял в прологе ($skipped), уже напоминали за последние 7 дней."
+     else "💭 Напоминать некому: в прологе нет никого, кто не заходил бы дольше часа.") + lastReminder(last)
 
-  /** Что спросить перед рассылкой: сколько получат и что именно. */
-  def reminderAsk(count: Int, message: String): String =
+  /** Что спросить перед рассылкой: сколько получат, скольких пропустим, как
+    * сработала прошлая рассылка и что придёт. */
+  def reminderAsk(count: Int, skipped: Int, last: Option[PrologueReminderDao.Last], message: String): String = {
+    val skip = if (skipped > 0) s"\nПропущено: $skipped — им уже напоминали за последние 7 дней." else ""
     s"""💭 Напомнить о прологе тем, кто в нём застрял и не заходил дольше часа.
-       |Получат: $count
+       |Получат: $count$skip${lastReminder(last)}
        |
        |Им придёт:
        |$message""".stripMargin
+  }
+
+  /** Строка о прошлой рассылке: когда (по Москве), скольким дошло и что было
+    * после. Рассылок не было — пусто. */
+  def lastReminder(last: Option[PrologueReminderDao.Last]): String =
+    last.fold("") { l =>
+      val when = java.time.Instant.ofEpochMilli(l.startedAt).atZone(java.time.ZoneId.of("Europe/Moscow"))
+        .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM HH:mm"))
+      s"\n\nПрошлая рассылка $when: дошло ${l.sent} из ${l.recipients}, вернулись ${l.returned}, " +
+        s"выбрали расу ${l.race}, прошли пролог ${l.completed}."
+    }
 
   def nothingFound(query: String): String = s"По «$query» ничего не нашлось."
 

@@ -1,5 +1,6 @@
 package pangea.service.state.states
 
+import pangea.dao.admin.PrologueReminderDao
 import pangea.dao.hero.HeroDao
 import pangea.engine.{GraphValidator, Journal, Players, SceneContent}
 import pangea.model.state.StateType
@@ -226,7 +227,8 @@ object StatesMap {
       with Scheduler
       with Referrals
       with Background
-      with QuestOutcomeDao,
+      with QuestOutcomeDao
+      with PrologueReminderDao,
     Throwable,
     StatesMap
   ] =
@@ -252,6 +254,7 @@ object StatesMap {
         referrals     <- ZIO.service[Referrals]
         background    <- ZIO.service[Background]
         outcomeDao    <- ZIO.service[QuestOutcomeDao]
+        reminders     <- ZIO.service[PrologueReminderDao]
         // Кошель героя: своё серебро, а следом — ячейка в Торговом доме.
         bank           = Some(bankRepo)
         // Ларец Азата и Живая сумка ловят добычу до того, как она попадёт в сумку.
@@ -277,7 +280,8 @@ object StatesMap {
             inventoryRepo,
             itemRepo,
             journal,
-            content
+            content,
+            reminders
           ),
           Dungeon   -> DungeonState(heroDao, inventoryRepo, scheduler, content),
           Arena     -> ArenaState(content),

@@ -847,6 +847,188 @@
       ]
     },
     {
+      "id": 18,
+      "type": "table",
+      "title": "Напоминания о прологе",
+      "description": "Каждая рассылка «Напомнить о прологе» из админ-панели: скольким ушла, скольким дошла (у остальных закрыты сообщения от сообщества), скольких пропустили (им напоминали за неделю) и что сделали те, кому дошло: вернулись (что-то нажали в прологе), выбрали расу, прошли пролог (вышли из сторожки). Отметки ставит игра — последней рассылке игрока, если ей не больше недели. Рассылка 21.11 восстановлена по базе задним числом.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 38,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Вернулись, %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-RdYlGr"
+                }
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Прошли, %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-RdYlGr"
+                }
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "fields": []
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT to_char(r.started_at AT TIME ZONE 'Europe/Moscow', 'YYYY-MM-DD HH24:MI') AS \"Когда (МСК)\",\n       count(p.user_id) AS \"Адресатов\",\n       count(*) FILTER (WHERE p.outcome = 'sent') AS \"Дошло\",\n       count(*) FILTER (WHERE p.outcome = 'closed') AS \"Закрыли сообщения\",\n       r.skipped AS \"Пропущено\",\n       count(p.returned_at) FILTER (WHERE p.outcome = 'sent') AS \"Вернулись\",\n       count(p.race_at) FILTER (WHERE p.outcome = 'sent') AS \"Выбрали расу\",\n       count(p.completed_at) FILTER (WHERE p.outcome = 'sent') AS \"Прошли пролог\",\n       round(100.0 * count(p.returned_at) FILTER (WHERE p.outcome = 'sent')\n             / nullif(count(*) FILTER (WHERE p.outcome = 'sent'), 0), 1) AS \"Вернулись, %\",\n       round(100.0 * count(p.completed_at) FILTER (WHERE p.outcome = 'sent')\n             / nullif(count(*) FILTER (WHERE p.outcome = 'sent'), 0), 1) AS \"Прошли, %\"\nFROM prologue_reminders r\nLEFT JOIN prologue_reminder_recipients p ON p.reminder_id = r.id\nGROUP BY r.id, r.started_at, r.skipped\nORDER BY r.started_at DESC"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "После напоминаний — по часам",
+      "description": "Сколько адресатов напоминаний о прологе (тех, кому письмо дошло) в этот час вернулись — впервые что-то нажали в прологе после рассылки — и сколько прошли пролог. Видно, как долго после рассылки идёт отклик.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pangea-db"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 46,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "barAlignment": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "interval": "1h",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroupAlias(p.returned_at, 1h), count(*) AS \"Вернулись\"\nFROM prologue_reminder_recipients p\nWHERE $__timeFilter(p.returned_at) AND p.outcome = 'sent'\nGROUP BY 1 ORDER BY 1"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pangea-db"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroupAlias(p.completed_at, 1h), count(*) AS \"Прошли пролог\"\nFROM prologue_reminder_recipients p\nWHERE $__timeFilter(p.completed_at) AND p.outcome = 'sent'\nGROUP BY 1 ORDER BY 1"
+        }
+      ]
+    },
+    {
       "id": 9,
       "type": "bargauge",
       "title": "Уровни тех, кто заходил за неделю",
@@ -913,7 +1095,7 @@
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 38,
+        "y": 54,
         "w": 24,
         "h": 1
       }
@@ -929,7 +1111,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 39,
+        "y": 55,
         "w": 12,
         "h": 14
       },
@@ -988,7 +1170,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 39,
+        "y": 55,
         "w": 12,
         "h": 14
       },
@@ -1052,7 +1234,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 53,
+        "y": 69,
         "w": 24,
         "h": 12
       },
@@ -1168,7 +1350,7 @@
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 65,
+        "y": 81,
         "w": 24,
         "h": 1
       }
@@ -1184,7 +1366,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 66,
+        "y": 82,
         "w": 24,
         "h": 14
       },
@@ -1369,7 +1551,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 80,
+        "y": 96,
         "w": 24,
         "h": 14
       },

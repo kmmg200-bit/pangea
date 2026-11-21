@@ -390,7 +390,8 @@ object StateHandlerSpec extends ZIOSpecDefault {
       journal  <- pangea.test.TestJournal.make
       states = Map[StateType, State](
         StateType.Registration -> pangea.service.state.states.registration.RegistrationState(
-                                    players, heroDao, TestInventoryRepository.accepting, TestItemRepository.make, journal, content)
+                                    players, heroDao, TestInventoryRepository.accepting, TestItemRepository.make, journal, content,
+                                    pangea.test.TestPrologueReminderDao.silent)
       )
       lock     <- PlayerLock.make
       bg       <- pangea.service.Background.make(zio.Duration.fromSeconds(1L))
@@ -428,7 +429,7 @@ object StateHandlerSpec extends ZIOSpecDefault {
         StateType.GlobalMap    -> GlobalMapState(heroDao, content),
         StateType.Battle       -> BattleState(heroDao, TestInventoryRepository.accepting, TestItemRepository.make, content),
         StateType.Registration -> pangea.service.state.states.registration.RegistrationState(
-                                    players, heroDao, invRepo, itemRepo, journal, content)
+                                    players, heroDao, invRepo, itemRepo, journal, content, pangea.test.TestPrologueReminderDao.silent)
       )
       lock <- PlayerLock.make
       payouts   = pangea.service.payout.Payouts(pangea.test.TestPayoutDao.empty, heroDao, content)

@@ -1,6 +1,6 @@
 package pangea.service.admin
 
-import pangea.dao.admin.{AdminDao, AdminStats, GameStats}
+import pangea.dao.admin.{AdminDao, AdminStats, GameStats, PrologueReminderDao}
 import pangea.engine.SceneContent
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.model.vk.Attachment
@@ -9,6 +9,7 @@ import pangea.model.vk.model.UserResponse
 import pangea.service.Background
 import pangea.service.sender.vk.VkApi
 import pangea.service.sender.{Api, ChatTarget}
+import pangea.test.TestPrologueReminderDao
 import zio.test._
 import zio.{Duration, Promise, Ref, Task, UIO, ZIO, durationInt}
 
@@ -65,12 +66,12 @@ object PrologueReminderSpec extends ZIOSpecDefault {
       peak     <- Ref.make(0)
     } yield new Vk(sent, refuse, gate, inFlight, peak)
 
-  private def reminder(stuck: List[User], api: Api) =
+  private def reminder(stuck: List[User], api: Api, dao: PrologueReminderDao = TestPrologueReminderDao.silent) =
     for {
       asked   <- Ref.make(List.empty[Duration])
       bg      <- Background.make(Background.Grace)
       running <- Ref.make(false)
-    } yield (new PrologueReminder(new PrologueDao(stuck, asked), api, bg, Text, running), asked)
+    } yield (new PrologueReminder(new PrologueDao(stuck, asked), dao, api, bg, Text, running), asked)
 
   private def summaryIn(api: Vk) =
     api.letters.repeatUntil(_.exists { case (to, text, _) => to == admin.vkId.value && text.startsWith("💭 Напоминание о прологе разослано") })
@@ -83,9 +84,9 @@ object PrologueReminderSpec extends ZIOSpecDefault {
         api    <- vk()
         t      <- reminder(stuck, api)
         (r, _)  = t
-        report <- r.run
+        report <- r.run(admin)
         sent   <- api.letters
-      } yield assertTrue(report == PrologueReminder.Report(sent = 4, closed = 0, failed = 0)) &&
+      } yield assertTrue(report == PrologueReminder.Report(sent = 4, closed = 0, failed = 0, skipped = 0)) &&
               assertTrue(sent.map(_._1).sorted == stuck.map(_.vkId.value).sorted) &&
               assertTrue(sent.forall { case (_, text, keys) => text == Text && keys.isEmpty })
     },
@@ -95,10 +96,11 @@ object PrologueReminderSpec extends ZIOSpecDefault {
         api    <- vk()
         t      <- reminder(List(user(2L)), api)
         (r, asked) = t
-        whom   <- r.recipients
-        _      <- r.run
+        whom   <- r.plan
+        _      <- r.run(admin)
         idles  <- asked.get
-      } yield assertTrue(whom == List(user(2L)), idles.forall(_ == 1.hour), idles.nonEmpty, PrologueReminder.Idle == 1.hour)
+      } yield assertTrue(whom == PrologueReminder.Plan(List(user(2L)), 0), idles.forall(_ == 1.hour), idles.nonEmpty,
+                         PrologueReminder.Idle == 1.hour)
     },
 
     test("закрыл сообщения (900–902) — в сводке отдельно; сбой ВК у одного не мешает остальным") {
@@ -110,9 +112,9 @@ object PrologueReminderSpec extends ZIOSpecDefault {
                     "vk5" -> new RuntimeException("connection reset")))
         t      <- reminder(stuck, api)
         (r, _)  = t
-        report <- r.run
+        report <- r.run(admin)
         tried  <- api.letters
-      } yield assertTrue(report == PrologueReminder.Report(sent = 2, closed = 2, failed = 1)) &&
+      } yield assertTrue(report == PrologueReminder.Report(sent = 2, closed = 2, failed = 1, skipped = 0)) &&
               assertTrue(tried.map(_._1).sorted == stuck.map(_.vkId.value).sorted)
     },
 
@@ -122,7 +124,7 @@ object PrologueReminderSpec extends ZIOSpecDefault {
         api    <- vk(open = false)
         t      <- reminder(stuck, api)
         (r, _)  = t
-        fiber  <- r.run.fork
+        fiber  <- r.run(admin).fork
         _      <- api.flying.repeatUntil(_ == PrologueReminder.Parallel)
         _      <- ZIO.yieldNow.repeatN(100)
         held   <- api.flying
@@ -148,9 +150,64 @@ object PrologueReminderSpec extends ZIOSpecDefault {
               assertTrue(sent.exists { case (to, text, _) => to == admin.vkId.value && text.contains("дошло: 3") })
     },
 
-    test("сводка: дошло, закрыли сообщения, сбой ВК") {
-      val text = PrologueReminder.summary(PrologueReminder.Report(sent = 300, closed = 90, failed = 2))
-      assertTrue(text.contains("дошло: 300"), text.contains("закрыли сообщения от сообщества: 90"), text.contains("не дошло (сбой ВК): 2"))
+    test("сводка: дошло, закрыли сообщения, сбой ВК, пропущено") {
+      val text = PrologueReminder.summary(PrologueReminder.Report(sent = 300, closed = 90, failed = 2, skipped = 7))
+      assertTrue(text.contains("дошло: 300"), text.contains("закрыли сообщения от сообщества: 90"),
+                 text.contains("не дошло (сбой ВК): 2"), text.contains("пропущено (напоминали за неделю): 7"))
+    },
+
+    test("кому напоминали за неделю — пропущены: письма им нет, в сводке — сколько") {
+      val stuck = (2L to 5L).toList.map(user)
+      for {
+        api    <- vk()
+        dao    <- TestPrologueReminderDao.make(recent = Set(UserId(3L), UserId(5L)))
+        t      <- reminder(stuck, api, dao)
+        (r, _)  = t
+        plan   <- r.plan
+        report <- r.run(admin)
+        sent   <- api.letters
+      } yield assertTrue(plan == PrologueReminder.Plan(List(user(2L), user(4L)), 2)) &&
+              assertTrue(sent.map(_._1).sorted == List("vk2", "vk4"), report.skipped == 2, report.sent == 2) &&
+              assertTrue(PrologueReminder.Repeat == 7.days)
+    },
+
+    test("рассылка — в учёт: кто запустил, порог, текст, адресаты, пропущенные, исход каждого письма и итоги") {
+      val stuck = (2L to 5L).toList.map(user)
+      for {
+        api  <- vk(Map("vk3" -> VkApi.VkApiError(901, "closed"), "vk4" -> new RuntimeException("connection reset")))
+        dao  <- TestPrologueReminderDao.make(recent = Set(UserId(5L)))
+        t    <- reminder(stuck, api, dao)
+        (r, _) = t
+        _    <- r.run(admin)
+        runs <- dao.runs
+      } yield assertTrue(runs.size == 1) &&
+              assertTrue(runs.forall(run =>
+                run.admin == admin.userId && run.idle == PrologueReminder.Idle && run.message == Text &&
+                run.recipients == List(UserId(2L), UserId(3L), UserId(4L)) && run.skipped == 1 &&
+                run.outcomes == Map(
+                  UserId(2L) -> PrologueReminderDao.Outcome.Sent,
+                  UserId(3L) -> PrologueReminderDao.Outcome.Closed,
+                  UserId(4L) -> PrologueReminderDao.Outcome.Failed) &&
+                run.totals.contains((1, 1, 1))))
+    },
+
+    test("учёт не записал исход письма — рассылка идёт дальше, письмо засчитано") {
+      val broken = new PrologueReminderDao {
+        def remindedWithin(within: Duration): Task[Set[UserId]] = ZIO.succeed(Set.empty)
+        def open(a: UserId, idle: Duration, m: String, rs: List[UserId], skipped: Int): Task[Long] = ZIO.succeed(1L)
+        def outcome(reminder: Long, u: UserId, o: PrologueReminderDao.Outcome): Task[Unit] = ZIO.fail(new RuntimeException("база"))
+        def close(reminder: Long, sent: Int, closed: Int, failed: Int): Task[Unit] = ZIO.unit
+        def last: Task[Option[PrologueReminderDao.Last]] = ZIO.none
+        def returned(u: UserId): Task[Unit] = ZIO.unit
+        def choseRace(u: UserId): Task[Unit] = ZIO.unit
+        def completed(u: UserId): Task[Unit] = ZIO.unit
+      }
+      for {
+        api    <- vk()
+        t      <- reminder(List(user(2L), user(3L)), api, broken)
+        (r, _)  = t
+        report <- r.run(admin)
+      } yield assertTrue(report.sent == 2)
     },
 
     test("текст напоминания — в scenes.yaml, без незаполненных подстановок") {
