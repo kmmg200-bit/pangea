@@ -1558,7 +1558,7 @@
       "gridPos": {
         "x": 0,
         "y": 70,
-        "w": 8,
+        "w": 6,
         "h": 8
       },
       "fieldConfig": {
@@ -1615,9 +1615,9 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "x": 8,
+        "x": 6,
         "y": 70,
-        "w": 8,
+        "w": 6,
         "h": 8
       },
       "fieldConfig": {
@@ -1669,15 +1669,15 @@
       "id": 34,
       "type": "timeseries",
       "title": "Письма ВК — ожидание в очереди",
-      "description": "Сколько письмо стояло в очереди пачек до отправки (VkBatcher): почти всегда меньше миллисекунды; растёт — окно частоты полно, и игрок видит ответ позже на это время. В очереди — больше всего писем в ней за последние 20 с (сама очередь живёт миллисекунды, опрос раз в 15 с её не застаёт). Растёт и не спадает — писем больше, чем 20 запросов × 25 писем в секунду.",
+      "description": "Сколько письмо стояло в очереди пачек до отправки (VkBatcher): почти всегда меньше миллисекунды; растёт — окно частоты полно, и игрок видит ответ позже на это время.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
-        "x": 16,
+        "x": 12,
         "y": 70,
-        "w": 8,
+        "w": 6,
         "h": 8
       },
       "fieldConfig": {
@@ -1690,44 +1690,7 @@
           },
           "min": 0
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "^в очереди.*"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "short"
-              },
-              {
-                "id": "decimals",
-                "value": 0
-              },
-              {
-                "id": "min",
-                "value": 0
-              },
-              {
-                "id": "custom.axisPlacement",
-                "value": "right"
-              },
-              {
-                "id": "custom.axisSoftMax",
-                "value": 5
-              },
-              {
-                "id": "custom.drawStyle",
-                "value": "bars"
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 60
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "options": {
         "legend": {
@@ -1758,15 +1721,59 @@
           },
           "expr": "histogram_quantile(0.99, sum by (le, community) (rate(pangea_vk_batch_wait_seconds_bucket[5m])))",
           "legendFormat": "p99: {{community}}"
+        }
+      ]
+    },
+    {
+      "id": 35,
+      "type": "timeseries",
+      "title": "Письма ВК — очередь",
+      "description": "Больше всего писем в очереди пачек за последние 20 с (сама очередь живёт миллисекунды, опрос раз в 15 с её не застаёт). Обычно 0–1; растёт и не спадает — писем больше, чем 20 запросов × 25 писем в секунду.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 70,
+        "w": 6,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "spanNulls": true,
+            "drawStyle": "bars",
+            "axisSoftMax": 5
+          },
+          "min": 0,
+          "decimals": 0
         },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
         {
-          "refId": "C",
+          "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
           "expr": "max by (community) (max_over_time(pangea_vk_batch_queued[$__interval]))",
-          "legendFormat": "в очереди, пик: {{community}}"
+          "legendFormat": "пик: {{community}}"
         }
       ]
     }
