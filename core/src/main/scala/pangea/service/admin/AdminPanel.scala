@@ -28,6 +28,8 @@ object AdminScreen {
   case object Stats    extends AdminScreen
   /** Игровая статистика: наборы, вложенные очки, умения на героях. */
   case object Game     extends AdminScreen
+  /** Напоминание застрявшим в прологе: кому и что придёт, — и «Разослать». */
+  case object Reminder extends AdminScreen
 
   /** Каталог: разделы и листание внутри раздела. */
   case object Sections                                  extends AdminScreen
@@ -99,7 +101,8 @@ class AdminPanelLive(
   states:        Map[StateType, State],
   config:        AdminConfig,
   sessions:      Ref[Map[UserId, AdminScreen]],
-  names:         NameBackfill
+  names:         NameBackfill,
+  reminder:      PrologueReminder
 ) extends AdminPanel {
 
   import AdminPanel._
@@ -170,6 +173,8 @@ class AdminPanelLive(
       case Some("AdminEquip")                   => goTo(user, AdminScreen.EquipType, renderer)
       case Some(Level1Id)                       => toggleLevel1(user, renderer)
       case Some(NamesId)                        => backfillNames(user, renderer)
+      case Some(ReminderId)                     => goTo(user, AdminScreen.Reminder, renderer)
+      case Some(ReminderSendId)                 => remind(user, renderer)
       case Some(a) if a.startsWith(SectionPrefix) =>
         goTo(user, AdminScreen.Listing(a.drop(SectionPrefix.length), 0), renderer)
       case Some(a) if a.startsWith(GivePrefix)  => give(user, hero, a.drop(GivePrefix.length), screen, renderer)
@@ -214,6 +219,13 @@ class AdminPanelLive(
       renderer.show(user, Screen(if (started) NameBackfill.Started else NameBackfill.Busy, Nil))) *>
       show(user, AdminScreen.Main, renderer)
 
+  /** Напоминание застрявшим в прологе: идёт в фоне, сводка придёт письмом (см.
+    * [[PrologueReminder]]). Панель возвращается на главный экран. */
+  private def remind(user: User, renderer: Renderer): Task[Unit] =
+    reminder.start(user).flatMap(started =>
+      renderer.show(user, Screen(if (started) PrologueReminder.Started else PrologueReminder.Busy, Nil))) *>
+      goTo(user, AdminScreen.Main, renderer)
+
   /** Уйти из панели и вернуть игрока в ту сцену, где он был. */
   private def leave(user: User, renderer: Renderer): Task[Unit] =
     for {
@@ -238,7 +250,20 @@ class AdminPanelLive(
           if (level >= Level1) Choice(Level1Id, "✅ Админ 1", color = ChoiceColor.Positive, row = Some(2))
           else Choice(Level1Id, "Админ 1", row = Some(2)),
           Choice(NamesId, "🏷 Имена из ВК", row = Some(2)),
-          cancelButton.copy(row = Some(3)))))
+          Choice(ReminderId, "💭 Напомнить о прологе", row = Some(3)),
+          cancelButton.copy(row = Some(4)))))
+      }
+
+    case AdminScreen.Reminder =>
+      reminder.recipients.either.flatMap {
+        case Left(e) =>
+          renderer.show(user, Screen(s"Не посчитал, кому напомнить: ${e.getMessage}", List(back("AdminMain", 0))))
+        case Right(Nil) =>
+          renderer.show(user, Screen(ReminderNobody, List(back("AdminMain", 0))))
+        case Right(users) =>
+          renderer.show(user, Screen(reminderAsk(users.size, reminder.message), List(
+            Choice(ReminderSendId, "✅ Разослать", color = ChoiceColor.Positive, row = Some(0)),
+            back("AdminMain", 1))))
       }
 
     case AdminScreen.Items =>
@@ -415,6 +440,8 @@ object AdminPanel {
   val DoubloonPrefix: String = "AdminDoubloon_"
   val Level1Id: String       = "AdminLevel1"
   val NamesId: String        = "AdminNames"
+  val ReminderId: String     = "AdminReminder"
+  val ReminderSendId: String = "AdminReminderSend"
 
   /** Уровень «Админ 1»: вход без пароля и пересылка /home и подтверждённых
     * /restart в личку. */
@@ -452,6 +479,17 @@ object AdminPanel {
     "✅ Вы — Админ 1. Панель теперь открывается без пароля, а сообщения игроков с /home и подтверждённым /restart будут приходить сюда. Нажмите кнопку ещё раз, чтобы снять права."
   val Level1Revoked: String =
     "Права «Админ 1» сняты: для входа снова нужен пароль, а /home и подтверждённые /restart игроков больше не придут."
+
+  val ReminderNobody: String =
+    "💭 Напоминать некому: в прологе нет никого, кто не заходил бы дольше часа."
+
+  /** Что спросить перед рассылкой: сколько получат и что именно. */
+  def reminderAsk(count: Int, message: String): String =
+    s"""💭 Напомнить о прологе тем, кто в нём застрял и не заходил дольше часа.
+       |Получат: $count
+       |
+       |Им придёт:
+       |$message""".stripMargin
 
   def nothingFound(query: String): String = s"По «$query» ничего не нашлось."
 
@@ -530,7 +568,8 @@ object AdminPanel {
   }
 
   val live: ZLayer[
-    HeroDao with InventoryRepository with ItemRepository with AdminDao with StatesMap with AdminConfig with NameBackfill,
+    HeroDao with InventoryRepository with ItemRepository with AdminDao with StatesMap with AdminConfig with NameBackfill
+      with PrologueReminder,
     Nothing,
     AdminPanel
   ] =
@@ -544,7 +583,8 @@ object AdminPanel {
         config    <- ZIO.service[AdminConfig]
         sessions  <- Ref.make(Map.empty[UserId, AdminScreen])
         names     <- ZIO.service[NameBackfill]
-      } yield new AdminPanelLive(heroDao, inventory, items, admin, statesMap.states, config, sessions, names))
+        reminder  <- ZIO.service[PrologueReminder]
+      } yield new AdminPanelLive(heroDao, inventory, items, admin, statesMap.states, config, sessions, names, reminder))
 
   /** Панель, которой нет: для тестов и сборок без админки. */
   val disabled: AdminPanel = new AdminPanel {

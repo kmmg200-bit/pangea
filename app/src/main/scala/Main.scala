@@ -42,7 +42,7 @@ import pangea.dao.lock.AdvisoryLocks
 import pangea.metrics.GameMetrics
 import pangea.service.inbox.InboxWorker
 import pangea.service.activity.ActivityContest
-import pangea.service.admin.{AdminConfig, AdminPanel, NameBackfill}
+import pangea.service.admin.{AdminConfig, AdminPanel, NameBackfill, PrologueReminder}
 import pangea.service.donation.Donations
 import pangea.service.miniapp.{MiniApp, MiniAppConfig}
 import pangea.service.parcel.{Parcels, Transfers}
@@ -131,6 +131,7 @@ object Main extends ZIOAppDefault {
       AdminConfig.live,
       AdminPanel.live,
       NameBackfill.live,
+      PrologueReminder.live,
       ScheduledTaskDao.live,
       SendFailureDao.live,
       ItemRepository.live,

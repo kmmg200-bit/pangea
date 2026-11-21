@@ -39,8 +39,9 @@ object AdminPanelSpec extends ZIOSpecDefault {
     free     = 12L,
     skills   = List(GameStats.SkillRow(Skill.CunningStrike, 3L, 1L), GameStats.SkillRow(Skill.QuickStrike, 2L, 0L)))
 
-  /** Сводка — готовая, уровни прав — в памяти; адрес в ВК у каждого `vk<id>`. */
-  private final class StubAdminDao(levels: Ref[Map[UserId, Int]]) extends AdminDao {
+  /** Сводка — готовая, уровни прав — в памяти; адрес в ВК у каждого `vk<id>`;
+    * в прологе — `prologue`. */
+  private final class StubAdminDao(levels: Ref[Map[UserId, Int]], prologue: List[User] = Nil) extends AdminDao {
     def stats: Task[AdminStats] = ZIO.succeed(stubStats)
     def gameStats: Task[GameStats] = ZIO.succeed(stubGame)
     def level(userId: UserId): Task[Int] = levels.get.map(_.getOrElse(userId, 0))
@@ -48,7 +49,17 @@ object AdminPanelSpec extends ZIOSpecDefault {
       levels.update(m => if (level <= 0) m - userId else m.updated(userId, level))
     def withLevel(min: Int): Task[List[(UserId, VkId)]] =
       levels.get.map(_.toList.collect { case (id, l) if l >= min => (id, VkId(s"vk${id.value}")) }.sortBy(_._1.value))
+    def inPrologue(idle: Duration): Task[List[User]] = ZIO.succeed(prologue)
   }
+
+  private val ReminderText = "💭 Герой задумался — пора продолжить."
+
+  /** Напоминание о прологе через тестовый ВК. */
+  private def reminder(admin: AdminDao, api: TestApi) =
+    for {
+      bg      <- Background.make(Background.Grace)
+      running <- Ref.make(false)
+    } yield new PrologueReminder(admin, api, bg, ReminderText, running)
 
   /** Имена из ВК без пауз: в тестах время не идёт. */
   private def names(dao: TestHeroDao) =
@@ -67,8 +78,10 @@ object AdminPanelSpec extends ZIOSpecDefault {
       levels   <- Ref.make(Map.empty[UserId, Int])
       r        <- TestRenderer.make
       backfill <- names(dao)
-    } yield (new AdminPanelLive(dao, inv, TestItemRepository.make, new StubAdminDao(levels), Map.empty,
-               AdminConfig(password), sessions, backfill), dao, inv, r)
+      admin     = new StubAdminDao(levels)
+      remind   <- TestApi.make.flatMap(reminder(admin, _))
+    } yield (new AdminPanelLive(dao, inv, TestItemRepository.make, admin, Map.empty,
+               AdminConfig(password), sessions, backfill, remind), dao, inv, r)
 
   /** Панель с заданными уровнями прав: их видно и после нажатий. */
   private def leveled(start: Map[UserId, Int], password: Option[String] = Some(Password)) =
@@ -78,8 +91,24 @@ object AdminPanelSpec extends ZIOSpecDefault {
       levels   <- Ref.make(start)
       r        <- TestRenderer.make
       backfill <- names(dao)
-    } yield (new AdminPanelLive(dao, TestInventoryRepository.accepting, TestItemRepository.make, new StubAdminDao(levels),
-               Map.empty, AdminConfig(password), sessions, backfill), levels, r)
+      admin     = new StubAdminDao(levels)
+      remind   <- TestApi.make.flatMap(reminder(admin, _))
+    } yield (new AdminPanelLive(dao, TestInventoryRepository.accepting, TestItemRepository.make, admin,
+               Map.empty, AdminConfig(password), sessions, backfill, remind), levels, r)
+
+  /** Панель, у которой в прологе застряли `stuck`; письма — в `api`. */
+  private def withPrologue(stuck: List[User]) =
+    for {
+      dao      <- TestHeroDao.withHero(userId, TestFixtures.hero(userId))
+      sessions <- Ref.make(Map.empty[UserId, AdminScreen])
+      levels   <- Ref.make(Map.empty[UserId, Int])
+      r        <- TestRenderer.make
+      backfill <- names(dao)
+      api      <- TestApi.make
+      admin     = new StubAdminDao(levels, stuck)
+      remind   <- reminder(admin, api)
+    } yield (new AdminPanelLive(dao, TestInventoryRepository.accepting, TestItemRepository.make, admin,
+               Map.empty, AdminConfig(Some(Password)), sessions, backfill, remind), api, r)
 
   private def said(r: TestRenderer): Task[String] = r.sentScreens.map(_.map(_.text).mkString("\n"))
 
@@ -109,7 +138,7 @@ object AdminPanelSpec extends ZIOSpecDefault {
               assertTrue(ask.text.contains("Пришлите пароль")) &&
               assertTrue(main.choices.map(_.id) ==
                 List("AdminItems", "AdminMoney", "AdminStats", "AdminGameStats", AdminPanel.Level1Id, AdminPanel.NamesId,
-                     AdminPanel.CancelId)) &&
+                     AdminPanel.ReminderId, AdminPanel.CancelId)) &&
               assertTrue(wrong.contains("Неверно") && !after)
     },
 
@@ -252,6 +281,38 @@ object AdminPanelSpec extends ZIOSpecDefault {
               assertTrue(scold.contains(AdminPanel.BadLevel)) &&
               // ни одна из двух неудачных попыток вещь не создала
               assertTrue(inv.snapshot.size == 1)
+    },
+
+    test("«Напомнить о прологе»: сначала — сколько получат и что придёт; «Разослать» — в фоне, сводка письмом") {
+      val stuck = (2L to 4L).toList.map(n => User(UserId(n), VkId(s"vk$n"), TelegramId(s"tg$n")))
+      for {
+        t <- withPrologue(stuck)
+        (p, api, r) = t
+        _      <- enter(p, r)
+        _      <- p.intercept(testUser, TestFixtures.hero(userId), tap(AdminPanel.ReminderId), r)
+        ask    <- r.sentScreens.map(_.last)
+        before <- api.sentMessages
+        _      <- p.intercept(testUser, TestFixtures.hero(userId), tap(AdminPanel.ReminderSendId), r)
+        shown  <- r.sentScreens.map(_.takeRight(2))
+        sent   <- api.sentMessages.repeatUntil(_.exists(_._1.startsWith("💭 Напоминание о прологе разослано")))
+      } yield assertTrue(ask.text.contains("Получат: 3") && ask.text.contains(ReminderText)) &&
+              assertTrue(ask.choices.map(_.id) == List(AdminPanel.ReminderSendId, "AdminMain")) &&
+              // до «Разослать» никому ничего не ушло
+              assertTrue(before.isEmpty) &&
+              assertTrue(shown.map(_.text) == List(PrologueReminder.Started, AdminPanel.MainText)) &&
+              assertTrue(sent.count(_ == (ReminderText -> None)) == 3) &&
+              assertTrue(sent.exists(_._1.contains("дошло: 3")))
+    },
+
+    test("напоминать некому — так и сказано, и разослать нечего") {
+      for {
+        t <- withPrologue(Nil)
+        (p, api, r) = t
+        _      <- enter(p, r)
+        _      <- p.intercept(testUser, TestFixtures.hero(userId), tap(AdminPanel.ReminderId), r)
+        nobody <- r.sentScreens.map(_.last)
+        sent   <- api.sentMessages
+      } yield assertTrue(nobody.text == AdminPanel.ReminderNobody, nobody.choices.map(_.id) == List("AdminMain"), sent.isEmpty)
     },
 
     test("деньги начисляются кнопками номиналов") {

@@ -9,9 +9,10 @@ import pangea.model.quest.DailyRates
 import pangea.model.rune.RuneData
 import pangea.model.skill.Skill
 import pangea.model.stats.BaseStats
-import pangea.model.user.{UserId, VkId}
+import pangea.model.state.StateType
+import pangea.model.user.{User, UserId, VkId}
 import zio.interop.catz._
-import zio.{Task, ZLayer}
+import zio.{Duration, Task, ZLayer}
 
 /** Сводка по серверу для админ-панели.
   *
@@ -157,6 +158,11 @@ trait AdminDao {
 
   /** Все, у кого уровень не ниже `min`, — с адресом в ВК: им пересылается /home. */
   def withLevel(min: Int): Task[List[(UserId, VkId)]]
+
+  /** Кто ещё в прологе — герой в регистрации — и не заходил дольше `idle`
+    * (или не заходил вовсе с тех пор, как бот это помнит): им — напоминание
+    * (см. [[pangea.service.admin.PrologueReminder]]). */
+  def inPrologue(idle: Duration): Task[List[User]]
 }
 
 /** Запросы админ-панели. Героев на сервере немного, а панель открывают руками
@@ -234,6 +240,14 @@ class AdminDaoLive(xa: transactor.Transactor[Task]) extends AdminDao {
      else sql"""insert into admins (user_id, level) values (${userId.value}, $level)
                 on conflict (user_id) do update set level = excluded.level, granted_at = now()""")
       .update.run.transact(xa).unit
+
+  override def inPrologue(idle: Duration): Task[List[User]] =
+    sql"""select u.id, u.vk_id, u.telegram_id, u.receipt_email from heroes h
+          join users u on u.id = h.user_id
+          where h.state = ${StateType.Registration: StateType}
+            and (u.last_seen_at is null or u.last_seen_at < now() - ${idle.toSeconds} * interval '1 second')
+          order by u.id"""
+      .query[User].to[List].transact(xa)
 
   override def withLevel(min: Int): Task[List[(UserId, VkId)]] =
     sql"""select u.id, u.vk_id from admins a
