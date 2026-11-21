@@ -29,6 +29,11 @@ object GameMetrics {
   private val WindowFill = MetricKeyType.Histogram.Boundaries.fromChunk(
     Chunk(1.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 17.0, 18.0, 19.0, 20.0))
 
+  /** Границы для размера пачки писем ВК: от одного письма до 25 — больше
+    * `execute` не вмещает. */
+  private val BatchSize = MetricKeyType.Histogram.Boundaries.fromChunk(
+    Chunk(1.0, 2.0, 3.0, 5.0, 8.0, 10.0, 13.0, 16.0, 20.0, 24.0, 25.0))
+
   // ── Ходы ─────────────────────────────────────────────────────────────────────
 
   val turnSeconds: Metric.Histogram[Double] =
@@ -90,6 +95,25 @@ object GameMetrics {
     * частота, которую Prometheus сам не видит: опрашивает раз в 15 секунд. */
   val vkLimiterPeakCalls: Metric.Gauge[Double] =
     Metric.gauge("pangea_vk_limiter_peak_calls", "Вызовов API ВК за одну секунду: пик за последние 20 секунд")
+
+  /** Сколько писем ушло одним запросом (VkBatcher), метка `community`: 1 —
+    * обычный messages.send, больше — execute. Сумма — сколько писем ушло,
+    * число значений — сколькими запросами. Повторы писем идут мимо пачек и
+    * здесь не видны. */
+  val vkBatchLetters: Metric.Histogram[Double] =
+    Metric.histogram("pangea_vk_batch_letters", "Писем ВК одним запросом: 1 — messages.send, больше — execute", BatchSize)
+
+  /** Сколько письмо стояло в очереди пачек (VkBatcher) — от постановки до
+    * отправки, метка `community`. Почти всегда ноль; не ноль — окно частоты
+    * полно, и игрок видит ответ позже на это время. Окно ждёт уже пачка, а не
+    * письмо: [[vkLimiterWaitSeconds]] письма в очереди не видит. */
+  val vkBatchWaitSeconds: Metric.Histogram[Double] =
+    Metric.histogram("pangea_vk_batch_wait_seconds", "Письмо ВК: ожидание в очереди пачек до отправки", Latency)
+
+  /** Сколько писем стоят в очереди пачек сейчас, метка `community`; снимается
+    * раз в секунду. */
+  val vkBatchQueued: Metric.Gauge[Double] =
+    Metric.gauge("pangea_vk_batch_queued", "Писем ВК в очереди пачек")
 
   // ── Несколько ботов: локи игроков и ведущий ─────────────────────────────────
 

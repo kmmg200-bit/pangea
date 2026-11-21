@@ -442,7 +442,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "API ВК — ошибки в минуту",
-      "description": "Каждая неудачная попытка — по методу и коду ошибки ВК: 6 — слишком часто (лимит 20 запросов в секунду), 9 — flood control, 901/902 — игрок закрыл сообщения, 911 — клавиатура; http_* — ответ не 2xx, not_json — не JSON, net — ответа нет. Повторы идут через 250 и 500 мс, после 901/902 — через 5 с; после 6 окно ключа закрыто на секунду (ряд «Лимит ВК»).",
+      "description": "Каждая неудачная попытка — по методу и коду ошибки ВК: 6 — слишком часто (лимит 20 запросов в секунду), 9 — flood control, 100 — неверный параметр (в пачке так ВК отвечает и на битую клавиатуру), 901/902 — игрок закрыл сообщения, 911 — клавиатура; http_* — ответ не 2xx, not_json — не JSON, net — ответа нет. execute — пачка писем целиком: http_413 — запрос больше 256 КБ, 12 — ВК не принял код; письмо пачки, которое ВК не принял, — под messages.send. Повтор — каждое письмо отдельным messages.send, через 250 и 500 мс, после 901/902 — через 5 с; после 6 окно ключа закрыто на секунду (ряд «Лимит ВК»).",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1303,7 +1303,7 @@
       "id": 28,
       "type": "timeseries",
       "title": "Лимит ВК — вызовов за секунду",
-      "description": "Пик — больше всего вызовов API ВК за одну секунду (любую, не календарную) за последние 20 с: бот считает сам, а Prometheus посекундно не видит — опрашивает раз в 15 с. При выкладке пики двух ботов складываются — это оценка сверху. Для сравнения — среднее за минуту. Лимит ВК — 20 за секунду на ключ.",
+      "description": "Пик — больше всего вызовов API ВК за одну секунду (любую, не календарную) за последние 20 с: бот считает сам, а Prometheus посекундно не видит — опрашивает раз в 15 с. При выкладке пики двух ботов складываются — это оценка сверху. Для сравнения — среднее за минуту. Лимит ВК — 20 за секунду на ключ. Пачка писем (execute) — один вызов, писем в ней до 25: сколько писем на деле — «Письма ВК — в секунду и запросами».",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1432,7 +1432,7 @@
       "id": 30,
       "type": "timeseries",
       "title": "Лимит ВК — ожидание места: p95 и p99",
-      "description": "Сколько вызов API ВК ждал места в окне частоты. Почти всегда ноль; не ноль — упёрлись в лимит, и игрок видит ответ позже на это время.",
+      "description": "Сколько вызов API ВК ждал места в окне частоты. Почти всегда ноль; не ноль — упёрлись в лимит. Места ждёт пачка писем, а не письмо: сколько ждали сами письма — «Письма ВК — ожидание в очереди».",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1491,7 +1491,7 @@
       "id": 31,
       "type": "timeseries",
       "title": "Лимит ВК — задержано и ждут",
-      "description": "Задержано — вызовов в минуту, что ждали места в окне дольше миллисекунды. Ждут — сколько стоят в очереди к окну сейчас (на момент опроса).",
+      "description": "Задержано — вызовов в минуту, что ждали места в окне дольше миллисекунды. Ждут — сколько вызовов стоят в очереди к окну сейчас (на момент опроса): пачки писем — одним вызовом на ключ, письма в очереди пачек — «Письма ВК — ожидание в очереди».",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1543,6 +1543,210 @@
           },
           "expr": "sum by (community) (pangea_vk_limiter_waiting)",
           "legendFormat": "ждут: {{community}}"
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Письма ВК — в секунду и запросами",
+      "description": "Сколько писем в секунду ушло (первая попытка; повторы идут мимо пачек) и сколькими запросами: messages.send — по одному, execute — до 25 разом (VkBatcher). Писем больше запросов — пачки работают.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 70,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "spanNulls": true
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (community) (rate(pangea_vk_batch_letters_sum[1m]))",
+          "legendFormat": "писем/с: {{community}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (community) (rate(pangea_vk_batch_letters_count[1m]))",
+          "legendFormat": "запросов/с: {{community}}"
+        }
+      ]
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "Письма ВК — размер пачки",
+      "description": "Сколько писем в одном запросе: 1 — окно частоты не полно, каждое письмо уходит само; растёт под нагрузкой, до 25 (больше execute не вмещает).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 70,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "spanNulls": true
+          },
+          "min": 0,
+          "max": 25
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le, community) (rate(pangea_vk_batch_letters_bucket[5m])))",
+          "legendFormat": "медиана: {{community}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le, community) (rate(pangea_vk_batch_letters_bucket[5m])))",
+          "legendFormat": "p99: {{community}}"
+        }
+      ]
+    },
+    {
+      "id": 34,
+      "type": "timeseries",
+      "title": "Письма ВК — ожидание в очереди",
+      "description": "Сколько письмо стояло в очереди пачек до отправки (VkBatcher): почти всегда ноль; не ноль — окно частоты полно, и игрок видит ответ позже на это время. В очереди — сколько писем ждут отправки сейчас (снимается раз в секунду). Растёт и не спадает — писем больше, чем 20 запросов × 25 писем в секунду.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 70,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "spanNulls": true
+          },
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^в очереди.*"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, community) (rate(pangea_vk_batch_wait_seconds_bucket[5m])))",
+          "legendFormat": "p95: {{community}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le, community) (rate(pangea_vk_batch_wait_seconds_bucket[5m])))",
+          "legendFormat": "p99: {{community}}"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (community) (pangea_vk_batch_queued)",
+          "legendFormat": "в очереди: {{community}}"
         }
       ]
     }

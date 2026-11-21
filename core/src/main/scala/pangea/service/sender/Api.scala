@@ -41,7 +41,9 @@ object Api {
 
   // Клиент живёт, пока жив слой: пул соединений с ВК не закрывается сразу
   // после создания (см. Client.scoped). Окна частоты ключей — одни на бота;
-  // их пик за секунду идёт в метрику раз в секунду, пока жив слой.
+  // их пик за секунду идёт в метрику раз в секунду, пока жив слой. Пачки писем
+  // (VkBatcher) разбирает цикл, пока жив слой: он закрывается уже после того,
+  // как Background дождался ходов, и их письма успевают уйти.
   val vk: ZLayer[VkConfig with SendFailureDao, Throwable, VkApi] = ZLayer.scoped(for {
     config   <- ZIO.service[VkConfig]
     failures <- ZIO.service[SendFailureDao]

@@ -51,7 +51,9 @@ final class VkRateLimit private (
         (fresh.values.maxOption.getOrElse(0), fresh)
       })
 
-  private def slot: UIO[Unit] =
+  /** Занять место в окне — дождаться его. Сам вызов — следом, у вызывающего:
+    * так пачка писем ([[VkBatcher]]) собирается, пока ждёт места. */
+  private[vk] def slot: UIO[Unit] =
     for {
       start <- now
       _     <- (count(1) *> gate.withPermit(take)).ensuring(count(-1))
@@ -112,7 +114,7 @@ object VkRateLimit {
     } yield new VkRateLimit(label(community), gate, sent, closed, waiting, peaks)
 
   /** Метка сообщества в метриках. */
-  private def label(community: Community): String = community match {
+  private[vk] def label(community: Community): String = community match {
     case Community.Main   => "main"
     case Community.Guilds => "guilds"
   }
