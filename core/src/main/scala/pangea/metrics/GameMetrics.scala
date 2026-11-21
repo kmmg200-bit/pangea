@@ -110,10 +110,11 @@ object GameMetrics {
   val vkBatchWaitSeconds: Metric.Histogram[Double] =
     Metric.histogram("pangea_vk_batch_wait_seconds", "Письмо ВК: ожидание в очереди пачек до отправки", Latency)
 
-  /** Сколько писем стоят в очереди пачек сейчас, метка `community`; снимается
-    * раз в секунду. */
+  /** Больше всего писем в очереди пачек за последние 20 секунд, метка
+    * `community`: очередь живёт миллисекунды, и опрос раз в 15 секунд её
+    * почти не застаёт — пик за 20 секунд попадёт хотя бы в один опрос. */
   val vkBatchQueued: Metric.Gauge[Double] =
-    Metric.gauge("pangea_vk_batch_queued", "Писем ВК в очереди пачек")
+    Metric.gauge("pangea_vk_batch_queued", "Писем ВК в очереди пачек: пик за последние 20 секунд")
 
   // ── Несколько ботов: локи игроков и ведущий ─────────────────────────────────
 

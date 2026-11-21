@@ -1669,7 +1669,7 @@
       "id": 34,
       "type": "timeseries",
       "title": "Письма ВК — ожидание в очереди",
-      "description": "Сколько письмо стояло в очереди пачек до отправки (VkBatcher): почти всегда ноль; не ноль — окно частоты полно, и игрок видит ответ позже на это время. В очереди — сколько писем ждут отправки сейчас (снимается раз в секунду). Растёт и не спадает — писем больше, чем 20 запросов × 25 писем в секунду.",
+      "description": "Сколько письмо стояло в очереди пачек до отправки (VkBatcher): почти всегда меньше миллисекунды; растёт — окно частоты полно, и игрок видит ответ позже на это время. В очереди — больше всего писем в ней за последние 20 с (сама очередь живёт миллисекунды, опрос раз в 15 с её не застаёт). Растёт и не спадает — писем больше, чем 20 запросов × 25 писем в секунду.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1702,8 +1702,28 @@
                 "value": "short"
               },
               {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
                 "id": "custom.axisPlacement",
                 "value": "right"
+              },
+              {
+                "id": "custom.axisSoftMax",
+                "value": 5
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "bars"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 60
               }
             ]
           }
@@ -1745,8 +1765,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (community) (pangea_vk_batch_queued)",
-          "legendFormat": "в очереди: {{community}}"
+          "expr": "max by (community) (max_over_time(pangea_vk_batch_queued[$__interval]))",
+          "legendFormat": "в очереди, пик: {{community}}"
         }
       ]
     }

@@ -478,7 +478,7 @@ object VkBatcherSpec extends ZIOSpecDefault {
       } yield assertTrue(sizes(seen) == Vector(1, 1, 1)) &&
               assertTrue(messages(seen) == Vector("1", "2", "3"))
     },
-    test("ожидание письма в очереди — в метрике у каждого письма; очередь — в метрике, когда бот её снимает") {
+    test("ожидание письма в очереди — в метрике у каждого письма; пик очереди держится 20 секунд, потом забыт") {
       def waits  = GameMetrics.vkBatchWaitSeconds.tagged("community", "spec-wait").value.map(_.count)
       def inQueue = GameMetrics.vkBatchQueued.tagged("community", "spec-wait").value.map(_.value)
       for {
@@ -493,9 +493,12 @@ object VkBatcherSpec extends ZIOSpecDefault {
         _       <- TestClock.adjust(1.second)
         _       <- ZIO.foreachDiscard(fibers)(_.join)
         _       <- batcher.publish
-        empty   <- inQueue
+        kept    <- inQueue
         after   <- waits
-      } yield assertTrue(stuck == 10.0, early == before, empty == 0.0, after - before == 10L)
+        _       <- TestClock.adjust(VkRateLimit.PeakSpan)
+        _       <- batcher.publish
+        gone    <- inQueue
+      } yield assertTrue(stuck == 10.0, early == before, after - before == 10L, kept == 10.0, gone == 0.0)
     },
     test("в метрике — по значению на запрос, сумма — сколько писем") {
       def state = GameMetrics.vkBatchLetters.tagged("community", "spec-metric").value

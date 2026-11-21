@@ -3,9 +3,10 @@ package pangea.service.sender.vk
 import io.circe.Json
 import pangea.metrics.GameMetrics
 import zio.stm.{STM, TRef}
-import zio.{Chunk, Exit, Promise, Scope, Task, UIO, URIO, ZIO}
+import zio.{Chunk, Exit, Promise, Ref, Scope, Task, UIO, URIO, ZIO}
 
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.TimeUnit
 import scala.annotation.tailrec
 
 /** Пачки писем одного ключа сообщества. ВК пускает на ключ 20 запросов в
@@ -26,7 +27,12 @@ import scala.annotation.tailrec
   * `false`, — а ошибки не ушедших по порядку лежат в `execute_errors`
   * ([[VkBatcher.outcomes]]). Не прошёл запрос целиком — его ошибку получает
   * каждое письмо пачки. Повторы — у вызывающего ([[VkApi]]). */
-final class VkBatcher private (label: String, queue: TRef[Chunk[VkBatcher.Letter]], open: TRef[Boolean]) {
+final class VkBatcher private (
+    label: String,
+    queue: TRef[Chunk[VkBatcher.Letter]],
+    open:  TRef[Boolean],
+    peaks: Ref[Map[Long, Int]]
+) {
   import VkBatcher._
 
   /** Отправить письмо: `messages.send` с полями `fields` токеном `token` — в
@@ -36,14 +42,32 @@ final class VkBatcher private (label: String, queue: TRef[Chunk[VkBatcher.Letter
       done   <- Promise.make[Throwable, Json]
       since  <- GameMetrics.now
       letter  = Letter(token, fields, sizeOf(fields), since, done)
-      queued <- open.get.flatMap(o => if (o) queue.update(_ :+ letter).as(true) else STM.succeed(false)).commit
-      json   <- if (queued) done.await else ZIO.fail(Stopped)
+      queued <- open.get.flatMap(o => if (o) queue.modify(q => (Some(q.size + 1), q :+ letter)) else STM.succeed(None)).commit
+      json   <- queued match {
+                  case Some(size) => mark(size) *> done.await
+                  case None       => ZIO.fail(Stopped)
+                }
     } yield json
 
-  /** Сколько писем в очереди сейчас — в метрику; бот зовёт раз в секунду
-    * (см. [[VkApi.publishPeaks]]). */
+  /** Пик очереди за секунду — в метрику; бот зовёт раз в секунду (см.
+    * [[VkApi.publishPeaks]]). */
   def publish: UIO[Unit] =
-    queue.get.commit.flatMap(q => GameMetrics.vkBatchQueued.tagged("community", label).set(q.size.toDouble))
+    peak.flatMap(n => GameMetrics.vkBatchQueued.tagged("community", label).set(n.toDouble))
+
+  /** Больше всего писем в очереди за последние [[VkRateLimit.PeakSpan]]:
+    * сколько их стало, когда письмо встало в очередь, — наибольшее по
+    * секундам. Сама очередь живёт миллисекунды, и Prometheus, опрашивающий раз
+    * в 15 с, увидел бы в ней почти всегда ноль. */
+  private[vk] def peak: UIO[Int] =
+    now.flatMap(t =>
+      peaks.modify { bySecond =>
+        val fresh = bySecond.filter { case (second, _) => second * 1000L >= t - VkRateLimit.PeakSpan.toMillis }
+        (fresh.values.maxOption.getOrElse(0), fresh)
+      })
+
+  /** Письмо встало в очередь, в ней теперь `size` писем: в пик секунды. */
+  private def mark(size: Int): UIO[Unit] =
+    now.flatMap(t => peaks.update(bySecond => bySecond.updated(t / 1000L, bySecond.getOrElse(t / 1000L, 0) max size)))
 
   /** Разбирать очередь: место в окне частоты — `slot`, запрос — `post`. Пачку
     * из очереди забираем и отправку запускаем неразрывно: прерванный цикл не
@@ -110,7 +134,8 @@ object VkBatcher {
     for {
       queue   <- TRef.make(Chunk.empty[Letter]).commit
       open    <- TRef.make(true).commit
-      batcher  = new VkBatcher(label, queue, open)
+      peaks   <- Ref.make(Map.empty[Long, Int])
+      batcher  = new VkBatcher(label, queue, open, peaks)
       _       <- ZIO.addFinalizer(batcher.stop)
       _       <- batcher.loop(slot, post).forkScoped
     } yield batcher
@@ -216,6 +241,8 @@ object VkBatcher {
       }
     }._2
   }
+
+  private val now: UIO[Long] = ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
 
   private def failAll(letters: Chunk[Letter], err: Throwable): UIO[Unit] =
     ZIO.foreachDiscard(letters)(_.done.fail(err))
