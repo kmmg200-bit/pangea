@@ -59,7 +59,11 @@ object VkRateLimitSpec extends ZIOSpecDefault {
         times  <- Ref.make(Vector.empty[Long])
         fibers <- ZIO.foreach(1 to 50)(_ => window(now.flatMap(t => times.update(_ :+ t))).fork)
         _      <- ZIO.foreachDiscard(fibers)(settled)
-        _      <- TestClock.adjust(3.seconds)
+        // Часы — по секунде, и каждый раз дожидаемся, пока места этой секунды
+        // разобраны: ждущие проходят семафор по одному, и один сдвиг на 3 с под
+        // нагрузкой полного прогона уходил дальше раньше, чем они успевали.
+        _      <- TestClock.adjust(1.second) *> times.get.repeatUntil(_.size == 2 * limit)
+        _      <- TestClock.adjust(1.second) *> times.get.repeatUntil(_.size == 50)
         _      <- ZIO.foreachDiscard(fibers)(_.join)
         seen   <- times.get.map(_.sorted)
       } yield assertTrue(seen.size == 50) &&

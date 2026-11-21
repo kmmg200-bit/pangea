@@ -1,7 +1,7 @@
 package pangea.service
 
 import zio.test._
-import zio.{Promise, Ref, ZIO, durationInt}
+import zio.{Fiber, Promise, Ref, ZIO, durationInt}
 
 /** Фон и остановка сервера: начатое дожидаются, циклы новых витков не
   * начинают, зависшее прерывают по истечении grace. Время здесь настоящее. */
@@ -78,7 +78,13 @@ object BackgroundSpec extends ZIOSpecDefault {
         _      <- bg.repeat(1.milli, "виток упал")(inTick.succeed(()) *> gate.await *> ticks.update(_ + 1))
         _      <- inTick.await
         stop   <- bg.shutdown.fork
-        _      <- ZIO.sleep(100.millis)
+        // Остановка встала ждать виток — значит, циклу уже сказано «хватит».
+        // Раньше здесь спали 100 мс, и под нагрузкой полного прогона остановка
+        // к открытию затвора ещё не начиналась: цикл успевал на лишние витки.
+        _      <- stop.status.repeatUntil {
+                    case _: Fiber.Status.Suspended => true
+                    case _                         => false
+                  }
         early  <- stop.poll
         _      <- gate.succeed(())
         _      <- stop.join
