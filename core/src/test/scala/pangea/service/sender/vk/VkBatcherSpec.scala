@@ -139,6 +139,15 @@ object VkBatcherSpec extends ZIOSpecDefault {
       case _                         => false
     }
 
+  /** Дождаться, пока файбер встанет или кончится: письмо в очереди или уже
+    * ушло. Письма, что уйдут сразу, не ждут часов — [[parked]] ждал бы их
+    * вечно. */
+  private def settled(fiber: Fiber.Runtime[_, _]) =
+    fiber.status.repeatUntil {
+      case _: Fiber.Status.Suspended | Fiber.Status.Done => true
+      case _                                              => false
+    }
+
   /** Отправить письма по одному, каждое — в очередь вслед за предыдущим. */
   private def queued(batcher: VkBatcher, token: String, letters: Seq[Map[String, String]]) =
     ZIO.foreach(letters)(l => batcher.send(token, l).either.fork.tap(parked))
@@ -400,6 +409,9 @@ object VkBatcherSpec extends ZIOSpecDefault {
         window  <- VkRateLimit.make(Community.Main)
         batcher <- VkBatcher.make("spec", window.slot, fakePost(hits))
         fibers  <- ZIO.foreach(1 to 500)(n => batcher.send("t", letter(n)).either.fork)
+        // Часы — только когда все 500 в очереди: опоздавшее письмо ушло бы на
+        // пятой секунде, хотя ждать ему было нечего.
+        _       <- ZIO.foreachDiscard(fibers)(settled)
         _       <- TestClock.adjust(5.seconds)
         results <- ZIO.foreach(fibers)(_.join)
         seen    <- hits.get
