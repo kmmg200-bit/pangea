@@ -246,9 +246,10 @@ object MiniAppView {
 
   /** Витрина и свои лоты (свои — с непроданными).
     *
-    * @param silver  сколько серебра наберётся на покупку: на руках вместе с ячейкой
+    * @param silver  сколько серебра видно на покупку: в городе — руки и ячейка,
+    *                вне города — только ячейка
     * @param bagFree свободных мест в сумке: купленное ложится туда
-    * @param away    почему сейчас нельзя покупать: герой не в городе
+    * @param away    почему сейчас нельзя покупать: не в городе и нет посыльного
     * @param sell    что и как выставить
     */
   final case class AuctionView(hero: HeroView, lots: List[LotView], mine: List[LotView], silver: Long, bagFree: Long,
@@ -849,7 +850,7 @@ object MiniAppView {
   /** Витрина, свои лоты и что из сумки `bag` можно выставить. Описание вещи —
     * со сравнением с надетым на герое, как в карточке бота. */
   def auction(h: Hero, onSale: List[AuctionLot], mine: List[AuctionLot], now: Long, bag: List[Item],
-              describe: Item => String, funds: Funds, content: SceneContent): AuctionView = {
+              describe: Item => String, funds: Funds, content: SceneContent, hasCourier: Boolean = false): AuctionView = {
     def lot(l: AuctionLot): LotView =
       LotView(
         id        = l.id,
@@ -861,7 +862,8 @@ object MiniAppView {
         mine      = l.sellerId == h.id,
         unsold    = l.unsold(now)
       )
-    val away = !MiniApp.inCity(h)
+    val inCity     = MiniApp.inCity(h)
+    val buyBlocked = !MiniApp.canAuctionBuy(h, hasCourier)
     val sell = SellView(
       items    = ItemStack.grouped(bag.filter(AuctionSale.sellable)).map { case (it, count) =>
                    view(it, count, describe(it)).copy(title = AuctionLot.titleOf(it))
@@ -871,9 +873,9 @@ object MiniAppView {
       feePct   = AuctionLot.FeePct,
       maxLots  = AuctionLot.MaxLots,
       empty    = content.text("bank.auction.nothingToSell"),
-      away     = Option.when(away)(content.text("miniapp.auction.sellAway")))
+      away     = Option.when(!inCity)(content.text("miniapp.auction.sellAway")))
     AuctionView(hero(h), onSale.map(lot), mine.map(lot), funds.silver, funds.bagFree,
-      Option.when(away)(content.text("miniapp.auction.away")), sell)
+      Option.when(buyBlocked)(content.text("miniapp.auction.away")), sell)
   }
 
   /** Монета лота из запроса приложения — обратное к [[currency]]. */

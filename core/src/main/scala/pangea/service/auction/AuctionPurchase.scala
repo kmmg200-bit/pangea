@@ -40,17 +40,20 @@ final class AuctionPurchase(
   /** Кошель: своё серебро, а следом — то, что лежит в ячейке Торгового дома. */
   private val purse = Purse(heroDao, Some(bankRepo))
 
-  def buy(user: User, hero: Hero, lotId: Long): Task[Result] =
+  /** @param vaultSilverOnly как вне города у личного посыльного: платить серебром
+    *                        только из ячейки, не с рук (бот в городе — `false`). */
+  def buy(user: User, hero: Hero, lotId: Long, vaultSilverOnly: Boolean = false): Task[Result] =
     for {
       now    <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
       inv    <- inventoryRepo.get(hero.id).mapError(asThrowable)
       wallet <- purse.wallet(hero)
+      silver = if (vaultSilverOnly) wallet.vault else wallet.total
       res    <- auctionRepo.lot(lotId).either
       out    <- res match {
         case Left(_)                               => ZIO.succeed(Result.Gone)
         case Right(lot) if !lot.onSale(now)        => ZIO.succeed(Result.Gone)
         case Right(lot) if lot.sellerId == hero.id => ZIO.succeed(Result.Own)
-        case Right(lot) if !canPay(lot, hero, wallet.total) => ZIO.succeed(Result.NoMoney(lot))
+        case Right(lot) if !canPay(lot, hero, silver) => ZIO.succeed(Result.NoMoney(lot))
         case Right(_) if inv.freeSlots <= 0        => ZIO.succeed(Result.NoRoom)
         case Right(lot) =>
           // Лот закрывается первым и вместе с вещью в сумке: опоздавший увидит
@@ -61,7 +64,7 @@ final class AuctionPurchase(
               case AuctionRepoError.Failed => ZIO.fail(new Throwable(s"Лот ${lot.id} не продался: сбой базы"))
               case _                       => ZIO.succeed(Result.Gone)
             },
-            _ => payForLot(user, hero, lot).flatMap(tellSeller(lot, _)).as(Result.Bought(lot))
+            _ => payForLot(user, hero, lot, vaultSilverOnly).flatMap(tellSeller(lot, _)).as(Result.Bought(lot))
           )
       }
     } yield out
@@ -69,10 +72,16 @@ final class AuctionPurchase(
   /** Покупатель платит, а выручка продавца идёт в его банковскую ячейку. Не
     * приняла (полна или монета не та) — деньги ждут его в городе. Возвращает,
     * легли ли они в ячейку: об этом говорит колокольчик. */
-  private def payForLot(user: User, hero: Hero, lot: AuctionLot): Task[Boolean] =
+  private def payForLot(user: User, hero: Hero, lot: AuctionLot, vaultSilverOnly: Boolean): Task[Boolean] =
     lot.currency match {
       case AuctionCurrency.Silver =>
-        purse.charge(user.userId, hero, lot.price) *>
+        val paid =
+          if (vaultSilverOnly) purse.chargeVaultOnly(hero, lot.price).flatMap {
+            case true  => ZIO.unit
+            case false => ZIO.fail(new Throwable(s"В ячейке не хватило серебра на лот ${lot.id}"))
+          }
+          else purse.charge(user.userId, hero, lot.price).someOrFailException.unit
+        paid *>
           bankRepo.depositSilver(lot.sellerId, lot.price).either.flatMap {
             case Right(_) => ZIO.succeed(true)
             case Left(_)  => payouts.queue(lot.sellerId, silver = lot.price).as(false)
