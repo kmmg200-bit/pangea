@@ -154,20 +154,20 @@ object SkillsState {
     /** `worn` — сколько надетых вещей несут это умение (см. [[times]]);
      *  `twin` — оно же есть и по другую сторону: на теле у вещи, на вещи у
      *  клейма (см. [[twinNote]]). */
-    final case class Active(itemId: Long, skill: Skill, worn: Int = 1, twin: Boolean = false) extends SkillEntry {
+    final case class Active(itemId: Long, skill: Skill, slots: List[String] = Nil, twin: Boolean = false) extends SkillEntry {
       private def onBody: Boolean = Rune.isBodySlot(itemId)
       def buttonId: String = s"$ActivePrefix$itemId"
-      def label: String    = if (onBody) s"${skill.label} (на теле)" else skill.label + times(worn)
+      def label: String    = if (onBody) s"${skill.label} (на теле)" else skill.label + fromSlots(slots)
       def describe(hero: Hero): String =
-        skill.describe(hero) + (if (onBody) "" else sameSkills(worn)) + twinNote(twin, onBody)
+        skill.describe(hero) + (if (onBody) "" else sameSkills(slots)) + twinNote(twin, onBody)
     }
-    final case class Passive(kind: PassiveKind, onBody: Boolean, worn: Int = 1, twin: Boolean = false) extends SkillEntry {
+    final case class Passive(kind: PassiveKind, onBody: Boolean, slots: List[String] = Nil, twin: Boolean = false) extends SkillEntry {
       def buttonId: String = s"$PassivePrefix${kind.entryName}" + (if (onBody) BodySuffix else "")
-      def label: String    = if (onBody) s"${kind.label} (на теле)" else kind.label + times(worn)
+      def label: String    = if (onBody) s"${kind.label} (на теле)" else kind.label + fromSlots(slots)
       def describe(hero: Hero): String = {
         val n = hero.runes.understandingOf(Rune.Passive(kind))
         kind.describe + (if (n > 0L) s" Понимание: $n." else "") +
-          (if (onBody) "" else sameSkills(worn)) + twinNote(twin, onBody)
+          (if (onBody) "" else sameSkills(slots)) + twinNote(twin, onBody)
       }
     }
 
@@ -224,9 +224,8 @@ object SkillsState {
   private val SetPrefix     = "Set_"
   private val BodySuffix    = "_body"
 
-  /** «Тайник ×2»: умение пришло с нескольких надетых вещей. С одной — без
-   *  числа, иначе «×1» стоял бы почти у всего списка. */
-  private def times(worn: Int): String = if (worn > 1) s" ×$worn" else ""
+  private def fromSlots(slots: List[String]): String =
+    if (slots.isEmpty) "" else s" (${slots.mkString(", ")})"
 
   /** Умение и на вещи, и на теле: в карточке каждой из двух кнопок — что второе
    *  такое же есть и что они не складываются. */
@@ -235,16 +234,17 @@ object SkillsState {
     else if (onBody) "\n\nЭто же умение есть и на надетой вещи. Одинаковые умения не складываются — действует одно."
     else "\n\nЭто же умение выжжено у вас на теле. Одинаковые умения не складываются — действует одно."
 
-  /** В карточке — почему ×2 не вдвое сильнее: одинаковые умения не складываются. */
-  private def sameSkills(worn: Int): String =
-    if (worn > 1) s"\n\nНадето вещей с этим умением: $worn. Одинаковые умения не складываются — действует одно."
+  /** В карточке — почему дубли не складываются: те же слоты, что в подписи кнопки. */
+  private def sameSkills(slots: List[String]): String =
+    if (slots.size > 1)
+      s"\n\n${slots.mkString(", ")}. Одинаковые умения не складываются — действует одно."
     else ""
 
   /** Все умения/пассивки/наборы, реально действующие на герое прямо сейчас —
    *  снятые с надетого снаряжения. Активные (оружие/нагрудник) идут первыми,
    *  затем пассивки по алфавиту метки, затем наборы, набравшие хотя бы один
    *  порог — стабильный порядок между перерисовками. Одинаковые вещи схлопнуты
-   *  в одну кнопку, а сколько их — видно по «×2»; умение, которое ещё и
+   *  в одну кнопку, слоты перечислены в подписи; умение, которое ещё и
    *  выжжено на теле, получает рядом вторую кнопку «на теле». */
   def entries(hero: Hero, buffs: Option[SkillEntry] = None): List[SkillEntry] = buffs.toList ++ skills(hero)
 
@@ -326,8 +326,9 @@ object SkillsState {
     val actives = hero.activeSkillSlots.flatMap { s =>
       if (Rune.isBodySlot(s.itemId)) List(SkillEntry.Active(s.itemId, s.skill))
       else {
-        val twin = bodyActives.contains(s.skill)
-        SkillEntry.Active(s.itemId, s.skill, wornWith(eq, s.skill), twin) ::
+        val twin  = bodyActives.contains(s.skill)
+        val slots = Equipment.slotNames(eq, it => it.activeSkill.contains(s.skill))
+        SkillEntry.Active(s.itemId, s.skill, slots, twin) ::
           (if (twin) List(SkillEntry.Active(Rune.bodySlotId(s.skill), s.skill, twin = true)) else Nil)
       }
     }
@@ -335,7 +336,8 @@ object SkillsState {
       val onItem = worn.contains(k)
       val onBody = bodyPassives.contains(k)
       val twin   = onItem && onBody
-      Option.when(onItem)(SkillEntry.Passive(k, onBody = false, eq.allItems.count(_.passive.contains(k)), twin)).toList ++
+      val slots  = Equipment.slotNames(eq, _.passive.contains(k))
+      Option.when(onItem)(SkillEntry.Passive(k, onBody = false, slots, twin)).toList ++
         Option.when(onBody)(SkillEntry.Passive(k, onBody = true, twin = twin)).toList
     }
     actives ++ passives ++
@@ -386,11 +388,6 @@ object SkillsState {
     ).flatten
     (if (totals.isEmpty) gems else gems ++ ("" :: "Итог:" :: totals)).mkString("\n")
   }
-
-  /** Сколько надетых вещей несут активное умение — те же, с которых оно и
-   *  берётся: оружие в обеих руках и нагрудник. */
-  private def wornWith(eq: Equipment, skill: Skill): Int =
-    List(eq.weapon, eq.leftHand, eq.chestPlate).count(_.activeSkill.contains(skill))
 
   final case class SkillsScene(page: Option[Int] = None)
   object SkillsScene {
