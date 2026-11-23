@@ -552,6 +552,11 @@ case class MonsterCaveState(
   private def lootRace(scene: CaveScene): Race =
     if (scene.sewer) Race.Human else Race.withName(scene.race)
 
+  /** Уровень добычи в пещере: в выездном задании — уровень контракта, в
+    * лабиринте — этаж. */
+  private def caveLootLvl(scene: CaveScene, hero: Hero): Long =
+    if (scene.away) scene.questLvl.max(1L) else hero.dungeonLevel.toLong.max(1L)
+
   // ── Бой в комнате ──────────────────────────────────────────────────────────
 
   /** Кучка мобов бросается на героя всей комнатой. Комнату помечаем зачищенной
@@ -772,12 +777,13 @@ case class MonsterCaveState(
       hero <- getHero(user)
       roll <- Random.nextIntBetween(1, 101)
       seed <- Random.nextLong
+      lvl   = caveLootLvl(scene, hero)
       loot  = if (roll <= CaveRates.ChestRunePct) {
                 val (rune, _) = Rng(seed).pick(RuneStone.all)
                 LootData(items = List(RuneStone.item(rune, RuneStoneSize.Big)), silvers = Nil)
               } else {
                 val (drops, _) = LootGenerator.roll(Rarity.Mythical, lootRace(scene),
-                                   hero.dungeonLevel.toLong, Rng(seed),
+                                   lvl, Rng(seed),
                                    gearChanceBonusPct = hero.gems.gearDropBonusPct)
                 LootData(
                   items     = drops.flatMap(_.itemOpt),
@@ -793,7 +799,8 @@ case class MonsterCaveState(
     for {
       hero <- getHero(user)
       seed <- Random.nextLong
-      (reward, _) = SchronGenerator.roll(lootRace(scene), hero.dungeonLevel.toLong,
+      lvl   = caveLootLvl(scene, hero)
+      (reward, _) = SchronGenerator.roll(lootRace(scene), lvl,
                       CaveRates.StashDoubloonMin, CaveRates.StashDoubloonMax, Rng(seed),
                       CaveRates.StashDoubloonChancePct)
       loot = LootData(
@@ -811,7 +818,8 @@ case class MonsterCaveState(
       hero <- getHero(user)
       seed <- Random.nextLong
       lore <- HerbLore.readLore(heroDao, user.userId)
-      zone  = scene.treasure.getOrElse(MapZone.forLevel(hero.lvl))
+      lvl   = caveLootLvl(scene, hero)
+      zone  = scene.treasure.getOrElse(MapZone.forLevel(lvl))
       (reward, _) = TreasureHuntGenerator.roll(zone, Rng(seed),
                       knowsRareHerbs = lore.knows(Knowledge.FlowersRank2))
       loot  = LootData(
