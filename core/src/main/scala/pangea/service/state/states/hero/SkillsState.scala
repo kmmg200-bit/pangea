@@ -259,7 +259,7 @@ object SkillsState {
     val dust     = hero.weaponDust
     val blessing = blessingUntil.filter(_ > nowMs).map(u => t("blessing", "left" -> left(u)))
     val boosts   = hero.statBoosts.active(nowMs).map(b => boostLine(content, b, left(b.until)))
-    val frozen   = Option.when(hero.expFrozen)(t("frozen"))
+    val frozen   = Option.when(hero.expStopped)(t("frozen"))
     val layers   = Option.when(dust.layers.nonEmpty)(t("dust", "names" ->
                      dust.layers.groupBy(_.displayName).toList
                        .sortBy { case (n, _) => dust.layers.indexWhere(_.displayName == n) }

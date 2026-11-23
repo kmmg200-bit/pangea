@@ -32,6 +32,16 @@ object HeroExpSpec extends ZIOSpecDefault {
         assertTrue(up.lvl == 4L && up.exp == 10L) &&
         assertTrue(up.upgradePoints == 3L * Hero.PointsPerLevel)
       },
+      test("с 51-го уровня опыт не капает; до него — можно; Зелье движения не снимает планку") {
+        import pangea.model.hero.FetPotion
+        val base  = TestFixtures.hero(UserId(1L)).copy(lvl = 50L, exp = 0L, upgradePoints = 0L)
+        val at51  = base.gainExp(Hero.neededExpForLevel(50L))
+        val stuck = at51.gainExp(1_000_000L)
+        assertTrue(at51.lvl == 51L && stuck == at51) &&
+        assertTrue(at51.expFrom(500L, 0L) == 0L && at51.expStopped) &&
+        assertTrue(!FetPotion.useful(FetPotion.ExpStart, at51.copy(expFrozen = true))) &&
+        assertTrue(!FetPotion.useful(FetPotion.ExpStop, at51))
+      },
       test("HP нагрудника прибавляется к effectiveMaxHp") {
         val hero = TestFixtures.hero(UserId(1L))
         val chest = Item(
