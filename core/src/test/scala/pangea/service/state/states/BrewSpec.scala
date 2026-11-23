@@ -282,7 +282,7 @@ object BrewSpec extends ZIOSpecDefault {
         card <- r.sentScreens.map(_.last)
         _    <- state.action(testUser, tap("DrinkBrew"), r)
       } yield assertTrue(!card.choices.map(_.id).contains("DrinkBrew")) &&
-              assertTrue(card.text.contains("бросают под ноги")) &&
+              assertTrue(card.text.contains("доп. слот")) &&
               // склянка на месте: выпить её не вышло
               assertTrue(inv.snapshot.size == 1)
     },

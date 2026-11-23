@@ -546,8 +546,8 @@ case class BattleState(
       case Outcome.Continue =>
         (persistHero *> heroDao.writeActiveBattle(user.userId, res.battle.asJson)).uninterruptible *>
           showLog *> showGroup *>
-          mixCount(res.hero).flatMap(mixes =>
-            renderer.show(user, buildBattleScreen(res.hero, res.battle, res.hero.effectiveMaxHp(nowMs), nowMs, mixes)))
+          renderer.show(user, buildBattleScreen(res.hero, res.battle, res.hero.effectiveMaxHp(nowMs), nowMs,
+            BattleState.mixInOffhand(res.hero)))
             .as(StateType.Battle)
       case Outcome.Victory =>
         for {
@@ -5113,6 +5113,8 @@ case class BattleState(
               TurnResult(withBelt(dusted, next), battle.copy(consumableUsedThisRound = consumed),
                 Vector(line) ++ qhLog, Outcome.Continue, endsRound = false)
             }
+          case Some(br: BeltSlot.Brew) if br.kind == BrewKind.MushroomMix =>
+            cont(hero, battle, content.text("battle.mixOffhandOnly"))
           case Some(br: BeltSlot.Brew) if br.spent =>
             cont(hero, battle, content.text("battle.belt.gone"))
           // Кнопка из старого сообщения: ответ на вопрос отвара устарел (травму
@@ -7175,6 +7177,25 @@ case class BattleState(
   private def saveAzat(user: User, azat: AzatState): Task[Unit] =
     heroDao.writeAzatData(user.userId, azat.asJson)
 
+  /** Бросок грибной смеси из доп. слота: склянка лопается под ногами врагов,
+    * достаётся всем в поле, и споры травят выживших. Расходник раунда. */
+  private def mixTurn(hero: Hero, battle: SoloPveBattle, nowMs: Long): Task[TurnResult] =
+    if (battle.aimSlot.isDefined) cont(hero, battle, content.text("battle.powerShot.handsBusy"))
+    else if (battle.consumableUsedThisRound) cont(hero, battle, content.text("battle.consumableAlreadyUsed"))
+  else if (!BattleState.mixInOffhand(hero)) cont(hero, battle, content.text("battle.mixNone"))
+    else
+      quickHandsRoll(hero).flatMap { case (consumed, qhLog) =>
+        val blow             = BrewRates.MushroomDamagePerLvl * hero.lvl
+        val (swept, _, foes) = sweep(battle, blow, None, poisons = true)
+        val outcome = if (swept.monsterCurrentHp <= 0L) Outcome.Victory else Outcome.Continue
+        val cleared = hero.copy(equipment = hero.equipment.copy(additionalWeapon = Item.NoItem))
+        val after   = if (outcome == Outcome.Victory && swept.promoteNext.isEmpty) endOfRoundHero(cleared, swept, nowMs) else cleared
+        ZIO.succeed(TurnResult(after, swept.copy(consumableUsedThisRound = consumed),
+          Vector(content.format("battle.mixThrown", "damage" -> blow.toString,
+            "foes" -> foes.toString)) ++ qhLog,
+          outcome, endsRound = false))
+      }
+
   // ── Божественное оружие ─────────────────────────────────────────────────────
 
   /** Удар божественного оружия: бьёт всех врагов на поле разом — сперва броня,
@@ -7236,32 +7257,6 @@ case class BattleState(
         val heroAfter = if (outcome == Outcome.Victory && hasted.promoteNext.isEmpty) endOfRoundHero(heroAfter0, hasted, nowMs) else heroAfter0
         ZIO.succeed(TurnResult(heroAfter, hasted.copy(divineUsedThisRound = true), log, outcome, endsRound = false))
     }
-
-  /** Бросок грибной смеси прямо из сумки: склянка лопается под ногами врагов,
-    * достаётся всем в поле, и споры травят выживших. Расходник раунда — как
-    * глоток фляги, только вместо себя выручает по площади; смесь можно и
-    * положить в ячейку пояса, тогда её достают оттуда. */
-  private def mixTurn(hero: Hero, battle: SoloPveBattle, nowMs: Long): Task[TurnResult] =
-    if (battle.aimSlot.isDefined) cont(hero, battle, content.text("battle.powerShot.handsBusy"))
-    else if (battle.consumableUsedThisRound) cont(hero, battle, content.text("battle.consumableAlreadyUsed"))
-    else
-      inventoryRepo.get(hero.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
-        inv.items.data.find((i: Item) => i.brew.contains(BrewKind.MushroomMix)) match {
-          case None => cont(hero, battle, content.text("battle.mixNone"))
-          case Some(mix) =>
-            quickHandsRoll(hero).flatMap { case (consumed, qhLog) =>
-              val blow             = BrewRates.MushroomDamagePerLvl * hero.lvl
-              val (swept, _, foes) = sweep(battle, blow, None, poisons = true)
-              val outcome = if (swept.monsterCurrentHp <= 0L) Outcome.Victory else Outcome.Continue
-              val after   = if (outcome == Outcome.Victory && swept.promoteNext.isEmpty) endOfRoundHero(hero, swept, nowMs) else hero
-              inventoryRepo.removeItem(mix.id, hero.id).mapError(e => new Throwable(e.toString)) *>
-                ZIO.succeed(TurnResult(after, swept.copy(consumableUsedThisRound = consumed),
-                  Vector(content.format("battle.mixThrown", "damage" -> blow.toString,
-                    "foes" -> foes.toString)) ++ qhLog,
-                  outcome, endsRound = false))
-            }
-        }
-      }
 
   /** Проход божественного оружия по всему полю: каждому врагу — удар, который
     * сперва сносит броню и лишь остатком идёт в HP (защита его не режет,
@@ -7330,13 +7325,12 @@ case class BattleState(
       now    <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
       hero   <- getHero(user)
       battle <- getBattle(user)
-      mixes  <- mixCount(hero)
       prefs  <- BattleState.prefs(heroDao, user.userId)
       _ <- ZIO.when(battle.group.hasFormation)(
              renderer.show(user, Screen(groupLines(battle).mkString("\n"), Nil)))
       _ <- renderer.show(
         user,
-        buildBattleScreen(hero, battle, hero.effectiveMaxHp(now), now, mixes, prefs.miasma)
+        buildBattleScreen(hero, battle, hero.effectiveMaxHp(now), now, BattleState.mixInOffhand(hero), prefs.miasma)
       )
     } yield ()
 
@@ -7345,8 +7339,8 @@ case class BattleState(
       battle0: SoloPveBattle,
       maxHp: Long,
       nowMs: Long,
-      mixes: Int,
-      miasmaOn: Boolean = true
+      mixReady:     Boolean,
+      miasmaOn:     Boolean = true
   ): Screen = {
     // Напротив пусто — шансы героя считаем против последней его цели (кто в
     // полях, тот в этот момент дерётся не с ним).
@@ -7518,11 +7512,10 @@ case class BattleState(
                 else pangea.engine.ChoiceColor.Positive,
         row = Some(3))
     }
-    // Грибная смесь лежит в сумке, а не в слоте, — кнопка появляется, только
-    // когда склянка при герое.
-    val mixButton = Option.when(mixes > 0)(
+    // Грибная смесь стоит в доп. слоте — своя кнопка; из сумки и пояса не бросают.
+    val mixButton = Option.when(mixReady)(
       pangea.engine.Choice("ThrowMix",
-        pangea.engine.Choice.fit(content.format("battle.mixLabel", "count" -> mixes.toString)),
+        pangea.engine.Choice.fit(content.format("battle.mixLabel", "count" -> "1")),
         color = if (battle0.consumableUsedThisRound || aiming.isDefined) pangea.engine.ChoiceColor.Negative
                 else pangea.engine.ChoiceColor.Positive,
         row = Some(2)))
@@ -7583,13 +7576,6 @@ case class BattleState(
       res.copy(hero = saved, outcome = Outcome.Continue,
         log = res.log :+ content.format("battle.bubbleSaved", "hp" -> BattleState.BubbleHp.toString))
     }
-
-  /** Сколько склянок грибной смеси в сумке героя. Сумка может быть недоступна
-    * (стаб в тестах) — тогда кнопки просто не будет. */
-  private def mixCount(hero: Hero): Task[Int] =
-    inventoryRepo.get(hero.id)
-      .map(_.items.data.count((i: Item) => i.brew.contains(BrewKind.MushroomMix)))
-      .orElseSucceed(0)
 
   /** Чьи уникальные трофеи у героя уже есть: в сумке, в бочке, в хранилище, на
     * Стене трофеев. Читаем всё это, только если среди павших есть именной. */
@@ -7664,6 +7650,10 @@ case class BattleState(
 }
 
 object BattleState {
+
+  /** Грибная смесь в доп. слоте — её можно бросить в бою. */
+  def mixInOffhand(hero: Hero): Boolean =
+    hero.equipment.additionalWeapon.brew.contains(BrewKind.MushroomMix)
 
   /** Сюжетные бои, которые награждаются как обычные: опыт и добыча с каждого
     * павшего (налёт на мурлоков, бой у завала, волны орков у поющего эльфа,

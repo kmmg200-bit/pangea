@@ -84,6 +84,7 @@ sealed abstract class BrewKind(
   def beltable: Boolean = this match {
     case BrewKind.Schnapps | BrewKind.Moonshine    => false
     case BrewKind.SleepingDope | BrewKind.Sentence => false
+    case BrewKind.MushroomMix                      => false
     case _                                         => true
   }
 
@@ -354,7 +355,7 @@ object BrewKind extends Enum[BrewKind] {
   case object MushroomMix extends BrewKind(
     "Грибная смесь",
     List(GlaiveMushroom, Nettle, Sage),
-    "Толчёные глефовые грибы в склянке, переложенные крапивой, чтобы не рвануло раньше времени. Её не пьют — её бросают под ноги: в бою достаётся всем, кто стоит в поле, и споры травят выживших.",
+    "Толчёные глефовые грибы в склянке, переложенные крапивой, чтобы не рвануло раньше времени. Не пьют: вставляют в доп. слот, в сече бросают оттуда — склянка тратится. Достаётся всем, кто стоит в поле, и споры травят выживших.",
     BrewEffect.Bomb)
 
   case object WolfCall extends BrewKind(
@@ -500,7 +501,7 @@ object BrewKind extends Enum[BrewKind] {
       name = kind.label,
       lvl = 1L,
       rarity = Rarity.Green,
-      itemType = ItemType.Brew,
+      itemType = if (kind == MushroomMix) ItemType.AdditionalWeapon else ItemType.Brew,
       attack = 0, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0,
       details = ItemDetails.Brew(kind)
     )
