@@ -942,9 +942,10 @@ object MiniAppView {
     * без имени (прошёл пролог до имён, а из ВК имени не подобрали)
     * подписываем `noName`. */
   def top(h: Hero, kind: TopKind, board: TopBoard, noName: String): TopView = {
-    val shown = board.rows.zipWithIndex.map { case (row, i) =>
-      val me = row.heroId == h.id
-      TopEntryView(i + 1L, row.name.getOrElse(noName), Option.unless(me)(Links.profile(row.vkId.value)),
+    val shown = board.rows.map { row =>
+      val me    = row.heroId == h.id
+      val place = board.places.get(row.heroId).map(_.place).getOrElse(0L)
+      TopEntryView(place, row.name.getOrElse(noName), Option.unless(me)(Links.profile(row.vkId.value)),
         row.race.toString, row.lvl, row.value, me)
     }
     val mine = Option.unless(shown.exists(_.me))(board.places.get(h.id)).flatten.map { at =>

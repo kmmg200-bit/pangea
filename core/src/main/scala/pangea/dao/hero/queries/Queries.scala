@@ -13,6 +13,10 @@ import pangea.model.stats.FightStats
 import pangea.model.user.UserId
 
 object Queries {
+
+  /** Момент (мс), записываемый в `top_since` при росте мерки топа. */
+  private val topStampNow: Fragment = fr"floor(extract(epoch from clock_timestamp()) * 1000)::bigint"
+
   private val fields: Fragment =
     sql"id, user_id, state, lvl, exp, upgrade_points, race, base_stats, fight_stats, equipment, dungeon_level, max_dungeon_level, silver, trauma_until, trauma_names, guild_reputation, master_horn_boosts, doubloons, stat_boosts, weapon_dust, kills, brews, achievements, squad_data, rune_data, exp_frozen, name"
   private val fieldInsert: Fragment =
@@ -61,7 +65,11 @@ object Queries {
     sql"update $tableName set dungeon_level = $level where user_id = $userId"
 
   def updateMaxDungeonLevel(userId: UserId, level: Int): Fragment =
-    sql"update $tableName set max_dungeon_level = $level where user_id = $userId"
+    sql"""update $tableName set max_dungeon_level = $level,
+      top_since = coalesce(top_since, '{}'::jsonb) ||
+        case when $level > max_dungeon_level then jsonb_build_object('depth', $topStampNow)
+        else '{}'::jsonb end
+      where user_id = $userId"""
 
   def updateRace(userId: UserId, race: Race): Fragment =
     sql"update $tableName set race = $race where user_id = $userId"
@@ -73,7 +81,11 @@ object Queries {
     sql"update $tableName set fight_stats = ${stats.asJson} where user_id = $userId"
 
   def updateExpAndLevel(userId: UserId, exp: Long, lvl: Long, upgradePoints: Long): Fragment =
-    sql"update $tableName set exp = $exp, lvl = $lvl, upgrade_points = $upgradePoints where user_id = $userId"
+    sql"""update $tableName set exp = $exp, lvl = $lvl, upgrade_points = $upgradePoints,
+      top_since = coalesce(top_since, '{}'::jsonb) ||
+        case when $lvl > lvl then jsonb_build_object('level', $topStampNow)
+        else '{}'::jsonb end
+      where user_id = $userId"""
 
   def updateEquipmentAndFightStats(userId: UserId, eq: Equipment, stats: FightStats): Fragment =
     sql"update $tableName set equipment = ${eq.asJson}, fight_stats = ${stats.asJson} where user_id = $userId"
@@ -145,7 +157,16 @@ object Queries {
     sql"update $tableName set weapon_dust = $dust where user_id = $userId"
 
   def updateKills(userId: UserId, kills: Long): Fragment =
-    sql"update $tableName set kills = $kills where user_id = $userId"
+    sql"""update $tableName set kills = $kills,
+      top_since = coalesce(top_since, '{}'::jsonb) ||
+        case when $kills > kills then jsonb_build_object('kills', $topStampNow)
+        else '{}'::jsonb end
+      where user_id = $userId"""
+
+  /** Дописать метку топа; снаружи — когда мерка выросла (алхимия, рецепты). */
+  def stampTopSince(userId: UserId, key: String): Fragment =
+    sql"""update $tableName set top_since = coalesce(top_since, '{}'::jsonb) ||
+      jsonb_build_object($key, $topStampNow) where user_id = $userId"""
 
   def addBrews(userId: UserId, n: Long): Fragment =
     sql"update $tableName set brews = brews + $n where user_id = $userId"
@@ -178,7 +199,8 @@ object Queries {
     * переписывается целиком, и выданное в этот же миг из другого места (донат
     * приходит вне хода игрока) не затирается. */
   def addAchievement(userId: UserId, key: String): Fragment =
-    sql"""update $tableName set achievements = ${appendAchievement(key)}
+    sql"""update $tableName set achievements = ${appendAchievement(key)},
+          top_since = coalesce(top_since, '{}'::jsonb) || jsonb_build_object('achievements', $topStampNow)
           where user_id = $userId and not ($key = any(string_to_array(achievements, ',')))"""
 
   def updateAchievements(userId: UserId, achievements: List[String]): Fragment =

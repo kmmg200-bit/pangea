@@ -11,7 +11,7 @@ sealed trait TopKind extends EnumEntry
 object TopKind extends Enum[TopKind] {
   val values: IndexedSeq[TopKind] = findValues
 
-  /** По уровню, внутри уровня — по опыту. */
+  /** По уровню; при равенстве — опыт, когда встал на уровень, номер героя. */
   case object Level extends TopKind {
     override val entryName: String = "level"
   }
