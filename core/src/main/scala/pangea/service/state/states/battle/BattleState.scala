@@ -28,6 +28,7 @@ import pangea.service.state.states.LootState
 import pangea.service.state.MurlocQuest
 import pangea.service.state.states.gustavo.GustavoState
 import pangea.repository.bank.BankRepository
+import pangea.repository.barrel.BarrelRepository
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.state.states.battle.BattleState.Victim
@@ -54,9 +55,10 @@ case class BattleState(
   content:       SceneContent,
   // Таймер раундов без героя (он обнулён, отряд дерётся дальше).
   scheduler:     Scheduler = Scheduler.none,
-  // Хранилище в Торговом доме: уникальный трофей не падает второй раз, даже
-  // если первый лежит там.
-  bank:          Option[BankRepository] = None
+  // Хранилище в Торговом доме и неприметная бочка: уникальный трофей не падает
+  // второй раз, даже если первый лежит там.
+  bank:          Option[BankRepository] = None,
+  barrel:        Option[BarrelRepository] = None
 ) extends State {
 
   import BattleState.{AllyBlow, MobStrike, Outcome, TurnResult, VictoryOutcome}
@@ -7589,15 +7591,16 @@ case class BattleState(
       .map(_.items.data.count((i: Item) => i.brew.contains(BrewKind.MushroomMix)))
       .orElseSucceed(0)
 
-  /** Чьи уникальные трофеи у героя уже есть: в сумке, в хранилище, на Стене
-    * трофеев. Читаем всё это, только если среди павших есть именной. */
+  /** Чьи уникальные трофеи у героя уже есть: в сумке, в бочке, в хранилище, на
+    * Стене трофеев. Читаем всё это, только если среди павших есть именной. */
   private def ownedNamedTrophies(user: User, hero: Hero, fallen: List[SlainMonster]): Task[Set[String]] =
     if (!fallen.exists(m => NamedTrophy.raceOf(BattleState.trophyName(m)).isDefined)) ZIO.succeed(Set.empty)
     else for {
-      bag   <- inventoryRepo.get(hero.id).fold(_ => List.empty[Item], _.items.data)
-      vault <- bank.fold(ZIO.succeed(List.empty[Item]))(_.get(hero.id).fold(_ => List.empty[Item], _.items.data))
-      home  <- heroDao.readHomeData(user.userId).map(_.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty))
-    } yield (bag ++ vault).flatMap(_.namedTrophy).map(_.monster).toSet ++ home.wall
+      bag    <- inventoryRepo.get(hero.id).fold(_ => List.empty[Item], _.items.data)
+      stored <- barrel.fold(ZIO.succeed(List.empty[Item]))(_.get(hero.id).fold(_ => List.empty[Item], _.items.data))
+      vault  <- bank.fold(ZIO.succeed(List.empty[Item]))(_.get(hero.id).fold(_ => List.empty[Item], _.items.data))
+      home   <- heroDao.readHomeData(user.userId).map(_.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty))
+    } yield (bag ++ stored ++ vault).flatMap(_.namedTrophy).map(_.monster).toSet ++ home.wall
 
   /** Стена трофеев дома: прибавка к урону героя по расам. */
   private def trophyWall(user: User): Task[Map[String, Int]] =

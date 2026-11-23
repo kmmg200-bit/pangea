@@ -295,7 +295,7 @@ object StatesMap {
             content,
             artifacts
           ),
-          Battle -> BattleState(heroDao, inventoryRepo, itemRepo, content, scheduler, bank),
+          Battle -> BattleState(heroDao, inventoryRepo, itemRepo, content, scheduler, bank, Some(barrelRepo)),
           Death  -> DeathState(heroDao, inventoryRepo, content, artifacts, outcomes, Some(itemRepo), Some(parcels)),
           Rest   -> RestState(heroDao, scheduler, content),
           Inventory -> InventoryState(
