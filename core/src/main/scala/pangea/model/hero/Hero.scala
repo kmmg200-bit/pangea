@@ -330,7 +330,7 @@ case class Hero(
                          .fold("")(until => s"\n ✨ Благословение: ещё ${pangea.util.TimeLeft.format(until - nowMs)}")
     val vanishLine   = vanishUntil.filter(_ > nowMs)
                          .fold("")(until => s"\n 🌫 Исчезновение: ещё ${pangea.util.TimeLeft.format(until - nowMs)}")
-    val frozenLine   = if (c.expFrozen) "\n ❄ Опыт остановлен" else ""
+    val frozenLine   = if (expStopped) "\n ❄ Опыт остановлен" else ""
     val restedLine   = c.restedLeftMs.fold("") { ms =>
       s"\n 🛏 Выспались дома: +${pangea.model.home.HomeRates.RestedExpPct}% опыта, ещё ${HeroCard.restedLeft(ms)}"
     }
@@ -362,7 +362,7 @@ case class Hero(
       exp           = getLvlExp,
       neededExp     = getNeededExp,
       kills         = kills,
-      expFrozen     = expFrozen,
+      expFrozen     = expStopped,
       restedLeftMs  = statBoosts.remainingMs(pangea.model.home.HomeRates.RestedBoost, nowMs),
       stats         = effectiveBaseStats(nowMs),
       native        = nativeBaseStats,
@@ -387,13 +387,20 @@ case class Hero(
   def getNeededExp: Long = Hero.neededExpForLevel(lvl)
   def getLvlExp: Long    = exp
 
+  /** Планка уровня: с неё опыт не капает, пока не выйдет патч (см.
+   *  [[Hero.ExpGainCapLevel]]). */
+  def expCappedByLevel: Boolean = lvl >= Hero.ExpGainCapLevel
+
+  /** Опыт ниоткуда не идёт: зелье застоя или планка по уровню. */
+  def expStopped: Boolean = expFrozen || expCappedByLevel
+
   /** Сколько опыта герой на самом деле получит из `amount`: пока опыт
-   *  остановлен (`expFrozen`), — ничего; выспался дома — на
+   *  остановлен (`expStopped`), — ничего; выспался дома — на
    *  [[pangea.model.home.HomeRates.RestedExpPct]]% больше (прибавка вверх, чтобы
    *  и малый опыт что-то прибавил); «Достигатор» — ещё по 2% за ранг, тоже
    *  вверх. Этим числом и говорят игроку «+N опыта». */
   def expFrom(amount: Long, nowMs: Long): Long =
-    if (expFrozen) 0L
+    if (expStopped) 0L
     else {
       val rest = if (rested(nowMs)) amount + (amount * pangea.model.home.HomeRates.RestedExpPct + 99L) / 100L
                  else amount
@@ -407,11 +414,11 @@ case class Hero(
    *  с обновлёнными `exp`/`lvl`/`upgradePoints` (4 очка характеристик за уровень,
    *  кап на `Hero.MaxLevel`). Единственное место расчёта прокачки. Опыт остановлен —
    *  герой как был. */
-  def gainExp(amount: Long): Hero = if (expFrozen) this else {
+  def gainExp(amount: Long): Hero = if (expStopped) this else {
     var e = exp + amount
     var l = lvl
     var p = upgradePoints
-    while (e >= Hero.neededExpForLevel(l) && l < Hero.MaxLevel) {
+    while (e >= Hero.neededExpForLevel(l) && l < Hero.MaxLevel && l < Hero.ExpGainCapLevel) {
       e -= Hero.neededExpForLevel(l)
       l += 1L
       p += Hero.PointsPerLevel
@@ -423,6 +430,9 @@ case class Hero(
 object Hero {
   val MaxLevel: Long       = 150L
   val PointsPerLevel: Long = 4L
+
+  /** С этого уровня опыт не прибавляется (временно; снять — отдельным патчем). */
+  val ExpGainCapLevel: Long = 51L
 
   /** С чего начинает каждый герой: по четыре в каждой характеристике. Раса,
    *  зелья, достижения и наборы ложатся сверху при подсчёте (см.

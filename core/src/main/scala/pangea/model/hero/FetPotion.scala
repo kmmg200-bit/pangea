@@ -21,8 +21,8 @@ object FetPotion extends Enum[FetPotion] {
   /** Будет ли от зелья толк: остановить идущий опыт, запустить стоящий,
     * сбросить, если есть что. */
   def useful(potion: FetPotion, hero: Hero): Boolean = potion match {
-    case ExpStop  => !hero.expFrozen
-    case ExpStart => hero.expFrozen
+    case ExpStop  => !hero.expFrozen && !hero.expCappedByLevel
+    case ExpStart => hero.expFrozen && !hero.expCappedByLevel
     case Respec   => Hero.spentPoints(hero) > 0L
   }
 }
