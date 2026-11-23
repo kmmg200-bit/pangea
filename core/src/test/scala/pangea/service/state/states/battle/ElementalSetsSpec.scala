@@ -227,6 +227,17 @@ object ElementalSetsSpec extends ZIOSpecDefault {
               assertTrue(!p._3.contains("Цепная молния") && p._2.monsterAt(2).exists(_.currentHp == MobHp))
     },
 
+    test("«Гроза» (12): перескок на соседа с бронёй — молния прошивает её в HP, а не застревает в броне") {
+      val armor = 900_000L
+      val gearH = gear(Some(ItemSet.Storm), 12, Some(GemKind.Topaz))
+      val h     = hero(gearH).copy(fightStats = hero(gearH).fightStats.copy(atk = 50_000))
+      for {
+        r <- attack(h, fight(h, mob(armor), side = List(2)), procRoll = 1)
+        (_, after, log) = r
+        neighborHp = MobHp - after.monsterAt(2).map(_.currentHp).getOrElse(MobHp)
+      } yield assertTrue(log.contains("⚡ Цепная молния задевает")) && assertTrue(neighborHp > 0L)
+    },
+
     test("«Гроза» (12): не чаще раза за раунд — перескок в этом раунде уже был, и второго нет") {
       val h = hero(gear(Some(ItemSet.Storm), 12, Some(GemKind.Topaz)))
       for {

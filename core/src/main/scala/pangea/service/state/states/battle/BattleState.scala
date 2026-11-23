@@ -3079,8 +3079,9 @@ case class BattleState(
     BattleState.ProcMods(burn, hero.sets.burnHurts, hero.sets.coldCutPct, hero.sets.coldRoots)
 
   /** «Гроза» (порог 12): прок молнии перескакивает на врагов рядом с целью — им
-    * по `ChainPct`% урона удара `struck` (сперва броня, остаток в HP; Громовому
-    * молния почти не вредит), и энергию им молния выжигает по тем же правилам.
+    * по `ChainPct`% урона удара `struck` (сперва в броню, в HP — остаток и
+    * прошивка молнией, как у удара героя), и энергию им молния выжигает по тем
+    * же правилам.
     * Не чаще раза за раунд. `struck` = 0 — перескока нет (отголосок по строю). */
   private def chainLightning(hero: Hero, battle: SoloPveBattle, fired: Set[Element],
                              struck: Long, burnOf: Long => Long): (SoloPveBattle, Vector[String]) =
@@ -3089,15 +3090,23 @@ case class BattleState(
     else {
       val pos = battle.group.activePos
       val (swept, lines) = strikeOthers(battle, List(pos - 1, pos + 1)) { tmp =>
-        val resist   = tmp.boss.map(_.damageTakenMult(Element.Lightning)).getOrElse(1.0)
-        val amount   = (struck * ItemSet.Storm.ChainPct / 100L * resist).toLong.max(1L)
-        val hpBefore = tmp.monsterCurrentHp
-        val (cut, line) = plainHit(tmp, amount)(d =>
-          content.format("battle.storm.chain", "monster" -> tmp.monsterName, "damage" -> d.toString))
+        val resist    = tmp.boss.map(_.damageTakenMult(Element.Lightning)).getOrElse(1.0)
+        val amount    = (struck * ItemSet.Storm.ChainPct / 100L * resist).toLong.max(1L)
+        // Доля удара уже посчитана со стихиями; здесь — как plainHit, плюс
+        // прошивка брони молнией, без повторных множителей гемов.
+        val armorDmg  = math.min(tmp.monsterCurrentArmor, amount)
+        val hpFromArmor =
+          (armorDmg * hero.gems.lightningArmorToHpFrac * hero.sets.lightningPierceMult).toLong
+        val hurt      = tmp.hurtActive(armorDmg, amount - armorDmg + hpFromArmor)
+        val cut               = hurt.battle
+        val line              =
+          if (hurt.absorbed) capText(cut)
+          else content.format("battle.storm.chain", "monster" -> tmp.monsterName, "damage" -> hurt.dealt.toString) +
+            capLine(hurt).map("\n" + _).getOrElse("")
         if (cut.monsterCurrentHp <= 0L) (cut, line)
         else {
-          val (zapped, zapLog) = applyProcs(cut, Set(Element.Lightning), heroAirTurns(hero),
-            heroProcMods(hero, burnOf(hpBefore - cut.monsterCurrentHp)))
+          val (zapped, zapLog) =
+            applyProcs(cut, Set(Element.Lightning), heroAirTurns(hero), heroProcMods(hero, burnOf(hurt.hp)))
           (zapped, (line +: zapLog).mkString("\n"))
         }
       }
