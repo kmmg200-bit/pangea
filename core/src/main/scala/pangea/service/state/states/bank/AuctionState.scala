@@ -61,6 +61,8 @@ case class AuctionState(
       "ShowLot"       -> Target.Run { (u, ua, r) => withLotId(ua)(showLot(u, _, r)).as(StateType.Auction) },
       "BuyLot"        -> Target.Run { (u, ua, r) => withLotId(ua)(confirmBuy(u, _, r)).as(StateType.Auction) },
       "BuyLotYes"     -> Target.Run { (u, ua, r) => withLotId(ua)(buy(u, _, r)).as(StateType.Auction) },
+      /** С карточки лота — на витрину с сохранённой страницей; иначе в меню. */
+      "AuctionReturnBrowse" -> Target.Run { (u, _, r) => leaveLotView(u, r).as(StateType.Auction) },
       "AuctionSell"   -> Target.Run { (u, _, r)  => writeScene(u, AuctionScene(sellPage = Some(0))) *> showSellList(u, r).as(StateType.Auction) },
       "SellPrev"      -> Target.Run { (u, _, r)  => turnSellPage(u, r, -1).as(StateType.Auction) },
       "SellNext"      -> Target.Run { (u, _, r)  => turnSellPage(u, r, +1).as(StateType.Auction) },
@@ -173,7 +175,7 @@ case class AuctionState(
           val state = lotStateLine(lot, now, own)
           // Под лотом — что надето в тот же слот: брать ли, видно сразу.
           renderer.show(user, Screen(ItemMenu.withEquipped(card + state, lot.item, hero), buttons :+
-            Choice("Auction", content.text("bank.auction.back"), color = ChoiceColor.Negative, row = Some(1))))
+            Choice("AuctionReturnBrowse", content.text("bank.auction.back"), color = ChoiceColor.Negative, row = Some(1))))
       }
     } yield ()
 
@@ -199,7 +201,7 @@ case class AuctionState(
               "id" -> lot.id.toString, "name" -> lot.title, "price" -> lot.priceLine),
             List(
               Choice("BuyLotYes", content.text("bank.auction.buyConfirmYes"), color = ChoiceColor.Positive, data = Map("id" -> lot.id.toString), row = Some(0)),
-              Choice("Auction",   content.text("bank.auction.buyConfirmNo"),  color = ChoiceColor.Negative, row = Some(0))
+              Choice("AuctionReturnBrowse", content.text("bank.auction.buyConfirmNo"), color = ChoiceColor.Negative, row = Some(0))
             ), inline = true))
       }
     } yield ()
@@ -218,11 +220,16 @@ case class AuctionState(
           afterPurchase(user, renderer)
     }
 
-  /** После покупки — туда, откуда купили: на ту же страницу витрины. Лот
-    * открыли по номеру из объявления, мимо витрины, — в меню аукциона. */
+  /** С карточки лота или после покупки: на ту же страницу витрины, если зашли
+    * с неё. Лот по номеру из объявления, мимо витрины, — в меню аукциона. */
+  private def leaveLotView(user: User, renderer: Renderer): Task[Unit] =
+    readScene(user).flatMap { scene =>
+      if (scene.page.isDefined) showBrowse(user, renderer)
+      else resetScene(user) *> showMenu(user, renderer)
+    }
+
   private def afterPurchase(user: User, renderer: Renderer): Task[Unit] =
-    readScene(user).flatMap(scene =>
-      if (scene.page.isDefined) showBrowse(user, renderer) else showMenu(user, renderer))
+    leaveLotView(user, renderer)
 
   // ── Выставление ────────────────────────────────────────────────────────────
 
