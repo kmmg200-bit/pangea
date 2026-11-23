@@ -151,7 +151,10 @@ object StrayCasketSpec extends ZIOSpecDefault {
         _      <- stray(d, TestInventoryRepository.withItems(Nil), c).enter(testUser, r)
         screen <- r.sentScreens.map(_.last)
       } yield assertTrue(screen.text.contains("щёлкает зубами, чуя камни у вас при себе")) &&
-              assertTrue(screen.text.contains(Difficulty.render(7)) && Difficulty.render(7) == "сложность 7 ур.") &&
+              assertTrue(
+                screen.text.contains(Difficulty.render(7)) &&
+                Difficulty.render(7) == "Сложность: 💀🦴🦴 (7 ур.)"
+              ) &&
               assertTrue(screen.choices.map(_.id) == List("StrayOffer", "StrayShoo"))
     },
 

@@ -30,7 +30,7 @@ object InventoryCardTextSpec extends ZIOSpecDefault {
         text     = InventoryState.cardText(content, QuestItemKind.item(QuestItemKind.MurlocVillageMap), hero, NpcQuests.empty)
       } yield assertTrue(
         text.contains(QuestItemKind.MurlocVillageMap.description),
-        text.contains("сложность"),
+        text.contains("Сложность:") && text.contains("ур.)"),
         !text.contains("Нет характеристик")
       )
     },
