@@ -2737,26 +2737,6 @@ case class BattleState(
       })
     ).flatten
 
-  /** Итоговое снижение урона у героя: его защита против атаки моба, плюс бонус
-    * «Заслона», минус то, что обгрызли морозные удары моба (Холод режет снижение
-    * в п.п. и не затухает — так же, как прок Холода у героя режет снижение моба). */
-  private def heroDamageReduction(
-      hero: Hero,
-      battle: SoloPveBattle,
-      buffed: FightStats,
-      monsterAtk: Long,
-      nowMs: Long
-  ): Double = {
-    val base = BattleState.damageReduction(
-      protection  = buffed.defence,
-      defenderInt = hero.effectiveBaseStats(nowMs).int,
-      // «Интеллект» моба в атаке = его атака (у мобов нет отдельного стата интеллекта).
-      attackerInt = monsterAtk,
-      bonusPct    = battle.heroBattleState.reductionBonusPct
-    )
-    (base - battle.effects.heroColdDefenceCut / 100.0).max(0.0)
-  }
-
   /** Насколько защита моба срежет удар героя — одинаково для базовой атаки и для
     * умений, которые режутся защитой. Порядок: пробитие героя сначала съедает саму
     * защиту (уже с учётом %-дебафа комбо), остаток идёт в общую формулу против
@@ -3424,7 +3404,7 @@ case class BattleState(
     for {
             spread <- Random.nextLongBetween(80L, 121L)
             rawDamage = (monsterAttack(battle) * spread / 100L * Achievement.damagePct(hero) / 100L).max(1L)
-            reduction = heroDamageReduction(hero, battle, buffedEff, monster.fightStats.atk, nowMs)
+            reduction = BattleState.heroDamageReduction(hero, battle, buffedEff, monster.fightStats.atk, nowMs)
             // Поднятый щит принимает три четверти того, что прошло сквозь защиту.
             baseReduced = BattleState.shieldCut(battle.heroBlockPct, (rawDamage * (1.0 - reduction)).toLong.max(1L))
             // «Непробиваемый»: 20% шанс срезать полученный урон обычной атаки вдвое.
@@ -5547,7 +5527,7 @@ case class BattleState(
           for {
             spread <- Random.nextLongBetween(80L, 121L)
             rawDamage = (monster.fightStats.atk * spread / 100L).max(1L)
-            reduction = heroDamageReduction(hero, battle, buffedEff, monster.fightStats.atk, nowMs)
+            reduction = BattleState.heroDamageReduction(hero, battle, buffedEff, monster.fightStats.atk, nowMs)
             baseReduced = (rawDamage * (1.0 - reduction)).toLong.max(1L)
             // «Непробиваемый»: 20% шанс срезать урон обычной атаки вдвое.
             impenTriggered <- chanceRoll(hero.passives.hasImpenetrable, PassiveKind.Impenetrable.TriggerPct)
@@ -7350,12 +7330,8 @@ case class BattleState(
     val monsterDodgePct = mobDodgeChance(buffedEff.accuracy, battle).toInt
     val mobHitPct       = 100 - playerDodgePct
     val heroHitPct      = 100 - monsterDodgePct
-    val reductionPct = (BattleState.damageReduction(
-      protection = buffedEff.defence,
-      defenderInt = hero.effectiveBaseStats(nowMs).int,
-      attackerInt = battle.monsterStats.atk,
-      bonusPct = battle.heroBattleState.reductionBonusPct
-    ) * 100.0).toInt
+    val reductionPct = (BattleState.heroDamageReduction(
+      hero, battle, buffedEff, battle.monsterStats.atk, nowMs) * 100.0).toInt
     // Защита моба показывается так же, как своя, — процентом снижения урона, и
     // уже с учётом пробития героя: сырое число защиты игроку ни о чём не говорит,
     // ведь один и тот же моб против сильного героя держит хуже.
@@ -8349,6 +8325,25 @@ object BattleState {
     val raw     = if (denom <= 0.0) 0.0 else numer / denom
     val boosted = raw + bonusPct / 100.0
     boosted.max(0.0).min(0.7)
+  }
+
+  /** Итоговое снижение урона у героя: его защита против атаки моба, плюс бонус
+    * «Заслона», минус то, что обгрызли морозные удары (холод режет снижение в
+    * п.п. и не затухает). То же число, что на экране боя в `heroReduction`. */
+  def heroDamageReduction(
+      hero: Hero,
+      battle: SoloPveBattle,
+      buffed: FightStats,
+      monsterAtk: Long,
+      nowMs: Long
+  ): Double = {
+    val base = damageReduction(
+      protection  = buffed.defence,
+      defenderInt = hero.effectiveBaseStats(nowMs).int,
+      attackerInt = monsterAtk,
+      bonusPct    = battle.heroBattleState.reductionBonusPct
+    )
+    (base - battle.effects.heroColdDefenceCut / 100.0).max(0.0)
   }
 
   /** Мощь бойца — его ударный потенциал: у героя это сила втрое плюс атака (ровно

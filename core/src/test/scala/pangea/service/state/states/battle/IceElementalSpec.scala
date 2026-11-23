@@ -149,6 +149,18 @@ object IceElementalSpec extends ZIOSpecDefault {
               assertTrue(u.fightStats.hp < h.fightStats.hp && after.bossTurn == 1)
     },
 
+    test("холод: на экране боя процент защиты героя падает на 10 п.п.") {
+      val h     = hero().copy(fightStats = hero().fightStats.copy(defence = 8000L))
+      val fight = iceBattle(h, turn = 0)
+      val buff  = fight.heroBattleState.applyTo(h.effectiveFightStats(0L))
+      val atk   = fight.monsterStats.atk
+      val base  = BattleState.heroDamageReduction(h, fight, buff, atk, 0L)
+      val cold  = BattleState.heroDamageReduction(
+        h, fight.copy(effects = fight.effects.copy(heroColdDefenceCut = Element.Cold.DefenceReductionCut)),
+        buff, atk, 0L)
+      assertTrue((base * 100).toInt - (cold * 100).toInt == Element.Cold.DefenceReductionCut)
+    },
+
     test("ледяной шип по горящему гасит пламя и сам не ложится; защитный отвар от холода бережёт") {
       val h = hero()
       val b = iceBattle(h, turn = 0)
