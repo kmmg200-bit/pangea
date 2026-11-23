@@ -7414,7 +7414,7 @@ case class BattleState(
     val heroArmorRegen = if (armorRegen > 0) s" (+$armorRegen)" else ""
     val text = content.format(
       if (battle0.group.paired) "battle.enter.text" else "battle.enter.noPair",
-      "monster"         -> battle.monsterName,
+      "monster"         -> battle.cardMonsterName,
       "monsterRace"     -> battle.toMonster.raceName,
       "monsterHp"       -> battle.monsterCurrentHp.toString,
       "monsterMax"      -> battle.monsterStats.hp.toString,
