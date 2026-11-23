@@ -150,6 +150,22 @@ object AuctionSpec extends ZIOSpecDefault {
               assertTrue(!screens.exists(_.text.contains("торговом чате Кинэта")))
     },
 
+    test("с витрины открыл лот и назад — та же страница, не меню") {
+      val many = (1L to 12L).toList.map(lotOf(_))
+      for {
+        f      <- auction(lots = many)
+        _      <- f.state.action(testUser, tap("AuctionBrowse"), f.renderer)
+        _      <- f.state.action(testUser, tap("AuctionNext"), f.renderer)
+        second <- f.renderer.sentScreens.map(_.last)
+        lotId   = second.choices.find(_.id == "ShowLot").flatMap(_.data.get("id")).getOrElse("")
+        _      <- f.state.action(testUser, tap("ShowLot", "id" -> lotId), f.renderer)
+        _      <- f.state.action(testUser, tap("AuctionReturnBrowse"), f.renderer)
+        after  <- f.renderer.sentScreens.map(_.last)
+      } yield assertTrue(lotId.nonEmpty) &&
+        assertTrue(after.text.startsWith("Лоты в продаже. Страница 2/2") &&
+          after.choices.count(_.id == "ShowLot") == 4)
+    },
+
     test("купил с витрины — остаёшься на той же странице, а не в меню аукциона") {
       val many = (1L to 12L).toList.map(lotOf(_))
       for {
@@ -236,10 +252,10 @@ object AuctionSpec extends ZIOSpecDefault {
               // описание вещи стоит до цены, а не после срока торгов
               assertTrue(card.last.text.contains("⚔ +7") && card.last.text.contains("🎯 +2")) &&
               assertTrue(card.last.text.indexOf("⚔ +7") < card.last.text.indexOf("Цена:")) &&
-              assertTrue(card.last.choices.map(_.id) == List("BuyLot", "Auction")) &&
+              assertTrue(card.last.choices.map(_.id) == List("BuyLot", "AuctionReturnBrowse")) &&
               // ничего не куплено: карточка только показывает
               assertTrue(f.lots.snapshot.size == 1) &&
-              assertTrue(confirm.last.choices.map(_.id) == List("BuyLotYes", "Auction"))
+              assertTrue(confirm.last.choices.map(_.id) == List("BuyLotYes", "AuctionReturnBrowse"))
     },
 
     test("на карточке лота — что надето в тот же слот; слот пуст — сравнения нет") {
@@ -264,7 +280,7 @@ object AuctionSpec extends ZIOSpecDefault {
         _       <- f.state.action(testUser, text("7"), f.renderer)
         screens <- f.renderer.sentScreens
       } yield assertTrue(screens.last.text.contains("№7") && screens.last.text.contains("⚔ +7")) &&
-              assertTrue(screens.last.choices.map(_.id) == List("BuyLot", "Auction"))
+              assertTrue(screens.last.choices.map(_.id) == List("BuyLot", "AuctionReturnBrowse"))
     },
 
     test("номер выкупленного лота — просто строчка, без экрана с «Назад»") {
@@ -438,7 +454,7 @@ object AuctionSpec extends ZIOSpecDefault {
           _       <- f.state.action(testUser, tap("BuyLotYes", "id" -> "1"), f.renderer)
           buyer   <- f.heroDao.getHeroByUserId(userId)
           sellerH <- f.heroDao.getHeroByUserId(sellerUs)
-        } yield assertTrue(confirm.last.choices.map(_.id) == List("BuyLotYes", "Auction") && confirm.last.inline) &&
+        } yield assertTrue(confirm.last.choices.map(_.id) == List("BuyLotYes", "AuctionReturnBrowse") && confirm.last.inline) &&
                 assertTrue(buyer.get.silver == 700L) &&
                 // продавцу на руки ничего не упало: деньги в ячейке
                 assertTrue(sellerH.get.silver == 0L && f.bank.silverSnapshot == 300L) &&
