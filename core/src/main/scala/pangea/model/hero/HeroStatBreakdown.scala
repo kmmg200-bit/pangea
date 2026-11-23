@@ -16,23 +16,6 @@ object HeroStatBreakdown {
   private def line(label: String, value: Long, acc: List[Line]): List[Line] =
     if (value != 0L) acc :+ Line(label, value) else acc
 
-  private val equipSlots: List[(String, Equipment => Item)] = List(
-    "Шлем"        -> (_.helmet),
-    "Наплечники"  -> (_.shoulderPads),
-    "Нагрудник"   -> (_.chestPlate),
-    "Браслеты"    -> (_.bracelets),
-    "Перчатки"    -> (_.gloves),
-    "Штаны"       -> (_.pants),
-    "Сапоги"      -> (_.boots),
-    "Амулет"      -> (_.amulet),
-    "Кольцо 1"    -> (_.firstRing),
-    "Кольцо 2"    -> (_.secondRing),
-    "Пояс"        -> (_.belt),
-    "Правая рука" -> (_.weapon),
-    "Левая рука"  -> (_.leftHand),
-    "Доп. оружие" -> (_.additionalWeapon)
-  )
-
   private def fight(
     hero:     Hero,
     nowMs:    Long,
@@ -49,7 +32,7 @@ object HeroStatBreakdown {
     val eqSum = hero.equipment.allItems.map(itemStat).sum
   val own     = stored - eqSum
     var lines   = line("Собственная", own, Nil)
-    lines = equipSlots.foldLeft(lines) { case (ls, (name, pick)) =>
+    lines = Equipment.labeledSlots.foldLeft(lines) { case (ls, (name, pick)) =>
       line(name, itemStat(pick(hero.equipment)), ls)
     }
     var acc = stored

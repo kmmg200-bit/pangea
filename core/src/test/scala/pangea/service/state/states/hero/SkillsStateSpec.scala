@@ -69,7 +69,8 @@ object SkillsStateSpec extends ZIOSpecDefault {
         _        <- state.action(testUser, tap("PassiveSkill_Healer_body"), renderer)
         healer   <- renderer.sentScreens.map(_.last)
       } yield assertTrue(list.text.startsWith("🎓 Эффекты")) &&
-              assertTrue(list.choices.map(_.label).take(3) == List("Хитрый удар", "Таран (на теле)", "Целитель (на теле)")) &&
+              assertTrue(list.choices.map(_.label).take(3) ==
+                List("Хитрый удар (Правая рука)", "Таран (на теле)", "Целитель (на теле)")) &&
               assertTrue(ram.text.contains("Понимание: 12.") && healer.text.contains("Понимание: 3."))
     },
 
@@ -92,7 +93,8 @@ object SkillsStateSpec extends ZIOSpecDefault {
         _        <- state.action(testUser, tap("PassiveSkill_Jeweler_body"), renderer)
         ringBody <- renderer.sentScreens.map(_.last)
         labels    = list.choices.map(_.label)
-      } yield assertTrue(labels.take(4) == List("Хитрый удар", "Хитрый удар (на теле)", "Ювелир", "Ювелир (на теле)")) &&
+      } yield assertTrue(labels.take(4) == List(
+                "Хитрый удар (Правая рука)", "Хитрый удар (на теле)", "Ювелир (Кольцо 1)", "Ювелир (на теле)")) &&
               assertTrue(onItem.text.contains("Это же умение выжжено у вас на теле. Одинаковые умения не складываются — действует одно.")) &&
               assertTrue(onBody.text.contains("Это же умение есть и на надетой вещи. Одинаковые умения не складываются — действует одно.")) &&
               assertTrue(ringBody.text.contains("Это же умение есть и на надетой вещи."))
@@ -112,8 +114,8 @@ object SkillsStateSpec extends ZIOSpecDefault {
         labels   = screens.last.choices.map(_.label)
       } yield assertTrue(ids.contains("ActiveSkill_10")) &&
               assertTrue(ids.contains("ActiveSkill_20")) &&
-              assertTrue(labels.contains(Skill.SweepingStrike.label)) &&
-              assertTrue(labels.contains(Skill.MinorHeal.label))
+              assertTrue(labels.contains(s"${Skill.SweepingStrike.label} (Правая рука)")) &&
+              assertTrue(labels.contains(s"${Skill.MinorHeal.label} (Нагрудник)"))
     },
 
     test("enter с пассивным кольцом → кнопка пассивки с её названием") {
@@ -126,10 +128,10 @@ object SkillsStateSpec extends ZIOSpecDefault {
         _       <- state.enter(testUser, renderer)
         screens <- renderer.sentScreens
       } yield assertTrue(screens.last.choices.exists(c =>
-        c.id == "PassiveSkill_Jeweler" && c.label == PassiveKind.Jeweler.label))
+        c.id == "PassiveSkill_Jeweler" && c.label == s"${PassiveKind.Jeweler.label} (Кольцо 1)"))
     },
 
-    test("два предмета с одной пассивкой в разных слотах → одна кнопка «×2», в карточке — что не складываются") {
+    test("два предмета с одной пассивкой в разных слотах → одна кнопка, слоты в подписи; в карточке — что не складываются") {
       val eq = TestFixtures.emptyEquipment.copy(
         boots = passiveItem(ItemType.Boots, PassiveKind.Stash, id = 40L),
         pants = passiveItem(ItemType.Pants, PassiveKind.Stash, id = 41L)
@@ -142,11 +144,12 @@ object SkillsStateSpec extends ZIOSpecDefault {
         _       <- state.action(testUser, tap("PassiveSkill_Stash"), renderer)
         card    <- renderer.sentScreens.map(_.last)
       } yield assertTrue(screens.last.choices.count(_.id == "PassiveSkill_Stash") == 1) &&
-              assertTrue(screens.last.choices.find(_.id == "PassiveSkill_Stash").exists(_.label == s"${PassiveKind.Stash.label} ×2")) &&
-              assertTrue(card.text.contains("Надето вещей с этим умением: 2. Одинаковые умения не складываются — действует одно."))
+              assertTrue(screens.last.choices.find(_.id == "PassiveSkill_Stash").exists(
+                _.label == s"${PassiveKind.Stash.label} (Штаны, Сапоги)")) &&
+              assertTrue(card.text.contains("Штаны, Сапоги. Одинаковые умения не складываются — действует одно."))
     },
 
-    test("одно умение с двух вещей — одна кнопка «×2»; с одной вещи — без числа") {
+    test("одно умение с двух вещей — одна кнопка, оба слота в подписи; с одной вещи — один слот") {
       val both = TestFixtures.emptyEquipment.copy(
         weapon   = weaponWith(Skill.CunningStrike, id = 10L),
         leftHand = weaponWith(Skill.CunningStrike, id = 11L)
@@ -166,9 +169,10 @@ object SkillsStateSpec extends ZIOSpecDefault {
         once  <- oneRenderer.sentScreens.map(_.last.choices.map(_.label))
         _     <- one.action(testUser, tap("ActiveSkill_10"), oneRenderer)
         card  <- oneRenderer.sentScreens.map(_.last)
-      } yield assertTrue(twice == List(s"${Skill.CunningStrike.label} ×2")) &&
-              assertTrue(once.take(2) == List(Skill.CunningStrike.label, PassiveKind.Stash.label)) &&
-              assertTrue(!card.text.contains("Надето вещей"))
+      } yield assertTrue(twice == List(s"${Skill.CunningStrike.label} (Правая рука, Левая рука)")) &&
+              assertTrue(once.take(2) == List(
+                s"${Skill.CunningStrike.label} (Правая рука)", s"${PassiveKind.Stash.label} (Сапоги)")) &&
+              assertTrue(!card.text.contains("Одинаковые умения"))
     },
 
     test("набор — с числом надетых частей: «Дикое пламя 6»") {

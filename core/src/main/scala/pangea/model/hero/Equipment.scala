@@ -178,6 +178,36 @@ case class Equipment(
 
 object Equipment {
 
+  /** Имена слотов снаряжения — как в экипировке и на раскладке статов. */
+  val labeledSlots: List[(String, Equipment => Item)] = List(
+    "Шлем"        -> (_.helmet),
+    "Наплечники"  -> (_.shoulderPads),
+    "Нагрудник"   -> (_.chestPlate),
+    "Браслеты"    -> (_.bracelets),
+    "Перчатки"    -> (_.gloves),
+    "Штаны"       -> (_.pants),
+    "Сапоги"      -> (_.boots),
+    "Амулет"      -> (_.amulet),
+    "Кольцо 1"    -> (_.firstRing),
+    "Кольцо 2"    -> (_.secondRing),
+    "Пояс"        -> (_.belt),
+    "Правая рука" -> (_.weapon),
+    "Левая рука"  -> (_.leftHand),
+    "Доп. оружие" -> (_.additionalWeapon)
+  )
+
+  /** Слот, в котором лежит эта надетая вещь. */
+  def slotName(eq: Equipment, item: Item): Option[String] =
+    if (item.itemType == ItemType.NoItem) None
+    else labeledSlots.collectFirst { case (name, pick) if pick(eq).id == item.id => name }
+
+  /** Все слоты, где стоит вещь с заданным свойством. */
+  def slotNames(eq: Equipment, has: Item => Boolean): List[String] =
+    labeledSlots.flatMap { case (name, pick) =>
+      val it = pick(eq)
+      Option.when(it.itemType != ItemType.NoItem && has(it))(name)
+    }
+
   /** Ни одной вещи: так выглядит, например, новая магическая стойка в доме. */
   val empty: Equipment = Equipment(Item.NoItem, Item.NoItem, Item.NoItem, Item.NoItem, Item.NoItem, Item.NoItem,
     Item.NoItem, Item.NoItem, Item.NoItem, Item.NoItem, Item.NoItem, Item.NoItem, Item.NoItem, Item.NoItem)
