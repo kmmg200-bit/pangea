@@ -367,7 +367,7 @@ object VillageArtifactSpec extends ZIOSpecDefault {
               assertTrue(out == StateType.VillageTrail && t2 == t)
     },
 
-    test("пал в стане: след остыл, контракт при герое; проснуться в лабиринте со строкой стана") {
+    test("пал в стане: контракт сорван; проснуться в лабиринте со строкой стана") {
       for {
         c   <- content
         d   <- dao()
@@ -380,8 +380,8 @@ object VillageArtifactSpec extends ZIOSpecDefault {
         q   <- questOf(d)
       } yield assertTrue(sd.flatMap(_.hcursor.get[List[String]]("wakeLines").toOption).contains(List("village.artifact.death"))) &&
               assertTrue(sd.exists(_.hcursor.downField("wakeTo").failed) && sd.exists(_.as[ArtifactTrail].isLeft)) &&
-              assertTrue(q.village.exists(v => v.quest == VillageQuest.StolenArtifact && !v.done) && inv.snapshot.nonEmpty) &&
-              assertTrue(c.text("village.artifact.death").contains("погоню придётся начинать заново"))
+              assertTrue(q.village.isEmpty && inv.snapshot.isEmpty) &&
+              assertTrue(c.text("village.artifact.death").contains("контракт деревни сорван"))
     },
 
     test("контракта на артефакт нет — на следу пусто: только «В лабиринт»") {

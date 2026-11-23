@@ -18,6 +18,7 @@ import pangea.repository.item.ItemRepository
 import pangea.service.parcel.Parcels
 import pangea.model.trauma.{Trauma, TraumaRoll}
 import pangea.service.state.states.LootState.LootData
+import pangea.service.schedule.Scheduler
 import pangea.service.state.states.marisa.MarisaHuntState
 import pangea.service.state.{AzatData, BarrelThievesQuest, BartiDeliveryQuest, BartiDoorQuest, BartiPitQuest, BartiRoofQuest, BartiSaltQuest, BeltContents, BigDealQuest, BramblQuest, HedgeSongQuest, HotGoodsQuest, JorgenQuest, LostSquadQuest, MarisaQuest,
   FaelinQuest, MurlocQuest, PlukhQuest, QuestOutcomeLog, State, StoryFaceQuest, StoryClearingQuest, StoryCollectorQuest, StoryFeedQuest, StoryFurnaceQuest, StoryListQuest, StoryMarkQuest, StoryMorningQuest, StoryNewcomerQuest, StoryPowderQuest,
@@ -36,7 +37,8 @@ case class DeathState(
   // Пал в засаде у каравана — амулет от каджитов: сохранить и, если не влез в
   // сумку, — посылкой (см. BigDealQuest.pay).
   itemRepo:      Option[ItemRepository] = None,
-  parcels:       Option[Parcels] = None
+  parcels:       Option[Parcels] = None,
+  scheduler:     Option[Scheduler] = None
 ) extends State {
 
   override def targetStates: Set[StateType] = Set(StateType.Rest)
@@ -83,20 +85,19 @@ case class DeathState(
       // герое — к корням можно вернуться; проснуться в лабиринте.
       faelinRoots   = battle.exists(_.story.contains(FaelinQuest.RootsStory))
       // Смерть в налёте на деревню: штрафы обычные, деревни больше нет —
-      // проснуться в лабиринте. Смерть в логове беды деревни (банда, гнездо):
-      // контракт при герое, логово ждёт — тоже в лабиринте, со строкой логова.
+      // проснуться в лабиринте. Смерть в логове беды деревни (банда, гнездо),
+      // в засаде на караван или в стане воров артефакта: контракт сорван —
+      // в лабиринте, со строкой боя. Исключение — охотники за головой (ниже).
       villageRaid   = battle.exists(_.story.contains(Villages.RaidStory))
       villageLair   = battle.flatMap(b => VillageLair.all.find(l => b.story.contains(l.story)))
-      // Смерть в засаде на караван деревни: караван разграблен, контракт
-      // сорван (так решил пользователь) — проснуться в лабиринте со строкой засады.
       villageCaravan = battle.exists(_.story.contains(Villages.CaravanStory))
-      // Смерть в стане воров артефакта: контракт при герое, но след остыл —
-      // погоню начинать заново; проснуться в лабиринте со строкой стана.
       villageArtifact = battle.exists(_.story.contains(Villages.ArtifactStory))
       // Смерть в бою с охотниками за головами на выходе с заставы: голову главаря
       // они забрали, а логово всё равно разбито — к старосте за платой без
       // доплаты; проснуться в лабиринте со строкой охотников.
       villageHunters = battle.exists(_.story.contains(Villages.HuntersStory))
+      villageContractFailed =
+        !villageHunters && (villageCaravan || villageArtifact || villageLair.isDefined)
       // Смерть на складе у причала: штрафы обычные, украденное всё ещё у банды —
       // по следу можно идти снова; проснуться в порту.
       thieves       = battle.exists(_.story.contains(BarrelThievesQuest.FightStory))
@@ -218,9 +219,8 @@ case class DeathState(
       dealStats    <- if (dealPaid.isDefined) QuestOutcomeLog.recordAndCount(outcomes, content, hero, QuestOutcome.BigDealFell)
                       else ZIO.none
       dealNote      = dealPaid.map(QuestOutcomeLog.withStats(_, dealStats))
-      // Караван разграблен: береста уходит из сумки, договор — из журнала, и
-      // деревни снова встречаются.
-      _            <- ZIO.when(villageCaravan)(Villages.abandon(heroDao, inventoryRepo, user.userId, hero))
+      _            <- ZIO.when(villageContractFailed)(
+                        Villages.failContract(heroDao, inventoryRepo, user.userId, hero, scheduler))
       _            <- ZIO.when(villageHunters)(Villages.dropHead(inventoryRepo, hero))
       wake          = if (collector) Json.obj(
                         "wakeTo"    -> (StateType.GlobalMap: StateType).asJson,
