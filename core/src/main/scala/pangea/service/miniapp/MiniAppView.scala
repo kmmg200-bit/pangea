@@ -7,7 +7,7 @@ import pangea.model.auction.{AuctionCurrency, AuctionLot}
 import pangea.model.artifact.{Artifact, HeroArtifacts}
 import pangea.model.bank.BankVault
 import pangea.model.barrel.Barrel
-import pangea.model.hero.{Achievement, AzatState, CubeStatus, Hero, HeroCard, Knowledge, LoreData}
+import pangea.model.hero.{Achievement, AzatState, CubeStatus, Hero, HeroCard, HeroStatBreakdown, Knowledge, LoreData}
 import pangea.model.home.{HomeData, HomeRates, House}
 import pangea.model.inventory.Inventory
 import pangea.model.item.{BeltSlot, BrewEffect, Bundling, Chisel, GemBreaking, Item, ItemDetails, ItemStack, ItemType, MaterialKind, Rarity}
@@ -278,9 +278,16 @@ object MiniAppView {
     * места в сумке. */
   final case class Funds(silver: Long, bagFree: Long)
 
+  /** Строка раскладки стата — подпись и прибавка (может быть отрицательной). */
+  final case class StatLineView(label: String, value: Long)
+
+  /** Боевой стат: итог и из чего сложился (экран «В бою»). */
+  final case class StatDetailView(current: Long, lines: List[StatLineView])
+
   /** Характеристика: сейчас — со всем, что действует, и родная — до расы, травм
-    * и зелий. В боте родная стоит первой, а текущая в скобках. */
-  final case class StatView(current: Long, native: Long)
+    * и зелий; `lines` — раскладка по клику. В боте родная стоит первой, а
+    * текущая в скобках. */
+  final case class StatView(current: Long, native: Long, lines: List[StatLineView])
 
   /** Запас — здоровье, броня, энергия: сколько есть из скольких. */
   final case class PoolView(current: Long, max: Long)
@@ -326,10 +333,10 @@ object MiniAppView {
     hp:            PoolView,
     armor:         PoolView,
     energy:        PoolView,
-    attack:        Long,
-    defence:       Long,
-    accuracy:      Long,
-    evasion:       Long,
+    attack:        StatDetailView,
+    defence:       StatDetailView,
+    accuracy:      StatDetailView,
+    evasion:       StatDetailView,
     upgradePoints: Long,
     traumaLeft:    Option[String],
     traumas:       List[TraumaView],
@@ -469,7 +476,9 @@ object MiniAppView {
   implicit val tradeActionEncoder: Encoder[TradeActionView] = deriveEncoder
   implicit val heroNameEncoder:    Encoder[HeroNameView]    = deriveEncoder
   implicit val heroNamesEncoder:   Encoder[HeroNamesView]   = deriveEncoder
-  implicit val statEncoder:      Encoder[StatView]      = deriveEncoder
+  implicit val statLineEncoder:    Encoder[StatLineView]    = deriveEncoder
+  implicit val statDetailEncoder: Encoder[StatDetailView] = deriveEncoder
+  implicit val statEncoder:        Encoder[StatView]        = deriveEncoder
   implicit val poolEncoder:      Encoder[PoolView]      = deriveEncoder
   implicit val traumaEncoder:    Encoder[TraumaView]    = deriveEncoder
   implicit val restedEncoder:    Encoder[RestedView]    = deriveEncoder
@@ -884,6 +893,12 @@ object MiniAppView {
 
   /** «Персонаж». Благословение и быстрые отдыхи — из состояния храма (`azat`),
     * знания — из `lore`, остальное — с героя: карточка, эффекты, достижения. */
+  private def statLines(v: HeroStatBreakdown.View): List[StatLineView] =
+    v.lines.map(l => StatLineView(l.label, l.value))
+
+  private def statDetail(v: HeroStatBreakdown.View): StatDetailView =
+    StatDetailView(v.current, statLines(v))
+
   def character(h: Hero, azat: AzatState, lore: LoreData, content: SceneContent, now: Long): CharacterView = {
     val c = h.card(now)
     CharacterView(
@@ -897,17 +912,17 @@ object MiniAppView {
       rested        = c.restedLeftMs.map(ms => RestedView(HomeRates.RestedExpPct, HeroCard.restedLeft(ms))),
       blessingLeft  = azat.blessingUntil.filter(_ > now).map(until => TimeLeft.format(until - now)),
       instantRests  = azat.instantRests,
-      str           = StatView(c.stats.str, c.native.str),
-      vit           = StatView(c.stats.vit, c.native.vit),
-      agi           = StatView(c.stats.agi, c.native.agi),
-      int           = StatView(c.stats.int, c.native.int),
+      str           = StatView(c.stats.str, c.native.str, statLines(HeroStatBreakdown.base(h, now, "str"))),
+      vit           = StatView(c.stats.vit, c.native.vit, statLines(HeroStatBreakdown.base(h, now, "vit"))),
+      agi           = StatView(c.stats.agi, c.native.agi, statLines(HeroStatBreakdown.base(h, now, "agi"))),
+      int           = StatView(c.stats.int, c.native.int, statLines(HeroStatBreakdown.base(h, now, "int"))),
       hp            = PoolView(c.hp, c.maxHp),
       armor         = PoolView(c.armor, c.maxArmor),
       energy        = PoolView(c.energy, c.maxEnergy),
-      attack        = c.fight.atk,
-      defence       = c.fight.defence,
-      accuracy      = c.fight.accuracy,
-      evasion       = c.fight.evasion,
+      attack        = statDetail(HeroStatBreakdown.attack(h, now)),
+      defence       = statDetail(HeroStatBreakdown.defence(h, now)),
+      accuracy      = statDetail(HeroStatBreakdown.accuracy(h, now)),
+      evasion       = statDetail(HeroStatBreakdown.evasion(h, now)),
       upgradePoints = c.upgradePoints,
       traumaLeft    = c.traumaLeftMs.map(HeroCard.traumaLeft),
       traumas       = c.traumas.map(t => TraumaView(t.name, t.penalties.shortText)),
