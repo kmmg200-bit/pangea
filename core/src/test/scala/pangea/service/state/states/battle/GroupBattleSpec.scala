@@ -717,6 +717,20 @@ object GroupBattleSpec extends ZIOSpecDefault {
               assertTrue(screens.contains("пал."))
     },
 
+    test("умение добило соседа, удар — последнего: в логе обе смерти") {
+      val base = heroWithSkills(Skill.SweepingStrike, Skill.MinorHeal)
+      val h    = base.copy(fightStats = base.fightStats.copy(atk = 100_000L))
+      for {
+        t <- makeState(h, groupFor(h, 1000L, 5L))
+        (state, _, r) = t
+        _       <- quietRound(99, 99) *> TestRandom.feedLongs(100L)
+        result  <- state.action(testUser, aimed("Skill_101", 2), r)
+        screens <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(result == StateType.Loot) &&
+              assertTrue(screens.linesIterator.count(_.contains("☠")) == 2 &&
+                screens.linesIterator.count(_.contains("пал.")) == 2)
+    },
+
     test("понимание руны множит урон умения: 1000 понимания — вдвое, дуга соседу тоже вдвое") {
       val h0 = heroWithSkills(Skill.SweepingStrike, Skill.MinorHeal)
       val h  = h0.copy(runes = pangea.model.rune.RuneData.empty.copy(

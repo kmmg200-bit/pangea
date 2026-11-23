@@ -3784,8 +3784,14 @@ case class BattleState(
     *
     * Раны героя здесь не тикают: кончится ли бой, решит промоут. Пойдёт бой
     * дальше — они тикают там (см. [[dueWounds]]). */
-  private def victoryByHero(hero: Hero, battle: SoloPveBattle, log: Vector[String], nowMs: Long, skip: Set[Long]): TurnResult =
-    TurnResult(endOfRoundHero(hero, battle, nowMs), battle.tickBuffs(skip), log, Outcome.Victory, woundsDue = true)
+  private def victoryByHero(hero: Hero, battle: SoloPveBattle, log: Vector[String], nowMs: Long, skip: Set[Long]): TurnResult = {
+    // Последний в группе: промоута не будет — «☠ пал» пишем здесь, один раз.
+    val withLast =
+      if (battle.group.hasFormation && battle.monsterCurrentHp <= 0L && battle.promoteNext.isEmpty)
+        log :+ content.format("battle.group.sideSlain", "monster" -> battle.monsterName)
+      else log
+    TurnResult(endOfRoundHero(hero, battle, nowMs), battle.tickBuffs(skip), withLast, Outcome.Victory, woundsDue = true)
+  }
 
   /** Раны героя в раунде, который он сам кончил, добив активного (см.
     * [[victoryByHero]]): до конца хода, где они тикают, — ответа моба в паре
