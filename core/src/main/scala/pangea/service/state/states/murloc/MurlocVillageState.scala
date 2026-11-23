@@ -105,7 +105,7 @@ case class MurlocVillageState(
       hero    = if (plukh) hero0.copy(squad = hero0.squad.sentAway(AllyKind.Murloc, now)) else hero0
       _      <- ZIO.when(plukh)(heroDao.updateSquad(user.userId, hero.squad))
       seed   <- Random.nextLong
-      // Сила деревни — по сложности задания (⚰️), а не по уровню героя.
+      // Сила деревни — по сложности задания, а не по уровню героя.
       (front, queue, _) = MurlocQuest.raidMonsters(MurlocQuest.MapDifficulty, Rng(seed))
       frontEnergies <- ZIO.foreach(front)(startEnergy)
       queueSlots    <- ZIO.foreach(queue)(m => startEnergy(m).map(e => slot(m, e)))

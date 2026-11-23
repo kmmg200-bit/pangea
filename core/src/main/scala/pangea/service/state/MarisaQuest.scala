@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit
   * [[pangea.service.state.states.marisa.MarisaHuntState]]. */
 object MarisaQuest {
 
-  /** Сложность задания — три кости. */
+  /** Сложность задания — 3 ур. */
   val LetterDifficulty: Int = 3
 
   /** Ключ сюжетного боя с коллектором (см. `SoloPveBattle.story`). */

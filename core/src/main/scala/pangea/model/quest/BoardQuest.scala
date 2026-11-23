@@ -42,7 +42,7 @@ object BoardTier extends Enum[BoardTier] {
   }
 }
 
-/** Вид задания с доски. Сложность показывается знаками [[Difficulty.render]]. */
+/** Вид задания с доски. Сложность — [[Difficulty.render]]. */
 sealed abstract class BoardKind(val key: String, val difficulty: Int) extends EnumEntry {
   /** Называет ли задание расу: у трофейного она в самом тексте. */
   def needsRace: Boolean = false

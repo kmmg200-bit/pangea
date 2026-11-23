@@ -115,7 +115,7 @@ object BarrelThievesSpec extends ZIOSpecDefault {
               assertTrue(b.thievesSnapshot.flatMap(_.stolen).contains(StolenGoods(List(stoneSword, plainHelm), 3000L))) &&
               assertTrue(b.thievesSnapshot.exists(_.rolledAt == day + 1000L)) &&
               assertTrue(BarrelThievesQuest.askAround(q) && BarrelThievesQuest.gangIndex(q) == 0) &&
-              assertTrue(screen.text.contains("Крышка сорвана") && screen.text.contains("Сложность: " + Difficulty.render(12))) &&
+              assertTrue(screen.text.contains("Крышка сорвана") && screen.text.contains(Difficulty.render(12))) &&
               assertTrue(screen.text.contains("не спрашивает, с кого оно снято") && !screen.text.contains("Торговой площади")) &&
               assertTrue(screen.choices.map(_.id).contains("BarrelTakeClue") && !screen.choices.exists(_.id == "DepositItemsMenu"))
     },
@@ -196,7 +196,7 @@ object BarrelThievesSpec extends ZIOSpecDefault {
         said  <- texts(r)
         _     <- d.writeReturnState(userId, Some(StateType.HarborQuarter))
         went  <- st.action(testUser, tap("BarrelTrail"), r)
-      } yield assertTrue(ask.contains("Сложность: " + Difficulty.render(23)) && ask.contains("Уж он-то узнает, чья это работа")) &&
+      } yield assertTrue(ask.contains(Difficulty.render(23)) && ask.contains("Уж он-то узнает, чья это работа")) &&
               assertTrue(card.choices.exists(_.id == "BarrelTrail") && card.text.contains("«Липкие пальцы»")) &&
               assertTrue(away == StateType.Inventory && said.contains("только из города") && went == StateType.BarrelThieves)
     },
@@ -216,7 +216,7 @@ object BarrelThievesSpec extends ZIOSpecDefault {
         dk     <- dao(hero(race = Race.Goblin), Some(quest(2)))
         _      <- BarrelThievesState(dk, c).enter(testUser, r)
         kin    <- r.sentScreens.map(_.last)
-      } yield assertTrue(lair.text.contains("«Кривые шила»") && lair.text.contains("Сложность: " + Difficulty.render(17))) &&
+      } yield assertTrue(lair.text.contains("«Кривые шила»") && lair.text.contains(Difficulty.render(17))) &&
               assertTrue(lair.choices.map(_.id) == List("ThievesFight", "ThievesLeave")) &&
               assertTrue(out == StateType.Battle) &&
               assertTrue(b.exists(x => x.story.contains(BarrelThievesQuest.FightStory) && x.cantFlee)) &&

@@ -100,7 +100,7 @@ object VillageCaravanSpec extends ZIOSpecDefault {
         _     <- st.enter(testUser, r)
         gates <- r.sentScreens.map(_.last)
       } yield assertTrue(gates.text.contains("Обоз ждёт у ворот") && gates.text.contains(s"До города $City — четыре перехода") &&
-                gates.text.contains("Сложность: " + Difficulty.render(QuestLevel)) && gates.text.contains("Из засады не сбежать")) &&
+                gates.text.contains(Difficulty.render(QuestLevel)) && gates.text.contains("Из засады не сбежать")) &&
               assertTrue(gates.choices.map(_.id) ==
                 List("VillageCaravanGo", "OpenCharacter", "VillageCaravanLeave", "VillageCaravanAbandon"))
     },

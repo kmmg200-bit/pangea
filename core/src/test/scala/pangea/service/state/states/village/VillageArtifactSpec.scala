@@ -124,7 +124,7 @@ object VillageArtifactSpec extends ZIOSpecDefault {
         _     <- st.enter(testUser, r)
         gates <- r.sentScreens.map(_.last)
       } yield assertTrue(gates.text.contains(s"След начинается у ворот деревни «$Name»") &&
-                gates.text.contains("Сложность: " + Difficulty.render(QuestLevel)) &&
+                gates.text.contains(Difficulty.render(QuestLevel)) &&
                 gates.text.contains("Сколько идти до воров, не скажет никто")) &&
               assertTrue(gates.choices.map(_.id) ==
                 List("VillageTrailGo", "OpenCharacter", "VillageTrailLeave", "VillageTrailAbandon"))
@@ -190,7 +190,7 @@ object VillageArtifactSpec extends ZIOSpecDefault {
               // два перехода: за первым сразу последний
               assertTrue(short._1.text.contains("стан воров совсем рядом") && short._2.exists(_.leg == 2)) &&
               assertTrue(camp._1.text.contains("Стан воров — на прогалине") && camp._1.text.contains("Сбежать из этого боя не получится") &&
-                camp._1.text.contains("Сложность: " + Difficulty.render(QuestLevel)) &&
+                camp._1.text.contains(Difficulty.render(QuestLevel)) &&
                 camp._1.choices.map(_.id) == List("VillageTrailFight", "OpenCharacter", "VillageTrailQuit", "VillageTrailAbandon") &&
                 camp._2.contains(ArtifactTrail(3, 4, 0L)) && camp._2.exists(_.atCamp))
     },

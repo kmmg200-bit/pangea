@@ -163,7 +163,7 @@ object VillageSpec extends ZIOSpecDefault {
               assertTrue(s.exists(x => x.silver >= VillageRates.silver(x.questLevel, 80L) && x.silver <= VillageRates.silver(x.questLevel, 120L) &&
                 Villages.cities(c).isDefinedAt(x.city))) &&
               assertTrue(s.exists(x => x.doubloons == VillageRates.doubloons(x.questLevel) && x.doubloons > 0L)) &&
-              assertTrue(first.text.contains("Сложность: " + Difficulty.render(Level))) &&
+              assertTrue(first.text.contains(Difficulty.render(Level))) &&
               assertTrue(first.choices.map(_.id) == List("VillageHeadman", "VillageRaid", "OpenCharacter", "VillageLeave")) &&
               assertTrue(again.text == first.text && typed == StateType.Village && third.text == first.text)
     },
@@ -229,7 +229,7 @@ object VillageSpec extends ZIOSpecDefault {
               assertTrue(shown(1).text.contains("Верховодит у них Чёрный Виктор") &&
                 shown(1).text.contains(s"Последний обоз из города $City") && !shown(1).text.contains("Кинэт") &&
                 shown(1).text.contains(s"Плата — $Silver серебра") &&
-                shown(1).text.contains("Сложность: " + Difficulty.render(QuestLevel))) &&
+                shown(1).text.contains(Difficulty.render(QuestLevel))) &&
               assertTrue(shown(1).choices.map(_.id) == List("VillageAccept", "VillageDecline", "VillageHaggle")) &&
               assertTrue(s1.exists(_.step == VillageScene.Headman)) &&
               assertTrue(res == StateType.Dungeon && sd.contains(Json.Null)) &&
@@ -305,7 +305,7 @@ object VillageSpec extends ZIOSpecDefault {
         city    <- card(StateType.GlobalMap, 15, VillageContract.Taken)
         shallow <- card(StateType.Dungeon, 14, VillageContract.Taken)
         back    <- card(StateType.Dungeon, 15, VillageContract.Done)
-      } yield assertTrue(deep._1.text.contains("Сложность: " + Difficulty.render(QuestLevel)) &&
+      } yield assertTrue(deep._1.text.contains(Difficulty.render(QuestLevel)) &&
                 deep._1.text.contains(s"Деревня орков «$VillageName»") && deep._1.text.contains("верховодит Чёрный Виктор") &&
                 deep._1.text.contains(s"Плата — $Silver серебра")) &&
               assertTrue(deep._1.choices.exists(_.id == "VillageGo") && deep._2 == StateType.VillageBandits && deep._4.contains(Json.Null)) &&
@@ -327,7 +327,7 @@ object VillageSpec extends ZIOSpecDefault {
         b     <- battleOf(d)
         loot  <- d.readSceneData(userId).map(_.flatMap(_.as[LootData].toOption))
         slots  = b.toList.flatMap(x => x.group.others ++ x.group.queue)
-      } yield assertTrue(intro.text.contains("сидит Чёрный Виктор") && intro.text.contains("Сложность: " + Difficulty.render(QuestLevel))) &&
+      } yield assertTrue(intro.text.contains("сидит Чёрный Виктор") && intro.text.contains(Difficulty.render(QuestLevel))) &&
               assertTrue(intro.choices.map(_.id) == List("BanditsFight", "OpenCharacter", "BanditsLeave", "BanditsAbandon")) &&
               assertTrue(res == StateType.Battle) &&
               assertTrue(b.exists(x => x.story.contains(Villages.BanditsStory) && x.lootLevel.contains(QuestLevel.toLong) &&
@@ -482,7 +482,7 @@ object VillageSpec extends ZIOSpecDefault {
         q     <- questOf(d)
       } yield assertTrue(come.text.contains(c.text("village.trouble.spiders").trim)) &&
               assertTrue(shown.lastOption.exists(s => s.text.contains("вышли сетеплёты") && s.text.contains(s"знахарь из города $City") &&
-                s.text.contains(s"Плата — $Silver серебра") && s.text.contains("Сложность: " + Difficulty.render(QuestLevel)))) &&
+                s.text.contains(s"Плата — $Silver серебра") && s.text.contains(Difficulty.render(QuestLevel)))) &&
               assertTrue(last.text.contains("Овраг за деревней") && last.text.contains("«Контракт деревни»")) &&
               assertTrue(q.village.exists(cc => cc.quest == VillageQuest.SpiderNests && cc.leader.isEmpty && cc.level == QuestLevel)) &&
               assertTrue(Villages.lairOf(q).contains(VillageLair.Spiders) && !Villages.toBandits(q))
@@ -517,7 +517,7 @@ object VillageSpec extends ZIOSpecDefault {
         slots  = b.toList.flatMap(x => x.group.others ++ x.group.queue)
         names  = Breed.spiders.map(_.displayName)
         breeds = b.toList.flatMap(x => x.monsterBreed.toList ++ slots.flatMap(_.breed))
-      } yield assertTrue(intro.text.contains("матка") && intro.text.contains("Сложность: " + Difficulty.render(QuestLevel))) &&
+      } yield assertTrue(intro.text.contains("матка") && intro.text.contains(Difficulty.render(QuestLevel))) &&
               assertTrue(intro.choices.map(_.id) == List("SpidersFight", "SpidersSupply", "OpenCharacter", "SpidersLeave", "SpidersAbandon")) &&
               assertTrue(res == StateType.Battle) &&
               assertTrue(b.exists(x => x.story.contains(Villages.SpidersStory) && x.lootLevel.contains(QuestLevel.toLong) &&

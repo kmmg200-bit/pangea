@@ -71,7 +71,7 @@ object FaelinQuestSpec extends ZIOSpecDefault {
         talk <- r.sentScreens.map(_.last)
       } yield assertTrue(card.choices.map(_.id) == List("MercTalk", "MercHire", "MercList")) &&
               assertTrue(talk.text.contains("Мне было тридцать, и я хотел лук. Я срезал ветвь сам.") &&
-                talk.text.contains("Сложность: " + Difficulty.render(14))) &&
+                talk.text.contains(Difficulty.render(14))) &&
               assertTrue(talk.choices.map(_.id) == List("MercTalkYes", "MercCard"))
     },
 
@@ -105,7 +105,7 @@ object FaelinQuestSpec extends ZIOSpecDefault {
       for {
         deep <- card(StateType.Dungeon)
         city <- card(StateType.GlobalMap)
-      } yield assertTrue(deep._1.text.contains("Сложность: " + Difficulty.render(14)) && deep._1.text.contains("старые корни у живой стены")) &&
+      } yield assertTrue(deep._1.text.contains(Difficulty.render(14)) && deep._1.text.contains("старые корни у живой стены")) &&
               assertTrue(deep._1.choices.exists(_.id == "FaelinRootsGo") && deep._2 == StateType.FaelinRoots) &&
               assertTrue(city._2 == StateType.Inventory && city._3.contains("К старым корням изгороди идут из лабиринта"))
     },
@@ -124,7 +124,7 @@ object FaelinQuestSpec extends ZIOSpecDefault {
                    x.group.others.map(s => (s.race, s.rarity, s.customName, s.lvl)))
         elves  = b.toList.flatMap(_.group.allies.filter(_.kind == AllyKind.Elf))
       } yield assertTrue(intro.text.contains("Гильдия Чернолом") && intro.text.contains("Приказ гильдейский") &&
-                intro.text.contains("а значит, и изгородь") && intro.text.contains("Сложность: " + Difficulty.render(14))) &&
+                intro.text.contains("а значит, и изгородь") && intro.text.contains(Difficulty.render(14))) &&
               assertTrue(intro.choices.map(_.id) == List("FaelinFight", "OpenCharacter", "FaelinLeave")) &&
               assertTrue(out == StateType.Battle) &&
               // все пятнадцать — в строю разом, очереди нет

@@ -132,7 +132,10 @@ object MarisaQuestSpec extends ZIOSpecDefault {
           q     <- quests(dao)
           _     <- state.action(testUser, tap(s"${InventoryState.ItemActionPrefix}11"), r)
           again <- r.sentScreens.map(_.last)
-        } yield assertTrue(card.text.contains("🦴🦴🦴") && card.text.contains("Трактирщик")) &&
+        } yield assertTrue(
+          card.text.contains(pangea.model.quest.Difficulty.render(MarisaQuest.LetterDifficulty)) &&
+          card.text.contains("Трактирщик")
+        ) &&
                 assertTrue(card.choices.map(_.id) == List("OpenLetter", "InventoryList")) &&
                 assertTrue(all.contains("Кельвин") && all.contains("Карта Кельвина")) &&
                 assertTrue(inv.snapshot.exists(_.questItem.contains(QuestItemKind.KelvinMap))) &&

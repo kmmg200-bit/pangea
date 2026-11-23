@@ -99,7 +99,7 @@ object PlukhQuestSpec extends ZIOSpecDefault {
         _    <- st.action(testUser, pick("MercTalk", AllyKind.Murloc), r)
         talk <- r.sentScreens.map(_.last)
       } yield assertTrue(card.choices.map(_.id) == List("MercTalk", "MercHire", "MercList")) &&
-              assertTrue(talk.text.contains("Плюх не одалживал") && talk.text.contains("Сложность: " + Difficulty.render(14))) &&
+              assertTrue(talk.text.contains("Плюх не одалживал") && talk.text.contains(Difficulty.render(14))) &&
               assertTrue(talk.choices.map(_.id) == List("MercTalkYes", "MercCard"))
     },
 
@@ -155,7 +155,7 @@ object PlukhQuestSpec extends ZIOSpecDefault {
         ready <- card(toHunt, StateType.Dungeon)
         city  <- card(toHunt, StateType.GlobalMap)
       } yield assertTrue(first._1.text.contains("Показать печать Густаво") && !first._1.choices.exists(_.id == "PlukhHuntGo")) &&
-              assertTrue(first._1.text.contains("Сложность: " + Difficulty.render(14)) && first._2 != StateType.PlukhHunt) &&
+              assertTrue(first._1.text.contains(Difficulty.render(14)) && first._2 != StateType.PlukhHunt) &&
               assertTrue(ready._1.text.contains("Густаво перевернул зов") && ready._1.choices.exists(_.id == "PlukhHuntGo")) &&
               assertTrue(ready._2 == StateType.PlukhHunt) &&
               assertTrue(city._2 == StateType.Inventory && city._3.contains("Ловчих зовут из лабиринта"))
@@ -175,7 +175,7 @@ object PlukhQuestSpec extends ZIOSpecDefault {
                    x.group.others.map(s => (s.race, s.rarity, s.customName, s.lvl)))
         plukh  = b.toList.flatMap(_.group.allies.filter(_.kind == AllyKind.Murloc))
       } yield assertTrue(intro.text.contains("каджиты в серых плащах") && intro.text.contains("Плюх рад") &&
-                intro.text.contains("Сноходцы куда сильнее своих ловчих") && intro.text.contains("Сложность: " + Difficulty.render(14))) &&
+                intro.text.contains("Сноходцы куда сильнее своих ловчих") && intro.text.contains(Difficulty.render(14))) &&
               assertTrue(intro.choices.map(_.id) == List("PlukhFight", "OpenCharacter", "PlukhLeave")) &&
               assertTrue(out == StateType.Battle && foes.size == 5 && foes.forall(f => f._1 == Race.Khajiit.entryName && f._4 == 14L)) &&
               assertTrue(foes.count(_._2 == Rarity.Mythical.entryName) == 4) &&

@@ -23,7 +23,7 @@ import zio.{Task, ZIO}
   * (MercenariesState), логово (JorgenLairState) и Горн (MasterHornState). */
 object JorgenQuest {
 
-  /** Сложность задания — 💀🦴🦴🦴🦴. По ней же уровень элементалей. */
+  /** Сложность задания — 9 ур. По ней же уровень элементалей. */
   val Level: Int = 9
 
   /** Ключ сюжетного боя в логове (см. `SoloPveBattle.story`): без «Сбежать», а

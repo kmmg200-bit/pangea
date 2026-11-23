@@ -86,7 +86,7 @@ object BramblQuestSpec extends ZIOSpecDefault {
         squad <- r.sentScreens.map(_.last)
       } yield assertTrue(card.choices.map(_.id) == List("MercTalk", "MercHire", "MercList")) &&
               assertTrue(talk.text.contains("Я снял латы с каменного предка") &&
-                talk.text.contains("Сложность: " + Difficulty.render(11))) &&
+                talk.text.contains(Difficulty.render(11))) &&
               assertTrue(talk.choices.map(_.id) == List("MercTalkYes", "MercCard")) &&
               assertTrue(!squad.choices.exists(_.id == "MercTalk"))
     },
@@ -171,7 +171,7 @@ object BramblQuestSpec extends ZIOSpecDefault {
         lvl    = MiniBoss.StoneElemental.bossLvl(BramblQuest.Level.toLong)
         gnomes = b.toList.flatMap(_.group.allies.filter(_.kind == AllyKind.Gnome))
       } yield assertTrue(intro.text.contains("Вы замечаете их одновременно с Брамблом") && intro.text.contains("«Двое") &&
-                intro.text.contains("Сложность: " + Difficulty.render(11))) &&
+                intro.text.contains(Difficulty.render(11))) &&
               assertTrue(intro.choices.map(_.id) == List("BramblFight", "OpenCharacter", "BramblLeave")) &&
               assertTrue(out == StateType.Battle) &&
               assertTrue(b.exists(x => x.bossKind.contains(MiniBoss.StoneElemental.entryName) && x.monsterLvl == lvl &&

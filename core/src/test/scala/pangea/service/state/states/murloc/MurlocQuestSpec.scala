@@ -171,7 +171,10 @@ object MurlocQuestSpec extends ZIOSpecDefault {
           (state2, dao2, r2) = t2
           gone <- state2.action(testUser, tap("UseMurlocMap"), r2)
           p2   <- dao2.readSceneData(userId).map(_.flatMap(_.as[Progress].toOption).get)
-        } yield assertTrue(card.text.contains("Сложность: ⚰️") && card.text.contains("трёх камней")) &&
+        } yield assertTrue(
+          card.text.contains(pangea.model.quest.Difficulty.render(MurlocQuest.MapDifficulty)) &&
+          card.text.contains("трёх камней")
+        ) &&
                 assertTrue(card.choices.map(_.id) == List("UseMurlocMap", "InventoryList")) &&
                 assertTrue(stay == StateType.Inventory && all.contains("только из города")) &&
                 assertTrue(gone == StateType.MurlocVillage && p2.step == Step.Route)
@@ -217,7 +220,7 @@ object MurlocQuestSpec extends ZIOSpecDefault {
                              .forall(m => Set(MobRarity.Rare, MobRarity.Mythical).map(_.entryName).contains(m.rarity))) &&
                 assertTrue(queue.size == MurlocQuest.RaidQueue + 1 - (Formation.MonsterPlaces - MurlocQuest.RaidFront) &&
                            queue.forall(m => m.race == Race.Murloc.entryName && m.lvl == MurlocQuest.MapDifficulty.toLong)) &&
-                // уровень мурлоков — сложность задания (⚰️ = 10), не уровень героя; награда — по ней же
+                // уровень мурлоков — сложность задания (10 ур.), не уровень героя; награда — по ней же
                 assertTrue(MurlocQuest.MapDifficulty == 10 && battle.lootLevel.contains(10L)) &&
                 assertTrue(queue.init.forall(m => Set(MobRarity.Rare, MobRarity.Mythical).map(_.entryName).contains(m.rarity))) &&
                 assertTrue(queue.last.rarity == MobRarity.Legendary.entryName && queue.last.name == "Старый Мрачноглаз") &&

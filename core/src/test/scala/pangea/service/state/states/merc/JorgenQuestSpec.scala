@@ -76,7 +76,7 @@ object JorgenQuestSpec extends ZIOSpecDefault {
         _     <- tavern(d, TestInventoryRepository.withItems(Nil), c, items = false).action(testUser, pick("MercCard", AllyKind.Human), r)
         bare  <- r.sentScreens.map(_.last)
       } yield assertTrue(card.choices.map(_.id) == List("MercTalk", "MercHire", "MercList")) &&
-              assertTrue(talk.text.contains("Их было двое") && talk.text.contains("Сложность: " + Difficulty.render(9))) &&
+              assertTrue(talk.text.contains("Их было двое") && talk.text.contains(Difficulty.render(9))) &&
               assertTrue(talk.choices.map(_.id) == List("MercTalkYes", "MercCard")) &&
               assertTrue(!bare.choices.exists(_.id == "MercTalk"))
     },
@@ -113,7 +113,7 @@ object JorgenQuestSpec extends ZIOSpecDefault {
         deep    <- card(StateType.Dungeon, 7)
         city    <- card(StateType.GlobalMap, 7)
         shallow <- card(StateType.Dungeon, 6)
-      } yield assertTrue(deep._1.text.contains("Сложность: " + Difficulty.render(9)) && deep._1.text.contains("не ближе 7-го поворота")) &&
+      } yield assertTrue(deep._1.text.contains(Difficulty.render(9)) && deep._1.text.contains("не ближе 7-го поворота")) &&
               assertTrue(deep._1.choices.exists(_.id == "JorgenLairGo") && deep._2 == StateType.JorgenLair) &&
               assertTrue(city._2 == StateType.Inventory && city._3.contains("идут из лабиринта")) &&
               assertTrue(shallow._2 == StateType.Inventory && shallow._3.contains("с 7-го поворота"))
@@ -133,7 +133,7 @@ object JorgenQuestSpec extends ZIOSpecDefault {
         lvl    = MiniBoss.FireElemental.bossLvl(JorgenQuest.Level.toLong)
         guests = b.toList.flatMap(_.group.allies.filter(_.kind == AllyKind.Human))
       } yield assertTrue(intro.text.contains("их двое") && intro.text.contains("сегодня беру холод") &&
-                intro.text.contains("Сложность: " + Difficulty.render(9))) &&
+                intro.text.contains(Difficulty.render(9))) &&
               assertTrue(intro.choices.map(_.id) == List("JorgenFight", "OpenCharacter", "JorgenLeave")) &&
               assertTrue(out == StateType.Battle) &&
               assertTrue(b.exists(x => x.bossKind.contains(MiniBoss.FireElemental.entryName) && x.monsterLvl == lvl &&

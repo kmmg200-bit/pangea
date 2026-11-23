@@ -88,7 +88,7 @@ object HedgeSongSpec extends ZIOSpecDefault {
         _     <- scene(d2, TestInventoryRepository.withItems(Nil), c).enter(testUser, r)
         elf   <- r.sentScreens.map(_.last)
       } yield assertTrue(human.text.contains("Я Элиар") && human.text.contains("орки-лесорубы")) &&
-              assertTrue(human.text.contains("Сложность: " + Difficulty.render(7))) &&
+              assertTrue(human.text.contains(Difficulty.render(7))) &&
               assertTrue(human.choices.map(_.id) == List("HedgeFight", "HedgeNotNow")) &&
               assertTrue(elf.text.contains("Постой за моей спиной, родич") && !human.text.contains("родич"))
     },
@@ -342,7 +342,7 @@ object HedgeSongSpec extends ZIOSpecDefault {
                   Some(TestItemRepository.make)).enter(testUser, r)
         menu <- r.sentScreens.map(_.last)
       } yield assertTrue(text.contains("«Тот, кто уговаривает деревья» — отнести ветвь живой изгороди Фету в Торговый дом")) &&
-              assertTrue(card.contains("Сложность: 💀🦴🦴") && card.contains(QuestItemKind.HedgeBranch.description)) &&
+              assertTrue(card.contains(Difficulty.render(7)) && card.contains(QuestItemKind.HedgeBranch.description)) &&
               assertTrue(!menu.choices.exists(_.id == "FetBranch"))
     }
   )

@@ -151,7 +151,7 @@ object StrayCasketSpec extends ZIOSpecDefault {
         _      <- stray(d, TestInventoryRepository.withItems(Nil), c).enter(testUser, r)
         screen <- r.sentScreens.map(_.last)
       } yield assertTrue(screen.text.contains("щёлкает зубами, чуя камни у вас при себе")) &&
-              assertTrue(screen.text.contains("Сложность: " + Difficulty.render(7)) && Difficulty.render(7) == "💀🦴🦴") &&
+              assertTrue(screen.text.contains(Difficulty.render(7)) && Difficulty.render(7) == "сложность 7 ур.") &&
               assertTrue(screen.choices.map(_.id) == List("StrayOffer", "StrayShoo"))
     },
 
@@ -219,7 +219,7 @@ object StrayCasketSpec extends ZIOSpecDefault {
         state   = InventoryState(d, inv, TestItemRepository.make, c, Some(arts))
         _      <- openCard(state, r)
         card   <- r.sentScreens.map(_.last)
-      } yield assertTrue(card.text.contains("Сложность: 💀🦴🦴") && card.text.contains("Скормлено камней: 3/10")) &&
+      } yield assertTrue(card.text.contains(Difficulty.render(7)) && card.text.contains("Скормлено камней: 3/10")) &&
               assertTrue(card.choices.filter(_.id == "StrayFeed").map(_.label) == List("Надколотый (2)", "Повреждённый (1)")) &&
               assertTrue(card.choices.exists(_.id == "InventoryList"))
     },
@@ -398,7 +398,7 @@ object StrayCasketSpec extends ZIOSpecDefault {
         text = QuestJournal.render(c, hero(), LoreData.empty, quest(1, fed = 4L), DailyQuests.empty, None, 0L)
         card = InventoryState.cardText(c, casketItem, hero(), quest(2, fed = 10L))
       } yield assertTrue(text.contains("«Бродячий ларец» — скормить бродячему ларцу камни (4/10)")) &&
-              assertTrue(card.contains("Сложность: 💀🦴🦴") && card.contains("он помнит дорогу"))
+              assertTrue(card.contains(Difficulty.render(7)) && card.contains("он помнит дорогу"))
     },
 
     test("старая запись заданий без съеденных камней читается; новая — туда и обратно") {
