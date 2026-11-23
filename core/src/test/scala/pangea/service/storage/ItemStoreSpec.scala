@@ -109,8 +109,9 @@ object ItemStoreSpec extends ZIOSpecDefault {
       )
     },
     test("выбросить: одну — ровно её, стопку — всю; сюжетное не трогаем; вещи уже нет — так и сказано") {
-      def done(d: ItemStore.Dropped): Option[(Long, Int)] = d match {
-        case ItemStore.Dropped.Done(it, n) => Some(it.id -> n)
+      // Что выброшено — номерами: их пишет след вещей (ItemTrail).
+      def done(d: ItemStore.Dropped): Option[(Long, List[Long])] = d match {
+        case ItemStore.Dropped.Done(it, gone) => Some(it.id -> gone.map(_.id))
         case _                             => None
       }
       def kept(d: ItemStore.Dropped): Option[Long] = d match {
@@ -134,11 +135,11 @@ object ItemStoreSpec extends ZIOSpecDefault {
         plain <- ItemStore.drop(store, hero, 5L, all = false)
         again <- ItemStore.drop(store, hero, 5L, all = false)
       } yield assertTrue(
-        done(one).contains(3L -> 1) && left1 == List(1L, 2L),
-        // вся стопка — обе ромашки, что остались
-        done(all).contains(2L -> 2) && left2.isEmpty,
+        done(one).contains(3L -> List(3L)) && left1 == List(1L, 2L),
+        // вся стопка — обе ромашки, что остались, с конца
+        done(all).contains(2L -> List(2L, 1L)) && left2.isEmpty,
         kept(star).contains(7L) && kept(quest).contains(8L),
-        done(plain).contains(5L -> 1) && again == ItemStore.Dropped.Gone,
+        done(plain).contains(5L -> List(5L)) && again == ItemStore.Dropped.Gone,
         bag.snapshot.map(_.id) == List(7L, 8L)
       )
     }

@@ -61,8 +61,8 @@ object ItemStore {
     case object Gone extends Dropped
     /** Сюжетное — предмет задания или экипировка ★ — не выбрасывают. */
     final case class Kept(item: Item) extends Dropped
-    /** Выброшено `count` вещей стопки `item` (одна, если стопку не просили). */
-    final case class Done(item: Item, count: Int) extends Dropped
+    /** Выброшены `gone` — вещи стопки `item` (одна, если стопку не просили). */
+    final case class Done(item: Item, gone: List[Item]) extends Dropped
   }
 
   /** Выбросить из `store` вещь `itemId` — одну или (`all`) всю её стопку, с
@@ -75,8 +75,8 @@ object ItemStore {
         case Some(item) if item.isQuestItem || item.isStoryGear => ZIO.succeed(Dropped.Kept(item))
         case Some(item) =>
           val doomed = if (all) StackMove.stack(items, item) else List(item)
-          ZIO.foldLeft(doomed)(0)((n, it) => store.remove(hero, it).map(gone => if (gone) n + 1 else n))
-            .map(n => if (n == 0) Dropped.Gone else Dropped.Done(item, n))
+          ZIO.filter(doomed)(store.remove(hero, _))
+            .map(gone => if (gone.isEmpty) Dropped.Gone else Dropped.Done(item, gone))
       }
     }
 

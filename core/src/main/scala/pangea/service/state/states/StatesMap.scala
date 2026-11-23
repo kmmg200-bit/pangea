@@ -303,9 +303,10 @@ object StatesMap {
             inventoryRepo,
             itemRepo,
             content,
-            artifacts
+            artifacts,
+            Some(journal)
           ),
-          Equipment -> EquipmentState(heroDao, inventoryRepo, content, itemRepo),
+          Equipment -> EquipmentState(heroDao, inventoryRepo, content, itemRepo, Some(journal)),
           Skills    -> SkillsState(heroDao, content),
           Knowledge -> KnowledgeState(heroDao, content),
           Squad -> SquadState(heroDao, content),

@@ -8,14 +8,16 @@ import pangea.model.user.User
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
 import pangea.service.state.{BeltContents, InventoryFeedback}
+import pangea.service.storage.ItemTrail
 import zio.{Task, ZIO}
 
 /** Что лежит в ячейках пояса, без экрана. Одно на бота — карточки вещи и слота
   * — и на Mini App: правила у них одни. Всё меняет героя, поэтому зовётся под
   * локом игрока: в боте его держит ход, в приложении — сам запрос. Что сказать
-  * игроку, идёт в `renderer`. */
+  * игроку, идёт в `renderer`. Что легло на пояс и что с него сошло — в след
+  * вещей (`trail`): на поясе вещь теряет номер, снятая получает новый. */
 final class BeltWork(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemRepo: ItemRepository,
-                     content: SceneContent) {
+                     content: SceneContent, trail: ItemTrail) {
   import BeltWork.{Put, sameInBag}
 
   /** Положить расходник на пояс: фляга — со своими зарядами, роза — со своими
@@ -45,6 +47,7 @@ final class BeltWork(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemR
               }
               inventoryRepo.removeItems(same.take(n).map(_.id).toSet, hero.id).mapError(asThrowable) *>
                 heroDao.updateEquipment(user.userId, hero.equipment.copy(belt = belt.copy(details = filled))) *>
+                trail.beltPut(user.userId, same.take(n), Nil) *>
                 renderer.show(user, Screen(content.format("inventory.beltPutStack",
                   "name" -> unit.name, "count" -> n.toString,
                   "have" -> in.getOrElse(n).toString, "stack" -> stack.toString), Nil)).as(Put.Done)
@@ -56,6 +59,7 @@ final class BeltWork(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemR
           case Some(filled) =>
             inventoryRepo.removeItem(item.id, hero.id).mapError(asThrowable) *>
               heroDao.updateEquipment(user.userId, hero.equipment.copy(belt = belt.copy(details = filled))) *>
+              trail.beltPut(user.userId, List(item), Nil) *>
               renderer.show(user, Screen(content.format("inventory.beltPutDone",
                 "name" -> slot.name, "used" -> filled.slots.size.toString,
                 "cap" -> cap.toString), Nil)).as(Put.Done)
@@ -101,6 +105,7 @@ final class BeltWork(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemR
                   _     <- heroDao.updateEquipment(user.userId,
                              hero.equipment.copy(belt = belt.copy(details = b.updated(i, put))))
                   _     <- ZIO.foreachDiscard(saved)(r => inventoryRepo.addItem(hero.id, r).mapError(asThrowable))
+                  _     <- trail.beltPut(user.userId, taken, saved)
                   name   = BeltContents.names(taken)
                   _     <- renderer.show(user, Screen(
                              if (back.isEmpty) content.format("inventory.beltSwappedEmpty", "name" -> name, "old" -> old.name)
@@ -141,6 +146,7 @@ final class BeltWork(heroDao: HeroDao, inventoryRepo: InventoryRepository, itemR
                   saved <- BeltContents.persist(Some(itemRepo), hero.id, back)
                   _     <- freed
                   _     <- ZIO.foreachDiscard(saved)(it => inventoryRepo.addItem(hero.id, it).ignore)
+                  _     <- trail.beltTaken(user.userId, saved)
                   _     <- renderer.show(user, Screen(content.format("equipment.beltTaken",
                              "name" -> BeltContents.names(back)), Nil))
                 } yield ()

@@ -3,7 +3,8 @@ package pangea.service.state.states
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.{Decoder, Encoder, jawn}
 import pangea.dao.hero.HeroDao
-import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
+import pangea.engine.{Branch, Choice, ChoiceColor, Journal, Renderer, SceneContent, Screen, Target}
+import pangea.service.storage.ItemTrail
 import pangea.model.hero.{Equipment, Hero}
 import pangea.model.item.{GemBreaking, Item, ItemDetails, ItemType}
 import pangea.model.state.StateType
@@ -21,7 +22,9 @@ case class EquipmentState(
   content:       SceneContent,
   // Вещи с пояса и пыль от ломки сохраняются, прежде чем лечь в сумку: у
   // каждой свой номер из базы (см. BeltContents.persist).
-  itemRepo:      ItemRepository
+  itemRepo:      ItemRepository,
+  // След вещей: что сошло с пояса (см. ItemTrail).
+  journal:       Option[Journal] = None
 ) extends State {
 
   /** Надеть и снять — общее с карточкой вещи в сумке и с Mini App. */
@@ -31,7 +34,7 @@ case class EquipmentState(
   private val gemWork = new GemWork(heroDao, inventoryRepo, itemRepo, content)
 
   /** Вынуть с пояса — общее с Mini App. */
-  private val beltWork = new BeltWork(heroDao, inventoryRepo, itemRepo, content)
+  private val beltWork = new BeltWork(heroDao, inventoryRepo, itemRepo, content, new ItemTrail(journal, ItemTrail.Bot))
 
   private val branch = new Branch(
     routes = Map(

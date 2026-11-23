@@ -25,4 +25,16 @@ object GameEvent {
   /** Куплен мешок наудачу у Барти — серебряная лотерея. По этим записям лимит
     * мешков на сутки и учёт в админ-панели (см. BartiLottery, `AdminDao.stats`). */
   val BartiLottery: String = "barti_lottery"
+
+  /** След вещей (см. `ItemTrail`): перенос между хранилищами в Mini App. */
+  val ItemMoved: String = "item_moved"
+
+  /** След вещей: «Выбросить» в Mini App. */
+  val ItemDropped: String = "item_dropped"
+
+  /** След вещей: вещь легла на пояс — и что сошло с него вместо неё. */
+  val BeltPut: String = "belt_put"
+
+  /** След вещей: снято с пояса в сумку. */
+  val BeltTaken: String = "belt_taken"
 }

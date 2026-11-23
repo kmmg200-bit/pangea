@@ -14,6 +14,7 @@ import pangea.model.state.StateType
 import pangea.model.trauma.Trauma
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.equipment.{BeltWork, BrewWork}
+import pangea.service.storage.ItemTrail
 import pangea.test.{TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository}
 import zio.test._
 import zio.Ref
@@ -63,7 +64,7 @@ object MiniAppBrewSpec extends ZIOSpecDefault {
       dao   <- TestHeroDao.withHero(userId, h)
       bag    = TestInventoryRepository.withItems(items)
       lines <- Ref.make(Vector.empty[String])
-    } yield (dao, bag, new BrewWork(dao, bag, content), new BeltWork(dao, bag, TestItemRepository.make, content),
+    } yield (dao, bag, new BrewWork(dao, bag, content), new BeltWork(dao, bag, TestItemRepository.make, content, ItemTrail.silent),
       new MiniApp.Collect(lines), lines)
 
   override def spec = suite("MiniApp: отвары и пояс")(
@@ -218,6 +219,42 @@ object MiniAppBrewSpec extends ZIOSpecDefault {
           took,
           !gone,
           slots(last).map(_.name) == List(FlaskKind.Smith.label, FlaskKind.Healer.label)
+        )
+      },
+      test("пояс оставляет след: легло — его номер; вместо — и сошедшее с новым номером; вынуто — новый номер") {
+        val flask = FlaskGenerator.item(FlaskKind.Smith, Rarity.Blue).copy(id = 7L)
+        val other = FlaskGenerator.item(FlaskKind.Vigor, Rarity.Blue).copy(id = 8L)
+        val free  = belted(base, healer(1), healer(2))
+        val full  = belted(base, healer(1), healer(2), healer(3))
+        def ids(e: pangea.model.GameEvent, field: String): List[Long] =
+          e.payload.hcursor.downField(field).values.toList.flatten.flatMap(_.hcursor.get[Long]("id").toOption)
+        for {
+          journal <- pangea.test.TestJournal.make
+          trail    = new ItemTrail(Some(journal), ItemTrail.App)
+          dao     <- TestHeroDao.withHero(userId, free)
+          bag      = TestInventoryRepository.withItems(List(flask))
+          lines   <- Ref.make(Vector.empty[String])
+          say      = new MiniApp.Collect(lines)
+          belts    = new BeltWork(dao, bag, TestItemRepository.make, content, trail)
+          _       <- belts.put(user, free, flask, say)
+          dao2    <- TestHeroDao.withHero(userId, full)
+          bag2     = TestInventoryRepository.withItems(List(other))
+          belts2   = new BeltWork(dao2, bag2, TestItemRepository.make, content, trail)
+          _       <- belts2.put(user, full, other, say)
+          _       <- belts2.swap(user, full, other, Some(1), say)
+          swapped  = bag2.snapshot
+          after   <- dao2.getHeroByUserId(userId).someOrFailException
+          _       <- belts2.take(user, after, 0, say)
+          taken    = bag2.snapshot
+          log     <- journal.logged
+        } yield assertTrue(
+          // Полный пояс отказал — следа нет: ничего не сдвинулось.
+          log.map(_.eventType) == List(pangea.model.GameEvent.BeltPut, pangea.model.GameEvent.BeltPut,
+            pangea.model.GameEvent.BeltTaken),
+          ids(log.head, "put") == List(7L) && ids(log.head, "off").isEmpty,
+          ids(log(1), "put") == List(8L) && ids(log(1), "off") == swapped.map(_.id),
+          ids(log(2), "items") == taken.map(_.id).filterNot(swapped.map(_.id).contains),
+          ids(log(2), "items").nonEmpty
         )
       },
       test("запрос приложения: известные действия читаются, без выбора или с чужим — нет") {

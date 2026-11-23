@@ -4,7 +4,8 @@ import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import pangea.model.item.{BrewEffect, BrewKind}
 import io.circe.{Decoder, Encoder, jawn}
 import pangea.dao.hero.HeroDao
-import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
+import pangea.engine.{Branch, Choice, ChoiceColor, Journal, Renderer, SceneContent, Screen, Target}
+import pangea.service.storage.ItemTrail
 import pangea.generator.item.TreasureMapGenerator
 import pangea.model.hero.{Equipment, Hero}
 import pangea.model.inventory.Inventory
@@ -35,7 +36,9 @@ case class InventoryState(
   inventoryRepo:  InventoryRepository,
   itemRepository: ItemRepository,
   content:        SceneContent,
-  artifacts:      Option[ArtifactRepository] = None
+  artifacts:      Option[ArtifactRepository] = None,
+  // След вещей: что легло на пояс и что сошло с него (см. ItemTrail).
+  journal:        Option[Journal] = None
 ) extends State {
 
   /** Надеть — общее с карточкой слота и с Mini App. */
@@ -52,7 +55,8 @@ case class InventoryState(
 
   /** Кнопки заданий на карточках сюжетных предметов — общее с Mini App. */
   private val questCard = new QuestCard(heroDao, inventoryRepo, itemRepository, content)
-  private val beltWork = new BeltWork(heroDao, inventoryRepo, itemRepository, content)
+  private val beltWork = new BeltWork(heroDao, inventoryRepo, itemRepository, content,
+    new ItemTrail(journal, ItemTrail.Bot))
 
   private val branch = new Branch(
     routes = Map(

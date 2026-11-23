@@ -6,7 +6,7 @@ import pangea.dao.barrel.BarrelDao
 import pangea.dao.hero.HeroDao
 import pangea.dao.quest.QuestOutcomeDao
 import pangea.dao.top.TopDao
-import pangea.engine.{Players, Renderer, SceneContent, Screen}
+import pangea.engine.{Journal, Players, Renderer, SceneContent, Screen}
 import pangea.model.artifact.HeroArtifacts
 import pangea.model.auction.{AuctionCurrency, AuctionLot}
 import pangea.model.bank.BankVault
@@ -36,7 +36,7 @@ import pangea.service.miniapp.MiniAppView.{HeroNamesView, TradeActionView, Trade
 import pangea.service.parcel.Transfers
 import pangea.service.payout.Payouts
 import pangea.service.squad.SquadOrders
-import pangea.service.storage.ItemStore
+import pangea.service.storage.{ItemStore, ItemTrail}
 import pangea.service.storage.ItemStore.Place
 import pangea.service.state.{AzatData, BarrelRobbery, HerbLore, NpcQuestLog, PlayerLock, QuestCard, QuestJournal, QuestsDone,
   SceneDoor, SquadDuty, StackMove}
@@ -319,7 +319,7 @@ object MiniApp {
                      with HeroDao with ArtifactDao with BarrelDao with BankVaultDao with TopDao with QuestOutcomeDao
                      with ItemRepository with BankRepository with ArtifactRepository with BarrelRepository
                      with Payouts with Players with PlayerLock with SceneDoor
-                     with SceneContent with Trades with Transfers, Nothing, MiniApp] =
+                     with SceneContent with Trades with Transfers with Journal, Nothing, MiniApp] =
     ZLayer {
       for {
         config      <- ZIO.service[MiniAppConfig]
@@ -344,15 +344,17 @@ object MiniApp {
         trades      <- ZIO.service[Trades]
         transfers   <- ZIO.service[Transfers]
         content     <- ZIO.service[SceneContent]
+        journal     <- ZIO.service[Journal]
+        trail        = new ItemTrail(Some(journal), ItemTrail.App)
         topCache    <- Ref.make(Map.empty[TopKind, CachedTop])
       } yield new MiniAppLive(config, users, heroes, inventories, lots, heroDao, artifacts, barrels, vaults, content,
         tops, topCache, outcomes, new AzatCube(heroDao, inventories, items, content),
         new AuctionPurchase(heroDao, inventories, lots, users, bank, payouts, players, content),
         new AuctionSale(heroDao, inventories, lots, bank, players),
         new Outfit(heroDao, inventories, items, content), new GemWork(heroDao, inventories, items, content),
-        new BrewWork(heroDao, inventories, content), new BeltWork(heroDao, inventories, items, content),
+        new BrewWork(heroDao, inventories, content), new BeltWork(heroDao, inventories, items, content, trail),
         new BundleWork(inventories, items, content), new SquadOrders(heroDao, content),
-        new ItemStore.All(heroDao, inventories, artifactRepo, barrelRepo, bank, content),
+        new ItemStore.All(heroDao, inventories, artifactRepo, barrelRepo, bank, content), trail,
         new BarrelRobbery(heroDao, barrelRepo, items, content), lock,
         new AppQuests(heroDao, inventories, new QuestCard(heroDao, inventories, items, content), content, door),
         trades, transfers, door.chat)
@@ -383,6 +385,8 @@ final class MiniAppLive(
   bundleWork:  BundleWork,
   orders:      SquadOrders,
   places:      ItemStore.All,
+  // След вещей: перенос и «Выбросить» (см. ItemTrail).
+  trail:       ItemTrail,
   robbery:     BarrelRobbery,
   lock:        PlayerLock,
   appQuests:   AppQuests,
@@ -799,10 +803,12 @@ final class MiniAppLive(
                     tell(content.format("miniapp.storages.wrongPlace", "name" -> item.displayTitle, "to" -> where))
                   case Some(item) if all =>
                     StackMove.run(StackMove.stack(items, item))(ItemStore.move(source, target, fresh, _, gone))
+                      .tap(moved => trail.moved(user.userId, src.id, dst.id, moved.items))
                       .flatMap(moved => tell(StackMove.summary(content, moved, "miniapp.storages.movedAll", "to" -> where)))
                   case Some(item) =>
                     ItemStore.move(source, target, fresh, item, gone).flatMap(why =>
-                      tell(why.getOrElse(content.format("miniapp.storages.moved", "name" -> item.displayTitle, "to" -> where))))
+                      ZIO.when(why.isEmpty)(trail.moved(user.userId, src.id, dst.id, List(item))) *>
+                        tell(why.getOrElse(content.format("miniapp.storages.moved", "name" -> item.displayTitle, "to" -> where))))
                 }
               }
           }
@@ -827,9 +833,10 @@ final class MiniAppLive(
                 case ItemStore.Dropped.Gone => tell(content.text("stack.gone"))
                 case ItemStore.Dropped.Kept(item) =>
                   tell(content.text(if (item.isStoryGear) "inventory.storyNoDrop" else "miniapp.storages.questNoDrop"))
-                case ItemStore.Dropped.Done(item, n) =>
-                  tell(if (all) content.format("miniapp.storages.droppedAll", "name" -> item.displayTitle, "n" -> n.toString)
-                       else content.format("miniapp.storages.dropped", "name" -> item.displayTitle))
+                case ItemStore.Dropped.Done(item, gone) =>
+                  trail.dropped(user.userId, src.id, gone) *>
+                    tell(if (all) content.format("miniapp.storages.droppedAll", "name" -> item.displayTitle, "n" -> gone.size.toString)
+                         else content.format("miniapp.storages.dropped", "name" -> item.displayTitle))
               }
           }
       }
