@@ -453,7 +453,10 @@ object MiniAppViewSpec extends ZIOSpecDefault {
       def row(id: Long, lvl: Long, name: Option[String] = None) =
         TopRow(HeroId(id), UserId(id), VkId(s"10$id"), name, Race.Orc, lvl, lvl)
       val inTop = MiniAppView.top(hero, TopKind.Level,
-                    TopBoard(List(row(3L, 20L, Some("Грох")), row(7L, 12L)), Map(HeroId(7L) -> TopStanding(2L, 12L)), 5L),
+                    TopBoard(
+                      List(row(3L, 20L, Some("Грох")), row(7L, 12L)),
+                      Map(HeroId(3L) -> TopStanding(1L, 20L), HeroId(7L) -> TopStanding(2L, 12L)),
+                      5L),
                     "Безымянный")
       // Число — из снимка топа: книги рецептов у героя под рукой нет.
       val outside = MiniAppView.top(hero, TopKind.Recipes,

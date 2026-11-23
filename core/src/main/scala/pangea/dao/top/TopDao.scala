@@ -14,8 +14,8 @@ import zio.{Task, ZLayer}
 
 /** Топы героев. В топ идут только те, кто прошёл регистрацию; админов в нём
   * нет — их герои часто тестовые, — и тех, кого прячет Зелье исчезновения
-  * Фета. При равенстве выше тот, у кого выше уровень и опыт, а дальше — кто
-  * раньше начал (меньший номер героя). */
+  * Фета. При равенстве мерки выше тот, кто раньше её достиг (см. `top_since`),
+  * иначе — меньший номер героя; уровень — внутри уровня ещё по опыту. */
 trait TopDao {
 
   /** Снимок топа: весь порядок героев одним запросом — по нему место любого
@@ -79,10 +79,16 @@ object TopDaoLive {
   private def jsonCount(list: Fragment): Fragment =
     fr"(case when jsonb_typeof(" ++ list ++ fr") = 'array' then jsonb_array_length(" ++ list ++ fr") else 0 end)"
 
-  /** Порядок топа: по мерке, затем уровень и опыт, затем кто раньше начал. */
+  /** Метка в `top_since`; пусто у старых записей — в хвосте у равенства. */
+  private def sinceAt(kind: TopKind): Fragment =
+    fr"coalesce((h.top_since ->> ${kind.entryName})::bigint, 9223372036854775807)"
+
+  /** Порядок топа: по мерке, при равенстве — кто раньше достиг (top_since). */
   private def orderBy(kind: TopKind): Fragment = kind match {
-    case TopKind.Level => fr"h.lvl desc, h.exp desc, h.id asc"
-    case other         => valueColumn(other) ++ fr" desc, h.lvl desc, h.exp desc, h.id asc"
+    case TopKind.Level =>
+      fr"h.lvl desc, h.exp desc, ${sinceAt(TopKind.Level)} asc, h.id asc"
+    case other         =>
+      valueColumn(other) ++ fr" desc, ${sinceAt(other)} asc, h.id asc"
   }
 }
 

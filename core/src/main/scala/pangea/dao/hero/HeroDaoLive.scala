@@ -7,14 +7,16 @@ import doobie.postgres.sqlstate
 import io.circe.Json
 import io.circe.syntax.EncoderOps
 import pangea.dao.hero.TraumaInstances._
-import pangea.model.hero.{Equipment, MasterHornBoosts}
+import pangea.model.hero.{Equipment, LoreData, MasterHornBoosts}
+import pangea.model.home.HomeData
+import pangea.model.top.TopKind
 import pangea.model.stats.FightStats
 import pangea.dao.hero.queries.Queries
 import pangea.model.hero.{Hero, HeroId}
 import pangea.model.monster.Race
 import pangea.model.state.StateType
 import pangea.model.user.UserId
-import zio.Task
+import zio.{Task, ZIO}
 import zio.interop.catz._
 
 class HeroDaoLive(xa: Transactor[Task]) extends HeroDao {
@@ -226,13 +228,31 @@ class HeroDaoLive(xa: Transactor[Task]) extends HeroDao {
     Queries.readAzatData(userId).query[Option[Json]].unique.transact(xa)
 
   override def writeHomeData(userId: UserId, data: Json): Task[Unit] =
-    Queries.writeHomeData(userId, data).update.run.transact(xa).unit
+    for {
+      oldJson <- readHomeData(userId)
+      old     = oldJson.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty)
+      neu     <- ZIO.fromEither(data.as[HomeData]).orElseSucceed(HomeData.empty)
+      _       <-
+        if (neu.recipeBook.size > old.recipeBook.size)
+          Queries.stampTopSince(userId, TopKind.Recipes.entryName).update.run.transact(xa).unit
+        else ZIO.unit
+      _       <- Queries.writeHomeData(userId, data).update.run.transact(xa).unit
+    } yield ()
 
   override def readHomeData(userId: UserId): Task[Option[Json]] =
     Queries.readHomeData(userId).query[Option[Json]].unique.transact(xa)
 
   override def writeLoreData(userId: UserId, data: Json): Task[Unit] =
-    Queries.writeLoreData(userId, data).update.run.transact(xa).unit
+    for {
+      oldJson <- readLoreData(userId)
+      old     = oldJson.flatMap(_.as[LoreData].toOption).getOrElse(LoreData.empty)
+      neu     <- ZIO.fromEither(data.as[LoreData]).orElseSucceed(LoreData.empty)
+      _       <-
+        if (neu.brewed.size > old.brewed.size)
+          Queries.stampTopSince(userId, TopKind.Alchemy.entryName).update.run.transact(xa).unit
+        else ZIO.unit
+      _       <- Queries.writeLoreData(userId, data).update.run.transact(xa).unit
+    } yield ()
 
   override def readLoreData(userId: UserId): Task[Option[Json]] =
     Queries.readLoreData(userId).query[Option[Json]].unique.transact(xa)
