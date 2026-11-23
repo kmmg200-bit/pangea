@@ -27,7 +27,8 @@ trait AuctionDao {
     * `false` — лот успели купить или снять, и покупателю ничего списывать
     * нельзя. Номера лотов переиспользуются, поэтому лот сверяется целиком:
     * под тем же номером мог встать чужой. */
-  def sold(lot: AuctionLot, buyer: HeroId, now: Long): Task[Boolean]
+  /** `toVault` — покупка посыльным вне города: вещь в хранилище, не в сумку. */
+  def sold(lot: AuctionLot, buyer: HeroId, now: Long, toVault: Boolean = false): Task[Boolean]
 
   /** Вернуть вещь хозяину — в сумку, как и при покупке: снятие с торгов или
     * забор непроданного. `None` — лота уже нет. */

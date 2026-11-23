@@ -4,6 +4,7 @@ import pangea.model.auction.{AuctionCurrency, AuctionLot}
 import pangea.model.hero.HeroId
 import pangea.model.item.Item
 import pangea.repository.auction.{AuctionRepoError, AuctionRepository}
+import pangea.repository.bank.{BankRepoError, BankRepository}
 import zio.{IO, ZIO}
 
 /** Аукцион в памяти: те же правила, что в проде, включая «кто первый, того и
@@ -12,7 +13,8 @@ import zio.{IO, ZIO}
   * транзакции прода: выставленная уходит из сумки, купленная и снятая — в
   * неё, с новым номером. */
 class TestAuctionRepository(private var lots: List[AuctionLot] = Nil,
-                            bag: TestInventoryRepository = TestInventoryRepository.accepting)
+                            bag: TestInventoryRepository = TestInventoryRepository.accepting,
+                            vault: Option[BankRepository] = None)
     extends AuctionRepository {
 
   private var nextItemId = 10000L
@@ -64,12 +66,21 @@ class TestAuctionRepository(private var lots: List[AuctionLot] = Nil,
     }
 
   // Лот сверяется целиком: номер мог занять чужой лот.
-  def buy(lot: AuctionLot, buyer: HeroId, now: Long): IO[AuctionRepoError, AuctionLot] =
+  def buy(lot: AuctionLot, buyer: HeroId, now: Long, toVault: Boolean): IO[AuctionRepoError, AuctionLot] =
     lots.find(l => l == lot && l.onSale(now)) match {
       case Some(found) =>
         lots = lots.filterNot(_.id == found.id)
-        toBag(found.item)
-        ZIO.succeed(found)
+        val place =
+          if (toVault)
+            vault.fold[IO[AuctionRepoError, Unit]](ZIO.fail(AuctionRepoError.Failed)) { bank =>
+              bank.deposit(buyer, found.item).mapError {
+                case BankRepoError.NoVault | BankRepoError.VaultFull | BankRepoError.DustLimitReached =>
+                  AuctionRepoError.Failed
+                case _ => AuctionRepoError.Failed
+              }
+            }
+          else ZIO.succeed(toBag(found.item))
+        place.as(found)
       case None => ZIO.fail(AuctionRepoError.LotGone)
     }
 

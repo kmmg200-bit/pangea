@@ -550,7 +550,8 @@ final class MiniAppLive(
         canBuy    = MiniApp.canAuctionBuy(fresh, home.hasCourier)
         said     <- if (!canBuy) ZIO.succeed(content.text("miniapp.auction.away") -> false)
                     else users.getUserById(fresh.userId).someOrFail(new Throwable(s"Нет игрока ${fresh.userId.value}"))
-                           .flatMap(purchase.buy(_, fresh, lotId, vaultSilverOnly = !inCity)).map(purchaseNote)
+                           .flatMap(purchase.buy(_, fresh, lotId,
+                             vaultSilverOnly = !inCity, deliverToVault = !inCity)).map(purchaseNote(_, !inCity))
       } yield fresh -> said
     }.flatMap { case (fresh, (note, bought)) =>
       heroes.getHero(fresh.userId).map(_.getOrElse(fresh)).flatMap(auction)
@@ -870,13 +871,15 @@ final class MiniAppLive(
     }
 
   /** Те же слова, что у Рахадима в боте, и куплено ли. */
-  private def purchaseNote(result: AuctionPurchase.Result): (String, Boolean) = result match {
+  private def purchaseNote(result: AuctionPurchase.Result, courier: Boolean): (String, Boolean) = result match {
     case AuctionPurchase.Result.Gone         => content.text("bank.auction.lotGone") -> false
     case AuctionPurchase.Result.Own          => content.text("bank.auction.ownLot") -> false
     case AuctionPurchase.Result.NoMoney(lot) => content.format("bank.auction.noMoney", "price" -> lot.priceLine) -> false
-    case AuctionPurchase.Result.NoRoom       => content.text("bank.auction.noRoom") -> false
+    case AuctionPurchase.Result.NoRoom       =>
+      (if (courier) content.text("bank.auction.noVaultRoom") else content.text("bank.auction.noRoom")) -> false
     case AuctionPurchase.Result.Bought(lot)  =>
-      content.format("bank.auction.bought", "name" -> lot.title, "price" -> lot.priceLine) -> true
+      val key = if (courier) "bank.auction.boughtVault" else "bank.auction.bought"
+      content.format(key, "name" -> lot.title, "price" -> lot.priceLine) -> true
   }
 
   /** Те же слова, что у Рахадима в боте, и выставлено ли. */

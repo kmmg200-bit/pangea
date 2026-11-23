@@ -38,9 +38,9 @@ object AuctionPurchaseSpec extends ZIOSpecDefault {
       heroDao  <- TestHeroDao.withHero(userId, TestFixtures.hero(userId).copy(silver = silver, doubloons = doubloons))
       _        <- heroDao.insertHero(TestFixtures.hero(sellerUs).copy(id = seller, silver = 0L, doubloons = 0L))
       inv       = TestInventoryRepository.withItems(bag)
-      aucRepo   = new TestAuctionRepository(lots, inv)
       // Ячейка одна на всех в тестовом банке; продавцу без своей выручка ждёт в городе.
       bank      = TestBankRepository.of(cells = if (vaultSilver > 0L) 1 else 0, silver = vaultSilver)
+      aucRepo   = new TestAuctionRepository(lots, inv, vault = Some(bank))
       payoutDao = TestPayoutDao.empty
       users    <- TestUserRepository.withUsers(buyerUser, sellerUser)
       players   = new TestPlayers
@@ -99,13 +99,27 @@ object AuctionPurchaseSpec extends ZIOSpecDefault {
       for {
         f      <- setup(List(lotOf(1L, price = 300L)), silver = 500L, vaultSilver = 300L)
         hero   <- buyer(f)
-        result <- f.purchase.buy(buyerUser, hero, 1L, vaultSilverOnly = true)
+        result <- f.purchase.buy(buyerUser, hero, 1L, vaultSilverOnly = true, deliverToVault = true)
         after  <- buyer(f)
       } yield assertTrue(
         result == AuctionPurchase.Result.Bought(lotOf(1L, price = 300L)),
         after.silver == 500L,
         f.bank.silverSnapshot == 300L,
-        f.inv.snapshot.map(_.name) == List("Топор 1")
+        f.inv.snapshot.isEmpty,
+        f.bank.itemsSnapshot.map(_.name) == List("Топор 1")
+      )
+    },
+
+    test("вне города: купленное — в хранилище, даже если сумка забита") {
+      val full = (1L to 20L).toList.map(i => gear(100L + i, s"Хлам $i"))
+      for {
+        f      <- setup(List(lotOf(1L, price = 300L)), silver = 500L, vaultSilver = 300L, bag = full)
+        hero   <- buyer(f)
+        result <- f.purchase.buy(buyerUser, hero, 1L, vaultSilverOnly = true, deliverToVault = true)
+      } yield assertTrue(
+        result == AuctionPurchase.Result.Bought(lotOf(1L, price = 300L)),
+        f.inv.snapshot.size == 20,
+        f.bank.itemsSnapshot.map(_.name) == List("Топор 1")
       )
     },
 
