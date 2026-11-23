@@ -275,9 +275,17 @@ object MiniApp {
   }
 
   /** Герой в городе — только тогда из приложения можно работать с кубом,
-    * покупать и выставлять на аукционе и трогать хранилища города и дома, как и
-    * передавать вещи. */
+    * выставлять на аукционе и трогать хранилища города и дома, как и передавать
+    * вещи. Покупать на аукционе можно и вне города, если дома есть личный
+    * посыльный — тогда платим серебром только из ячейки. */
   def inCity(hero: Hero): Boolean = StateType.cityStates.contains(hero.state)
+
+  def canAuctionBuy(hero: Hero, hasCourier: Boolean): Boolean = inCity(hero) || hasCourier
+
+  /** Сколько серебра показывать на витрине аукциона: в городе — руки и ячейка,
+    * вне города — только ячейка (посыльный не носит карманное серебро). */
+  def auctionSilver(hand: Long, vault: Long, hero: Hero): Long =
+    if (inCity(hero)) hand + vault else vault
 
   /** Герой в бою — тогда снаряжение, комплект со стойки и строй из приложения
     * не меняют: ход боя считается на надетом и на том, кто где стоит. Любой бой
@@ -469,20 +477,22 @@ final class MiniAppLive(
     } yield MiniAppView.inventory(hero, inv, MiniAppView.Stores(arts, barrel, vault, home), content,
       describeWith(hero, quests), ms, quests)
 
-  /** С витриной — чем платить и куда класть: серебро на руках вместе с
-    * ячейкой (её читаем без записи) и свободные места в сумке, — и что из
+  /** С витриной — чем платить и куда класть: в городе серебро на руках вместе с
+    * ячейкой, вне города — только ячейка; свободные места в сумке и что из
     * сумки можно выставить. */
   override def auction(hero: Hero): Task[AuctionView] =
     for {
-      ms     <- now
-      page   <- lots.page(ms, 0, MiniApp.MaxLots).mapError(e => new Throwable(e.toString))
+      ms       <- now
+      page     <- lots.page(ms, 0, MiniApp.MaxLots).mapError(e => new Throwable(e.toString))
       (onSale, _, _) = page
-      mine   <- lots.mine(hero.id, AuctionLot.MaxLots.toLong).mapError(e => new Throwable(e.toString))
-      vault  <- vaults.find(hero.id).map(_.fold(0L)(_.silver))
-      inv    <- inventories.get(hero.id).mapError(e => new Throwable(e.toString))
+      mine     <- lots.mine(hero.id, AuctionLot.MaxLots.toLong).mapError(e => new Throwable(e.toString))
+      vaultAmt <- vaults.find(hero.id).map(_.fold(0L)(_.silver))
+      home     <- heroDao.readHomeData(hero.userId).map(_.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty))
+      inv      <- inventories.get(hero.id).mapError(e => new Throwable(e.toString))
       describe <- describer(hero)
+      silver    = MiniApp.auctionSilver(hero.silver, vaultAmt, hero)
     } yield MiniAppView.auction(hero, onSale, mine, ms, inv.items.data, describe,
-      MiniAppView.Funds(hero.silver + vault, inv.freeSlots), content)
+      MiniAppView.Funds(silver, inv.freeSlots), content, home.hasCourier)
 
   /** Обмен: открытые предложения с именами партнёров, что при герое передаётся
     * (из этого кладут свою сторону) и правила. */
@@ -525,15 +535,18 @@ final class MiniAppLive(
         .map(TradeActionView(_, Some(said.merge), said.isRight))
     }
 
-  /** Под локом покупателя, героя перечитываем уже под ним. Не в городе —
-    * ничего не трогаем, говорим почему. */
+  /** Под локом покупателя, героя перечитываем уже под ним. Вне города — только
+    * с личным посыльным и серебром из ячейки. */
   override def buy(hero: Hero, lotId: Long): Task[AuctionActionView] =
     lock.withLock(hero.userId) {
       for {
-        fresh <- heroes.getHero(hero.userId).someOrFail(new Throwable(s"Нет героя у игрока ${hero.userId.value}"))
-        said  <- if (!MiniApp.inCity(fresh)) ZIO.succeed(content.text("miniapp.auction.away") -> false)
-                 else users.getUserById(fresh.userId).someOrFail(new Throwable(s"Нет игрока ${fresh.userId.value}"))
-                        .flatMap(purchase.buy(_, fresh, lotId)).map(purchaseNote)
+        fresh    <- heroes.getHero(hero.userId).someOrFail(new Throwable(s"Нет героя у игрока ${hero.userId.value}"))
+        home     <- heroDao.readHomeData(fresh.userId).map(_.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty))
+        inCity    = MiniApp.inCity(fresh)
+        canBuy    = MiniApp.canAuctionBuy(fresh, home.hasCourier)
+        said     <- if (!canBuy) ZIO.succeed(content.text("miniapp.auction.away") -> false)
+                    else users.getUserById(fresh.userId).someOrFail(new Throwable(s"Нет игрока ${fresh.userId.value}"))
+                           .flatMap(purchase.buy(_, fresh, lotId, vaultSilverOnly = !inCity)).map(purchaseNote)
       } yield fresh -> said
     }.flatMap { case (fresh, (note, bought)) =>
       heroes.getHero(fresh.userId).map(_.getOrElse(fresh)).flatMap(auction)

@@ -491,17 +491,21 @@ object MiniAppViewSpec extends ZIOSpecDefault {
     },
 
     test("аукцион: чем платить и куда класть — как пришло; вне города — почему не купить") {
-      val c      = SceneContent.load()
-      val hero   = TestFixtures.hero(UserId(1L), state = StateType.TradeHouse)
-      val lot    = AuctionLot(3L, HeroId(2L), sword, 300L, AuctionCurrency.Doubloons, 0L, AuctionLot.LifetimeMs)
-      val funds  = MiniAppView.Funds(silver = 1200L, bagFree = 4L)
-      val inCity = MiniAppView.auction(hero, List(lot), Nil, 0L, Nil, _ => "", funds, c)
-      val away   = MiniAppView.auction(hero.copy(state = StateType.Battle), List(lot), Nil, 0L, Nil, _ => "", funds, c)
+      val c        = SceneContent.load()
+      val hero     = TestFixtures.hero(UserId(1L), state = StateType.TradeHouse)
+      val lot      = AuctionLot(3L, HeroId(2L), sword, 300L, AuctionCurrency.Doubloons, 0L, AuctionLot.LifetimeMs)
+      val funds    = MiniAppView.Funds(silver = 1200L, bagFree = 4L)
+      val inCity   = MiniAppView.auction(hero, List(lot), Nil, 0L, Nil, _ => "", funds, c)
+      val away     = MiniAppView.auction(hero.copy(state = StateType.Battle), List(lot), Nil, 0L, Nil, _ => "", funds, c)
+      val vaultOnly = MiniAppView.Funds(silver = 400L, bagFree = 4L)
+      val courier  = MiniAppView.auction(hero.copy(state = StateType.Battle), List(lot), Nil, 0L, Nil, _ => "",
+                       vaultOnly, c, hasCourier = true)
       assertTrue(
         inCity.lots.map(l => (l.id, l.currency, l.mine)) == List((3L, "doubloons", false)),
         inCity.silver == 1200L && inCity.bagFree == 4L,
         inCity.away.isEmpty,
-        away.away.contains(c.text("miniapp.auction.away"))
+        away.away.contains(c.text("miniapp.auction.away")),
+        courier.away.isEmpty && courier.silver == 400L
       )
     },
 

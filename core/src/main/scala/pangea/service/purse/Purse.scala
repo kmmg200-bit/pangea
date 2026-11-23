@@ -53,6 +53,18 @@ final case class Purse(heroDao: HeroDao, bank: Option[BankRepository]) {
             .as(Some(hero.copy(silver = hero.silver - fromHand)))
       }
     } yield res
+
+  /** Списывает цену только из ячейки; серебро на руках не трогает. `false` —
+    * в ячейке не хватило или банка нет. */
+  def chargeVaultOnly(hero: Hero, price: Long): Task[Boolean] =
+    wallet(hero).flatMap { w =>
+      if (price < 0 || w.vault < price) ZIO.succeed(false)
+      else
+        bank match {
+          case None    => ZIO.succeed(false)
+          case Some(b) => b.withdrawSilver(hero.id, price).fold(_ => false, _ => true)
+        }
+    }
 }
 
 object Purse {

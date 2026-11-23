@@ -83,6 +83,32 @@ object AuctionPurchaseSpec extends ZIOSpecDefault {
       )
     },
 
+    test("вне города: серебро только из ячейки — на руках хватает, но без ячейки не купит") {
+      for {
+        f      <- setup(List(lotOf(1L, price = 300L)), silver = 500L, vaultSilver = 250L)
+        hero   <- buyer(f)
+        result <- f.purchase.buy(buyerUser, hero, 1L, vaultSilverOnly = true)
+        after  <- buyer(f)
+      } yield assertTrue(
+        result == AuctionPurchase.Result.NoMoney(lotOf(1L, price = 300L)),
+        after.silver == 500L && f.bank.silverSnapshot == 250L && f.lots.snapshot.size == 1
+      )
+    },
+
+    test("вне города: серебро только из ячейки — покупка списывает ячейку, руки не трогает") {
+      for {
+        f      <- setup(List(lotOf(1L, price = 300L)), silver = 500L, vaultSilver = 300L)
+        hero   <- buyer(f)
+        result <- f.purchase.buy(buyerUser, hero, 1L, vaultSilverOnly = true)
+        after  <- buyer(f)
+      } yield assertTrue(
+        result == AuctionPurchase.Result.Bought(lotOf(1L, price = 300L)),
+        after.silver == 500L,
+        f.bank.silverSnapshot == 300L,
+        f.inv.snapshot.map(_.name) == List("Топор 1")
+      )
+    },
+
     test("отказы: свой лот, не хватает денег, нет места, лота нет — ничего не списано, лот на месте") {
       val full = (1L to 20L).toList.map(i => gear(100L + i, s"Хлам $i"))
       for {
