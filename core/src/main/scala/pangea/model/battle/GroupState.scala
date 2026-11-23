@@ -55,8 +55,10 @@ final case class BattleAlly(
   /** Паутина сетеплёта на нём: сколько концов раунда она ещё держит (см.
     * SpiderWeb). Пока держит — с места он не сходит, а удары идут мимо брони. */
   webbed:     Int              = 0,
-  /** Его отравил красный сетеплёт: следующее его умение сорвётся (см. RedSpider). */
+  /** Следующее его умение сорвётся: яд красного сетеплёта или громовой раскат. */
   skillJammed: Boolean         = false,
+  /** Причина срыва: `SkillJam.Spider` или `SkillJam.Thunder`; без поля — паук. */
+  skillJam:    Option[String] = None,
   /** Проклятие Некроманта на нём: сколько концов раунда его раны ещё не
     * затягиваются (см. HealCurse). */
   cursed:      Int             = 0,
@@ -174,10 +176,11 @@ object BattleAlly {
       strike   <- c.getOrElse[Option[Element]]("strike")(None)
       webbed   <- c.getOrElse[Int]("webbed")(0)
       jammed   <- c.getOrElse[Boolean]("skillJammed")(false)
+      jamKind  <- c.getOrElse[Option[String]]("skillJam")(None)
       cursed   <- c.getOrElse[Int]("cursed")(0)
       frozen   <- c.getOrElse[Int]("frozen")(0)
     } yield BattleAlly(kind, position, hp, armor, energy, stats, lvl, undead, home, poison, bleed, burn, stood,
-                       coldCut, kills, hitBy, rooted, grown, strike, webbed, jammed, cursed, frozen)
+                       coldCut, kills, hitBy, rooted, grown, strike, webbed, jammed, jamKind, cursed, frozen)
 }
 
 /** Моб группы, стоящий НЕ в паре с героем: всё, что описывает его и его текущее
