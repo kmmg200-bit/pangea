@@ -47,8 +47,9 @@ case class Monster(
 object Monster {
   val MarkedPrefix: String = "Отмеченный тьмой"
 
-  /** Значок отмеченного тьмой на кнопке выбора цели: метку словами кнопка не
-    * вмещает, а отличать таких надо (см. `MonsterSlot.targetName`). */
+  /** Значок отмеченного тьмой на кнопке цели и на карточке боя: метку словами
+    * не вмещают, а отличать таких надо (см. `MonsterSlot.targetName`,
+    * `SoloPveBattle.cardMonsterName`). */
   val MarkedBadge: String = "⚫"
 
   /** Приставка поднятого: «Нежить-Орк раб». */

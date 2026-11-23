@@ -861,6 +861,9 @@ case class SoloPveBattle(
 
   def monsterName: String = customName.orElse(boss.map(_.monsterName)).getOrElse(toMonster.name)
 
+  /** Имя на карточке боя — как на кнопке цели: ⚫ вместо «Отмеченный тьмой». */
+  def cardMonsterName: String = activeSlot.targetName
+
   def rarity: Rarity = Rarity.withName(monsterRarity)
 
   /** Тик в конце хода игрока. `skipSlots` — itemId слотов, кулдауны которых не

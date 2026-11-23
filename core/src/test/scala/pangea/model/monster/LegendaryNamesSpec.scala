@@ -58,6 +58,7 @@ object LegendaryNamesSpec extends ZIOSpecDefault {
       val b = SoloPveBattle.fromGroup(List(m), hero, Nil)
       assertTrue(m.name == s"${Monster.MarkedPrefix} Велиар") &&
       assertTrue(b.monsterAt(b.group.activePos).exists(_.targetName == "⚫ Велиар")) &&
+      assertTrue(b.cardMonsterName == "⚫ Велиар") &&
       assertTrue(legendary(Race.Demon, Some("Велиар")).name == "Велиар")
     },
 
