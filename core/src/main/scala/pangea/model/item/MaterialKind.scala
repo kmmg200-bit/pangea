@@ -473,6 +473,16 @@ object MaterialKind extends Enum[MaterialKind] {
     * трава — 0. */
   def rankOf(kind: MaterialKind): Int = unknownFlowerRank(kind).getOrElse(kind.herbRank)
 
+  /** Редкость травы в сумке — по рангу (миниапп сортирует по ней). У прочих
+    * материалов — None. */
+  def herbInventoryRarity(kind: MaterialKind): Option[Rarity] =
+    if (!kind.isHerb) None
+    else rankOf(kind) match {
+      case 1 => Some(Rarity.White)
+      case 2 => Some(Rarity.Purple)
+      case _ => None
+    }
+
   /** Каким цветком видит траву этого ранга тот, кто её не знает. */
   def unknownFlower(rank: Int): MaterialKind = if (rank >= 2) UnusualFlower else StrangeFlower
 

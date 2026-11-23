@@ -39,7 +39,7 @@ object VillageArtifactSpec extends ZIOSpecDefault {
   private val QuestLevel = 54
   private val Silver     = 2700L
 
-  private def hero: Hero = TestFixtures.hero(userId, dungeonLevel = Level).copy(lvl = 55L, silver = 100L)
+  private def hero: Hero = TestFixtures.hero(userId, dungeonLevel = Level).copy(lvl = 50L, silver = 100L)
 
   // Деревня мурлоков, первое название в списке (Илистая Заводь); город — третий (Каэлис).
   private val scene    = VillageScene(Race.Murloc, 0, VillageQuest.StolenArtifact, Level, QuestLevel, Silver, city = 2)
