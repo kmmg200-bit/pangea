@@ -226,7 +226,8 @@ case class InventoryState(
           // Розу, выкованную до её переезда в пояс, носить в доп. слоте больше
           // незачем: раскрывается она из ячейки. Фляге тоже место на поясе — у
           // неё «На пояс» вместо «Надеть».
-          val canEquip = ItemType.equippable.contains(item.itemType) && item.rose.isEmpty &&
+          val canEquip = (ItemType.equippable.contains(item.itemType) ||
+                          item.brew.contains(BrewKind.MushroomMix)) && item.rose.isEmpty &&
                          item.itemType != ItemType.Flask
           val canCombine = item.itemType == ItemType.TreasureMapHalf
           // Пять малых рун одного узора складываются в большую — прямо в сумке.
@@ -688,7 +689,7 @@ case class InventoryState(
       keepScreen <- inv.items.data.find(_.id == itemId) match {
         case None => ZIO.succeed(false)
         case Some(item) =>
-          if (!ItemType.equippable.contains(item.itemType))
+          if (!ItemType.equippable.contains(item.itemType) && !item.brew.contains(BrewKind.MushroomMix))
             renderer.show(user, Screen(content.text("inventory.notEquippable"), Nil)).as(false)
           // Кнопка со старой карточки фляги: в слот её больше не надевают.
           else if (item.itemType == ItemType.Flask)
@@ -1489,10 +1490,13 @@ object InventoryState {
     }
   }
 
-  /** Отвар: что делает; боевой — с пометкой, что работает из ячейки пояса. */
+  /** Отвар: что делает; боевой — с пометкой, что работает из ячейки пояса;
+    * грибная смесь — тоже только из пояса. */
   def brewText(content: SceneContent, item: Item, kind: BrewKind): String =
     s"${item.displayTitle}\n${item.statsLines.mkString("\n")}" +
-      (if (kind.combat) "\n" + content.text("brew.beltOnly") else "")
+      (if (kind.combat) "\n" + content.text("brew.beltOnly")
+       else if (kind == BrewKind.MushroomMix) "\n" + content.text("brew.mixOffhand")
+       else "")
 
   /** Краденый кошелёк, если его развязать: от горсти серебра до увесистой.
     * Один из двухсот оказывается набит редкой монетой — воры и сами этого не
@@ -1579,6 +1583,8 @@ object InventoryState {
       case (ItemType.Belt, _) if eq.belt.itemType != ItemType.NoItem =>
         val swap = BeltContents.swap(eq.belt, item)
         (eq.copy(belt = swap.next), List(swap.worn), Some(swap))
+      case _ if item.brew.contains(BrewKind.MushroomMix) =>
+        (eq.copy(additionalWeapon = item), List(eq.additionalWeapon), None)
       case _ => (withSlot(eq, item), List(equippedIn(eq, item.itemType)), None)
     }
     val removed  = out.filter(_.itemType != ItemType.NoItem)

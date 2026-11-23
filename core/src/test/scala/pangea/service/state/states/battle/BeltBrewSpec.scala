@@ -191,17 +191,16 @@ object BeltBrewSpec extends ZIOSpecDefault {
                                              BeltSlot.Brew(BrewKind.Invigorating, count = 0)))
     },
 
-    test("грибная смесь из ячейки достаётся всем, кто стоит в поле") {
+    test("грибную смесь из пояса не бросают — только из доп. слота") {
       val h = hero(BeltSlot.Brew(BrewKind.MushroomMix))
       for {
-        t <- makeState(h, battle(h, 100000L, 100000L))
+        t <- makeState(h, battle(h, 100000L))
         (state, dao, r) = t
-        _     <- state.action(testUser, useSlot(0), r)
+        _    <- state.action(testUser, useSlot(0), r)
+        said <- r.sentScreens.map(_.map(_.text).mkString("\n"))
         after <- battleOf(dao)
-        blow   = BrewRates.MushroomDamagePerLvl * 10L
-      } yield assertTrue(after.monsterCurrentHp == 100000L - blow) &&
-              assertTrue(after.group.others.head.currentHp == 100000L - blow) &&
-              assertTrue(after.effects.monsterPoison.isDefined)
+      } yield assertTrue(said.contains("доп. слота")) &&
+              assertTrue(after.monsterCurrentHp == 100000L)
     },
 
     test("живая вода спрашивает, какую флягу заправить, и заправляет выбранную, а не первую") {

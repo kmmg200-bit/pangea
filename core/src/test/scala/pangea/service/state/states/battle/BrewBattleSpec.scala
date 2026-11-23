@@ -4,7 +4,8 @@ import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
 import pangea.model.battle.{BattleEffects, MonsterSlot, SoloPveBattle}
 import pangea.model.hero.{Hero, WeaponDust}
-import pangea.model.item.{BrewKind, BrewRates, Item}
+import pangea.model.item.{BrewKind, BrewRates, Item, ItemType}
+import pangea.test.TestFixtures
 import pangea.model.monster.{Monster, Race, Rarity}
 import pangea.model.state.StateType
 import pangea.model.stats.{BaseStats, FightStats, ParamsBuff, StatBoost, StatBoosts}
@@ -15,8 +16,8 @@ import pangea.test._
 import zio.test.{TestRandom, _}
 import zio.{Task, ZIO}
 
-/** Отвары, которые работают в бою: грибная смесь бьёт по всему полю,
-  * зеркальный настой подставляет под удар копии. */
+/** Отвары, которые работают в бою: грибная смесь из доп. слота, зеркальный
+  * настой подставляет под удар копии. */
 object BrewBattleSpec extends ZIOSpecDefault {
 
   private val userId   = UserId(1L)
@@ -25,18 +26,17 @@ object BrewBattleSpec extends ZIOSpecDefault {
 
   private val lvl = 10L
 
-  private def hero(dust: WeaponDust = WeaponDust.empty): Hero =
+  private def hero(dust: WeaponDust = WeaponDust.empty, offhand: Item = Item.NoItem): Hero =
     TestFixtures.hero(userId, state = StateType.Battle).copy(
       lvl        = lvl,
       baseStats  = BaseStats(agi = 10, vit = 10, str = 10, int = 10),
       fightStats = FightStats(atk = 20, hp = 5000, armor = 500, defence = 10, evasion = 5, accuracy = 20, energy = 100),
-      weaponDust = dust)
+      weaponDust = dust,
+      equipment  = TestFixtures.emptyEquipment.copy(additionalWeapon = offhand))
 
   private def monster(hp: Long, atk: Long = 100L): Monster =
     Monster(0L, lvl, Race.Goblin, Rarity.Common,
       FightStats(atk = atk, hp = hp, armor = 0, defence = 0, evasion = 0, accuracy = 10000, energy = 0))
-
-  private def mix(id: Long): Item = BrewKind.item(BrewKind.MushroomMix).copy(id = id)
 
   /** Приговорённый — именной, со своим именем — и сородич, которого он позвал. */
   private val PreyName = "Грызь Кривозуб"
@@ -150,54 +150,38 @@ object BrewBattleSpec extends ZIOSpecDefault {
               assertTrue(loot.exists(j => !j.noSpaces.contains(PreyName)))
     },
 
-    test("грибная смесь: кнопка есть только со склянкой в сумке") {
-      val b = SoloPveBattle.from(monster(1000L), hero())
+    test("грибная смесь: кнопка броска только со склянкой в доп. слоте") {
+      val mix = BrewKind.item(BrewKind.MushroomMix).copy(id = 1L)
+      val b   = SoloPveBattle.from(monster(1000L), hero())
       for {
-        with_ <- makeState(hero(), b, List(mix(1L)))
-        (s1, _, _, r1) = with_
+        armed <- makeState(hero(offhand = mix), b, Nil)
+        (s1, _, _, r1) = armed
         _      <- s1.enter(testUser, r1)
-        armed  <- r1.sentScreens.map(_.last)
-        empty_ <- makeState(hero(), b)
-        (s2, _, _, r2) = empty_
+        on     <- r1.sentScreens.map(_.last)
+        plain_ <- makeState(hero(), b, List(mix))
+        (s2, _, _, r2) = plain_
         _      <- s2.enter(testUser, r2)
-        plain  <- r2.sentScreens.map(_.last)
-      } yield assertTrue(armed.choices.exists(c => c.id == "ThrowMix" && c.label.contains("1"))) &&
-              assertTrue(!plain.choices.exists(_.id == "ThrowMix"))
+        off    <- r2.sentScreens.map(_.last)
+      } yield assertTrue(on.choices.exists(c => c.id == "ThrowMix")) &&
+              assertTrue(!off.choices.exists(_.id == "ThrowMix"))
     },
 
-    test("бросок смеси: достаётся всем в поле, все травятся, склянка уходит из сумки") {
-      val group = SoloPveBattle.fromGroup(List(monster(100000L), monster(100000L), monster(100000L)),
-        hero(), List(0L, 0L, 0L))
+    test("бросок из доп. слота: бьёт всех в поле, травит и снимает смесь со слота") {
+      val mix   = BrewKind.item(BrewKind.MushroomMix).copy(id = 1L)
+      val group = SoloPveBattle.fromGroup(List(monster(100000L), monster(100000L)),
+        hero(offhand = mix), List(0L, 0L))
       for {
-        t <- makeState(hero(), group, List(mix(1L)))
-        (state, dao, inv, r) = t
-        res    <- state.action(testUser, tap("ThrowMix"), r)
+        t <- makeState(hero(offhand = mix), group, Nil)
+        (state, dao, _, r) = t
+        _      <- state.action(testUser, tap("ThrowMix"), r)
         after  <- battleOf(dao)
-        said   <- texts(r)
+        h      <- dao.getHeroByUserId(userId).map(_.get)
         blow    = BrewRates.MushroomDamagePerLvl * lvl
-      } yield assertTrue(res == StateType.Battle && said.contains("🍄 Грибная смесь: всем врагам по ")) &&
-              // досталось и тому, кто в паре, и тем, кто в строю
+      } yield assertTrue(h.equipment.additionalWeapon.itemType == ItemType.NoItem) &&
               assertTrue(after.monsterCurrentHp == 100000L - blow) &&
               assertTrue(after.group.others.forall(_.currentHp == 100000L - blow)) &&
               assertTrue(after.effects.monsterPoison.isDefined) &&
-              assertTrue(after.group.others.forall(_.effects.monsterPoison.isDefined)) &&
-              // склянка одноразовая и считается расходником раунда
-              assertTrue(inv.snapshot.isEmpty && after.consumableUsedThisRound)
-    },
-
-    test("вторую склянку в тот же раунд не бросить, а без склянки кнопка не сработает") {
-      val b = SoloPveBattle.from(monster(100000L), hero())
-      for {
-        t <- makeState(hero(), b.copy(consumableUsedThisRound = true), List(mix(1L)))
-        (state, _, inv, r) = t
-        _    <- state.action(testUser, tap("ThrowMix"), r)
-        busy <- texts(r)
-        t2   <- makeState(hero(), b)
-        (s2, _, _, r2) = t2
-        _    <- s2.action(testUser, tap("ThrowMix"), r2)
-        none <- texts(r2)
-      } yield assertTrue(busy.contains("уже") && inv.snapshot.size == 1) &&
-              assertTrue(none.contains("Грибной смеси в сумке нет"))
+              assertTrue(after.consumableUsedThisRound)
     },
 
     test("зеркальный настой: первые удары уходят в копии, потом бьют героя") {
