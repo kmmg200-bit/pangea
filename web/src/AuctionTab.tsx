@@ -16,6 +16,11 @@ const sorts = [
 
 const coin: Record<Currency, ReactNode> = { silver: <Silver />, doubloons: '🟡' }
 
+/** Подпись к сумме серебра: в Кинэте — руки и ячейка, вне города — только ячейка. */
+function silverScope(data: AuctionView): string {
+  return data.sell.away ? ' в ячейке' : ' вместе с ячейкой'
+}
+
 function sortLots(lots: LotView[], sort: string): LotView[] {
   const by = (f: (a: LotView, b: LotView) => number) => [...lots].sort(f)
   switch (sort) {
@@ -106,7 +111,7 @@ function Buy(props: { lot: LotView; data: AuctionView; onChange: OnChange }) {
     have < lot.price ? (
       <>
         Не хватает: у вас {coin[lot.currency]} {num(have)}
-        {lot.currency === 'silver' && ' вместе с ячейкой'}.
+        {lot.currency === 'silver' && silverScope(data)}.
       </>
     ) : data.bagFree <= 0 ? (
       'В сумке нет места.'
@@ -198,7 +203,7 @@ function Sell(props: { item: ItemView; data: AuctionView; onChange: OnChange }) 
     ) : have < fee ? (
       <>
         На сбор нужно {c} {num(fee)}, а у вас {c} {num(have)}
-        {currency === 'silver' && ' вместе с ячейкой'}.
+        {currency === 'silver' && silverScope(data)}.
       </>
     ) : null
 
