@@ -451,6 +451,29 @@ object MonsterCaveSpec extends ZIOSpecDefault {
               assertTrue(back.exists(_.rooms(2).done))
     },
 
+    test("выездное задание: сундук и схрон катают вещи по уровню контракта, не по этажу") {
+      val high = hero(dungeonLevel = 40).copy(lvl = 50L)
+      val questChest = smallCave(kind = RoomKind.Chest).copy(
+        at = 2, sewer = true, questLvl = 10L, race = Race.Orc.entryName)
+      val questStash = smallCave(kind = RoomKind.Stash).copy(
+        at = 2, sewer = true, questLvl = 10L, race = Race.Human.entryName)
+      for {
+        t <- cave(high)
+        (state, dao, _, _, r) = t
+        _      <- put(dao, questChest)
+        _      <- TestRandom.feedInts(50) *> TestRandom.feedLongs(777L)
+        _      <- state.action(testUser, tap("CaveSearch"), r)
+        chest  <- lootOf(dao)
+        gear    = chest.toList.flatMap(_.items).filter(_.itemType != ItemType.Material)
+        _      <- put(dao, questStash)
+        _      <- TestRandom.feedLongs(888L)
+        _      <- state.action(testUser, tap("CaveSearch"), r)
+        stash  <- lootOf(dao)
+        stashGear = stash.toList.flatMap(_.items).filter(i => i.attack > 0 || i.defence > 0 || i.hp > 0)
+      } yield assertTrue(gear.nonEmpty && gear.forall(i => i.lvl >= 8L && i.lvl <= 11L)) &&
+              assertTrue(stashGear.forall(i => i.lvl >= 8L && i.lvl <= 11L))
+    },
+
     test("трава в трещине достаётся сразу, комната после этого пуста") {
       for {
         t <- cave()
