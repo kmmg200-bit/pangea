@@ -12,9 +12,11 @@ import pangea.model.quest.NpcQuests
 import pangea.model.squad.{AllyKind, UndeadForm}
 import pangea.model.state.StateType
 import pangea.model.user.UserId
+import pangea.model.schedule.TaskKind
 import pangea.model.village.{CaravanAmbush, VillageContract, VillageQuest, VillageRates, VillageScene}
 import pangea.repository.inventory.InventoryRepository
 import pangea.repository.item.ItemRepository
+import pangea.service.schedule.Scheduler
 import zio.{Task, ZIO}
 
 /** Логово беды деревни — куда ведёт контракт, пока дело не сделано: своя
@@ -73,7 +75,7 @@ object Villages {
   val CaravanStory: String = "villageCaravan"
 
   /** Ключ сюжетного боя в стане воров артефакта: без «Сбежать», награда как за
-    * обычный бой уровня задания. Пал — след остыл, контракт при герое. */
+    * обычный бой уровня задания. Пал — контракт сорван. */
   val ArtifactStory: String = "villageArtifact"
 
   /** Ключ сюжетного боя с охотниками за головами на выходе с заставы: без
@@ -247,6 +249,21 @@ object Villages {
   def abandon(heroDao: HeroDao, inventory: InventoryRepository, userId: UserId, hero: Hero): Task[Unit] =
     NpcQuestLog.modify(heroDao, userId)(_.copy(village = None)) *>
       QuestSupport.removeItems(inventory, hero, ContractItems)
+
+  /** Провал на контракте (смерть в сюжетном бою логова, каравана или следа):
+    * как [[abandon]], плюс снимаются отложенные ноги каравана и погони. */
+  def failContract(
+      heroDao: HeroDao,
+      inventory: InventoryRepository,
+      userId: UserId,
+      hero: Hero,
+      scheduler: Option[Scheduler]
+  ): Task[Unit] =
+    abandon(heroDao, inventory, userId, hero) *>
+      ZIO.foreachDiscard(scheduler)(s =>
+        s.cancel(userId, TaskKind.VillageCaravan) *>
+          s.cancel(userId, TaskKind.VillageTrail)
+      )
 
   /** Что уходит из сумки вместе с договором: сам контракт и голова главаря, если
     * её несли старосте. */

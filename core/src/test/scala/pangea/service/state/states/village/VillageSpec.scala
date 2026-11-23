@@ -629,7 +629,7 @@ object VillageSpec extends ZIOSpecDefault {
               assertTrue(toPay.contains(s"«Контракт деревни» — вернуться в деревню орков «$VillageName» за платой — $Silver серебра"))
     },
 
-    test("смерть в налёте и в логове: проснуться в лабиринте со своей строкой, контракт на месте; оба боя награждаются как обычные") {
+    test("смерть в налёте — без контракта; в логове — контракт сорван: проснуться со своей строкой; оба боя награждаются как обычные") {
       for {
         c   <- content
         r   <- TestRenderer.make
@@ -638,21 +638,26 @@ object VillageSpec extends ZIOSpecDefault {
                  towers = VillageRates.RaidTowers).copy(story = Some(Villages.RaidStory)).asJson)
         _   <- DeathState(d1, TestInventoryRepository.withItems(Nil), c).enter(testUser, r)
         w1  <- d1.readSceneData(userId)
+        inv2 = TestInventoryRepository.withItems(List(paper))
         d2  <- dao(q = Some(withContract()))
         _   <- d2.writeActiveBattle(userId, SoloPveBattle.fromGroup(Villages.banditGang(contract(), Rng(1L)), hero(), Nil)
                  .copy(story = Some(Villages.BanditsStory)).asJson)
-        _   <- DeathState(d2, TestInventoryRepository.withItems(List(paper)), c).enter(testUser, r)
+        _   <- DeathState(d2, inv2, c).enter(testUser, r)
         w2  <- d2.readSceneData(userId)
         q2  <- questOf(d2)
+        inv3 = TestInventoryRepository.withItems(List(paper))
         d3  <- dao(q = Some(withSpiders()))
         _   <- d3.writeActiveBattle(userId, SoloPveBattle.fromGroup(Villages.spiderBrood(VillageContract.of(spiderScene), Rng(1L)),
                  hero(), Nil).copy(story = Some(Villages.SpidersStory)).asJson)
-        _   <- DeathState(d3, TestInventoryRepository.withItems(List(paper)), c).enter(testUser, r)
+        _   <- DeathState(d3, inv3, c).enter(testUser, r)
         w3  <- d3.readSceneData(userId)
+        q3  <- questOf(d3)
       } yield assertTrue(wakeLines(w1) == List("village.raid.death") && wakeLines(w2) == List("village.bandits.death") &&
                 wakeLines(w3) == List("village.spiders.death")) &&
               assertTrue(w1.exists(_.hcursor.downField("wakeTo").failed) && w2.exists(_.hcursor.downField("wakeTo").failed)) &&
-              assertTrue(Villages.toBandits(q2)) &&
+              assertTrue(q2.village.isEmpty && inv2.snapshot.isEmpty && q3.village.isEmpty && inv3.snapshot.isEmpty) &&
+              assertTrue(c.text("village.bandits.death").contains("контракт деревни сорван") &&
+                c.text("village.spiders.death").contains("контракт деревни сорван")) &&
               assertTrue(BattleState.RaidStories.contains(Villages.RaidStory) && BattleState.RaidStories.contains(Villages.BanditsStory) &&
                 BattleState.RaidStories.contains(Villages.SpidersStory))
     },
