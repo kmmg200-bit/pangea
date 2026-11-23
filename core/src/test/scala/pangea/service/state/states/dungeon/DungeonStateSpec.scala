@@ -297,6 +297,28 @@ object DungeonStateSpec extends ZIOSpecDefault {
       } yield assertTrue(first == StateType.Battle && second == StateType.RottenJoe)
     },
 
+    test("FindEvent Spring: запас выше потолка — в тексте нет «+-», энергия не уходит в минус") {
+      val base = TestFixtures.hero(userId).copy(lvl = 80L)
+      val maxEn = base.maxEnergy(0L)
+      val maxHp = base.effectiveMaxHp(0L)
+      val over  = base.copy(
+        fightStats = base.fightStats.copy(hp = maxHp, energy = maxEn + 200L))
+      for {
+        heroDao   <- TestHeroDao.withHero(userId, over)
+        renderer  <- TestRenderer.make
+        content   <- ZIO.attempt(SceneContent.load())
+        scheduler <- TestScheduler.make
+        state      = DungeonState(heroDao, TestInventoryRepository.accepting, scheduler, content)
+        _         <- TestRandom.feedInts(67, 99)
+        _         <- state.action(testUser, tap("FindEvent"), renderer)
+        screens   <- renderer.sentScreens
+        hero      <- heroDao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(hero.fightStats.energy <= maxEn) &&
+        assertTrue(screens.exists { s =>
+          s.text.contains("живительный ручеёк") && !s.text.contains("+-") && !s.text.contains("(+0)")
+        })
+    },
+
     test("FindEvent Spring (индекс 67) → восстанавливает HP, без засады остаётся в Dungeon") {
       val lowHpHero = TestFixtures.hero(userId).copy(
         fightStats = TestFixtures.hero(userId).fightStats.copy(hp = 10L)
