@@ -341,12 +341,17 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
   }
 
   private def healAtSpring(user: User, hero: Hero, nowMs: Long, renderer: Renderer): Task[StateType] = {
-    val maxHp    = hero.effectiveMaxHp(nowMs)
-    val healed   = (maxHp - hero.fightStats.hp).max(0L)
+    val maxHp      = hero.effectiveMaxHp(nowMs)
+  // Текущие запасы бывают выше потолка (смена экипировки, бафы) — в карточке
+  // и в событии показывают min, а при лечении считают от зажатого значения.
+    val curHp      = hero.fightStats.hp.min(maxHp)
+    val healed     = (maxHp - curHp).max(0L)
     // Ручеёк дополнительно восстанавливает 10% максимума Энергии.
-    val maxEn        = hero.maxEnergy(nowMs)
-    val newEnergy    = (hero.fightStats.energy + (maxEn * 10 / 100L).max(1L)).min(maxEn)
-    val energyBack   = newEnergy - hero.fightStats.energy
+    val maxEn      = hero.maxEnergy(nowMs)
+    val curEnergy  = hero.fightStats.energy.min(maxEn)
+    val energyGain = (maxEn * 10 / 100L).max(1L)
+    val newEnergy  = (curEnergy + energyGain).min(maxEn)
+    val energyBack = (newEnergy - curEnergy).max(0L)
     // Ручей — вода: наполняет только флягу целителя; кузнеца, стихийную и прочие
     // — нет. На поясе — хоть початую, хоть выпитую до дна.
     val beltRefilled = hero.equipment.belt.details match {
@@ -370,8 +375,8 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
       ambush  = roll <= 50
       _ <- renderer.show(user, Screen(
              content.format("dungeon.spring",
-               "healed"      -> healed.toString,
-               "energy"      -> energyBack.toString,
+               "healed"      -> DungeonState.springGainText(healed),
+               "energy"      -> DungeonState.springGainText(energyBack),
                "flaskFilled" -> (if (hasFlask) content.text("dungeon.springFlaskFilled") else "")) +
                (if (ambush) content.text("dungeon.springAmbush") else ""), Nil))
       result <- if (ambush) startBattle(user, hero) else ZIO.succeed(StateType.Dungeon)
@@ -534,6 +539,10 @@ object DungeonState {
   // payload синтетического действия, которым поллер будит выслеживание в момент
   // дедлайна (маршрутизируется в goDarker, как и обычное нажатие «к тьме»).
   private val TrackAction: String = """{"action":"GoDarker"}"""
+
+  /** Подпись прироста в тексте ручейка: плюс только при реальном наборе. */
+  private[dungeon] def springGainText(gain: Long): String =
+    if (gain > 0L) s"+$gain" else "0"
 
   /** Прогресс выслеживания в scene_data: момент (мс), когда Отмеченный тьмой
    *  будет «выслежен». Пока это лежит в scene_data — герой в режиме ожидания. */
