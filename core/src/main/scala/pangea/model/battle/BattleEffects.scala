@@ -241,9 +241,11 @@ case class BattleEffects(
   // Паутина сетеплёта на герое: сколько концов раунда она ещё держит (см.
   // SpiderWeb). Option — чтобы бои, записанные до паутины, читались.
   heroWebTurns:         Option[Int]                = None,
-  // Яд красного сетеплёта: следующее активное умение героя сорвётся (см.
-  // RedSpider). Option — чтобы бои, записанные до этого, читались.
+  // Следующее активное умение героя сорвётся: яд красного сетеплёта или
+  // оглушение от громового раската (см. RedSpider, MiniBoss.ThunderElemental).
+  // `heroSkillJammed` — для старых записей; новое — `heroSkillJam`.
   heroSkillJammed:      Option[Boolean]            = None,
+  heroSkillJam:         Option[String]             = None,
   // Проклятие Некроманта: сколько концов раунда раны героя ещё не затягиваются
   // (см. HealCurse). Option — чтобы бои, записанные до проклятия, читались.
   heroCursedTurns:      Option[Int]                = None,
@@ -307,6 +309,7 @@ case class BattleEffects(
     heroWards            = heroWards,
     heroWebTurns         = heroWebTurns,
     heroSkillJammed      = heroSkillJammed,
+    heroSkillJam         = heroSkillJam,
     heroCursedTurns      = heroCursedTurns,
     heroFrozenTurns      = heroFrozenTurns,
     heroDrainTurns       = heroDrainTurns
@@ -369,8 +372,17 @@ case class BattleEffects(
   /** Пригвождён ли моб: с места он сейчас не сходит. */
   def monsterRooted: Boolean = monsterRootedTurns > 0
 
-  /** Сорвётся ли следующее умение героя: его отравил красный сетеплёт (см. RedSpider). */
-  def skillJammed: Boolean = heroSkillJammed.contains(true)
+  /** Сорвётся ли следующее умение героя (паук или громовой раскат). */
+  def skillJammed: Boolean = heroSkillJammed.contains(true) || heroSkillJam.isDefined
+
+  /** От чего сорвётся умение: без ключа в старых боях — паук. */
+  def skillJamKind: Option[String] =
+    heroSkillJam.orElse(if (heroSkillJammed.contains(true)) Some(SkillJam.Spider) else None)
+
+  def withSkillJam(kind: String): BattleEffects =
+    copy(heroSkillJammed = Some(true), heroSkillJam = Some(kind))
+
+  def withoutSkillJam: BattleEffects = copy(heroSkillJammed = None, heroSkillJam = None)
 
   /** Опутан ли герой паутиной сетеплёта (см. SpiderWeb). */
   def heroWebbed: Boolean = heroWebTurns.exists(_ > 0)
@@ -408,7 +420,7 @@ case class BattleEffects(
       case Ward.Cold   => copy(heroColdDefenceCut = 0)
       case Ward.Bleed  => copy(heroBleed = None)
       // Сыворотка снимает, что оставили сетеплёты: паутину, яд и сорванное умение.
-      case Ward.Spider => copy(heroWebTurns = None, heroPoison = None, heroSkillJammed = None)
+      case Ward.Spider => copy(heroWebTurns = None, heroPoison = None).withoutSkillJam
     }
     cleared.copy(heroWards = Some(heroWards.getOrElse(Set.empty) + w))
   }

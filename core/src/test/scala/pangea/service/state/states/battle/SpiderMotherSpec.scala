@@ -2,7 +2,7 @@ package pangea.service.state.states.battle
 
 import io.circe.syntax.EncoderOps
 import pangea.engine.SceneContent
-import pangea.model.battle.{BattleAlly, BattleEffects, RedSpider, SkillSlotState, SlainMonster, SoloPveBattle, Ward}
+import pangea.model.battle.{BattleAlly, BattleEffects, RedSpider, SkillJam, SkillSlotState, SlainMonster, SoloPveBattle, Ward}
 import pangea.model.hero.Hero
 import pangea.model.item.{Item, ItemDetails, ItemType, Rarity => ItemRarity}
 import pangea.model.monster.{Breed, Monster, Race, Rarity}
@@ -253,9 +253,11 @@ object SpiderMotherSpec extends ZIOSpecDefault {
       val fx    = BattleEffects(heroSkillJammed = Some(true))
       val stats = FightStats(atk = 10, hp = 500, armor = 500, defence = 0, evasion = 0, accuracy = 10, energy = 0)
       val a     = BattleAlly(AllyKind.Human, 1, hp = 500L, armor = 500L, energy = 0L, stats = stats, lvl = 10L, skillJammed = true)
-      val oldFx = fx.asJson.mapObject(_.remove("heroSkillJammed"))
-      val oldA  = a.asJson.mapObject(_.remove("skillJammed"))
+      val oldFx = fx.asJson.mapObject(_.remove("heroSkillJammed").remove("heroSkillJam"))
+      val oldA  = a.asJson.mapObject(_.remove("skillJammed").remove("skillJam"))
+      val thunderFx = fx.withSkillJam(SkillJam.Thunder)
       assertTrue(fx.asJson.as[BattleEffects].exists(_.skillJammed) && oldFx.as[BattleEffects].exists(!_.skillJammed)) &&
+      assertTrue(thunderFx.asJson.as[BattleEffects].exists(e => e.skillJamKind.contains(SkillJam.Thunder))) &&
       assertTrue(a.asJson.as[BattleAlly].exists(_.skillJammed) && oldA.as[BattleAlly].exists(!_.skillJammed))
     }
   )

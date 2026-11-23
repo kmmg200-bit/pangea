@@ -5,9 +5,10 @@ import pangea.domain.Rng
 import pangea.engine.SceneContent
 import pangea.generator.loot.LootGenerator
 import pangea.generator.loot.LootGenerator.LootDrop
-import pangea.model.battle.{BattleAlly, BattleEffects, Element, SoloPveBattle}
+import pangea.model.battle.{BattleAlly, BattleEffects, Element, SkillJam, SoloPveBattle}
 import pangea.model.hero.Hero
-import pangea.model.item.{Gem, GemKind, Grip, Item, ItemSet, ItemType, MaterialKind, Rarity => ItemRarity}
+import pangea.model.item.{Gem, GemKind, Grip, Item, ItemDetails, ItemSet, ItemType, MaterialKind, Rarity => ItemRarity}
+import pangea.model.skill.Skill
 import pangea.model.monster.{MiniBoss, Monster, Race, Rarity => MobRarity}
 import pangea.model.squad.{Ally, AllyKind}
 import pangea.model.state.StateType
@@ -171,8 +172,27 @@ object ThunderElementalSpec extends ZIOSpecDefault {
       } yield assertTrue(first._3.contains("Над элементалем сгущается туча: заряд 1 из 3.") && first._2.bossCharges == 1) &&
               assertTrue(third._3.contains("Громовой раскат! Туча разряжается в Вас на")) &&
               assertTrue(third._3.contains("В ушах звенит: следующее ваше умение сорвётся.")) &&
-              assertTrue(third._2.bossCharges == 0 && third._2.effects.heroSkillJammed.contains(true)) &&
+              assertTrue(third._2.bossCharges == 0 && third._2.effects.heroSkillJam.contains(SkillJam.Thunder)) &&
               assertTrue(third._1.fightStats.hp < h.fightStats.hp - 2L * stats.atk * 9L / 10L)
+    },
+
+    test("раскат: сорванное умение — про звон в ушах, не про яд паука") {
+      val c = SceneContent.load()
+      val shield = Item(301L, "Щит", 1L, ItemRarity.Gray, ItemType.Shield,
+        attack = 0, accuracy = 0, energy = 0, armor = 0, defence = 0, evasion = 0,
+        details = ItemDetails.HandSkill(Skill.Block))
+      val h = hero().copy(
+        fightStats = hero().fightStats.copy(energy = 10_000L),
+        baseStats  = hero().baseStats.copy(int = 50),
+        equipment  = TestFixtures.emptyEquipment.copy(leftHand = shield))
+      val b = thunderBattle(h, turn = 0).copy(effects = BattleEffects.empty.withSkillJam(SkillJam.Thunder))
+      for {
+        t <- makeState(h, b)
+        (state, _, renderer) = t
+        _   <- state.action(testUser, tap("Skill_301"), renderer)
+        log <- renderer.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(log.contains(c.text("battle.thunder.skillJammed"))) &&
+              assertTrue(!log.contains("Яд паука"))
     },
 
     test("цепная молния: по цели и по тем, кто стоит с ней рядом") {

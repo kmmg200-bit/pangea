@@ -7,7 +7,7 @@ import pangea.domain.Rng
 import pangea.engine.{Branch, Renderer, SceneContent, Screen, Target}
 import pangea.generator.loot.LootGenerator
 import pangea.generator.monster.MonsterGenerator
-import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Convoy, Element, Formation, GroupState, HealCurse, HealedWounds, MonsterSlot, Nature, Poison, PatternPull, PowderKeg, RaceTactics, Regen, RedSpider, SlainMonster, SoloPveBattle, SkillSlotState, SpiderWeb, TimedDefenceDebuff, Wagon, Ward}
+import pangea.model.battle.{Aura, AuraRates, BattleAlly, BattleEffects, Bleed, Buff, Burn, Convoy, Element, Formation, GroupState, HealCurse, HealedWounds, MonsterSlot, Nature, Poison, PatternPull, PowderKeg, RaceTactics, Regen, RedSpider, SkillJam, SlainMonster, SoloPveBattle, SkillSlotState, SpiderWeb, TimedDefenceDebuff, Wagon, Ward}
 import pangea.model.cave.CaveGenerator
 import pangea.model.item.ItemSet
 import pangea.model.squad.AllySkill
@@ -2346,12 +2346,12 @@ case class BattleState(
     val toHp     = (hpBefore - victimHp(victim, hit, struck)).max(0L)
     val (stunned, lines) = victim match {
       case Victim.Hero =>
-        (struck.copy(effects = struck.effects.copy(heroSkillJammed = Some(true))),
+        (struck.copy(effects = struck.effects.withSkillJam(SkillJam.Thunder)),
           Vector(content.format("battle.thunder.clap", "damage" -> damage.toString),
                  content.text("battle.thunder.stunned")))
       case Victim.Ally(pos) =>
         val name = struck.group.allyAt(pos).fold("")(_.name)
-        (struck.copy(group = struck.group.updateAlly(pos)(_.copy(skillJammed = true))),
+        (struck.copy(group = struck.group.updateAlly(pos)(_.copy(skillJammed = true, skillJam = Some(SkillJam.Thunder)))),
           Vector(content.format("battle.thunder.clapAlly", "name" -> name, "damage" -> damage.toString),
                  content.format("battle.thunder.stunnedAlly", "name" -> name)))
     }
@@ -3530,7 +3530,7 @@ case class BattleState(
               toughnessUsed    = battle.toughnessUsed || toughTriggered,
               effects          = {
                 val webbedFx = if (webbed) effectsAfterHit.copy(heroWebTurns = Some(SpiderWeb.Turns)) else effectsAfterHit
-                if (jams) webbedFx.copy(heroSkillJammed = Some(true)) else webbedFx
+                if (jams) webbedFx.withSkillJam(SkillJam.Spider) else webbedFx
               }
             )
             lines = List(
@@ -4208,13 +4208,22 @@ case class BattleState(
         skillHit(paid(hero, slot), battle, slot, nowMs, target)
     }
 
-  /** Умение сорвал яд красного сетеплёта: энергия ушла, умения нет, перезарядка
-    * не началась. Потрачено то, что взяло бы само умение: обычное — ход (враги
-    * отвечают), Блок и Контрудар — бонусное действие раунда, ход остаётся.
-    * Срыв один: дальше умения работают (см. RedSpider). */
+  private def skillJamLine(kind: Option[String]): String =
+    if (SkillJam.isThunder(kind)) content.text("battle.thunder.skillJammed")
+    else content.text("battle.skillJammed")
+
+  private def allySkillJamLine(name: String, kind: Option[String]): String =
+    if (SkillJam.isThunder(kind)) content.format("battle.thunder.skillJammedAlly", "name" -> name)
+    else content.format("battle.ally.skillJammed", "name" -> name)
+
+  /** Сорвалось следующее умение (яд красного сетеплёта или громовой раскат):
+    * энергия ушла, умения нет, перезарядка не началась. Потрачено то, что взяло
+    * бы само умение: обычное — ход (враги отвечают), Блок и Контрудар —
+    * бонусное действие раунда, ход остаётся. Срыв один: дальше умения
+    * работают. */
   private def jammed(hero: Hero, battle: SoloPveBattle, slot: SkillSlotState, nowMs: Long): Task[TurnResult] = {
-    val cleared = battle.copy(effects = battle.effects.copy(heroSkillJammed = None))
-    val line    = Vector(content.text("battle.skillJammed"))
+    val cleared = battle.copy(effects = battle.effects.withoutSkillJam)
+    val line    = Vector(skillJamLine(battle.effects.skillJamKind))
     if (BattleState.bonusAction(slot.skill.effect))
       ZIO.succeed(TurnResult(paid(hero, slot), cleared.copy(consumableUsedThisRound = true), line, Outcome.Continue,
         endsRound = false))
@@ -4914,7 +4923,7 @@ case class BattleState(
           val cleaned = battle.effects.copy(
             heroBurn = None, heroPoison = None, heroBleed = None,
             heroStunnedTurns = 0, heroGroundedTurns = 0, heroColdDefenceCut = 0, heroWebTurns = None,
-            heroSkillJammed = None, heroCursedTurns = None, heroFrozenTurns = None, heroDrainTurns = None)
+            heroSkillJammed = None, heroSkillJam = None, heroCursedTurns = None, heroFrozenTurns = None, heroDrainTurns = None)
           TurnResult(hero, battle.copy(effects = cleaned),
             Vector(content.text("battle.flaskCleanse")) ++ qhLog, Outcome.Continue, endsRound = false)
 
@@ -5973,9 +5982,11 @@ case class BattleState(
           val cast = options(i)
           val paid = b1.copy(group = b1.group.updateAlly(a1.position)(x => x.copy(energy = x.energy - cast.skill.cost(a1.lvl))))
           // Яд красного сетеплёта: умение срывается — энергия ушла, умения нет.
-          if (a1.skillJammed)
-            ZIO.succeed((AllyBlow(paid.copy(group = paid.group.updateAlly(a1.position)(_.copy(skillJammed = false))),
-              None, 0L, slew = false), Vector(content.format("battle.ally.skillJammed", "name" -> a1.name))))
+          if (a1.skillJammed) {
+            val jamKind = a1.skillJam.orElse(Some(SkillJam.Spider))
+            ZIO.succeed((AllyBlow(paid.copy(group = paid.group.updateAlly(a1.position)(_.copy(skillJammed = false, skillJam = None))),
+              None, 0L, slew = false), Vector(allySkillJamLine(a1.name, jamKind))))
+          }
           else cast match {
             case BattleState.AllyCast.Strike(target, crushing) =>
               val factor = if (crushing) AllySkill.CrushingStrikeFactor else AllySkill.QuickStrikeFactor
@@ -6172,7 +6183,7 @@ case class BattleState(
             else poisoned
           hurt     = {
             val webbedA = if (webs) hurt0.copy(webbed = SpiderWeb.Turns) else hurt0
-            if (jams) webbedA.copy(skillJammed = true) else webbedA
+            if (jams) webbedA.copy(skillJammed = true, skillJam = Some(SkillJam.Spider)) else webbedA
           }
           after    = if (airy) tmp.copy(effects = tmp.effects.copy(mobAirBoostTurns = Element.Air.ProcTurns)) else tmp
           line     = content.format("battle.ally.mobHit", "monster" -> tmp.monsterName, "name" -> a.name,
