@@ -11,13 +11,13 @@ import pangea.model.stats.FightStats
 import pangea.model.user.{TelegramId, User, UserId, VkId}
 import pangea.service.state.UserAction
 import pangea.service.state.states.LootState.LootData
-import pangea.test.{TestBankRepository, TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestRenderer}
+import pangea.test.{TestBankRepository, TestBarrelRepository, TestFixtures, TestHeroDao, TestInventoryRepository, TestItemRepository, TestRenderer}
 import zio.test._
 import zio.{Task, ZIO}
 
 /** Уникальный трофей падает с самого именного — если у героя такого нет ни в
-  * сумке, ни в хранилище, ни на Стене трофеев; стена прибавляет герою урон по
-  * расе — и удару, и умению. */
+  * сумке, ни в бочке, ни в хранилище, ни на Стене трофеев; стена прибавляет
+  * герою урон по расе — и удару, и умению. */
 object TrophyWallBattleSpec extends ZIOSpecDefault {
 
   private val userId   = UserId(1L)
@@ -52,7 +52,7 @@ object TrophyWallBattleSpec extends ZIOSpecDefault {
   private val island = HomeData(tier = 3, metJunona = true)
 
   private def make(battle: SoloPveBattle, home: HomeData, hero: pangea.model.hero.Hero = strongHero,
-                   bag: List[Item] = Nil, vault: List[Item] = Nil) =
+                   bag: List[Item] = Nil, vault: List[Item] = Nil, barrel: List[Item] = Nil) =
     for {
       dao <- TestHeroDao.withHero(userId, hero)
       _   <- dao.writeActiveBattle(userId, battle.asJson)
@@ -60,7 +60,8 @@ object TrophyWallBattleSpec extends ZIOSpecDefault {
       r   <- TestRenderer.make
       c   <- ZIO.attempt(SceneContent.load())
     } yield (BattleState(heroDao = dao, inventoryRepo = TestInventoryRepository.withItems(bag), itemRepo = TestItemRepository.make,
-               content = c, bank = Some(TestBankRepository.of(1, vault))), dao, r)
+               content = c, bank = Some(TestBankRepository.of(1, vault)),
+               barrel = Some(TestBarrelRepository.of(barrel, 0L))), dao, r)
 
   private def lootOf(dao: TestHeroDao): Task[List[Item]] =
     dao.readSceneData(userId).map(_.flatMap(_.as[LootData].toOption).fold(List.empty[Item])(_.items))
@@ -78,7 +79,7 @@ object TrophyWallBattleSpec extends ZIOSpecDefault {
       } yield assertTrue(named(loot) == List("Ухо Каркана Кровавого Топора"))
     },
 
-    test("уникальный — один на героя: висит на стене, лежит в сумке или в хранилище — второй не падает") {
+    test("уникальный — один на героя: висит на стене, лежит в сумке, в бочке или в хранилище — второй не падает") {
       for {
         t1 <- make(karkan, island.copy(wall = List(Karkan)))
         (s1, d1, r1) = t1
@@ -92,7 +93,12 @@ object TrophyWallBattleSpec extends ZIOSpecDefault {
         (s3, d3, r3) = t3
         _       <- s3.action(testUser, tap("Attack"), r3)
         inVault <- lootOf(d3)
-      } yield assertTrue(named(onWall).isEmpty && named(inBag).isEmpty && named(inVault).isEmpty)
+        t4 <- make(karkan, HomeData.empty, barrel = List(ear))
+        (s4, d4, r4) = t4
+        _        <- s4.action(testUser, tap("Attack"), r4)
+        inBarrel <- lootOf(d4)
+      } yield assertTrue(named(onWall).isEmpty && named(inBag).isEmpty && named(inVault).isEmpty &&
+              named(inBarrel).isEmpty)
     },
 
     test("в одном бою — по трофею на именного; поднятый некромантом и безымянный ничего не роняют") {
