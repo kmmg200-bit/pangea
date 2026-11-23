@@ -138,6 +138,13 @@ object Gem {
     if (prefix.isEmpty) kind.baseName else s"$prefix ${kind.baseName.toLowerCase}"
   }
 
+  /** Редкость в сумке для сортировки (миниапп): грейд 1 — белая, …, 5 — оранжевая;
+    * ниже — только пыль ([[MaterialKind.inventoryRarity]]). */
+  def inventoryRarity(grade: Int): Rarity = {
+    val g = grade.max(MinGrade).min(MaxGrade)
+    Vector(Rarity.White, Rarity.Green, Rarity.Blue, Rarity.Purple, Rarity.Orange)(g - 1)
+  }
+
   implicit val encoder: Encoder[Gem] = deriveEncoder[Gem]
   implicit val decoder: Decoder[Gem] = deriveDecoder[Gem]
 }

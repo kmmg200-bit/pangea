@@ -63,10 +63,12 @@ case class Item(
 
   def withRarity(rarity: Rarity): Item = copy(rarity = rarity)
 
-  /** Редкость для списков и сортировки: у трав — по рангу, иначе поле записи. */
+  /** Редкость для списков и сортировки: пыль, травы и камни — по виду/грейду,
+    * иначе поле записи. */
   def inventoryRarity: Rarity =
     details match {
-      case ItemDetails.Material(k) => MaterialKind.herbInventoryRarity(k).getOrElse(rarity)
+      case ItemDetails.Material(k) => MaterialKind.inventoryRarity(k).getOrElse(rarity)
+      case ItemDetails.Gem(g)      => Gem.inventoryRarity(g.grade)
       case _                         => rarity
     }
 

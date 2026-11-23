@@ -12,8 +12,7 @@ export const sorts = [
 /** Качество камня; у прочих вещей — ноль. */
 const grade = (i: ItemView) => i.grade ?? 0
 
-/** Камни все серые и первого уровня: и по редкости, и по уровню их ставит
-  * качество — безупречные первыми. */
+/** Камни: редкость по грейду (пыль — серая, ниже всех), затем грейд и уровень. */
 export function sortItems(items: ItemView[], sort: string): ItemView[] {
   if (sort === 'rarity')
     return [...items].sort((a, b) => b.rarityRank - a.rarityRank || grade(b) - grade(a) || b.lvl - a.lvl)

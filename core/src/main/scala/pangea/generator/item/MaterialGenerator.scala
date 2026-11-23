@@ -11,7 +11,7 @@ object MaterialGenerator {
       id = -1L,
       name = kind.displayName,
       lvl = 1L,
-      rarity = MaterialKind.herbInventoryRarity(kind).getOrElse(Rarity.Gray),
+      rarity = MaterialKind.inventoryRarity(kind).getOrElse(Rarity.Gray),
       itemType = ItemType.Material,
       attack = 0,
       accuracy = 0,

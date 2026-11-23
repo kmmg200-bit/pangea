@@ -1,7 +1,7 @@
 package pangea.generator.item
 
 import pangea.domain.Rng
-import pangea.model.item.{Gem, GemKind, Item, ItemDetails, ItemType, Rarity}
+import pangea.model.item.{Gem, GemKind, Item, ItemDetails, ItemType}
 
 /** Чистое ядро генерации камней-усилителей как предметов инвентаря. Камни не
  *  масштабируются по уровню (эффект зависит только от грейда), поэтому уровень у
@@ -14,7 +14,7 @@ object GemGenerator {
       id = -1L,
       name = Gem.gradeName(kind, grade),
       lvl = 1L,
-      rarity = Rarity.Gray,
+      rarity = Gem.inventoryRarity(grade),
       itemType = ItemType.Gem,
       attack = 0,
       accuracy = 0,

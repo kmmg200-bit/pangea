@@ -2,7 +2,8 @@ package pangea.model.item
 
 import zio.test._
 
-import pangea.generator.item.MaterialGenerator
+import pangea.generator.item.{GemGenerator, MaterialGenerator}
+import pangea.model.item.GemKind
 
 object HerbInventoryRaritySpec extends ZIOSpecDefault {
 
@@ -23,6 +24,21 @@ object HerbInventoryRaritySpec extends ZIOSpecDefault {
     test("старая запись с Gray у травы — inventoryRarity по рангу") {
       val old = MaterialGenerator.item(MaterialKind.BubbleLily).copy(rarity = Rarity.Gray)
       assertTrue(old.inventoryRarity == Rarity.Purple)
+    },
+
+    test("пыль — серая; камни — по грейду, 1 ниже 5; старая запись камня — по грейду") {
+      val dust  = MaterialGenerator.item(MaterialKind.RubyDust)
+      val g1    = GemGenerator.item(GemKind.Ruby, 1)
+      val g5    = GemGenerator.item(GemKind.Ruby, 5)
+      val oldG5 = g5.copy(rarity = Rarity.Gray)
+      assertTrue(
+        dust.inventoryRarity == Rarity.Gray,
+        g1.inventoryRarity == Rarity.White,
+        g5.inventoryRarity == Rarity.Orange,
+        Rarity.order(dust.inventoryRarity) < Rarity.order(g1.inventoryRarity),
+        Rarity.order(g1.inventoryRarity) < Rarity.order(g5.inventoryRarity),
+        oldG5.inventoryRarity == Rarity.Orange
+      )
     }
   )
 }
