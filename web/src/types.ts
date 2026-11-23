@@ -271,10 +271,22 @@ export interface AuctionSellView {
   listed: boolean
 }
 
+export interface StatLineView {
+  label: string
+  value: number
+}
+
+/** Боевой стат: итог и раскладка по клику. */
+export interface StatDetailView {
+  current: number
+  lines: StatLineView[]
+}
+
 /** Характеристика: сейчас — со всем, что действует, и родная — до расы, травм и зелий. */
 export interface StatView {
   current: number
   native: number
+  lines: StatLineView[]
 }
 
 /** Запас: здоровье, броня, энергия. */
@@ -308,10 +320,10 @@ export interface CharacterView {
   hp: PoolView
   armor: PoolView
   energy: PoolView
-  attack: number
-  defence: number
-  accuracy: number
-  evasion: number
+  attack: StatDetailView
+  defence: StatDetailView
+  accuracy: StatDetailView
+  evasion: StatDetailView
   upgradePoints: number
   traumaLeft: string | null
   traumas: TraumaView[]

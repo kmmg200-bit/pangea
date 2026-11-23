@@ -106,7 +106,7 @@ object MiniAppViewSpec extends ZIOSpecDefault {
         view.int.current == 8L && view.int.native == 10L,
         view.hp.current == card.hp && view.hp.max == card.maxHp,
         view.armor.max == card.maxArmor,
-        view.attack == card.fight.atk && view.evasion == card.fight.evasion,
+        view.attack.current == card.fight.atk && view.evasion.current == card.fight.evasion,
         view.traumas.map(_.name) == List(Trauma.BruisedLeg.name),
         view.traumaLeft.contains("4ч 0мин"),
         view.blessingLeft.contains("2ч 0мин"),

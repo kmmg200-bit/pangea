@@ -1,31 +1,40 @@
 import { useState } from 'react'
-import type { CharacterView, EffectView, StatView } from './types'
+import type { CharacterView, EffectView, StatDetailView, StatLineView, StatView } from './types'
 import { Meter, num, Sheet } from './ui'
+
+type StatSheet = {
+  icon: string
+  label: string
+  current: number
+  lines: StatLineView[]
+}
+
+const signed = (v: number) => (v > 0 ? `+${num(v)}` : v < 0 ? `−${num(-v)}` : '0')
 
 /** Характеристика: крупно — текущая, с ней герой выходит в бой; под ней —
   * родная, если раса, травмы или зелья её сдвинули. */
-function Stat(props: { icon: string; label: string; stat: StatView }) {
+function Stat(props: { icon: string; label: string; stat: StatView; onOpen: (s: StatSheet) => void }) {
   const { current, native } = props.stat
   const shift = current > native ? 'stat-up' : current < native ? 'stat-down' : ''
   return (
-    <div className="stat">
+    <button type="button" className="stat stat-btn" onClick={() => props.onOpen({ icon: props.icon, label: props.label, current, lines: props.stat.lines })}>
       <span className="stat-label">
         {props.icon} {props.label}
       </span>
       <span className={`stat-value ${shift}`}>{num(current)}</span>
       {current !== native && <span className="stat-native">родное {num(native)}</span>}
-    </div>
+    </button>
   )
 }
 
-function Plain(props: { icon: string; label: string; value: number }) {
+function Plain(props: { icon: string; label: string; detail: StatDetailView; onOpen: (s: StatSheet) => void }) {
   return (
-    <div className="stat">
+    <button type="button" className="stat stat-btn" onClick={() => props.onOpen({ icon: props.icon, label: props.label, current: props.detail.current, lines: props.detail.lines })}>
       <span className="stat-label">
         {props.icon} {props.label}
       </span>
-      <span className="stat-value">{num(props.value)}</span>
-    </div>
+      <span className="stat-value">{num(props.detail.current)}</span>
+    </button>
   )
 }
 
@@ -74,6 +83,7 @@ function Effects(props: { effects: EffectView[]; onOpen: (e: EffectView) => void
 export function CharacterTab(props: { data: CharacterView }) {
   const c = props.data
   const [effect, setEffect] = useState<EffectView | null>(null)
+  const [stat, setStat] = useState<StatSheet | null>(null)
   const notes = [
     c.expFrozen && '❄ Опыт остановлен',
     c.rested && `🛏 Выспались дома: +${c.rested.expPct}% опыта, ещё ${c.rested.left}`,
@@ -123,10 +133,10 @@ export function CharacterTab(props: { data: CharacterView }) {
 
       <h2 className="section-title">Характеристики</h2>
       <div className="stats">
-        <Stat icon="💪" label="Сила" stat={c.str} />
-        <Stat icon="🫀" label="Телосложение" stat={c.vit} />
-        <Stat icon="🏃" label="Ловкость" stat={c.agi} />
-        <Stat icon="🧠" label="Интеллект" stat={c.int} />
+        <Stat icon="💪" label="Сила" stat={c.str} onOpen={setStat} />
+        <Stat icon="🫀" label="Телосложение" stat={c.vit} onOpen={setStat} />
+        <Stat icon="🏃" label="Ловкость" stat={c.agi} onOpen={setStat} />
+        <Stat icon="🧠" label="Интеллект" stat={c.int} onOpen={setStat} />
       </div>
       {c.upgradePoints > 0 && (
         <p className="char-points">
@@ -137,10 +147,10 @@ export function CharacterTab(props: { data: CharacterView }) {
 
       <h2 className="section-title">В бою</h2>
       <div className="stats">
-        <Plain icon="⚔" label="Атака" value={c.attack} />
-        <Plain icon="🛡" label="Защита" value={c.defence} />
-        <Plain icon="🎯" label="Точность" value={c.accuracy} />
-        <Plain icon="👁" label="Уклонение" value={c.evasion} />
+        <Plain icon="⚔" label="Атака" detail={c.attack} onOpen={setStat} />
+        <Plain icon="🛡" label="Защита" detail={c.defence} onOpen={setStat} />
+        <Plain icon="🎯" label="Точность" detail={c.accuracy} onOpen={setStat} />
+        <Plain icon="👁" label="Уклонение" detail={c.evasion} onOpen={setStat} />
       </div>
 
       <h2 className="section-title">Эффекты</h2>
@@ -186,6 +196,22 @@ export function CharacterTab(props: { data: CharacterView }) {
           </div>
         ))}
       </div>
+
+      {stat && (
+        <Sheet onClose={() => setStat(null)}>
+          <div className="sheet-title">
+            {stat.icon} {stat.label} = {num(stat.current)}
+          </div>
+          <ul className="stat-breakdown">
+            {stat.lines.map((l) => (
+              <li key={l.label} className={l.value > 0 ? 'stat-line-up' : l.value < 0 ? 'stat-line-down' : undefined}>
+                <span>{l.label}</span>
+                <span>{signed(l.value)}</span>
+              </li>
+            ))}
+          </ul>
+        </Sheet>
+      )}
 
       {effect && (
         <Sheet onClose={() => setEffect(null)}>
