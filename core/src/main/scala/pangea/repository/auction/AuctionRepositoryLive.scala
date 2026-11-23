@@ -43,8 +43,8 @@ final class AuctionRepositoryLive(dao: AuctionDao) extends AuctionRepository {
                .someOrFail(AuctionRepoError.NotInBag)
     } yield lot
 
-  def buy(lot: AuctionLot, buyer: HeroId, now: Long): IO[AuctionRepoError, AuctionLot] =
-    moved(s"Лот ${lot.id} не продался герою ${buyer.value}", dao.sold(lot, buyer, now))
+  def buy(lot: AuctionLot, buyer: HeroId, now: Long, toVault: Boolean): IO[AuctionRepoError, AuctionLot] =
+    moved(s"Лот ${lot.id} не продался герою ${buyer.value}", dao.sold(lot, buyer, now, toVault))
       .filterOrFail(identity)(AuctionRepoError.LotGone).as(lot)
 
   def reclaim(lotId: Long, sellerId: HeroId): IO[AuctionRepoError, AuctionLot] =

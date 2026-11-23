@@ -1,5 +1,6 @@
 package pangea.dao.bank
 
+import doobie.ConnectionIO
 import doobie.implicits._
 import doobie.postgres.circe.json.implicits._
 import doobie.util.transactor.Transactor
@@ -40,4 +41,20 @@ class BankVaultDaoLive(xa: Transactor[Task]) extends BankVaultDao {
   override def takeSilver(heroId: HeroId, amount: Long): Task[Boolean] =
     sql"update bank_vaults set silver = silver - $amount where hero_id = $heroId and silver >= $amount"
       .update.run.transact(xa).map(_ == 1)
+}
+
+/** Ячейка внутри чужой транзакции — покупка на аукционе через посыльного. */
+object BankVaultDaoLive {
+
+  def ensureIo(heroId: HeroId): ConnectionIO[Unit] =
+    sql"insert into bank_vaults(hero_id, cells, items, silver) values($heroId, 0, ${Items(List.empty[Item])}, 0) on conflict (hero_id) do nothing"
+      .update.run.map(_ => ())
+
+  def lockedIo(heroId: HeroId): ConnectionIO[BankVault] =
+    sql"select id, hero_id, cells, items, silver from bank_vaults where hero_id = $heroId for update"
+      .query[BankVault]
+      .unique
+
+  def updateIo(vault: BankVault): ConnectionIO[Int] =
+    sql"update bank_vaults set cells = ${vault.cells}, items = ${vault.items.asJson} where id = ${vault.id}".update.run
 }

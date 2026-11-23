@@ -1,9 +1,10 @@
 package pangea.dao.auction
 
 import doobie.ConnectionIO
-import doobie.free.connection.{pure, unit}
+import doobie.free.connection.{pure, raiseError, unit}
 import doobie.implicits._
 import doobie.util.transactor.Transactor
+import pangea.dao.bank.BankVaultDaoLive
 import pangea.dao.inventory.InventoryDaoLive
 import pangea.dao.item.ItemDaoLive
 import pangea.model.auction.AuctionLot
@@ -39,6 +40,21 @@ class AuctionDaoLive(xa: Transactor[Task]) extends AuctionDao {
       id  <- ItemDaoLive.insertIo(heroId.value, item)
       bag <- InventoryDaoLive.lockedIo(heroId)
       _   <- InventoryDaoLive.updateIo(bag.addItem(item.copy(id = id)))
+    } yield ()
+
+  /** В хранилище Торгового дома — там же, куда ложат переданное. */
+  private def putInVault(heroId: HeroId, item: Item): ConnectionIO[Unit] =
+    for {
+      _     <- BankVaultDaoLive.ensureIo(heroId)
+      vault <- BankVaultDaoLive.lockedIo(heroId)
+      _     <- if (!vault.open) raiseError(AuctionDaoLive.VaultClosed: Throwable)
+               else if (item.weightless && !vault.hasRoomForHoard(item))
+                 raiseError(AuctionDaoLive.VaultFull: Throwable)
+               else if (!item.weightless && vault.freeSlots <= 0)
+                 raiseError(AuctionDaoLive.VaultFull: Throwable)
+               else unit
+      id    <- ItemDaoLive.insertIo(heroId.value, item)
+      _     <- BankVaultDaoLive.updateIo(vault.addItem(item.copy(id = id)))
     } yield ()
 
   // В лот идёт вещь, как она лежит в сумке, а не копия, с которой пришли.
@@ -89,12 +105,14 @@ class AuctionDaoLive(xa: Transactor[Task]) extends AuctionDao {
 
   // Гонка двух покупателей решается здесь: строка либо удалилась (значит, лот
   // был наш), либо её уже не было — и второй получит `false`.
-  override def sold(lot: AuctionLot, buyer: HeroId, now: Long): Task[Boolean] =
+  override def sold(lot: AuctionLot, buyer: HeroId, now: Long, toVault: Boolean): Task[Boolean] =
     (for {
       gone <- sql"""delete from auction_lots
                     where id = ${lot.id} and seller_id = ${lot.sellerId.value} and listed_at = ${lot.listedAt}
                       and expires_at > $now""".update.run
-      _    <- if (gone == 1) toBag(buyer, lot.item) else unit
+      _    <- if (gone == 1)
+                if (toVault) putInVault(buyer, lot.item) else toBag(buyer, lot.item)
+              else unit
     } yield gone == 1).transact(xa)
 
   override def returned(id: Long, sellerId: HeroId): Task[Option[AuctionLot]] =
@@ -109,4 +127,7 @@ object AuctionDaoLive {
   /** Ключ advisory-замка, под которым выдаются номера лотов. Число произвольное,
     * важно лишь, чтобы его не занял кто-то ещё. */
   val LotIdLock: Long = 770001L
+
+  private case object VaultClosed extends Throwable
+  private case object VaultFull   extends Throwable
 }

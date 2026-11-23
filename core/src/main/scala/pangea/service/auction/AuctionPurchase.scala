@@ -17,7 +17,8 @@ import java.util.concurrent.TimeUnit
 
 /** Покупка лота без экрана. Одно на бота
   * ([[pangea.service.state.states.bank.AuctionState]]) и на Mini App — правила
-  * у них одни: вещь — в сумку покупателя, деньги — продавцу в ячейку, а не
+  * у них одни: вещь — в сумку или в хранилище (посыльный), деньги — продавцу
+  * в ячейку, а не
   * приняла ячейка — ждут его в городе. Меняет героя, поэтому зовётся под локом
   * покупателя: в боте его держит ход, в приложении — сам запрос.
   *
@@ -41,8 +42,11 @@ final class AuctionPurchase(
   private val purse = Purse(heroDao, Some(bankRepo))
 
   /** @param vaultSilverOnly как вне города у личного посыльного: платить серебром
-    *                        только из ячейки, не с рук (бот в городе — `false`). */
-  def buy(user: User, hero: Hero, lotId: Long, vaultSilverOnly: Boolean = false): Task[Result] =
+    *                        только из ячейки, не с рук (бот в городе — `false`).
+    * @param deliverToVault  покупка вне города: вещь в хранилище Торгового
+    *                        дома, не в сумку. */
+  def buy(user: User, hero: Hero, lotId: Long, vaultSilverOnly: Boolean = false,
+          deliverToVault: Boolean = false): Task[Result] =
     for {
       now    <- ZIO.clockWith(_.currentTime(TimeUnit.MILLISECONDS))
       inv    <- inventoryRepo.get(hero.id).mapError(asThrowable)
@@ -50,24 +54,37 @@ final class AuctionPurchase(
       silver = if (vaultSilverOnly) wallet.vault else wallet.total
       res    <- auctionRepo.lot(lotId).either
       out    <- res match {
-        case Left(_)                               => ZIO.succeed(Result.Gone)
-        case Right(lot) if !lot.onSale(now)        => ZIO.succeed(Result.Gone)
-        case Right(lot) if lot.sellerId == hero.id => ZIO.succeed(Result.Own)
-        case Right(lot) if !canPay(lot, hero, silver) => ZIO.succeed(Result.NoMoney(lot))
-        case Right(_) if inv.freeSlots <= 0        => ZIO.succeed(Result.NoRoom)
+        case Left(_)                                  => ZIO.succeed(Result.Gone)
+        case Right(lot) if !lot.onSale(now)            => ZIO.succeed(Result.Gone)
+        case Right(lot) if lot.sellerId == hero.id     => ZIO.succeed(Result.Own)
+        case Right(lot) if !canPay(lot, hero, silver)  => ZIO.succeed(Result.NoMoney(lot))
         case Right(lot) =>
-          // Лот закрывается первым и вместе с вещью в сумке: опоздавший увидит
-          // «лот ушёл», и никаких денег с него не спишется. Упала транзакция —
-          // лот на месте, вещь у продавца, денег не трогаем.
-          auctionRepo.buy(lot, hero.id, now).foldZIO(
-            {
-              case AuctionRepoError.Failed => ZIO.fail(new Throwable(s"Лот ${lot.id} не продался: сбой базы"))
-              case _                       => ZIO.succeed(Result.Gone)
-            },
-            _ => payForLot(user, hero, lot, vaultSilverOnly).flatMap(tellSeller(lot, _)).as(Result.Bought(lot))
-          )
+          roomFor(lot, hero, deliverToVault, inv.freeSlots).flatMap {
+            case false => ZIO.succeed(Result.NoRoom)
+            case true  =>
+              // Лот закрывается первым и вместе с вещью: опоздавший увидит
+              // «лот ушёл», и никаких денег с него не спишется. Упала транзакция —
+              // лот на месте, вещь у продавца, денег не трогаем.
+              auctionRepo.buy(lot, hero.id, now, deliverToVault).foldZIO(
+                {
+                  case AuctionRepoError.Failed => ZIO.fail(new Throwable(s"Лот ${lot.id} не продался: сбой базы"))
+                  case _                       => ZIO.succeed(Result.Gone)
+                },
+                _ => payForLot(user, hero, lot, vaultSilverOnly).flatMap(tellSeller(lot, _)).as(Result.Bought(lot))
+              )
+          }
       }
     } yield out
+
+  /** Есть ли куда положить купленное: в сумку или в хранилище. */
+  private def roomFor(lot: AuctionLot, hero: Hero, toVault: Boolean, bagFree: Long): Task[Boolean] =
+    if (!toVault) ZIO.succeed(bagFree > 0L)
+    else
+      bankRepo.get(hero.id).either.map {
+        case Right(vault) if vault.open =>
+          if (lot.item.weightless) vault.hasRoomForHoard(lot.item) else vault.freeSlots > 0
+        case _ => false
+      }
 
   /** Покупатель платит, а выручка продавца идёт в его банковскую ячейку. Не
     * приняла (полна или монета не та) — деньги ждут его в городе. Возвращает,
@@ -114,7 +131,7 @@ object AuctionPurchase {
     /** Свой же лот. */
     case object Own extends Result
     final case class NoMoney(lot: AuctionLot) extends Result
-    /** В сумке нет места. */
+    /** Некуда положить: сумка или хранилище посыльного. */
     case object NoRoom extends Result
     final case class Bought(lot: AuctionLot) extends Result
   }

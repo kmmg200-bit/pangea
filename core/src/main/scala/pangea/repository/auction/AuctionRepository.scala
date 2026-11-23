@@ -41,10 +41,10 @@ trait AuctionRepository {
     * вызывающий. */
   def sell(sellerId: HeroId, item: Item, price: Long, currency: AuctionCurrency, now: Long): IO[AuctionRepoError, AuctionLot]
 
-  /** Купить: лот закрывается, и вещь ложится в сумку покупателя. Лот удаляется
-    * атомарно, поэтому второму покупателю придёт [[AuctionRepoError.LotGone]]
-    * и списывать с него нечего. */
-  def buy(lot: AuctionLot, buyer: HeroId, now: Long): IO[AuctionRepoError, AuctionLot]
+  /** Купить: лот закрывается, вещь — в сумку или в хранилище (`toVault`).
+    * Лот удаляется атомарно, поэтому второму покупателю придёт
+    * [[AuctionRepoError.LotGone]] и списывать с него нечего. */
+  def buy(lot: AuctionLot, buyer: HeroId, now: Long, toVault: Boolean = false): IO[AuctionRepoError, AuctionLot]
 
   /** Снять свой лот с торгов или забрать непроданное: вещь — в сумку хозяина. */
   def reclaim(lotId: Long, sellerId: HeroId): IO[AuctionRepoError, AuctionLot]
