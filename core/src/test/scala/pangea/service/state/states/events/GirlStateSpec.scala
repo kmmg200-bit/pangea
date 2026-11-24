@@ -207,7 +207,7 @@ object GirlStateSpec extends ZIOSpecDefault {
               assertTrue(result == StateType.GlobalMap && h.guildReputation == 50L + 20L)
     },
 
-    test("уединение: кошелёк худеет на 25–50%, травмы пройдут через 90 минут, свет гаснет на 30 — в темноте «Прошу прощения…» и приложение") {
+    test("уединение: кошелёк худеет на 25–50%, травмы и тёмная сцена — 90 минут, «Прошу прощения…» и приложение") {
       val wounded = hero.copy(traumaUntil = Some(10L * 60L * 60L * 1000L), traumaNames = List("Хромота"))
       for {
         t <- make(wounded, Some(orcScene(Step.Room)))
@@ -226,18 +226,20 @@ object GirlStateSpec extends ZIOSpecDefault {
         out    <- state.action(testUser, tap("LeaveRoom"), r)
         all    <- texts(r)
         cancelled <- sched.cancelled
+        hOut   <- heroOf(dao)
       } yield assertTrue(result == StateType.Girl) &&
               assertTrue(h.silver == 600L) &&
-              assertTrue(h.traumaUntil.contains(GirlState.HealDelayMs)) &&      // TestClock на нуле
+              assertTrue(h.traumaUntil.contains(10L * 60L * 60L * 1000L)) &&
               // уединение и темнота — одним сообщением
               assertTrue(dark.text.startsWith("Вы уединились") && dark.text.contains("погас свет") &&
                 dark.choices.map(_.id) == List("OpenApp", "Excuse")) &&
               assertTrue(dark.choices.lastOption.exists(c => c.label == "Прошу прощения, но у меня есть дела" && c.row.contains(0))) &&
-              assertTrue(tasks.exists(s => s.kind == TaskKind.GirlRoom && s.fireAt == GirlState.RoomWaitMs && s.expectedState == StateType.Girl)) &&
+              assertTrue(tasks.exists(s => s.kind == TaskKind.GirlRoom && s.fireAt == GirlState.HealDelayMs && s.expectedState == StateType.Girl)) &&
               // дальше в темноте — тот же экран, но «вы уединились» уже не повторяется
               assertTrue(stay == StateType.Girl && still.choices == dark.choices && still.text.contains("погас свет") &&
                 !still.text.contains("уединились") && again == StateType.Girl && still2 == still) &&
               assertTrue(out == StateType.GlobalMap) &&
+              assertTrue(hOut.traumaUntil.isEmpty && hOut.traumaNames.isEmpty) &&
               // уход из комнаты и пропажа — одним сообщением
               assertTrue(all.contains("покинуть её комнату.\n\nУже на улице") && all.contains("на 400 серебра")) &&
               assertTrue(cancelled.contains(userId -> TaskKind.GirlRoom))
@@ -274,7 +276,7 @@ object GirlStateSpec extends ZIOSpecDefault {
               assertTrue(late == StateType.Girl && after == shown && still == scene)
     },
 
-    test("полчаса вышли, пока она уговаривала: таймер уговоры не прерывает, а «Ну раз такое дело…» выводит, как по таймеру") {
+    test("90 минут вышли, пока она уговаривала: таймер уговоры не прерывает, а «Ну раз такое дело…» выводит, как по таймеру") {
       for {
         t <- make(hero, Some(orcScene(Step.Room)))
         (state, dao, _, _, _, r) = t
