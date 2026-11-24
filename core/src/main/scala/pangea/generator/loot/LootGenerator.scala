@@ -664,10 +664,10 @@ object LootGenerator {
       killLevel: Long,
       rng: Rng
   ): (List[LootDrop], Rng) = {
-    // Со зверя трофеев не берут — ни обычных, ни «таксидермистом»: гильдия их
-    // не принимает, да и срезать с крысы, кроме шкурки, нечего.
+    // Трофей «Таксидермиста» — только с рас, с которых падают обычные трофеи
+    // (см. [[Race.trophyLoot]]): не зверь, не элементаль, не нежить и пр.
     val (trophy, r1) =
-      if (trophyChancePct > 0L && race != Race.Animal)
+      if (trophyChancePct > 0L && Race.trophyLoot(race))
         rollChance(trophyChancePct, rng)(makeDrop(Category.Trophy, tier, race, killLevel, _))
       else (None, rng)
     val (silver, r2) =

@@ -476,6 +476,16 @@ object LootGeneratorSpec extends ZIOSpecDefault {
         assertTrue(trophies.forall(_.lvl == 12L))
     },
 
+    test("Таксидермист не даёт трофеев с рас без обычной добычи трофеев") {
+      val barred = List(Race.Animal, Race.Elemental, Race.Undead, Race.Construct, Race.Dragon)
+      val hits   = barred.flatMap { race =>
+        (1L to 30L).flatMap { s =>
+          LootGenerator.rollPassiveDrops(trophyChancePct = 100L, silverChancePct = 0L, Rarity.Rare, race, 12L, Rng(s))._1
+        }
+      }
+      assertTrue(hits.forall { case LootDrop.Trophy(_) => false; case _ => true })
+    },
+
     test("Таксидермист срабатывает примерно в 10% случаев") {
       val hits = (1L to 2000L).count { s =>
         LootGenerator.rollPassiveDrops(trophyChancePct = 10L, silverChancePct = 0L, Rarity.Rare, Race.Orc, 12L, Rng(s))._1.nonEmpty

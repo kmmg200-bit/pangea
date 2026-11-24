@@ -384,6 +384,11 @@ object Race extends Enum[Race] with DoobieEnum[Race] {
    *  поэтому везде, где раньше брали `values`, брать нужно этот список. */
   val mortals: IndexedSeq[Race] = values.filterNot(bossRaces.contains)
 
+  /** Обычный трофей для гильдии с этой расы не падает: только у смертных
+   *  (см. [[mortals]]). На звере, элементалях, нежити, сооружениях и драконе
+   *  «Таксидермист» не срабатывает. */
+  def trophyLoot(race: Race): Boolean = mortals.contains(race)
+
   implicit val decoder: Decoder[Race] = (c: HCursor) =>
     c.get[String]("race").map(Race.withName)
 }
