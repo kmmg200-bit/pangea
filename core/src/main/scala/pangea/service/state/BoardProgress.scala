@@ -2,7 +2,7 @@ package pangea.service.state
 
 import io.circe.syntax.EncoderOps
 import pangea.dao.hero.HeroDao
-import pangea.model.quest.{BoardDesk, BoardKind}
+import pangea.model.quest.{BoardDesk, BoardKind, BoardSlot}
 import pangea.model.user.UserId
 import zio.Task
 
@@ -23,6 +23,10 @@ object BoardProgress {
   /** Взято ли сейчас такое задание и не закрыто ли уже. */
   def hunting(heroDao: HeroDao, userId: UserId, kind: BoardKind): Task[Boolean] =
     load(heroDao, userId).map(_.hunting(kind))
+
+  /** Взятое объявление такого вида — с уровнем, который вывесили на доске. */
+  def huntingSlot(heroDao: HeroDao, userId: UserId, kind: BoardKind): Task[Option[BoardSlot]] =
+    load(heroDao, userId).map(_.huntingSlot(kind))
 
   /** Закрыть задание такого вида. Возвращает, было ли что закрывать. */
   def markDone(heroDao: HeroDao, userId: UserId, kind: BoardKind): Task[Boolean] =

@@ -105,7 +105,9 @@ case class MonsterCaveState(
       raceIdx <- Random.nextIntBounded(Race.mortals.size)
       race     = Race.mortals(raceIdx)
       seed    <- Random.nextLong
-      (scene, _) = CaveGenerator.generate(race.entryName, Rng(seed))
+      (base, _) = CaveGenerator.generate(race.entryName, Rng(seed))
+      slot   <- BoardProgress.huntingSlot(heroDao, user.userId, BoardKind.CaveClear)
+      scene   = slot.filter(_.lvl > 0L).fold(base)(s => base.copy(questLvl = s.lvl))
       _ <- writeScene(user, scene)
       // Взято задание с доски — говорим сразу, что эта пещера годится.
       hunt <- BoardProgress.hunting(heroDao, user.userId, BoardKind.CaveClear)
@@ -305,7 +307,7 @@ case class MonsterCaveState(
     * вернуться из боя можно только победив — к расколотой плите. */
   private def summon(user: User, hero: Hero, scene: CaveScene, bones: Item, renderer: Renderer): Task[StateType] = {
     val lord    = MiniBoss.Necromancer
-    val depth   = if (scene.away) scene.questLvl.max(1L) else hero.dungeonLevel.toLong.max(1L)
+    val depth   = caveLootLvl(scene, hero)
     val lvl     = lord.bossLvl(hero.lvl, depth)
     val broken  = scene.copy(altarSpent = true, altarBroken = true)
     val routing = LootData(Nil, Nil, returnState = Some(StateType.MonsterCave), eventData = Some(broken.asJson))
@@ -314,7 +316,7 @@ case class MonsterCaveState(
       _      <- inventoryRepo.removeItem(bones.id, hero.id).mapError(asThrowable)
       battle <- necromancerFight(hero, scene, lord, lvl, lord.stats(lvl), mobLvl)
       _      <- heroDao.writeActiveBattle(user.userId,
-                  battle.copy(lootLevel = Option.when(scene.away)(mobLvl)).asJson)
+                  battle.copy(lootLevel = Option.when(boardQuest(scene))(mobLvl)).asJson)
       _      <- heroDao.writeSceneData(user.userId, routing.asJson)
       // Вызванный — тот же Некромант: первая встреча с ним открывает Трактирщика.
       met    <- meet(user, lord)
@@ -553,10 +555,14 @@ case class MonsterCaveState(
   private def lootRace(scene: CaveScene): Race =
     if (scene.sewer) Race.Human else Race.withName(scene.race)
 
-  /** Уровень добычи в пещере: в выездном задании — уровень контракта, в
+  /** Задание с доски: выездное или караван/пещера с уровнем в объявлении. */
+  private def boardQuest(scene: CaveScene): Boolean =
+    scene.away || scene.questLvl > 0L
+
+  /** Уровень добычи в пещере: в задании с доски — уровень контракта, в
     * лабиринте — этаж. */
   private def caveLootLvl(scene: CaveScene, hero: Hero): Long =
-    if (scene.away) scene.questLvl.max(1L) else hero.dungeonLevel.toLong.max(1L)
+    if (boardQuest(scene)) scene.questLvl.max(1L) else hero.dungeonLevel.toLong.max(1L)
 
   // ── Бой в комнате ──────────────────────────────────────────────────────────
 
@@ -566,14 +572,13 @@ case class MonsterCaveState(
   private def fight(user: User, hero: Hero, scene: CaveScene, idx: Int, renderer: Renderer): Task[StateType] = {
     val race  = Race.withName(scene.race)
     val count = scene.rooms(idx).monsters
-    // В выездных уровень берётся от задания, а не от этажа лабиринта:
-    // объявление обещало обитателей именно такой силы (см. SewerRates.MinLvl).
-    val lvl   = if (scene.away) scene.questLvl.toInt.max(1) else hero.dungeonLevel
+    // В задании с доски уровень — из объявления, а не с этажа лабиринта.
+    val lvl   = caveLootLvl(scene, hero).toInt
     for {
       seeds   <- ZIO.foreach(List.fill(count)(()))(_ => Random.nextLong)
       monsters = seeds.map { seed =>
                    val (rarity, _) =
-                     if (scene.away) CaveGenerator.rollQuestRarity(Rng(seed))
+                     if (boardQuest(scene)) CaveGenerator.rollQuestRarity(Rng(seed))
                      else CaveGenerator.rollRarity(Rng(seed))
                    val m = weaken(MonsterGenerator.generateOfRaceAndRarity(lvl, race, rarity), scene.weakened)
                    // В пещере Некроманта вся родня поднята: раса своя, природа могильная.
@@ -586,9 +591,9 @@ case class MonsterCaveState(
       gained    = monsters.map(expFor).sum
       next      = scene.withRoom(idx, _.copy(monsters = 0)).copy(expEarned = scene.expEarned + gained)
       routing   = LootData(Nil, Nil, returnState = Some(StateType.MonsterCave), eventData = Some(next.asJson))
-      // В выездных и добыча с опытом — по уровню задания, как и сила обитателей.
+      // В задании с доски и добыча с опытом — по уровню контракта.
       _ <- heroDao.writeActiveBattle(user.userId,
-             battle.copy(noKin = true, lootLevel = Option.when(scene.away)(lvl.toLong)).asJson)
+             battle.copy(noKin = true, lootLevel = Option.when(boardQuest(scene))(lvl.toLong)).asJson)
       _ <- heroDao.writeSceneData(user.userId, routing.asJson)
       _ <- renderer.show(user, Screen(content.format(key(scene, "ambush"), "count" -> count.toString), Nil))
     } yield StateType.Battle
@@ -603,7 +608,7 @@ case class MonsterCaveState(
     * него три-четыре мертвеца той же расы, что пещера. */
   private def fightLord(user: User, hero: Hero, scene: CaveScene, idx: Int, renderer: Renderer): Task[StateType] = {
     val lord  = scene.boss.flatMap(MiniBoss.byName).getOrElse(MiniBoss.RatKing)
-    val depth   = if (scene.away) scene.questLvl.max(1L) else hero.dungeonLevel.toLong.max(1L)
+    val depth   = caveLootLvl(scene, hero)
     val lvl     = lord.bossLvl(hero.lvl, depth)
     val stats   = lord.stats(lvl)
     val next    = scene.withRoom(idx, _.copy(monsters = 0, done = true))
@@ -617,7 +622,7 @@ case class MonsterCaveState(
       // Хозяин катает свою добычу по своему уровню, а свита и подмога в
       // выездных падают по уровню задания — как и в комнатах.
       _ <- heroDao.writeActiveBattle(user.userId,
-             battle.copy(lootLevel = Option.when(scene.away)(mobLvl)).asJson)
+             battle.copy(lootLevel = Option.when(boardQuest(scene))(mobLvl)).asJson)
       _ <- heroDao.writeSceneData(user.userId, routing.asJson)
       // Встреча с хозяином: после неё Трактирщику есть о ком рассказать.
       met <- meet(user, lord)
