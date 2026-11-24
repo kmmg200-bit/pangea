@@ -305,10 +305,11 @@ case class MonsterCaveState(
     * вернуться из боя можно только победив — к расколотой плите. */
   private def summon(user: User, hero: Hero, scene: CaveScene, bones: Item, renderer: Renderer): Task[StateType] = {
     val lord    = MiniBoss.Necromancer
-    val lvl     = lord.bossLvl(hero.lvl)
+    val depth   = if (scene.away) scene.questLvl.max(1L) else hero.dungeonLevel.toLong.max(1L)
+    val lvl     = lord.bossLvl(hero.lvl, depth)
     val broken  = scene.copy(altarSpent = true, altarBroken = true)
     val routing = LootData(Nil, Nil, returnState = Some(StateType.MonsterCave), eventData = Some(broken.asJson))
-    val mobLvl  = if (scene.away) scene.questLvl.max(1L) else hero.dungeonLevel.toLong.max(1L)
+    val mobLvl  = depth
     for {
       _      <- inventoryRepo.removeItem(bones.id, hero.id).mapError(asThrowable)
       battle <- necromancerFight(hero, scene, lord, lvl, lord.stats(lvl), mobLvl)
@@ -602,11 +603,12 @@ case class MonsterCaveState(
     * него три-четыре мертвеца той же расы, что пещера. */
   private def fightLord(user: User, hero: Hero, scene: CaveScene, idx: Int, renderer: Renderer): Task[StateType] = {
     val lord  = scene.boss.flatMap(MiniBoss.byName).getOrElse(MiniBoss.RatKing)
-    val lvl   = lord.bossLvl(hero.lvl)
-    val stats = lord.stats(lvl)
+    val depth   = if (scene.away) scene.questLvl.max(1L) else hero.dungeonLevel.toLong.max(1L)
+    val lvl     = lord.bossLvl(hero.lvl, depth)
+    val stats   = lord.stats(lvl)
     val next    = scene.withRoom(idx, _.copy(monsters = 0, done = true))
     val routing = LootData(Nil, Nil, returnState = Some(StateType.MonsterCave), eventData = Some(next.asJson))
-    val mobLvl  = if (scene.away) scene.questLvl.max(1L) else hero.dungeonLevel.toLong.max(1L)
+    val mobLvl  = depth
     for {
       battle <- lord match {
                   case MiniBoss.Necromancer => necromancerFight(hero, scene, lord, lvl, stats, mobLvl)

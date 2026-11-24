@@ -168,7 +168,9 @@ object BramblQuestSpec extends ZIOSpecDefault {
         intro <- r.sentScreens.map(_.last)
         out   <- st.action(testUser, tap("BramblFight"), r)
         b     <- battleOf(d)
-        lvl    = MiniBoss.StoneElemental.bossLvl(BramblQuest.Level.toLong)
+        h      = hero()
+        lvl    = MiniBoss.StoneElemental.bossLvl(
+                   MiniBoss.scalingLvl(h.lvl.max(BramblQuest.Level.toLong), h.dungeonLevel.toLong))
         gnomes = b.toList.flatMap(_.group.allies.filter(_.kind == AllyKind.Gnome))
       } yield assertTrue(intro.text.contains("Вы замечаете их одновременно с Брамблом") && intro.text.contains("«Двое") &&
                 intro.text.contains(Difficulty.render(11))) &&

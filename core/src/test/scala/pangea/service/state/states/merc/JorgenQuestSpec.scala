@@ -130,7 +130,9 @@ object JorgenQuestSpec extends ZIOSpecDefault {
         out   <- st.action(testUser, tap("JorgenFight"), r)
         b     <- battleOf(d)
         loot  <- d.readSceneData(userId).map(_.flatMap(_.as[LootData].toOption))
-        lvl    = MiniBoss.FireElemental.bossLvl(JorgenQuest.Level.toLong)
+        h      = hero()
+        lvl    = MiniBoss.FireElemental.bossLvl(
+                   MiniBoss.scalingLvl(h.lvl.max(JorgenQuest.Level.toLong), h.dungeonLevel.toLong))
         guests = b.toList.flatMap(_.group.allies.filter(_.kind == AllyKind.Human))
       } yield assertTrue(intro.text.contains("их двое") && intro.text.contains("сегодня беру холод") &&
                 intro.text.contains(Difficulty.render(9))) &&

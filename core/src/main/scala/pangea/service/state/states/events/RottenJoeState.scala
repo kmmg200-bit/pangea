@@ -61,7 +61,7 @@ case class RottenJoeState(heroDao: HeroDao, content: SceneContent) extends State
   private def attack(user: User, renderer: Renderer): Task[StateType] =
     for {
       hero <- getHero(user)
-      lvl   = MiniBoss.bossLvl(hero.lvl)
+      lvl   = MiniBoss.bossLvlFromHero(hero.lvl, hero.dungeonLevel.toLong)
       joe   = MiniBoss.RottenJoe
       monster = Monster(0L, lvl, joe.race, Rarity.Legendary, joe.stats(lvl))
       battle  = SoloPveBattle.from(monster, hero).copy(bossKind = Some(joe.entryName))

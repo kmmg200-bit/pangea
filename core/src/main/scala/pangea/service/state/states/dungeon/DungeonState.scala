@@ -329,7 +329,7 @@ case class DungeonState(heroDao: HeroDao, inventoryRepo: pangea.repository.inven
     * здесь герой знает, за кем шёл, — и успел приготовиться. */
   private def wolfOnCall(user: User, hero: Hero, renderer: Renderer): Task[StateType] = {
     val wolf    = MiniBoss.WhiteWolf
-    val lvl     = wolf.bossLvl(hero.lvl)
+    val lvl     = wolf.bossLvl(hero.lvl, hero.dungeonLevel.toLong)
     val monster = Monster(0L, lvl, wolf.race, Rarity.Legendary, wolf.stats(lvl))
     val battle  = SoloPveBattle.from(monster, hero).copy(bossKind = Some(wolf.entryName))
     for {

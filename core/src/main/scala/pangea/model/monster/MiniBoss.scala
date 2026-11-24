@@ -6,9 +6,9 @@ import pangea.model.item.{ItemSet, MaterialKind}
 import pangea.model.stats.FightStats
 
 /** Минибосс — особый моб, который встречается редко и живёт по своим правилам:
- *  сила зависит от уровня ГЕРОЯ, а не от глубины лабиринта, статы фиксированы (а
- *  не роллятся), способности идут строго по кругу и оплачиваются энергией, а
- *  добыча своя.
+ *  сила зависит от уровня героя и этажа лабиринта — берётся что выше (см.
+ *  [[MiniBoss.scalingLvl]]), статы фиксированы (а не роллятся), способности идут
+ *  строго по кругу и оплачиваются энергией, а добыча своя.
  *
  *  Статы считаются от `BossLvL` (см. [[MiniBoss.bossLvl]]) — базовые числа живут
  *  ЗДЕСЬ, на варианте, как у [[pangea.model.item.PassiveKind]]. Уязвимости к
@@ -57,8 +57,12 @@ sealed abstract class MiniBoss(
    *  Джо — пять, у волка — четыре (см. [[MiniBoss.bossLvl]]). */
   def levelDivisor: Long = MiniBoss.DefaultLevelDivisor
 
-  /** Уровень ЭТОГО босса для героя такого уровня. */
+  /** Уровень ЭТОГО босса от одной мерки (тесты, задания с фиксированным уровнем). */
   def bossLvl(heroLvl: Long): Long = MiniBoss.bossLvl(heroLvl, levelDivisor)
+
+  /** Уровень ЭТОГО босса от уровня героя и этажа (или уровня задания вне лабиринта). */
+  def bossLvl(heroLvl: Long, dungeonLvl: Long): Long =
+    MiniBoss.bossLvlFromHero(heroLvl, dungeonLvl, levelDivisor)
 
   /** Стихия, которой бьют ВСЕ его атаки — и обычная, и способности: грани урона
    *  по броне и HP двигаются как у стихии в оружии, а обычная атака ещё и
@@ -140,11 +144,20 @@ object MiniBoss extends Enum[MiniBoss] {
    *  узелком можно и раньше — это уже выбор самого героя. */
   val AmbushMinHeroLvl: Long = 4L
 
-  /** Уровень босса: `уровень героя / divisor`, округление вниз, минимум 1 — у
-   *  волка на 8-м уровне героя уже второй. Элементали и Джо растут раз в пять
+  /** Что сильнее — уровень героя или этаж лабиринта (в пещере вне лабиринта —
+   *  уровень задания). От этой мерки считается BossLvL. */
+  def scalingLvl(heroLvl: Long, dungeonLvl: Long): Long =
+    heroLvl.max(dungeonLvl).max(1L)
+
+  /** Уровень босса: `уровень / divisor`, округление вниз, минимум 1 — у
+   *  волка на 8-й мерке уже второй. Элементали и Джо растут раз в пять
    *  уровней, Белый волк — раз в четыре (см. [[MiniBoss.levelDivisor]]). */
   def bossLvl(heroLvl: Long, divisor: Long = DefaultLevelDivisor): Long =
     (heroLvl / divisor).max(1L)
+
+  /** BossLvL от уровня героя и этажа — смотрит, что выше. */
+  def bossLvlFromHero(heroLvl: Long, dungeonLvl: Long, divisor: Long = DefaultLevelDivisor): Long =
+    bossLvl(scalingLvl(heroLvl, dungeonLvl), divisor)
 
   // ── Огненный элементаль ────────────────────────────────────────────────────────────────
   case object FireElemental extends MiniBoss("Огненный", "Огненного", Race.Elemental) {
