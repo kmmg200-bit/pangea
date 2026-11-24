@@ -285,17 +285,20 @@ object RatKingBattleSpec extends ZIOSpecDefault {
               assertTrue(slainRat.name == "Чумная крыса")
     },
 
-    test("предметов с него (0..1 + BossLvL) / 2, но всегда хотя бы один") {
+    test("бросков с него: (0..1 + BossLvL) / 2, от одного до четырёх, с потолком") {
       def counts(lvl: Long) = (1L to 400L).toList.map(s => LootGenerator.rollMiniBoss(king, lvl, 10L, Rng(s))._1.size)
       val one  = counts(1L)   // (0..1 + 1) / 2 = 0 или 1 → не меньше одного
       val five = counts(5L)   // (0..1 + 5) / 2 = 2 или 3
       val six  = counts(6L)   // (0..1 + 6) / 2 = 3 всегда
+      val high = counts(20L)  // без потолка было бы 10+, с потолком — четыре
       assertTrue(one.forall(_ == 1)) &&
       assertTrue(five.forall(n => n == 2 || n == 3) && five.contains(2) && five.contains(3)) &&
       assertTrue(six.forall(_ == 3)) &&
-      // у прочих боссов счёт прежний, без деления пополам
+      assertTrue(high.forall(_ == LootGenerator.MiniBossMaxLootRolls)) &&
+      // у прочих боссов — без деления пополам, тот же потолок
       assertTrue((1L to 50L).toList.map(s =>
-        LootGenerator.rollMiniBoss(MiniBoss.WhiteWolf, 6L, 10L, Rng(s))._1.size).forall(n => n == 6 || n == 7))
+        LootGenerator.rollMiniBoss(MiniBoss.WhiteWolf, 6L, 10L, Rng(s))._1.size)
+        .forall(n => n >= 1 && n <= LootGenerator.MiniBossMaxLootRolls))
     }
   )
 }
