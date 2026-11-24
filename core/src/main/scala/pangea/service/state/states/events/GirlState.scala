@@ -205,8 +205,9 @@ case class GirlState(
 
   // ── Таверна: комната ────────────────────────────────────────────────────────
 
-  /** Уединение: кошелёк худеет на 25–50% (скажем в конце), травмы пройдут через
-    * полтора часа, свет гаснет на полчаса (см. [[lightsOut]]). Уже уединялись —
+  /** Уединение: кошелёк худеет на 25–50% (скажем в конце); тёмная сцена —
+    * полтора часа. Травмы снимаются, если досидел до выхода (см. [[leaveRoom]]),
+    * таймер травм на старте не трогаем. Уже уединялись —
     * значит, герой вернулся от уговоров («Ну раз такое дело…» после «Прошу
     * прощения…» в темноте): снова темнота, без второго уединения и второй
     * пропажи. */
@@ -220,16 +221,13 @@ case class GirlState(
           pct   <- Random.nextLongBetween(LossPctMin, LossPctMax + 1L)
           lost   = hero.silver * pct / 100L
           _     <- heroDao.updateSilver(user.userId, hero.silver - lost)
-          healAt = now + HealDelayMs
-          _     <- ZIO.when(hero.traumaActive(now) && hero.traumaUntil.exists(_ > healAt))(
-                     heroDao.updateTrauma(user.userId, Some(healAt), hero.traumaNames))
           _     <- writeScene(user, scene.copy(step = Step.RoomWait, lost = lost, roomStartedAt = Some(now)))
-          _     <- scheduler.schedule(user.userId, now + RoomWaitMs, TaskKind.GirlRoom, StateType.Girl, LeaveRoomAction)
+          _     <- scheduler.schedule(user.userId, now + HealDelayMs, TaskKind.GirlRoom, StateType.Girl, LeaveRoomAction)
           _     <- renderer.show(user, lightsOut.noted(content.text("girl.intimacy")))
         } yield StateType.Girl
     }
 
-  /** Тёмная комната. Через полчаса герой уходит сам (таймер шлёт «LeaveRoom»),
+  /** Тёмная комната. Через полтора часа герой уходит сам (таймер шлёт «LeaveRoom»),
     * а раньше — только через «Прошу прощения, но у меня есть дела»: та же
     * кнопка, что в комнате, и тот же путь — уговоры, а настоит — брат. Так
     * случайно не уйдёшь. Рядом кнопка приложения. Без своих кнопок ВК оставлял
@@ -238,28 +236,32 @@ case class GirlState(
     Screen(content.text("girl.lightsOut"),
       AppButton.inRow(content, List(content.choice("Excuse", "girl.room.choices.Excuse"))))
 
-  /** Пока полчаса не прошли — тот же тёмный экран; прошли — выход из комнаты. */
+  /** Пока 90 минут не прошли — тот же тёмный экран; прошли — выход из комнаты. */
   private def roomWait(user: User, renderer: Renderer, scene: GirlScene): Task[Unit] =
     nowMs.flatMap { now =>
       if (scene.roomStartedAt.exists(start => now - start >= RoomWaitMs)) leaveRoom(user, renderer).unit
       else renderer.show(user, lightsOut)
     }
 
-  /** Полчаса прошли — герой выходит из комнаты. Раньше срока — та же темнота.
+  /** 90 минут прошли — герой выходит из комнаты. Раньше срока — та же темнота.
     * Ушёл от неё к уговорам или к брату — таймер их не прерывает: вернётся в
     * темноту — выйдет там (см. [[intimacy]]). */
   private def leaveRoom(user: User, renderer: Renderer): Task[StateType] =
     for {
       now   <- nowMs
       scene <- requireScene(user)
-      done   = scene.roomStartedAt.exists(start => now - start >= RoomWaitMs)
+      done   = scene.roomStartedAt.exists(start => now - start >= HealDelayMs)
       res   <- if (scene.step != Step.RoomWait) ZIO.succeed(StateType.Girl)
                else if (!done) renderer.show(user, lightsOut).as(StateType.Girl)
                else
-                 scheduler.cancel(user.userId, TaskKind.GirlRoom) *>
-                   renderer.show(user, Screen(Screen.joined(content.text("girl.roomLeft"),
-                     content.format("girl.silverGone", "silver" -> scene.lost.toString)), Nil)) *>
-                   clear(user).as(StateType.GlobalMap)
+                 for {
+                   hero <- getHero(user)
+                   _    <- ZIO.when(hero.traumaActive(now))(heroDao.updateTrauma(user.userId, None, Nil))
+                   _    <- scheduler.cancel(user.userId, TaskKind.GirlRoom)
+                   _    <- renderer.show(user, Screen(Screen.joined(content.text("girl.roomLeft"),
+                     content.format("girl.silverGone", "silver" -> scene.lost.toString)), Nil))
+                   _    <- clear(user)
+                 } yield StateType.GlobalMap
     } yield res
 
   /** «Нет, мне правда надо идти!» — она зовёт брата. Если уже уединялись (ушёл
@@ -528,11 +530,12 @@ object GirlState {
   val CityThanksPct: Int = 48
   val CityMapPct: Int    = 2
 
-  /** Уединение: кошелёк худеет на 25–50%, травмы пройдут через 90 минут, свет
-    * гаснет на 30. */
+  /** Уединение: кошелёк худеет на 25–50%, травмы пройдут через 90 минут;
+    * тёмная сцена и автовыход — столько же. */
   val LossPctMin: Long  = 25L
   val LossPctMax: Long  = 50L
   val HealDelayMs: Long = 90L * 60L * 1000L
-  val RoomWaitMs: Long  = 30L * 60L * 1000L
+  /** Как [[HealDelayMs]] — оставлено для тестов и старых имён. */
+  val RoomWaitMs: Long  = HealDelayMs
   val LeaveRoomAction: String = """{"action":"LeaveRoom"}"""
 }
