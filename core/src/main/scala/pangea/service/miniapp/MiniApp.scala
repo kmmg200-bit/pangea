@@ -13,7 +13,7 @@ import pangea.model.bank.BankVault
 import pangea.model.barrel.Barrel
 import pangea.model.home.HomeData
 import pangea.model.hero.Hero
-import pangea.model.item.{Chisel, Item, ItemType, MaterialKind}
+import pangea.model.item.{Chisel, Item, ItemType, MaterialKind, QuestItemKind}
 import pangea.model.monster.Race
 import pangea.model.quest.NpcQuests
 import pangea.model.state.StateType
@@ -29,7 +29,7 @@ import pangea.repository.item.ItemRepository
 import pangea.repository.user.UserRepository
 import pangea.service.auction.{AuctionPurchase, AuctionSale}
 import pangea.service.cube.AzatCube
-import pangea.service.equipment.{BeltWork, BrewWork, BundleWork, GemWork, Outfit}
+import pangea.service.equipment.{BeltWork, BrewWork, BundleWork, GemWork, MapWork, Outfit, StrayFeedWork}
 import pangea.service.miniapp.MiniAppView.{HeroNamesView, TradeActionView, TradeView, AuctionActionView, AuctionSellView, AuctionView, CharacterView,
   CraftActionView, CraftView,
   InventoryActionView, InventoryView, QuestActionView, QuestsView, SquadActionView, SquadView, TopView}
@@ -38,8 +38,8 @@ import pangea.service.payout.Payouts
 import pangea.service.squad.SquadOrders
 import pangea.service.storage.{ItemStore, ItemTrail}
 import pangea.service.storage.ItemStore.Place
-import pangea.service.state.{AzatData, BarrelRobbery, HerbLore, NpcQuestLog, PlayerLock, QuestCard, QuestJournal, QuestsDone,
-  SceneDoor, SquadDuty, StackMove}
+import pangea.service.state.{AzatData, BarrelRobbery, HerbLore, NpcQuestLog, PlayerLock, QuestCard, QuestGoods, QuestJournal, QuestsDone,
+  SceneDoor, SquadDuty, StackMove, StrayCasketQuest}
 import pangea.service.state.states.{EquipmentState, InventoryState}
 import pangea.service.state.states.home.Racks
 import pangea.service.trade.Trades
@@ -121,6 +121,14 @@ trait MiniApp {
   /** Прочитать трактат `itemId` из сумки — как кнопкой «Читать» на его
     * карточке в боте; не в бою. */
   def read(hero: Hero, itemId: Long): Task[InventoryActionView]
+
+  /** Сложить половинку карты клада `itemId` с парной — как «Объединить» на
+    * карточке в боте; не в бою. */
+  def combineMap(hero: Hero, itemId: Long): Task[InventoryActionView]
+
+  /** Скормить бродячему ларцу `itemId` камень качества `grade` — как кнопка
+    * кормления на карточке в боте; не в бою. */
+  def strayFeed(hero: Hero, itemId: Long, grade: Int): Task[InventoryActionView]
 
   /** Кнопка задания на карточке сюжетного предмета `itemId` из сумки — та же,
     * что в боте: `act` — её имя у бота или ответ на её вопрос; не в бою.
@@ -353,7 +361,8 @@ object MiniApp {
         new AuctionSale(heroDao, inventories, lots, bank, players),
         new Outfit(heroDao, inventories, items, content), new GemWork(heroDao, inventories, items, content),
         new BrewWork(heroDao, inventories, content), new BeltWork(heroDao, inventories, items, content, trail),
-        new BundleWork(inventories, items, content), new SquadOrders(heroDao, content),
+        new BundleWork(inventories, items, content), new MapWork(inventories, items, content),
+        new StrayFeedWork(heroDao, inventories, artifactRepo, content), artifactRepo, new SquadOrders(heroDao, content),
         new ItemStore.All(heroDao, inventories, artifactRepo, barrelRepo, bank, content), trail,
         new BarrelRobbery(heroDao, barrelRepo, items, content), lock,
         new AppQuests(heroDao, inventories, new QuestCard(heroDao, inventories, items, content), content, door),
@@ -383,6 +392,9 @@ final class MiniAppLive(
   brewWork:    BrewWork,
   beltWork:    BeltWork,
   bundleWork:  BundleWork,
+  mapWork:      MapWork,
+  strayFeedWork: StrayFeedWork,
+  artifactRepo: ArtifactRepository,
   orders:      SquadOrders,
   places:      ItemStore.All,
   // След вещей: перенос и «Выбросить» (см. ItemTrail).
@@ -477,9 +489,16 @@ final class MiniAppLive(
       vault    <- vaults.find(hero.id).map(_.getOrElse(BankVault.empty(hero.id)))
       home     <- heroDao.readHomeData(hero.userId).map(_.flatMap(_.as[HomeData].toOption).getOrElse(HomeData.empty))
       quests   <- NpcQuestLog.load(heroDao, hero.userId)
+      goods    <- QuestGoods.all(inventories, Some(artifactRepo), hero.id)
+      feeds    = if (StrayCasketQuest.hungry(quests))
+                   inv.items.data.collect {
+                     case item if item.questItem.contains(QuestItemKind.StrayCasket) =>
+                       item.id -> strayFeedWork.choices(goods)
+                   }.toMap
+                 else Map.empty[Long, List[(Int, String)]]
       ms       <- now
     } yield MiniAppView.inventory(hero, inv, MiniAppView.Stores(arts, barrel, vault, home), content,
-      describeWith(hero, quests), ms, quests)
+      describeWith(hero, quests), ms, quests, feeds)
 
   /** С витриной — чем платить и куда класть: в городе серебро на руках вместе с
     * ячейкой, вне города — только ячейка; свободные места в сумке и что из
@@ -619,6 +638,26 @@ final class MiniAppLive(
     * ([[HerbLore.readTreatise]]). Книги уже нет — так и сказать. */
   override def read(hero: Hero, itemId: Long): Task[InventoryActionView] =
     bagAct(hero, itemId, content.text("stack.gone"))(HerbLore.readTreatise(heroDao, inventories, content, _, _, _, _))
+
+  override def combineMap(hero: Hero, itemId: Long): Task[InventoryActionView] =
+    notInBattle(hero, content.text("battle.belt.notInBattle")) { fresh =>
+      inventories.get(fresh.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
+        inv.items.data.find(_.id == itemId) match {
+          case None       => ZIO.succeed(content.text("stack.gone"))
+          case Some(item) => mapWork.combine(fresh.id, inv, item.id).map(_.getOrElse(content.text("stack.gone")))
+        }
+      }
+    }
+
+  override def strayFeed(hero: Hero, itemId: Long, grade: Int): Task[InventoryActionView] =
+    notInBattle(hero, content.text("battle.belt.notInBattle")) { fresh =>
+      inventories.get(fresh.id).mapError(e => new Throwable(e.toString)).flatMap { inv =>
+        inv.items.data.find(_.id == itemId) match {
+          case None       => ZIO.succeed(content.text("stack.gone"))
+          case Some(item) => strayFeedWork.feed(fresh.userId, fresh.id, item, grade).map(_.getOrElse(content.text("stack.gone")))
+        }
+      }
+    }
 
   /** Под локом игрока, героя перечитываем уже под ним. В бою — ничего не
     * трогаем: те же слова, что у сумки в бою. Ответ — вещи после кнопки и что

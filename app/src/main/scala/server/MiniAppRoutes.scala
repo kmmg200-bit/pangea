@@ -117,6 +117,12 @@ final class MiniAppRoutes(app: MiniApp) {
     case req @ POST -> Root / "api" / "app" / "bag" / "quest" :? ItemParam(id) +& ActParam(act) =>
       asPlayer(req)(hero => app.quest(hero, id, act).flatMap(view => Ok(view.asJson)))
 
+    case req @ POST -> Root / "api" / "app" / "bag" / "combine-map" :? ItemParam(id) =>
+      asPlayer(req)(hero => app.combineMap(hero, id).flatMap(view => Ok(view.asJson)))
+
+    case req @ POST -> Root / "api" / "app" / "bag" / "stray-feed" :? ItemParam(id) +& GradeParam(grade) =>
+      asPlayer(req)(hero => app.strayFeed(hero, id, grade).flatMap(view => Ok(view.asJson)))
+
     case req @ POST -> Root / "api" / "app" / "belt" / "put" :? ItemParam(id) +& BeltCellParam(slot) =>
       asPlayer(req)(hero => app.gear(hero, GearAct.BeltPut(id, slot)).flatMap(view => Ok(view.asJson)))
 
@@ -229,6 +235,7 @@ final class MiniAppRoutes(app: MiniApp) {
 
   private object KindParam extends OptionalQueryParamDecoderMatcher[String]("kind")
   private object ItemParam extends QueryParamDecoderMatcher[Long]("item")
+  private object GradeParam extends QueryParamDecoderMatcher[Int]("grade")
   private object ActParam  extends QueryParamDecoderMatcher[String]("act")
   private object LotParam  extends QueryParamDecoderMatcher[Long]("lot")
   private object CurrencyParam extends QueryParamDecoderMatcher[String]("currency")

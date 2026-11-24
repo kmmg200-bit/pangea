@@ -93,6 +93,11 @@ export interface BrewAskView {
  *  собрать (у бота старше приложения поля нет); `crush` — это камень, его можно расколоть, и вот
  *  вопрос перед этим; `dust` — это пыль, ею посыпают надетое оружие; `read` — это трактат, его
  *  можно читать; `quest` — кнопка задания на карточке сюжетного предмета. */
+export interface FeedGradeView {
+  grade: number
+  label: string
+}
+
 export interface BagActView {
   item: number
   brew: BrewAskView[]
@@ -104,6 +109,8 @@ export interface BagActView {
   dust: boolean
   read: boolean
   quest: QuestActView | null
+  combineMap?: string | null
+  strayFeed?: FeedGradeView[]
 }
 
 /** Кнопка задания — та же, что на карточке в боте: `act` — её имя у бота. */
