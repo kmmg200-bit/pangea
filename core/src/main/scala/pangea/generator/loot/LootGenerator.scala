@@ -333,9 +333,14 @@ object LootGenerator {
     loop(dropChances(tier), Set.empty, Nil, rng)
   }
 
+  /** Сколько раз за бой катается добыча минибосса: не меньше одного и не больше
+    * четырёх, даже когда BossLvL вырос. */
+  val MiniBossMaxLootRolls: Int = 4
+
   /** Дроп с минибосса. В отличие от обычного лута он есть ВСЕГДА и не зависит
-    * от таблицы категорий: выпадает `0..1 + BossLvL` предметов, каждый — по
-    * своей раскладке босса (элементаль, Джо, волк, король, Некромант).
+    * от таблицы категорий: число бросков — `0..1 + BossLvL`, но не выше
+    * [[MiniBossMaxLootRolls]] и не ниже 1; каждый бросок — по своей раскладке
+    * босса (элементаль, Джо, волк, король, Некромант).
     *
     * Свой ингредиент — тот, что в кубе переводит вещь в его набор (шкура волка,
     * кровь короля, кости Некроманта…), — половина бросков, пока он с этого
@@ -361,7 +366,7 @@ object LootGenerator {
     // короля, — половина от уровня босса, но не меньше одной.
     val raw         = extra + bossLvl
     val halved      = boss == MiniBoss.RatKing || boss == MiniBoss.Necromancer
-    val count       = (if (halved) raw / 2L else raw).toInt.max(1)
+    val count       = (if (halved) raw / 2L else raw).toInt.max(1).min(MiniBossMaxLootRolls)
     (0 until count).foldLeft((List.empty[LootDrop], r0, true)) { case ((acc, r, left), _) =>
       val (drops, r2) = bossDrop(boss, bossLvl, heroLvl, floorLvl, left, r)
       (acc ++ drops, r2, left && !drops.exists(isIngredient(boss, _)))
