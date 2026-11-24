@@ -394,9 +394,10 @@ case class CaravanState(
   private def startWave(user: User, scene: CaravanScene, renderer: Renderer, note: String): Task[StateType] =
     for {
       hero  <- getHero(user)
+      slot  <- BoardProgress.huntingSlot(heroDao, user.userId, BoardKind.CaravanRout)
       race   = Race.withName(scene.race)
       count  = scene.waveSize(scene.wave)
-      lvl    = hero.dungeonLevel
+      lvl    = slot.filter(_.lvl > 0L).fold(hero.dungeonLevel)(s => s.lvl.toInt.max(1))
       seeds <- ZIO.foreach(List.fill(count)(()))(_ => Random.nextLong)
       guards = seeds.map { seed =>
                  val (rarity, _) = CaravanGenerator.guardRarity(Rng(seed))

@@ -98,9 +98,10 @@ object QuestBoardSpec extends ZIOSpecDefault {
       assertTrue(races.size == 3 && races.distinct.size == 3) &&
       assertTrue(boards.forall(b => pooled(b).size == BoardRates.Slots - BoardRates.NoviceTrophies)) &&
       assertTrue(fromPool && rolled && ordered) &&
-      // сложности: трофей — один знак, караван и пещера — пятнадцать
+      // сложности: трофей — один знак, у каравана и пещеры ставка вида — пятнадцать
       assertTrue(BoardKind.Trophy.difficulty == 1 && BoardKind.CaravanRout.difficulty == 15) &&
-      assertTrue(BoardKind.CaveClear.difficulty == 15)
+      assertTrue(BoardKind.CaveClear.difficulty == 15) &&
+      assertTrue(BoardKind.CaravanRout.rolledLvl && BoardKind.CaveClear.rolledLvl)
     },
 
     test("старшие доски целиком из пула: трофеев нет, видов не больше восьми и без повторов") {
@@ -112,6 +113,16 @@ object QuestBoardSpec extends ZIOSpecDefault {
       assertTrue(boards.forall(_.size == BoardRates.Pool.size.min(BoardRates.Slots))) &&
       assertTrue(boards.forall(b => b.map(_.kind).distinct.size == b.size)) &&
       assertTrue(BoardRates.trophiesFor(BoardTier.Seasoned) == 0 && BoardRates.trophiesFor(BoardTier.Novice) == 3)
+    },
+
+    test("караван и пещера: уровень задания — в пределах доски, и он же сложность объявления") {
+      val lvls = (1L to 200L).toList.flatMap { s =>
+        QuestBoardState.roll(BoardTier.Veteran, Rng(s)).filter(k =>
+          k.kind == BoardKind.CaravanRout || k.kind == BoardKind.CaveClear)
+      }
+      assertTrue(lvls.nonEmpty) &&
+      assertTrue(lvls.forall(s => s.lvl >= BoardTier.Veteran.from && s.lvl <= BoardTier.Veteran.to)) &&
+      assertTrue(lvls.forall(s => s.difficulty == s.lvl.toInt))
     },
 
     test("выездные: уровень задания — в пределах доски, и он же сложность объявления") {
@@ -133,8 +144,9 @@ object QuestBoardSpec extends ZIOSpecDefault {
       // сложность объявления — его собственный уровень, а не ставка вида
       assertTrue(away.forall(s => s.difficulty == s.lvl.toInt)) &&
       assertTrue(BoardKind.NecromancerHunt.away && BoardKind.NecromancerHunt.rolledLvl) &&
-      // у прочих видов сложность по-прежнему общая
-      assertTrue(BoardSlot(BoardKind.CaveClear).difficulty == BoardKind.CaveClear.difficulty)
+      // без уровня в записи — ставка вида
+      assertTrue(BoardSlot(BoardKind.CaveClear).difficulty == BoardKind.CaveClear.difficulty) &&
+      assertTrue(BoardSlot(BoardKind.CaveClear, lvl = 60L).difficulty == 60)
     },
 
     test("выездное уводит от доски в дорогу, а поллеру оставляет задачу") {

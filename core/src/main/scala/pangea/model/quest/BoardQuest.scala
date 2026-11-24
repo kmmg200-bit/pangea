@@ -56,8 +56,9 @@ sealed abstract class BoardKind(val key: String, val difficulty: Int) extends En
     * лабиринте, когда они ему встретятся. */
   def away: Boolean = false
 
-  /** Своя сложность у каждого объявления: у выездных она катается вместе с
-    * уровнем задания, у остальных одна на весь вид. */
+  /** Своя сложность у каждого объявления: у выездных, каравана и пещеры она
+    * катается вместе с уровнем задания в пределах доски; у трофея и гномов —
+    * одна на весь вид. */
   def rolledLvl: Boolean = false
 
   /** Сдаётся прямо на доске — трофей, ящик склянок. Прочие отмечаются там, где
@@ -74,11 +75,17 @@ object BoardKind extends Enum[BoardKind] {
     override def handedIn: Boolean  = true
   }
 
-  /** «Найти караван и перебить охрану» — тихая кража не в счёт. */
-  case object CaravanRout extends BoardKind("caravan", 15)
+  /** «Найти караван и перебить охрану» — тихая кража не в счёт. Сложность, как
+    * у выездных, своя у каждого объявления, в пределах доски; ставка вида здесь
+    * служебная (см. [[BoardSlot.difficulty]]). */
+  case object CaravanRout extends BoardKind("caravan", 15) {
+    override def rolledLvl: Boolean = true
+  }
 
   /** «Найти пещеру и выбить всех до последнего» — раса пещеры не важна. */
-  case object CaveClear extends BoardKind("cave", 15)
+  case object CaveClear extends BoardKind("cave", 15) {
+    override def rolledLvl: Boolean = true
+  }
 
   /** «Припасы в дальний поход»: гномья дружина берёт десять склянок одного
     * толка — и только все разом. Сдаётся на доске, ходить никуда не надо. */
@@ -137,8 +144,9 @@ final case class BoardSlot(
   /** Взято и сделано, но ещё не оплачено. */
   def ready: Boolean = taken && done
 
-  /** Сложность этого объявления в знаках: у выездных она своя, по уровню
-    * задания, у остальных — одна на весь вид. */
+  /** Сложность этого объявления в знаках: у выездных, каравана и пещеры — своя,
+    * по уровню задания; у трофея и гномов — одна на весь вид; без уровня в
+    * записи — ставка вида (для старых объявлений). */
   def difficulty: Int = if (kind.rolledLvl && lvl > 0L) lvl.toInt else kind.difficulty
 }
 
@@ -237,6 +245,10 @@ final case class BoardDesk(boards: List[BoardData] = Nil) {
 
   /** Взято ли сейчас задание такого вида (и ещё не закрыто) — на любой доске. */
   def hunting(kind: BoardKind): Boolean = boards.exists(_.hunting(kind))
+
+  /** Взятое и незакрытое объявление такого вида — для уровня задания в деле. */
+  def huntingSlot(kind: BoardKind): Option[BoardSlot] =
+    boards.flatMap(_.slots).find(s => s.kind == kind && s.taken && !s.done)
 
   /** Отметить сделанным взятое задание такого вида — на той доске, где оно взято. */
   def markDone(kind: BoardKind): BoardDesk =
