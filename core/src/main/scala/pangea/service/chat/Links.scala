@@ -9,6 +9,9 @@ object Links {
   /** Статья «Впервые прибыли на Пангею? Обязательно к прочтению». */
   val Tutorial: String = "https://vk.ru/@stigmapangeaproject-vpervye-pribyli-na-pangeu-obyazatelno-k-prochteniu"
 
+  /** FAQ по клейму Пангеи — из беседы по команде «Faq». */
+  val Faq: String = "https://vk.ru/@rainbow_niko-faq-po-kleimu-pangei"
+
   /** Приглашение в общую беседу Пангеи. */
   val Chat: String = "https://vk.me/join/D_KzFZY1BWBtxF1fRuoZrheMRN5TB_dlWug="
 

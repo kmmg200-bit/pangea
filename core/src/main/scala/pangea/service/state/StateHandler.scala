@@ -180,6 +180,19 @@ class StateHandler(
     }
   }
 
+  /** «Faq» из беседы — та же схема, что у «Туториал» (см. [[tutorialToChat]]). */
+  def faqToChat(senderVk: VkId, eventId: Long, chat: ChatTarget.Peer): Task[Unit] = {
+    val text  = content.format("chat.faq", "faq" -> Links.Faq)
+    val reply = api.sendToChat(chat, text)
+    userRepo.getUserByVkId(senderVk).flatMap {
+      case None => reply
+      case Some(sender) =>
+        lock.withLock(sender.userId) {
+          userRepo.checkAndRecordEvent(sender.userId, eventId).flatMap(fresh => ZIO.when(fresh)(reply).unit)
+        }
+    }
+  }
+
   /** «Дать Торопыга» из беседы ответом на сообщение игрока: достижение — тому,
     * на чьё сообщение ответили. Давать вправе только «Админ 1»; от прочих
     * команду молча пропускаем. Ответ — в ту же беседу, игроку в личку — строка

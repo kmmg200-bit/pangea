@@ -58,6 +58,21 @@ object ChatSelfSpec extends ZIOSpecDefault {
 
   override def spec = suite("Команды о себе в беседе")(
 
+    test("«Faq»: узнают в любом написании, отвечают ссылкой на статью — и игроку, и незнакомцу") {
+      val key = ChatCommand.eventKey(general, 0L, Some(301L))
+      for {
+        t <- handler(heroWith(None))
+        (state, api, _) = t
+        _    <- state.faqToChat(vkId, key, general)
+        _    <- state.faqToChat(vkId, key, general)
+        _    <- state.faqToChat(VkId("777"), ChatCommand.eventKey(general, 0L, Some(302L)), general)
+        said <- api.chatMessages
+      } yield assertTrue(ChatCommand.faqCommand("Faq") && ChatCommand.faqCommand("  faq! ") &&
+                ChatCommand.faqCommand("/faq")) &&
+              assertTrue(!ChatCommand.faqCommand("faq по боям") && !ChatCommand.faqCommand("мой профиль")) &&
+              assertTrue(said.size == 2 && said.forall(_.contains(Links.Faq)))
+    },
+
     test("«Туториал»: узнают в любом написании, отвечают ссылкой на статью — и игроку, и незнакомцу") {
       val key = ChatCommand.eventKey(general, 0L, Some(201L))
       for {
