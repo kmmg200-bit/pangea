@@ -226,6 +226,21 @@ function BagActs(props: {
             В стопку
           </button>
         )}
+        {act.combineMap && (
+          <button className="equip-off" disabled={acts.busy} onClick={() => finish(() => api.bagCombineMap(item.id))}>
+            {act.combineMap}
+          </button>
+        )}
+        {act.strayFeed?.map((f) => (
+          <button
+            key={f.grade}
+            className="equip-off"
+            disabled={acts.busy}
+            onClick={() => finish(() => api.bagStrayFeed(item.id, f.grade))}
+          >
+            {f.label}
+          </button>
+        ))}
         {act.crush && (
           <button className="equip-off" disabled={acts.busy} onClick={() => setAsk('crush')}>
             Расколоть камень

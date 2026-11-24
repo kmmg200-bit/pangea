@@ -158,14 +158,19 @@ object MiniAppView {
     * (как «📦 В стопку» в боте), `crush` — это камень, его можно расколоть, и вот вопрос
     * перед этим (те же слова, что в боте), `dust` — это пыль, ею посыпают
     * надетое оружие, `read` — это трактат, его можно читать, `quest` — кнопка
-    * задания на карточке сюжетного предмета. */
+    * задания на карточке сюжетного предмета; `combineMap` — сложить половинки
+    * карты клада; `strayFeed` — покормить бродячий ларец камнями. */
   final case class BagActView(item: Long, brew: List[BrewAskView], belt: Boolean, beltFull: Option[String],
                               unpack: Boolean, pack: Boolean, crush: Option[String], dust: Boolean, read: Boolean,
-                              quest: Option[QuestActView])
+                              quest: Option[QuestActView], combineMap: Option[String] = None,
+                              strayFeed: List[FeedGradeView] = Nil)
 
   /** Кнопка задания — та же, что в боте: `act` — её имя у бота, `label` —
     * подпись (без значка, как у прочих кнопок приложения). */
   final case class QuestActView(act: String, label: String)
+
+  /** Кнопка кормления ларца — качество камня и подпись, как в боте. */
+  final case class FeedGradeView(grade: Int, label: String)
 
   /** Что спросить, прежде чем идти: вопрос и ответы — те же, что в боте. */
   final case class QuestAskView(question: String, options: List[QuestActView])
@@ -458,6 +463,7 @@ object MiniAppView {
   implicit val brewOptionEncoder: Encoder[BrewOptionView] = deriveEncoder
   implicit val brewAskEncoder:   Encoder[BrewAskView]   = deriveEncoder
   implicit val questActEncoder:  Encoder[QuestActView]  = deriveEncoder
+  implicit val feedGradeEncoder: Encoder[FeedGradeView] = deriveEncoder
   implicit val questAskEncoder:  Encoder[QuestAskView]  = deriveEncoder
   implicit val bagActEncoder:    Encoder[BagActView]    = deriveEncoder
   implicit val heroEncoder:      Encoder[HeroView]      = deriveEncoder
@@ -548,7 +554,8 @@ object MiniAppView {
   /** Сумка — стопками, как в боте, — всё надетое и остальные хранилища.
     * `quests` — журнал заданий: по нему — кнопки заданий на карточках. */
   def inventory(h: Hero, inv: Inventory, stores: Stores, content: SceneContent, describe: Item => String,
-                now: Long, quests: NpcQuests = NpcQuests.empty): InventoryView = {
+                now: Long, quests: NpcQuests = NpcQuests.empty,
+                strayFeeds: Map[Long, List[(Int, String)]] = Map.empty): InventoryView = {
     val before = h.card(now)
     val views  = storages(stores, content, describe)
     InventoryView(
@@ -576,14 +583,15 @@ object MiniAppView {
       storesAway = MiniApp.storesAway(content, h),
       moves      = moves(h, inv, stores, views),
       gemStock   = gemStock(inv, stores, describe),
-      bagActs    = bagActs(h, inv, content, now, quests),
+      bagActs    = bagActs(h, inv, content, now, quests, strayFeeds),
       drops      = drops(h, inv, stores, views)
     )
   }
 
   /** Что сделать с вещами сумки — те же кнопки, что на карточке в боте; в бою
     * из сумки ничего не достать. */
-  private def bagActs(h: Hero, inv: Inventory, content: SceneContent, now: Long, quests: NpcQuests): List[BagActView] =
+  private def bagActs(h: Hero, inv: Inventory, content: SceneContent, now: Long, quests: NpcQuests,
+                      strayFeeds: Map[Long, List[(Int, String)]]): List[BagActView] =
     if (MiniApp.inBattle(h)) Nil
     else InventoryState.listed(inv.items.data).flatMap { case (item, count) =>
       val asks  = brewAsks(h, item, content, now)
@@ -597,10 +605,14 @@ object MiniAppView {
       val quest = QuestCard.choice(content, item, quests).map(c => QuestActView(c.id, bare(c.label)))
       // «В стопку» — как в боте: таких в сумке на стопку хватает (см. Bundling).
       val pack  = Bundling.packable(item) && count >= Bundling.Size
+      val combineMap = Option.when(item.itemType == ItemType.TreasureMapHalf)(
+        bare(content.choice("CombineMap", "inventory.combineMap").label))
+      val strayFeed = strayFeeds.getOrElse(item.id, Nil).map { case (g, l) => FeedGradeView(g, l) }
       Option.when(asks.nonEmpty || slot.isDefined || item.isBundle || pack || crush.isDefined || dust || read ||
-          quest.isDefined)(
+          quest.isDefined || combineMap.isDefined || strayFeed.nonEmpty)(
         BagActView(item.id, asks, slot.isDefined, slot.flatMap(beltFull(h, _, content)), unpack = item.isBundle,
-          pack = pack, crush = crush, dust = dust, read = read, quest = quest))
+          pack = pack, crush = crush, dust = dust, read = read, quest = quest, combineMap = combineMap,
+          strayFeed = strayFeed))
     }
 
   /** Подпись кнопки бота без значка впереди: в приложении у кнопок значков нет. */

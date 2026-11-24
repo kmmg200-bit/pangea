@@ -111,6 +111,9 @@ export const api = {
   bagRead: (item: number) => post<InventoryActionView>(`bag/read?item=${item}`),
   bagQuest: (item: number, act: string) =>
     post<QuestActionView>(`bag/quest?item=${item}&act=${encodeURIComponent(act)}`),
+  bagCombineMap: (item: number) => post<InventoryActionView>(`bag/combine-map?item=${item}`),
+  bagStrayFeed: (item: number, grade: number) =>
+    post<InventoryActionView>(`bag/stray-feed?item=${item}&grade=${grade}`),
   rackWear: (n: number) => post<InventoryActionView>(`racks/wear?n=${n}`),
   storeMove: (from: string, to: string, item: number, all: boolean) =>
     post<InventoryActionView>(`storages/move?from=${from}&to=${to}&item=${item}&all=${all}`),
