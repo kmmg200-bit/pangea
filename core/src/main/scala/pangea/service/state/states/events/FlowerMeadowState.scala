@@ -164,7 +164,7 @@ case class FlowerMeadowState(
   private def wolfAmbush(user: User, hero: Hero, scene: MeadowScene, renderer: Renderer,
                          note: String): Task[StateType] = {
     val wolf    = MiniBoss.WhiteWolf
-    val lvl     = wolf.bossLvl(hero.lvl)
+    val lvl     = wolf.bossLvl(hero.lvl, hero.dungeonLevel.toLong)
     val monster = Monster(0L, lvl, wolf.race, Rarity.Legendary, wolf.stats(lvl))
     val battle  = SoloPveBattle.from(monster, hero).copy(bossKind = Some(wolf.entryName))
     val routing =

@@ -226,6 +226,12 @@ object ElementalLairStateSpec extends ZIOSpecDefault {
         1L -> 1L, 4L -> 1L, 5L -> 1L, 9L -> 1L, // до 9 уровня босс держится на первом
         10L -> 2L, 14L -> 2L, 15L -> 3L, 50L -> 10L, 150L -> 30L)
       assertTrue(cases.forall { case (heroLvl, expected) => MiniBoss.bossLvl(heroLvl) == expected })
+    },
+
+    test("BossLvL с этажом — что сильнее, герой или лабиринт") {
+      assertTrue(MiniBoss.bossLvlFromHero(5L, 30L) == 6L) &&
+        assertTrue(MiniBoss.bossLvlFromHero(40L, 10L) == 8L) &&
+        assertTrue(MiniBoss.WhiteWolf.bossLvl(8L, 20L) == 5L) // max(8,20)/4
     }
   )
 }

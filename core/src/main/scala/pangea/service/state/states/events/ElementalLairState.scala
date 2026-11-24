@@ -88,7 +88,7 @@ case class ElementalLairState(heroDao: HeroDao, content: SceneContent) extends S
         case None => showCurrent(user, renderer)
         case Some(s) =>
           val elemental = MiniBoss.byName(s.kind).getOrElse(MiniBoss.FireElemental)
-          val lvl       = MiniBoss.bossLvl(hero.lvl)
+          val lvl       = MiniBoss.bossLvlFromHero(hero.lvl, hero.dungeonLevel.toLong)
           val monster   = Monster(0L, lvl, Race.Elemental, Rarity.Legendary, elemental.stats(lvl))
           val base      = SoloPveBattle.from(monster, hero).copy(bossKind = Some(s.kind))
           // Дальник встаёт поодаль (Громовой — на четвёртом месте) и бьёт оттуда.

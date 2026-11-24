@@ -398,8 +398,8 @@ object SewerSpec extends ZIOSpecDefault {
         back    = loot.flatMap(_.eventData).flatMap(_.as[CaveScene].toOption)
       } yield assertTrue(out == StateType.Battle && said.contains("Крысиный король")) &&
               assertTrue(battle.exists(_.boss.contains(MiniBoss.RatKing))) &&
-              // уровень босса — от уровня героя, а не от задания
-              assertTrue(battle.exists(_.monsterLvl == MiniBoss.RatKing.bossLvl(10L))) &&
+              // уровень босса — что сильнее, герой или этаж (здесь оба 10)
+              assertTrue(battle.exists(_.monsterLvl == MiniBoss.RatKing.bossLvl(10L, 10L))) &&
               // звать ему некого, зато своих он позовёт сам — уровнем в задание
               assertTrue(battle.exists(b => b.noKin && b.minionLvl == 7L)) &&
               // всякая рана от него гноится

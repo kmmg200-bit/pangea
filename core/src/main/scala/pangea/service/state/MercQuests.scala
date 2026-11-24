@@ -110,7 +110,8 @@ object MercQuests {
     * (см. `MonsterSlot.bossTurn`), на полной энергии; кто бы ни встал с героем в
     * пару, правила у него свои. */
   def bossFight(boss: MiniBoss, count: Int, questLevel: Int, hero: Hero): SoloPveBattle = {
-    val lvl  = boss.bossLvl(questLevel.toLong)
+    // У задания свой уровень (чтобы не ослаблять встречу), этаж — этаж лабиринта.
+    val lvl  = boss.bossLvl(MiniBoss.scalingLvl(hero.lvl.max(questLevel.toLong), hero.dungeonLevel.toLong))
     val foes = List.fill(count)(Monster(0L, lvl, Race.Elemental, Rarity.Legendary, boss.stats(lvl)))
     val base = SoloPveBattle.fromGroup(foes, hero, foes.map(_.fightStats.energy))
     base.copy(bossKind = Some(boss.entryName),
