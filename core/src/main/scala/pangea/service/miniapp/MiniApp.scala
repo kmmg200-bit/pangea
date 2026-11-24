@@ -13,7 +13,7 @@ import pangea.model.bank.BankVault
 import pangea.model.barrel.Barrel
 import pangea.model.home.HomeData
 import pangea.model.hero.Hero
-import pangea.model.item.{Chisel, Item, ItemType, MaterialKind, QuestItemKind}
+import pangea.model.item.{BrewKind, Chisel, Item, ItemType, MaterialKind, QuestItemKind}
 import pangea.model.monster.Race
 import pangea.model.quest.NpcQuests
 import pangea.model.state.StateType
@@ -30,6 +30,7 @@ import pangea.repository.user.UserRepository
 import pangea.service.auction.{AuctionPurchase, AuctionSale}
 import pangea.service.cube.AzatCube
 import pangea.service.equipment.{BeltWork, BrewWork, BundleWork, GemWork, MapWork, Outfit, StrayFeedWork}
+import pangea.service.home.Cauldron
 import pangea.service.miniapp.MiniAppView.{HeroNamesView, TradeActionView, TradeView, AuctionActionView, AuctionSellView, AuctionView, CharacterView,
   CraftActionView, CraftView,
   InventoryActionView, InventoryView, QuestActionView, QuestsView, SquadActionView, SquadView, TopView}
@@ -154,6 +155,9 @@ trait MiniApp {
 
   /** Действие с кубом и куб после него. */
   def cube(hero: Hero, act: MiniApp.CubeAct): Task[CraftActionView]
+
+  /** Действие с котелком верстака травника и «Крафт» после него. */
+  def cauldron(hero: Hero, act: MiniApp.CauldronAct): Task[CraftActionView]
 }
 
 object MiniApp {
@@ -189,6 +193,18 @@ object MiniApp {
     final case class Withdraw(itemId: Long) extends CubeAct
     case object TakeAll                     extends CubeAct
     case object Activate                    extends CubeAct
+  }
+
+  /** Что делают с котелком из приложения: переносят пальцем с полок верстака
+    * и обратно, варят, вынимают всё, варят изученный отвар — `kind` это
+    * `entryName` отвара, `n` — сколько бутылок. */
+  sealed trait CauldronAct
+  object CauldronAct {
+    final case class Put(itemId: Long)          extends CauldronAct
+    final case class Back(itemId: Long)         extends CauldronAct
+    case object Cook                            extends CauldronAct
+    case object Empty                           extends CauldronAct
+    final case class Brew(kind: String, n: Int) extends CauldronAct
   }
 
   /** Что делают со снаряжением: надевают вещь из сумки в слот или снимают
@@ -357,6 +373,7 @@ object MiniApp {
         topCache    <- Ref.make(Map.empty[TopKind, CachedTop])
       } yield new MiniAppLive(config, users, heroes, inventories, lots, heroDao, artifacts, barrels, vaults, content,
         tops, topCache, outcomes, new AzatCube(heroDao, inventories, items, content),
+        new Cauldron(heroDao, inventories, items, content),
         new AuctionPurchase(heroDao, inventories, lots, users, bank, payouts, players, content),
         new AuctionSale(heroDao, inventories, lots, bank, players),
         new Outfit(heroDao, inventories, items, content), new GemWork(heroDao, inventories, items, content),
@@ -385,6 +402,7 @@ final class MiniAppLive(
   topCache:    Ref[Map[TopKind, MiniApp.CachedTop]],
   outcomes:    QuestOutcomeDao,
   azatCube:    AzatCube,
+  pot:         Cauldron,
   purchase:    AuctionPurchase,
   sale:        AuctionSale,
   outfit:      Outfit,
@@ -407,7 +425,7 @@ final class MiniAppLive(
   // Чат игрока с ботом: строка о достижении, полученном в приложении, — и туда.
   dm:          Renderer
 ) extends MiniApp {
-  import MiniApp.{BrewAct, CubeAct, Denied, GearAct, Outcome, SquadAct, TradeAct}
+  import MiniApp.{BrewAct, CauldronAct, CubeAct, Denied, GearAct, Outcome, SquadAct, TradeAct}
 
   override def player(launchParams: String): Task[Either[Denied, Hero]] =
     config.vkSecret.map(_.trim).filter(_.nonEmpty) match {
@@ -957,9 +975,10 @@ final class MiniAppLive(
       ms       <- now
       azat     <- AzatData.read(heroDao, hero.userId).map(_.withDailyRests(ms))
       home     <- azatCube.loadHome(hero.userId)
+      lore     <- HerbLore.readLore(heroDao, hero.userId)
       inv      <- inventories.get(hero.id).mapError(e => new Throwable(e.toString))
       describe <- describer(hero)
-    } yield MiniAppView.craft(hero, azat, home, inv, content, describe)
+    } yield MiniAppView.craft(hero, azat, home, lore, inv, content, describe)
 
   /** Под локом игрока: героя перечитываем уже под ним — пока запрос ждал,
     * ход в чате мог его поменять. Куб не ожил или герой не в городе — ничего
@@ -996,14 +1015,55 @@ final class MiniAppLive(
       case CubeAct.TakeAll =>
         azatCube.withdrawEverything(hero).map(note => Outcome(Some(note), Nil))
       case CubeAct.Activate =>
-        for {
-          user  <- users.getUserById(hero.userId).someOrFail(new Throwable(s"Нет игрока ${hero.userId.value}"))
-          lines <- zio.Ref.make(Vector.empty[String])
-          made  <- azatCube.activate(user, hero, new MiniApp.Collect(lines, Some(dm)))
-          said  <- lines.get
-        } yield Outcome(Option.when(said.nonEmpty)(said.mkString("\n\n")), made.map(_.id))
+        collected(hero)(azatCube.activate(_, hero, _))
     }
   }
+
+  /** Под локом игрока, как и куб: героя перечитываем уже под ним. Дома с
+    * верстаком нет или герой не в городе — ничего не трогаем, говорим почему. */
+  override def cauldron(hero: Hero, act: CauldronAct): Task[CraftActionView] =
+    lock.withLock(hero.userId) {
+      for {
+        fresh   <- heroes.getHero(hero.userId).someOrFail(new Throwable(s"Нет героя у игрока ${hero.userId.value}"))
+        home    <- azatCube.loadHome(fresh.userId)
+        outcome <- MiniAppView.cauldronLocked(home, content) match {
+                     case Some(why)                      => ZIO.succeed(Outcome(Some(why), Nil))
+                     case None if !MiniApp.inCity(fresh) => ZIO.succeed(Outcome(Some(content.text("miniapp.craft.cauldronAway")), Nil))
+                     case None                           => cauldronAct(fresh, act)
+                   }
+      } yield fresh -> outcome
+    }.flatMap { case (fresh, outcome) =>
+      heroes.getHero(fresh.userId).map(_.getOrElse(fresh)).flatMap(craft)
+        .map(CraftActionView(_, outcome.note, outcome.made))
+    }
+
+  /** Отвар варят только изученный: чужой `kind` сюда не подсунешь. */
+  private def cauldronAct(hero: Hero, act: CauldronAct): Task[Outcome] =
+    act match {
+      case CauldronAct.Put(id)  => pot.putById(hero.userId, id).map(Outcome(_, Nil))
+      case CauldronAct.Back(id) => pot.back(hero, id).map(Outcome(_, Nil))
+      case CauldronAct.Empty    => pot.empty(hero).map(Outcome(_, Nil))
+      case CauldronAct.Cook     => collected(hero)(pot.cook(_, hero, _))
+      case CauldronAct.Brew(_, n) if n <= 0 =>
+        ZIO.succeed(Outcome(Some(content.text("home.workbench.notNumber")), Nil))
+      case CauldronAct.Brew(k, n) =>
+        HerbLore.readLore(heroDao, hero.userId).flatMap { lore =>
+          BrewKind.withNameOption(k).filter(Cauldron.learned(lore).contains) match {
+            case None       => ZIO.succeed(Outcome(None, Nil))
+            case Some(kind) => collected(hero)(pot.brew(_, hero, kind, n, _))
+          }
+        }
+    }
+
+  /** Действие, которое в боте говорило бы в чат: его строки — в ответ
+    * приложению, строка о достижении — ещё и в личку. */
+  private def collected(hero: Hero)(run: (User, Renderer) => Task[List[Item]]): Task[Outcome] =
+    for {
+      user  <- users.getUserById(hero.userId).someOrFail(new Throwable(s"Нет игрока ${hero.userId.value}"))
+      lines <- zio.Ref.make(Vector.empty[String])
+      made  <- run(user, new MiniApp.Collect(lines, Some(dm)))
+      said  <- lines.get
+    } yield Outcome(Option.when(said.nonEmpty)(said.mkString("\n\n")), made.map(_.id))
 
   /** Описание вещи — как в карточке бота. Что сказать на карточке сюжетного
     * предмета (вскрыто ли письмо Марисы, сыт ли бродячий ларец), знает журнал

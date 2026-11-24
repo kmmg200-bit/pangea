@@ -4,21 +4,20 @@ import io.circe.generic.semiauto.deriveEncoder
 import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder, HCursor, jawn}
 import pangea.dao.hero.HeroDao
-import pangea.domain.Rng
 import pangea.engine.{Branch, Choice, ChoiceColor, Renderer, SceneContent, Screen, Target}
-import pangea.generator.item.CubeCraft
 import pangea.model.artifact.ArtifactKind
-import pangea.model.hero.{Hero, LoreData}
-import pangea.model.home.{HomeData, HomeRates, House}
+import pangea.model.hero.Hero
+import pangea.model.home.{HomeData, HomeRates}
 import pangea.model.item.{BrewKind, Item, ItemStack, MaterialKind}
 import pangea.model.state.StateType
 import pangea.model.user.User
 import pangea.repository.artifact.ArtifactRepository
 import pangea.repository.inventory.{InventoryRepoError, InventoryRepository}
 import pangea.repository.item.ItemRepository
-import pangea.service.state.{HerbLore, ItemMenu, QuestSupport, StackMove, State, UiScene, UserAction}
+import pangea.service.home.Cauldron
+import pangea.service.state.{HerbLore, ItemMenu, State, UiScene, UserAction}
 import pangea.service.storage.ItemStore
-import zio.{Random, Task, ZIO}
+import zio.{Task, ZIO}
 
 /** Верстак травника — со второго дома. Полки под травы (всего
   * [[HomeData.herbShelves]], не по видам), котелок на [[HomeRates.CauldronSlots]]
@@ -28,10 +27,9 @@ import zio.{Random, Task, ZIO}
   * Травы ложатся на полки одной кнопкой — из сумки и из Живой сумки, пока есть
   * место. Траву с полки можно бросить в котелок или забрать в сумку — по одной
   * кнопкой или сразу сколько написано числом. Котелок
-  * варит, как магия Живой сумки (`CubeCraft.brewHerbs`: отвары из трав и
-  * перегонка склянки с травами), и тратит энергию дома — по одной на каждую
-  * варку. Сваренное встаёт на полку отваров, что не поместилось — ждёт в
-  * котелке. На полке отваров — то же: сложить все из сумки и Живой сумки,
+  * варит, как магия Живой сумки, и тратит энергию дома — по одной на каждую
+  * варку (общий с Mini App [[Cauldron]]). Сваренное встаёт на полку отваров,
+  * что не поместилось — ждёт в котелке. На полке отваров — то же: сложить все из сумки и Живой сумки,
   * забрать в сумку — по одной кнопкой или сразу сколько написано числом, —
   * бросить в котелок основой для перегонки. Всё живёт в `home_data`.
   *
@@ -49,7 +47,8 @@ case class HerbWorkbenchState(
   artifacts:     Option[ArtifactRepository] = None
 ) extends State {
 
-  private val stow = HomeStow(inventoryRepo, artifacts, content)
+  private val stow     = HomeStow(inventoryRepo, artifacts, content)
+  private val cauldron = new Cauldron(heroDao, inventoryRepo, itemRepo, content)
 
   private val branch = new Branch(
     routes = Map(
@@ -175,12 +174,13 @@ case class HerbWorkbenchState(
     withWorkbench(user) { home =>
       itemOf(home.herbs, ua) match {
         case None => menu(user, page(ua), renderer)
-        case Some(_) if home.cauldron.size >= HomeRates.CauldronSlots =>
-          say(user, content.format("home.workbench.potFull", "max" -> HomeRates.CauldronSlots.toString), renderer) *> herb(user, ua, renderer)
         case Some(it) =>
-          saveHome(user, home.copy(herbs = without(home.herbs, it), cauldron = home.cauldron :+ it)) *>
-            say(user, content.format("home.workbench.potIn", "name" -> it.name), renderer) *>
-            afterTake(user, ua, home.herbs, it, renderer, herb, menu)
+          cauldron.put(user.userId, ItemStore.HomeShelf.Herbs, it).flatMap {
+            case Some(why) => say(user, why, renderer) *> herb(user, ua, renderer)
+            case None =>
+              say(user, content.format("home.workbench.potIn", "name" -> it.name), renderer) *>
+                afterTake(user, ua, home.herbs, it, renderer, herb, menu)
+          }
       }
     }
 
@@ -228,60 +228,16 @@ case class HerbWorkbenchState(
       ))).as(StateType.HerbWorkbench)
     }
 
-  /** Сварить: каждая варка — одна энергия дома. Сваренное — на полку отваров,
-    * что не поместилось — остаётся в котелке. */
+  /** Сварить ([[Cauldron.cook]]) и снова котелок. */
   private def cook(user: User, renderer: Renderer): Task[StateType] =
-    withWorkbench(user) { home =>
-      if (home.charges <= 0) say(user, content.text("home.workbench.noCharges"), renderer) *> pot(user, renderer)
-      else for {
-        hero   <- getHero(user)
-        seed   <- Random.nextLong
-        result  = CubeCraft.brewHerbs(home.cauldron, home.charges, Rng(seed))
-        res    <- if (!result.anyApplied) say(user, content.text("home.workbench.nothing"), renderer) *> pot(user, renderer)
-                  else {
-                    val (fresh, kept) = result.items.partition(_.id <= 0L)
-                    for {
-                      made  <- ZIO.foreach(fresh)(itemRepo.persist(hero.id, _))
-                      room   = (home.brewShelves - home.brews.size).max(0)
-                      (shelf, queued) = made.splitAt(room)
-                      _     <- saveHome(user, home.copy(brews = home.brews ++ shelf, cauldron = kept ++ queued,
-                                 charges = home.charges - result.chargesUsed))
-                      _     <- say(user, content.format("home.workbench.cooked", "n" -> result.chargesUsed.toString,
-                                 "items" -> StackMove.names(made)) +
-                                 (if (queued.nonEmpty) "\n" + content.format("home.workbench.cookedWait", "n" -> queued.size.toString) else ""),
-                                 renderer)
-                      _     <- brewedAchievement(user, made, renderer)
-                      s     <- pot(user, renderer)
-                    } yield s
-                  }
-      } yield res
+    withWorkbench(user) { _ =>
+      getHero(user).flatMap(cauldron.cook(user, _, renderer)) *> pot(user, renderer)
     }
 
-  /** Вынуть всё из котелка: травы — на полки, отвары — на полку отваров, а
-    * где места нет — в сумку; что и туда не влезло, остаётся в котелке. */
+  /** Вынуть всё ([[Cauldron.empty]]) и снова котелок. */
   private def emptyPot(user: User, renderer: Renderer): Task[StateType] =
-    withWorkbench(user) { home =>
-      if (home.cauldron.isEmpty) pot(user, renderer)
-      else for {
-        hero <- getHero(user)
-        inv  <- inventoryRepo.get(hero.id).mapError(asThrowable)
-        (hShelf, bShelf, bag, stay) = {
-          val hRoom = home.herbShelves - home.herbs.size
-          val bRoom = home.brewShelves - home.brews.size
-          val (hs, rest1) = home.cauldron.partition(isHerb)
-          val (bs, other) = rest1.partition(_.brew.isDefined)
-          val (hIn, hOver) = hs.splitAt(hRoom.max(0))
-          val (bIn, bOver) = bs.splitAt(bRoom.max(0))
-          val over = hOver ++ bOver ++ other
-          val (toBag, stayPot) = over.splitAt(inv.freeSlots.toInt.max(0))
-          (hIn, bIn, toBag, stayPot)
-        }
-        _ <- ZIO.foreachDiscard(bag)(it => inventoryRepo.addItem(hero.id, it).mapError(asThrowable))
-        _ <- saveHome(user, home.copy(herbs = home.herbs ++ hShelf, brews = home.brews ++ bShelf, cauldron = stay))
-        _ <- say(user, content.text("home.workbench.emptied") +
-               (if (stay.nonEmpty) "\n" + content.format("home.workbench.emptiedStay", "n" -> stay.size.toString) else ""), renderer)
-        s <- pot(user, renderer)
-      } yield s
+    withWorkbench(user) { _ =>
+      getHero(user).flatMap(cauldron.empty).flatMap(ZIO.foreachDiscard(_)(say(user, _, renderer))) *> pot(user, renderer)
     }
 
   // ── Полка отваров ───────────────────────────────────────────────────────────
@@ -391,12 +347,13 @@ case class HerbWorkbenchState(
     withWorkbench(user) { home =>
       itemOf(home.brews, ua) match {
         case None => brews(user, page(ua), renderer)
-        case Some(_) if home.cauldron.size >= HomeRates.CauldronSlots =>
-          say(user, content.format("home.workbench.potFull", "max" -> HomeRates.CauldronSlots.toString), renderer) *> brew(user, ua, renderer)
         case Some(it) =>
-          saveHome(user, home.copy(brews = without(home.brews, it), cauldron = home.cauldron :+ it)) *>
-            say(user, content.format("home.workbench.potIn", "name" -> it.name), renderer) *>
-            afterTake(user, ua, home.brews, it, renderer, brew, brews)
+          cauldron.put(user.userId, ItemStore.HomeShelf.Brews, it).flatMap {
+            case Some(why) => say(user, why, renderer) *> brew(user, ua, renderer)
+            case None =>
+              say(user, content.format("home.workbench.potIn", "name" -> it.name), renderer) *>
+                afterTake(user, ua, home.brews, it, renderer, brew, brews)
+          }
       }
     }
 
@@ -419,7 +376,7 @@ case class HerbWorkbenchState(
   private def known(user: User, p: Int, renderer: Renderer): Task[StateType] =
     withWorkbench(user) { _ =>
       HerbLore.readLore(heroDao, user.userId).flatMap { lore =>
-        val kinds = HerbWorkbenchState.learned(lore)
+        val kinds = Cauldron.learned(lore)
         val (pageKinds, totalPages, cur) = ItemMenu.page(kinds, p)
         val buttons = pageKinds.zipWithIndex.map { case (k, i) =>
           Choice("WbRecipe", ItemMenu.truncate(k.label), data = Map("k" -> k.entryName, "p" -> cur.toString), row = Some(i))
@@ -438,7 +395,7 @@ case class HerbWorkbenchState(
   /** Отвар из кнопки — только изученный: чужую кнопку сюда не подсунешь. */
   private def recipeOf(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     HerbLore.readLore(heroDao, user.userId).flatMap { lore =>
-      payload(ua, "k").flatMap(BrewKind.withNameOption).filter(HerbWorkbenchState.learned(lore).contains) match {
+      payload(ua, "k").flatMap(BrewKind.withNameOption).filter(Cauldron.learned(lore).contains) match {
         case None       => known(user, page(ua), renderer)
         case Some(kind) => recipe(user, kind, page(ua), renderer)
       }
@@ -449,11 +406,11 @@ case class HerbWorkbenchState(
   private def recipe(user: User, kind: BrewKind, p: Int, renderer: Renderer): Task[StateType] =
     withWorkbench(user) { home =>
       val base = kind.base.fold("")(b => content.format("home.workbench.recipeBase", "name" -> b.label))
-      val can  = HerbWorkbenchState.maxBatches(home, kind) * HerbWorkbenchState.perBatch(kind)
+      val can  = Cauldron.maxBatches(home, kind) * Cauldron.perBatch(kind)
       writeScene(user, HerbWorkbenchState.WbScene(Some(kind.entryName), p)) *>
         renderer.show(user, Screen(content.format("home.workbench.recipe",
           "name" -> kind.label, "herbs" -> kind.recipe.map(_.displayName).mkString(", "), "base" -> base,
-          "portions" -> HerbWorkbenchState.perBatch(kind).toString, "can" -> can.toString,
+          "portions" -> Cauldron.perBatch(kind).toString, "can" -> can.toString,
           "charges" -> home.charges.toString, "chargesMax" -> home.altarMax.toString), List(
           Choice("WbKnown", content.text("home.house.back"), color = ChoiceColor.Negative, data = Map("p" -> p.toString), row = Some(0))
         ))).as(StateType.HerbWorkbench)
@@ -486,48 +443,10 @@ case class HerbWorkbenchState(
       }
     }
 
-  /** Сварить `asked` отваров: варок — с округлением вверх (из простых трав
-    * выходит по два), каждая — одна энергия дома. Не хватает трав, основы или
-    * энергии — говорим, чего и сколько, и ничего не трогаем. Сваренное — на
-    * полку отваров, что не поместилось — ждёт в котелке, как у котелка. */
+  /** Сварить `asked` изученных отваров ([[Cauldron.brew]]) и снова рецепт. */
   private def craft(user: User, kind: BrewKind, asked: Int, p: Int, renderer: Renderer): Task[StateType] =
-    withWorkbench(user) { home =>
-      val per     = HerbWorkbenchState.perBatch(kind)
-      val batches = (asked + per - 1) / per
-      val total   = batches * per
-      HerbWorkbenchState.lacks(home, kind, batches) match {
-        case Nil =>
-          val (herbsLeft, brewsLeft) = HerbWorkbenchState.consume(home, kind, batches)
-          for {
-            hero <- getHero(user)
-            made <- ZIO.foreach(List.fill(total)(BrewKind.item(kind)))(itemRepo.persist(hero.id, _))
-            room  = (home.brewShelves - brewsLeft.size).max(0)
-            (shelf, queued) = made.splitAt(room)
-            _    <- saveHome(user, home.copy(herbs = herbsLeft, brews = brewsLeft ++ shelf,
-                      cauldron = home.cauldron ++ queued, charges = home.charges - batches))
-            _    <- say(user, List(
-                      Some(content.format("home.workbench.crafted", "name" -> kind.label,
-                        "n" -> total.toString, "batches" -> batches.toString)),
-                      Option.when(total > asked)(content.format("home.workbench.roundedUp",
-                        "portions" -> per.toString, "n" -> total.toString, "asked" -> asked.toString)),
-                      Option.when(queued.nonEmpty)(content.format("home.workbench.cookedWait", "n" -> queued.size.toString))
-                    ).flatten.mkString("\n"), renderer)
-            _    <- brewedAchievement(user, made, renderer)
-            s    <- recipe(user, kind, p, renderer)
-          } yield s
-        case lacks =>
-          val lines = lacks.map { l =>
-            val name = l match {
-              case HerbWorkbenchState.HerbNeed(h, _, _) => h.displayName
-              case HerbWorkbenchState.BaseNeed(b, _, _) => s"«${b.label}»"
-              case HerbWorkbenchState.EnergyNeed(_, _)  => content.text("home.workbench.lackEnergy")
-            }
-            content.format("home.workbench.lackLine", "name" -> name,
-              "lack" -> (l.need - l.have).toString, "have" -> l.have.toString, "need" -> l.need.toString)
-          }
-          say(user, content.format("home.workbench.lack", "n" -> total.toString, "lines" -> lines.mkString("\n")), renderer) *>
-            recipe(user, kind, p, renderer)
-      }
+    withWorkbench(user) { _ =>
+      getHero(user).flatMap(cauldron.brew(user, _, kind, asked, renderer)) *> recipe(user, kind, p, renderer)
     }
 
   private def readScene(user: User): Task[HerbWorkbenchState.WbScene] =
@@ -547,7 +466,7 @@ case class HerbWorkbenchState(
   /** Верстак есть со второго дома; нет — обратно в дом. */
   private def withWorkbench(user: User)(f: HomeData => Task[StateType]): Task[StateType] =
     loadHome(user).flatMap(home =>
-      if (home.house.exists(_.tier >= House.Townhouse.tier)) f(home) else ZIO.succeed(StateType.Home))
+      if (Cauldron.stands(home)) f(home) else ZIO.succeed(StateType.Home))
 
   /** Стопки одинакового по страницам, листание и номер страницы в кнопках.
     * Полки и котелок показывают по алфавиту ([[ItemMenu.byName]]). */
@@ -606,11 +525,6 @@ case class HerbWorkbenchState(
 
   private def isHerb(it: Item): Boolean = HomeStow.isHerb(it)
 
-  /** Сваренное в котелке идёт в тот же счёт «Зельевара I» и «Промышленного
-    * аптекаря», что и в кубе. */
-  private def brewedAchievement(user: User, made: List[Item], renderer: Renderer): Task[Unit] =
-    QuestSupport.brewed(heroDao, content, user, made.flatMap(_.brew).map(_.entryName), renderer)
-
   private def say(user: User, text: String, renderer: Renderer): Task[Unit] =
     renderer.show(user, Screen(text, Nil))
 
@@ -651,54 +565,4 @@ object HerbWorkbenchState {
         herb   <- c.getOrElse[Option[String]]("herb")(None)
       } yield WbScene(recipe, page, take, herb)
   }
-
-  /** Изученные отвары, которые варятся на верстаке: всё, что герой уже варил,
-    * — кроме собранного не из трав (узелок гнилого зова котелку не по зубам).
-    * По алфавиту. */
-  def learned(lore: LoreData): List[BrewKind] =
-    lore.brewed.flatMap(BrewKind.withNameOption).distinct
-      .filter(k => k.recipe.nonEmpty && k.recipe.forall(_.isHerb))
-      .sortBy(_.label)(ItemMenu.Alphabet)
-
-  /** Сколько бутылок выходит с одной варки — как в котелке: из простых трав
-    * две, с редкой травой одна, перегонка (основа + травы) — тоже одна. */
-  def perBatch(kind: BrewKind): Int = if (kind.base.isDefined) 1 else kind.portions
-
-  /** Сколько каких трав уйдёт на `batches` варок. */
-  def herbsFor(kind: BrewKind, batches: Int): Map[MaterialKind, Int] =
-    kind.recipe.groupMapReduce(identity)(_ => batches)(_ + _)
-
-  /** Чего на `batches` варок нужно и сколько есть: трава, основа, энергия. */
-  sealed trait Need { def need: Int; def have: Int }
-  final case class HerbNeed(kind: MaterialKind, need: Int, have: Int) extends Need
-  final case class BaseNeed(kind: BrewKind, need: Int, have: Int)     extends Need
-  final case class EnergyNeed(need: Int, have: Int)                   extends Need
-
-  /** Чего не хватает на `batches` варок; пусто — можно варить. */
-  def lacks(home: HomeData, kind: BrewKind, batches: Int): List[Need] =
-    (herbsFor(kind, batches).toList.sortBy(_._1.displayName).map { case (h, n) => HerbNeed(h, n, herbCount(home, h)) } ++
-      kind.base.map(b => BaseNeed(b, batches, baseCount(home, b))).toList :+
-      EnergyNeed(batches, home.charges)).filter(n => n.have < n.need)
-
-  /** На сколько варок хватит трав на полках, основы и энергии дома. */
-  def maxBatches(home: HomeData, kind: BrewKind): Int =
-    (herbsFor(kind, 1).toList.map { case (h, n) => herbCount(home, h) / n } ++
-      kind.base.map(baseCount(home, _)).toList :+ home.charges).min.max(0)
-
-  /** Полки после варки: без трав на `batches` варок и без основ, если рецепт с ней. */
-  def consume(home: HomeData, kind: BrewKind, batches: Int): (List[Item], List[Item]) = {
-    val herbs = herbsFor(kind, batches).foldLeft(home.herbs) { case (left, (h, n)) => removeN(left, _.material.contains(h), n) }
-    val brews = kind.base.fold(home.brews)(b => removeN(home.brews, _.brew.contains(b), batches))
-    (herbs, brews)
-  }
-
-  private def herbCount(home: HomeData, h: MaterialKind): Int = home.herbs.count(_.material.contains(h))
-
-  private def baseCount(home: HomeData, b: BrewKind): Int = home.brews.count(_.brew.contains(b))
-
-  /** Убрать первые `n` подходящих, остальное — как лежало. */
-  private def removeN(items: List[Item], fits: Item => Boolean, n: Int): List[Item] =
-    items.foldLeft((List.empty[Item], n)) { case ((kept, left), it) =>
-      if (left > 0 && fits(it)) (kept, left - 1) else (it :: kept, left)
-    }._1.reverse
 }

@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { tap } from './platform'
 
-/** Откуда и куда носят: сумка и куб. Зона — элемент с `data-drop`. */
-export type Zone = 'bag' | 'cube'
+/** Откуда и куда носят: сумка и куб, полки верстака и котелок. Зона — элемент
+  * с `data-drop`. */
+export type Zone = 'bag' | 'cube' | 'shelf' | 'pot'
+
+const zones: readonly string[] = ['bag', 'cube', 'shelf', 'pot']
 
 export interface Drag<T> {
   item: T
@@ -23,7 +26,7 @@ const SlopPx = 8
 const zoneAt = (x: number, y: number): Zone | null => {
   const el = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-drop]')
   const z = el?.dataset.drop
-  return z === 'bag' || z === 'cube' ? z : null
+  return z && zones.includes(z) ? (z as Zone) : null
 }
 
 /** Перенос пальцем: зажал вещь — она поднялась и идёт за пальцем, отпустил над

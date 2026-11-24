@@ -9,7 +9,7 @@ import org.typelevel.ci.CIStringSyntax
 import pangea.model.hero.Hero
 import pangea.model.top.TopKind
 import pangea.service.miniapp.{MiniApp, MiniAppView, VkLaunchParams}
-import pangea.service.miniapp.MiniApp.{CubeAct, Denied, GearAct, SquadAct, TradeAct}
+import pangea.service.miniapp.MiniApp.{CauldronAct, CubeAct, Denied, GearAct, SquadAct, TradeAct}
 import pangea.service.trade.Trades
 import pangea.service.miniapp.MiniAppView._
 import zio.Task
@@ -199,10 +199,30 @@ final class MiniAppRoutes(app: MiniApp) {
 
     case req @ POST -> Root / "api" / "app" / "craft" / "cube" / "activate" =>
       cubeAct(req, CubeAct.Activate)
+
+    // Котелок верстака: перенос пальцем с полок и обратно, «Варить», «Вынуть
+    // всё», изученный отвар числом. Меняют игру — только POST.
+    case req @ POST -> Root / "api" / "app" / "craft" / "cauldron" / "put" :? ItemParam(id) =>
+      cauldronAct(req, CauldronAct.Put(id))
+
+    case req @ POST -> Root / "api" / "app" / "craft" / "cauldron" / "back" :? ItemParam(id) =>
+      cauldronAct(req, CauldronAct.Back(id))
+
+    case req @ POST -> Root / "api" / "app" / "craft" / "cauldron" / "cook" =>
+      cauldronAct(req, CauldronAct.Cook)
+
+    case req @ POST -> Root / "api" / "app" / "craft" / "cauldron" / "empty" =>
+      cauldronAct(req, CauldronAct.Empty)
+
+    case req @ POST -> Root / "api" / "app" / "craft" / "cauldron" / "brew" :? BrewParam(kind) +& CountParam(n) =>
+      cauldronAct(req, CauldronAct.Brew(kind, n))
   }
 
   private def cubeAct(req: Request[Task], act: CubeAct): Task[Response[Task]] =
     asPlayer(req)(hero => app.cube(hero, act).flatMap(view => Ok(view.asJson)))
+
+  private def cauldronAct(req: Request[Task], act: CauldronAct): Task[Response[Task]] =
+    asPlayer(req)(hero => app.cauldron(hero, act).flatMap(view => Ok(view.asJson)))
 
   private def squadOrder(req: Request[Task], act: SquadAct): Task[Response[Task]] =
     asPlayer(req)(hero => app.squadOrder(hero, act).flatMap(view => Ok(view.asJson)))
@@ -254,4 +274,6 @@ final class MiniAppRoutes(app: MiniApp) {
   private object IndexParam extends QueryParamDecoderMatcher[Int]("i")
   private object WhoParam   extends QueryParamDecoderMatcher[String]("who")
   private object SwapParam  extends OptionalQueryParamDecoderMatcher[Int]("swap")
+  private object BrewParam  extends QueryParamDecoderMatcher[String]("kind")
+  private object CountParam extends QueryParamDecoderMatcher[Int]("n")
 }

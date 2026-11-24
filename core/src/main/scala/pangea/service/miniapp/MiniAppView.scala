@@ -21,6 +21,7 @@ import pangea.service.auction.AuctionSale
 import pangea.service.chat.Links
 import pangea.service.cube.AzatCube
 import pangea.service.equipment.{BeltWork, BrewWork}
+import pangea.service.home.Cauldron
 import pangea.service.parcel.Transfers
 import pangea.service.state.{HerbLore, ItemMenu, QuestCard, QuestJournal, QuestsDone}
 import pangea.service.storage.ItemStore.Place
@@ -420,7 +421,31 @@ object MiniAppView {
   final case class CubeView(status: String, locked: Option[String], home: Boolean, power: CubePowerView, capacity: Int,
                             items: List[ItemView], bag: List[ItemView], away: Option[String])
 
-  final case class CraftView(hero: HeroView, cube: CubeView)
+  /** Полка верстака: сколько на ней и сколько держит, что стоит — стопками. */
+  final case class ShelfView(used: Long, max: Long, items: List[ItemView])
+
+  /** Изученный отвар: из каких трав, на какой основе, сколько бутылок с
+    * варки и на сколько бутылок хватит полок и энергии дома.
+    *
+    * @param kind `entryName` отвара — им его и варят
+    */
+  final case class KnownBrewView(kind: String, name: String, herbs: List[String], base: Option[String],
+                                 portions: Int, can: Int)
+
+  /** Котелок верстака травника.
+    *
+    * @param locked нет дома или в доме нет верстака — почему; тогда всё прочее пусто
+    * @param power  энергия дома (алтарь Азата): по одной на варку
+    * @param items  что в котелке — каждая вещь своей ячейкой, в каком порядке клали
+    * @param herbs  полки трав — с них кладут в котелок
+    * @param brews  полка отваров — склянки-основы и сваренное
+    * @param known  изученные отвары, по алфавиту
+    * @param away   почему сейчас нельзя варить: герой не в городе
+    */
+  final case class CauldronView(locked: Option[String], power: PoolView, capacity: Int, items: List[ItemView],
+                                herbs: ShelfView, brews: ShelfView, known: List[KnownBrewView], away: Option[String])
+
+  final case class CraftView(hero: HeroView, cube: CubeView, cauldron: CauldronView)
 
   /** Ответ на действие с кубом: куб после него, что сказать и номера вещей,
     * что только что получились. */
@@ -507,6 +532,9 @@ object MiniAppView {
   implicit val topEncoder:       Encoder[TopView]       = deriveEncoder
   implicit val cubePowerEncoder: Encoder[CubePowerView] = deriveEncoder
   implicit val cubeEncoder:      Encoder[CubeView]      = deriveEncoder
+  implicit val shelfEncoder:     Encoder[ShelfView]     = deriveEncoder
+  implicit val knownBrewEncoder: Encoder[KnownBrewView] = deriveEncoder
+  implicit val cauldronEncoder:  Encoder[CauldronView]  = deriveEncoder
   implicit val craftEncoder:     Encoder[CraftView]     = deriveEncoder
   implicit val craftActEncoder:  Encoder[CraftActionView] = deriveEncoder
 
@@ -966,8 +994,9 @@ object MiniAppView {
     TopView(hero = hero(h), kind = kind.entryName, total = board.total, rows = shown, me = mine)
   }
 
-  /** «Крафт»: куб Азата, что в нём, и сумка, из которой в него кладут. */
-  def craft(h: Hero, azat: AzatState, home: HomeData, inv: Inventory, content: SceneContent,
+  /** «Крафт»: куб Азата, что в нём, и сумка, из которой в него кладут; котелок
+    * верстака и его полки. */
+  def craft(h: Hero, azat: AzatState, home: HomeData, lore: LoreData, inv: Inventory, content: SceneContent,
             describe: Item => String): CraftView = {
     val (status, locked) = azat.cube match {
       case CubeStatus.None =>
@@ -990,7 +1019,41 @@ object MiniAppView {
       items    = azat.cubeItems.map(i => view(i, 1, describe(i))),
       bag      = stacked(inv.items.data.filter(AzatCube.accepts), describe),
       away     = Option.unless(MiniApp.inCity(h))(content.text("miniapp.craft.away"))
-    ))
+    ), cauldron(h, home, lore, content, describe))
+  }
+
+  /** Почему котелка нет: нет дома или дом без верстака травника. */
+  def cauldronLocked(home: HomeData, content: SceneContent): Option[String] =
+    if (!home.owns) Some(content.text("miniapp.noHouse"))
+    else if (!Cauldron.stands(home)) Some(content.text("miniapp.storages.cauldron.locked"))
+    else None
+
+  /** Котелок: ячейки — в каком порядке клали, полки — по алфавиту, как у
+    * верстака в боте. */
+  private def cauldron(h: Hero, home: HomeData, lore: LoreData, content: SceneContent,
+                       describe: Item => String): CauldronView = {
+    val power = PoolView(home.charges.toLong, home.altarMax.toLong)
+    cauldronLocked(home, content) match {
+      case Some(why) =>
+        CauldronView(Some(why), power, HomeRates.CauldronSlots, Nil, ShelfView(0L, 0L, Nil), ShelfView(0L, 0L, Nil),
+          Nil, None)
+      case None =>
+        def shelf(items: List[Item], max: Int) =
+          ShelfView(items.size.toLong, max.toLong, stacked(ItemMenu.byName(items), describe))
+        CauldronView(
+          locked   = None,
+          power    = power,
+          capacity = HomeRates.CauldronSlots,
+          items    = home.cauldron.map(i => view(i, 1, describe(i))),
+          herbs    = shelf(home.herbs, home.herbShelves),
+          brews    = shelf(home.brews, home.brewShelves),
+          known    = Cauldron.learned(lore).map { k =>
+                       KnownBrewView(k.entryName, k.label, k.recipe.map(_.displayName), k.base.map(_.label),
+                         Cauldron.perBatch(k), Cauldron.maxBatches(home, k) * Cauldron.perBatch(k))
+                     },
+          away     = Option.unless(MiniApp.inCity(h))(content.text("miniapp.craft.cauldronAway"))
+        )
+    }
   }
 
   private def effectKind(e: SkillEntry): String = e match {

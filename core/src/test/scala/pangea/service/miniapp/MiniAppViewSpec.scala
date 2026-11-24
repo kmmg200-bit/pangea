@@ -6,7 +6,7 @@ import pangea.model.auction.{AuctionCurrency, AuctionLot}
 import pangea.model.bank.BankVault
 import pangea.model.barrel.Barrel
 import pangea.model.hero.{Achievement, AzatState, HeroId, Knowledge, LoreData}
-import pangea.model.home.{HomeData, House}
+import pangea.model.home.{HomeData, HomeRates, House}
 import pangea.model.inventory.Inventory
 import pangea.model.item.{BeltSlot, BrewKind, FlaskKind, Gem, GemKind, Grip, Item, ItemDetails, ItemType, Rarity}
 import pangea.model.monster.Race
@@ -64,7 +64,7 @@ object MiniAppViewSpec extends ZIOSpecDefault {
       val hero   = TestFixtures.hero(UserId(1L))
       val bundle = pangea.model.item.Bundling.pack((101L to 105L).toList.map(ruby)).get.copy(id = 50L)
       val view   = MiniAppView.inventory(hero, inv(hero, List(bundle, ruby(1L))), nothing(hero), content, _.name, 0L)
-      val craft  = MiniAppView.craft(hero, AzatState.empty, HomeData.empty, inv(hero, List(bundle, ruby(1L))), content, _ => "")
+      val craft  = MiniAppView.craft(hero, AzatState.empty, HomeData.empty, LoreData.empty, inv(hero, List(bundle, ruby(1L))), content, _ => "")
       assertTrue(
         view.items.map(i => i.id -> i.kind) == List(50L -> "Gem", 1L -> "Gem"),
         view.items.headOption.exists(_.title == "📦 Надколотый рубин"),
@@ -478,10 +478,10 @@ object MiniAppViewSpec extends ZIOSpecDefault {
       val hero   = TestFixtures.hero(UserId(1L), state = StateType.MarketSquare)
       val quest  = sword.copy(id = 77L, itemType = ItemType.QuestItem)
       val bag    = inv(hero, List(ruby(5L), quest))
-      val absent = MiniAppView.craft(hero, AzatState.empty, HomeData.empty, bag, c, _ => "")
+      val absent = MiniAppView.craft(hero, AzatState.empty, HomeData.empty, LoreData.empty, bag, c, _ => "")
       val active = AzatState.empty.copy(cube = CubeStatus.Active, cubeCharges = 37, cubeItems = List(ruby(9L)))
-      val inCity = MiniAppView.craft(hero, active, HomeData.empty, bag, c, _ => "")
-      val away   = MiniAppView.craft(hero.copy(state = StateType.Dungeon), active, HomeData.empty, bag, c, _ => "")
+      val inCity = MiniAppView.craft(hero, active, HomeData.empty, LoreData.empty, bag, c, _ => "")
+      val away   = MiniAppView.craft(hero.copy(state = StateType.Dungeon), active, HomeData.empty, LoreData.empty, bag, c, _ => "")
       assertTrue(
         absent.cube.status == "absent" && absent.cube.locked.exists(_.contains("200")),
         inCity.cube.status == "active" && inCity.cube.locked.isEmpty,
@@ -490,6 +490,37 @@ object MiniAppViewSpec extends ZIOSpecDefault {
         inCity.cube.bag.map(_.id) == List(5L),
         inCity.cube.away.isEmpty,
         away.cube.away.contains(c.text("miniapp.craft.away"))
+      )
+    },
+    test("крафт: котелок — замок без дома и в домике; дома — ячейки, полки по алфавиту, изученные с «хватит на»") {
+      import pangea.generator.item.MaterialGenerator
+      import pangea.model.item.{BrewKind, MaterialKind}
+      val c     = SceneContent.load()
+      val hero  = TestFixtures.hero(UserId(1L), state = StateType.MarketSquare)
+      val bag   = inv(hero, Nil)
+      def herb(id: Long, k: MaterialKind) = MaterialGenerator.item(k).copy(id = id)
+      val home  = HomeData(tier = 2, metJunona = true, charges = 7,
+        herbs = List(herb(1L, MaterialKind.Nettle), herb(2L, MaterialKind.Chamomile), herb(3L, MaterialKind.Calendula)),
+        cauldron = List(herb(5L, MaterialKind.Sage), herb(4L, MaterialKind.Chamomile)))
+      val lore  = LoreData(brewed = List(BrewKind.BoneSetter.entryName))
+      def pot(h: HomeData, who: pangea.model.hero.Hero = hero) =
+        MiniAppView.craft(who, AzatState.empty, h, lore, bag, c, _ => "").cauldron
+      val none  = pot(HomeData.empty)
+      val small = pot(HomeData(tier = 1, metJunona = true))
+      val open  = pot(home)
+      val away  = pot(home, hero.copy(state = StateType.Dungeon))
+      assertTrue(
+        none.locked.contains(c.text("miniapp.noHouse")) && none.items.isEmpty && none.known.isEmpty,
+        small.locked.contains(c.text("miniapp.storages.cauldron.locked")),
+        open.locked.isEmpty && open.away.isEmpty,
+        open.power.current == 7L,
+        open.capacity == HomeRates.CauldronSlots,
+        open.items.map(_.id) == List(5L, 4L),
+        open.herbs.used == 3L && open.herbs.items.map(_.id) == List(3L, 1L, 2L),
+        open.brews.used == 0L && open.brews.max == home.brewShelves.toLong,
+        open.known.map(k => (k.kind, k.portions, k.can)) == List((BrewKind.BoneSetter.entryName, 2, 2)),
+        open.known.flatMap(_.herbs) == List("Ромашка", "Календула", "Крапива"),
+        away.away.contains(c.text("miniapp.craft.cauldronAway"))
       )
     },
 

@@ -128,4 +128,10 @@ export const api = {
   cubeWithdraw: (item: number) => post<CraftActionView>(`craft/cube/withdraw?item=${item}`),
   cubeTakeAll: () => post<CraftActionView>('craft/cube/take-all'),
   cubeActivate: () => post<CraftActionView>('craft/cube/activate'),
+  cauldronPut: (item: number) => post<CraftActionView>(`craft/cauldron/put?item=${item}`),
+  cauldronBack: (item: number) => post<CraftActionView>(`craft/cauldron/back?item=${item}`),
+  cauldronCook: () => post<CraftActionView>('craft/cauldron/cook'),
+  cauldronEmpty: () => post<CraftActionView>('craft/cauldron/empty'),
+  cauldronBrew: (kind: string, n: number) =>
+    post<CraftActionView>(`craft/cauldron/brew?kind=${encodeURIComponent(kind)}&n=${n}`),
 }

@@ -456,9 +456,44 @@ export interface CubeView {
   away: string | null
 }
 
+/** Полка верстака: сколько на ней и сколько держит, что стоит — стопками. */
+export interface ShelfView {
+  used: number
+  max: number
+  items: ItemView[]
+}
+
+/** Изученный отвар: из каких трав, на какой основе, сколько бутылок с варки и
+  * на сколько бутылок хватит полок и энергии дома. `kind` — им его и варят. */
+export interface KnownBrewView {
+  kind: string
+  name: string
+  herbs: string[]
+  base: string | null
+  portions: number
+  can: number
+}
+
+/** Котелок верстака травника. Нет дома или верстака — `locked`: почему. */
+export interface CauldronView {
+  locked: string | null
+  /** Энергия дома (алтарь Азата): по одной на варку. */
+  power: PoolView
+  capacity: number
+  /** Что в котелке — каждая вещь своей ячейкой. */
+  items: ItemView[]
+  /** Полки трав и полка отваров — с них кладут в котелок. */
+  herbs: ShelfView
+  brews: ShelfView
+  known: KnownBrewView[]
+  /** Почему сейчас нельзя варить (герой не в городе); пусто — можно. */
+  away: string | null
+}
+
 export interface CraftView {
   hero: HeroView
   cube: CubeView
+  cauldron: CauldronView
 }
 
 /** Ответ на действие с кубом: куб после него, что сказать и какие вещи только что получились. */

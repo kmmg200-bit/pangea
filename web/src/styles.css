@@ -1664,6 +1664,31 @@ button.row:active {
   margin: 0 2px 8px;
 }
 
+/* Котелок: две полки подряд в одной зоне переноса, под ними — изученные. */
+.cauldron-shelf + .cauldron-shelf {
+  margin-top: 12px;
+}
+
+.cauldron-known {
+  margin-top: 14px;
+}
+
+.cauldron-brew {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.cauldron-brew .level-field input {
+  width: 3.6em;
+}
+
+.cauldron-brew .cube-activate {
+  flex: 1 1 auto;
+  width: auto;
+}
+
 .bag-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
