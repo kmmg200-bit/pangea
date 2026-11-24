@@ -780,6 +780,8 @@ registration:
 chat:
   # На «Туториал». Ссылка — в pangea.service.chat.Links.
   tutorial: "📖 Как всё устроено в Пангее — коротко о главном:\n{tutorial}"
+  # На «Faq». Ссылка — в pangea.service.chat.Links.
+  faq: "❓ FAQ по клейму Пангеи:\n{faq}"
   # «Дать Торопыга» от «Админ 1» ответом на сообщение игрока: ответ — в ту же
   # беседу. Игроку в личку — обычная строка о достижении (marisa.achievement)
   # и под ней hastyNote.

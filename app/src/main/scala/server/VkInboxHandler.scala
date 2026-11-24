@@ -59,6 +59,8 @@ final class VkInboxHandler(stateHandler: StateHandler, adminConfig: AdminConfig,
       case None => ZIO.unit
       case Some(from) if ChatCommand.tutorialCommand(msg.text) =>
         stateHandler.tutorialToChat(VkId(from.toString), key, where)
+      case Some(from) if ChatCommand.faqCommand(msg.text) =>
+        stateHandler.faqToChat(VkId(from.toString), key, where)
       // «Дать Торопыга» ответом на сообщение игрока — от «Админ 1» (права
       // проверяет StateHandler).
       case Some(from) if ChatCommand.grantCommand(msg.text).isDefined && msg.quotedAuthor.exists(_ > 0L) =>
