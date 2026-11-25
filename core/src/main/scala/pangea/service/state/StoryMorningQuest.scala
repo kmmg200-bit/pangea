@@ -61,10 +61,11 @@ object StoryMorningQuest {
   val HenchmanRarity: Rarity  = Rarity.Rare
   val Henchmen: Int           = 4
 
-  /** Гости в строю: Горн — легендарный, его искатели — редкие, Барти —
-    * необычный: дерётся он плохо. */
-  val HornRarity: Rarity   = Rarity.Legendary
-  val SeekerRarity: Rarity = Rarity.Rare
+  /** Гости в строю: Горн — мифический, его искатели — необычные. Союзники героя
+    * в сюжете Акта II — на ступень слабее, чем были (так решил пользователь), —
+    * кроме Барти и его людей. Барти — необычный: дерётся он плохо. */
+  val HornRarity: Rarity   = Rarity.Mythical
+  val SeekerRarity: Rarity = Rarity.Uncommon
   val BartiRarity: Rarity  = Rarity.Uncommon
   val GuestRace: Race      = Race.Human
 

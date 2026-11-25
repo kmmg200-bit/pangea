@@ -46,6 +46,11 @@ object StoryClearingQuest {
   val ForemanRarity: Rarity = Rarity.Mythical
   val LeaderRarity: Rarity  = Rarity.Legendary
 
+  /** Элиар в строю у одиночки — мифический: на ступень слабее, чем в своём
+    * событии у изгороди, как все союзники Акта II, кроме Барти (см.
+    * StoryMorningQuest.HornRarity). */
+  val ElfRarity: Rarity = Rarity.Mythical
+
   /** Сколько Братство задолжало бригаде — Тень может отдать сам: тысяча за
     * уровень задания, как долг писаря в «Наутре». */
   val WagesPerLvl: Long = 1000L
@@ -86,7 +91,7 @@ object StoryClearingQuest {
     case Path.Shield =>
       List(StoryMorningQuest.guest(AllyKind.GuildMaster, content.text("story.storyMorning.cellar.hornName"),
         StoryMorningQuest.HornRarity, Level))
-    case Path.Alone  => List(HedgeSongQuest.elfAt(Level))
+    case Path.Alone  => List(HedgeSongQuest.elfAt(Level, ElfRarity))
     case Path.Shadow => Nil
   }
 

@@ -109,9 +109,10 @@ object HedgeSongQuest {
   def elf: BattleAlly = elfAt(Level)
 
   /** Тот же Элиар уровня `lvl` — так он встаёт в строй и в других заданиях
-    * (на просеке Чернолома — уровнем главы). */
-  def elfAt(lvl: Int): BattleAlly = {
-    val stats = MonsterGenerator.generateOfRaceAndRarity(lvl, Race.Elf, Rarity.Legendary).fightStats
+    * (на просеке Чернолома — уровнем главы и на ступень слабее, см.
+    * StoryClearingQuest.ElfRarity). Здесь, у изгороди, он легендарный. */
+  def elfAt(lvl: Int, rarity: Rarity = Rarity.Legendary): BattleAlly = {
+    val stats = MonsterGenerator.generateOfRaceAndRarity(lvl, Race.Elf, rarity).fightStats
     BattleAlly(AllyKind.HedgeElf, position = 0, hp = stats.hp, armor = stats.armor, energy = stats.energy,
       stats = stats, lvl = lvl.toLong, undead = Some(UndeadForm(ElfName, lvl.toLong, stats)), home = 0)
   }

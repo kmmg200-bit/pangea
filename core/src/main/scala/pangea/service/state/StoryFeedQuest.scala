@@ -47,8 +47,9 @@ object StoryFeedQuest {
   val HenchRarity: Rarity    = Rarity.Legendary
   val Henchmen: Int          = 4
 
-  /** Сойка в строю — по силе мифическая. */
-  val SojkaRarity: Rarity = Rarity.Mythical
+  /** Сойка в строю — по силе редкая: на ступень слабее, чем была, как все
+    * союзники Акта II, кроме Барти (см. StoryMorningQuest.HornRarity). */
+  val SojkaRarity: Rarity = Rarity.Rare
 
   /** Рубеж щедрее главы: столько серебра за уровень задания, как у Рубежа I. */
   val SilverPerLvl: Long = 300L

@@ -46,8 +46,9 @@ object StoryCollectorQuest {
   val HenchRarity: Rarity   = Rarity.Rare
   val Henchmen: Int         = 4
 
-  /** Э. в строю у Тени — по силе легендарный. */
-  val AgentRarity: Rarity = Rarity.Legendary
+  /** Э. в строю у Тени — по силе мифический: на ступень слабее, чем был, как
+    * все союзники Акта II, кроме Барти (см. StoryMorningQuest.HornRarity). */
+  val AgentRarity: Rarity = Rarity.Mythical
 
   /** Дегтярный склад — столько просит Торговый дом (так решил пользователь). */
   val WarehousePrice: Long = 250000L

@@ -51,8 +51,11 @@ object StoryFurnaceQuest {
   val GuardRarity: Rarity   = Rarity.Rare
   val Guards: Int           = 4
 
-  /** Асессор совета в строю у Щита — по силе редкий человек. */
-  val EnvoyRarity: Rarity = Rarity.Rare
+  /** Асессор совета в строю у Щита — по силе необычный человек: на ступень
+    * слабее, чем был, как все союзники Акта II, кроме Барти (см.
+    * StoryMorningQuest.HornRarity). Капитаны каравана у одиночки — люди Барти:
+    * они прежние, как в «Большом деле». */
+  val EnvoyRarity: Rarity = Rarity.Uncommon
 
   /** Серебро за главу — за уровень задания, как в прежних главах. */
   val SilverPerLvl: Long = 200L
