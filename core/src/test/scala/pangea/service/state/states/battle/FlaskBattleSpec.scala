@@ -187,6 +187,69 @@ object FlaskBattleSpec extends ZIOSpecDefault {
               assertTrue(log.contains("Фляга очищения"))
     },
 
+    test("в дыму удар сбоку выдаёт героя: ударенный прыгает в пустую пару и тут же отвечает; промах — тоже; без дыма — стоит") {
+      val h = hero(FlaskKind.Smoke, hp = 50000L)
+      // Пара пуста: «Дальний» (активный) отошёл на третье место, «Сосед» — на втором.
+      val two  = SoloPveBattle.fromGroup(List(monster().copy(customName = Some("Дальний")),
+                   monster().copy(customName = Some("Сосед"))), h, List(0L, 0L))
+      val open = two.copy(group = two.group.copy(activePos = 3))
+      val smoky = open.copy(effects = open.effects.copy(heroSmokeTurns = 3))
+      // Удар героя (`first`: 60 — попал, 1 — промах), дальше — 99: мобы попадают, подкреплений нет.
+      def hitSide(b: SoloPveBattle, first: Int) =
+        for {
+          t <- makeState(h, b)
+          (state, dao, r) = t
+          _     <- TestRandom.feedInts(first :: List.fill(12)(99): _*) *> TestRandom.feedLongs(List.fill(12)(100L): _*)
+          _     <- state.action(testUser, aimed("Attack", 2), r)
+          after <- dao.readActiveBattle(userId).map(_.flatMap(_.as[SoloPveBattle].toOption).get)
+          hp    <- dao.getHeroByUserId(userId).map(_.get.fightStats.hp)
+          log   <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+        } yield (after, hp, log)
+      for {
+        hit    <- hitSide(smoky, 60)
+        missed <- hitSide(smoky, 1)
+        plain  <- hitSide(open, 60)
+      } yield {
+        val (hitB, hitHp, hitLog)    = hit
+        val (missB, missHp, missLog) = missed
+        val (plainB, _, plainLog)    = plain
+        // «Сосед» теперь напротив героя, его место пусто, «Дальний» стоит где стоял, и
+        // в паре он уже ответил — герой ранен
+        assertTrue(hitB.group.paired && hitB.customName.contains("Сосед") && hitB.monsterCurrentHp < 100000L) &&
+        assertTrue(!hitB.group.hasMonster(2) && hitB.group.hasMonster(3)) &&
+        assertTrue(hitLog.contains("💨 Сосед прыгнул к вам сквозь дым и встал напротив.") && hitHp < 50000L) &&
+        // промах выдаёт так же
+        assertTrue(missB.group.paired && missB.customName.contains("Сосед") && missB.monsterCurrentHp == 100000L) &&
+        assertTrue(missLog.contains("прыгнул к вам сквозь дым") && missHp < 50000L) &&
+        // без дыма никто не прыгает: пара пуста, «Сосед» бьёт сбоку со своего места
+        assertTrue(!plainB.group.paired && plainB.group.hasMonster(2)) &&
+        assertTrue(!plainLog.contains("прыгнул") && plainLog.contains("атаковал вас сбоку"))
+      }
+    },
+
+    test("в дыму умение по активному вне пары тоже выдаёт героя: он прыгает в пару и отвечает") {
+      val quick = weapon.copy(details = ItemDetails.Weapon(pangea.model.skill.Skill.QuickStrike))
+      val base  = hero(FlaskKind.Smoke, hp = 50000L, energy = 1000L)
+      val h     = base.copy(equipment = base.equipment.copy(weapon = quick))
+      // Пара пуста: «Передний» (активный) — на втором месте, «Задний» — на третьем.
+      val two   = SoloPveBattle.fromGroup(List(monster().copy(customName = Some("Передний")),
+                    monster().copy(customName = Some("Задний"))), h, List(0L, 0L))
+      val smoky = two.copy(group = two.group.copy(activePos = 2, places = List(3)),
+                    effects = two.effects.copy(heroSmokeTurns = 3))
+      for {
+        t <- makeState(h, smoky)
+        (state, dao, r) = t
+        // базовая атака следом попадает (60), дальше мобы попадают, подкреплений нет (99)
+        _     <- TestRandom.feedInts(60 :: List.fill(12)(99): _*) *> TestRandom.feedLongs(List.fill(12)(100L): _*)
+        _     <- state.action(testUser, aimed("Skill_50", 2), r)
+        after <- dao.readActiveBattle(userId).map(_.flatMap(_.as[SoloPveBattle].toOption).get)
+        hp    <- dao.getHeroByUserId(userId).map(_.get.fightStats.hp)
+        log   <- r.sentScreens.map(_.map(_.text).mkString("\n"))
+      } yield assertTrue(log.contains("«Быстрый удар»")) &&
+              assertTrue(after.group.paired && after.customName.contains("Передний") && !after.group.hasMonster(2)) &&
+              assertTrue(log.contains("💨 Передний прыгнул к вам сквозь дым и встал напротив.") && hp < 50000L)
+    },
+
     test("дымная фляга: 4 раунда сосед не бьёт сбоку и не лечит; активный бьёт как обычно; на пятый дым рассеялся") {
       val h = hero(FlaskKind.Smoke, hp = 50000L)
       // Активный ранен и без энергии; сосед цел и с энергией — без дыма он бьёт сбоку и лечит активного.

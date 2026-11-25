@@ -944,20 +944,39 @@ case class BattleState(
   }
 
   /** После удара по месту `pos` (см. [[strikeSide]]): запомнить цель, вернуть
-    * прежнего активного в поля, добитого — в павшие или в победу. */
+    * прежнего активного в поля, добитого — в павшие или в победу. Живой и
+    * ударенный из дыма — прыгает к герою, если напротив пусто ([[smokeLeap]]). */
   private def settleAfterHit(res: TurnResult, pos: Int, home: Int, nowMs: Long, skip: Set[Long]): TurnResult = {
     val struck = res.battle.rememberTarget(pos)
     val dead   = struck.monsterCurrentHp <= 0L
+    def leapt(b: SoloPveBattle): TurnResult = {
+      val (after, lines) = smokeLeap(b, pos)
+      res.copy(battle = after, log = res.log ++ lines)
+    }
     if (pos == home) {
-      if (dead) victoryByHero(res.hero, struck, res.log, nowMs, skip) else res.copy(battle = struck)
+      if (dead) victoryByHero(res.hero, struck, res.log, nowMs, skip) else leapt(struck)
     } else {
       val back = struck.engage(home)
       if (dead)
         res.copy(battle = back.sideFallen(back.group.idxOf(pos)),
           log = res.log :+ content.format("battle.group.sideSlain", "monster" -> struck.monsterName))
-      else res.copy(battle = back)
+      else leapt(back)
     }
   }
+
+  /** Дым (дымная фляга) прячет героя от мобов вне пары — но не от того, по
+    * кому он ударил сбоку: тот прыгает к нему и встаёт в пару, если напротив
+    * героя пусто (так решил пользователь), и отвечает уже оттуда, как моб в
+    * паре. Удар — и промах тоже: выдаёт взмах, а не рана. Мимо — без дыма и
+    * при Таране: герой сам шагнёт к цели в конце раунда. `pos` — где цель стоит сейчас. */
+  private def smokeLeap(battle: SoloPveBattle, pos: Int): (SoloPveBattle, Vector[String]) =
+    if (!battle.effects.heroInSmoke || battle.group.pendingMove.isDefined ||
+        battle.group.paired) (battle, Vector.empty)
+    else {
+      val leapt = battle.leapAtHero(pos)
+      if (leapt.group.paired) (leapt, Vector(content.format("battle.group.smokeLeap", "monster" -> leapt.monsterName)))
+      else (battle, Vector.empty)
+    }
 
   /** Завершить ход героя: в паре отвечает моб, без пары ход кончается тихо.
     * Ход, который уже кончился (победа, смерть, «ничего не случилось»), не трогаем. */
@@ -1253,7 +1272,11 @@ case class BattleState(
               if (!retaliate) ZIO.succeed(TurnResult(thornedHero, thornedBattle, fed, Outcome.Continue))
               else if (thornedBattle.monsterCurrentHp <= 0) ZIO.succeed(victoryByHero(thornedHero, thornedBattle, fed, nowMs, skip))
               else if (thornedHero.fightStats.hp <= 0) ZIO.succeed(TurnResult(thornedHero, thornedBattle, fed, Outcome.Death))
-              else respond(thornedHero, thornedBattle, nowMs, log4, skip, vampGained)
+              else {
+                // Вне пары бил по тому, кто в полях, — из дыма он прыгает к герою.
+                val (leapt, leapLog) = smokeLeap(thornedBattle, thornedBattle.group.activePos)
+                respond(thornedHero, leapt, nowMs, log4 ++ leapLog, skip, vampGained)
+              }
           } yield r
         } else {
           val attackLine = content.text("battle.miss")
@@ -1267,7 +1290,11 @@ case class BattleState(
                 playerStrike(hero, battle, nowMs, missLog :+ content.text("battle.hunterRepeat"), skip,
                   isRepeat = true, retaliate = retaliate)
               else if (!retaliate) ZIO.succeed(TurnResult(hero, battle, missLog, Outcome.Continue))
-              else respond(hero, battle, nowMs, missLog, skip)
+              else {
+                // Промах из дыма выдаёт героя так же, как удар.
+                val (leapt, leapLog) = smokeLeap(battle, battle.group.activePos)
+                respond(hero, leapt, nowMs, missLog ++ leapLog, skip)
+              }
             }
         }
     } yield result

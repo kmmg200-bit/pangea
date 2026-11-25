@@ -49,7 +49,7 @@ sealed trait FlaskEffect {
     case FlaskEffect.EnergyPercent(pct) => s"Глоток: +$pct% макс. энергии."
     case FlaskEffect.Splash(e)          => s"Плеснуть во врага: ${FlaskKind.splashText(e)}"
     case FlaskEffect.Cleanse            => "Глоток: снимает с вас горение, яд, кровотечение и все дебафы."
-    case FlaskEffect.Smoke(rounds)      => s"Разбить о землю: $rounds раунда дым прячет вас от мобов вне пары — они не бьют сбоку и не помогают друг другу."
+    case FlaskEffect.Smoke(rounds)      => s"Разбить о землю: $rounds раунда дым прячет вас от мобов вне пары — они не бьют сбоку и не помогают друг другу. Ударите кого-то сбоку — он прыгнет к вам, если напротив пусто."
     case FlaskEffect.Vampiric(hits, pct) => s"Глоток: следующие $hits удара по HP лечат вас на $pct% нанесённого урона."
     case FlaskEffect.PoisonCoat(rounds) => s"Смазать оружие: $rounds раундов удары по HP травят врага."
     case FlaskEffect.BleedCoat(rounds)  => s"Смазать оружие: $rounds раундов удары по HP пускают врагу кровь."

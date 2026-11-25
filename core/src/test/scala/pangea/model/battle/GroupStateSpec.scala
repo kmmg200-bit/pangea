@@ -38,6 +38,36 @@ object GroupStateSpec extends ZIOSpecDefault {
       assertTrue(b.group.aliveCount == 3)
     },
 
+    // ── Прыжок к герою (удар из дыма) ─────────────────────────────────────────
+    test("прыжок к герою: моб одним прыжком встаёт в пустую пару — сосед, дальний и активный вне пары") {
+      // 100 — в паре на первом, 200 — на втором, 300 — на третьем; пару освобождаем:
+      // активный отходит на четвёртое.
+      val b    = SoloPveBattle.fromGroup(trio, hero, List(5L, 6L, 7L))
+      val open = b.copy(group = b.group.copy(activePos = 4))
+      val near = open.leapAtHero(2)
+      val far  = open.leapAtHero(3)
+      val self = open.leapAtHero(4)
+      assertTrue(near.group.paired && near.monsterCurrentHp == 200L && !near.group.hasMonster(2)) &&
+      // прежний активный остался на своём месте
+      assertTrue(near.group.hasMonster(4) && near.group.others.map(_.currentHp).toSet == Set(100L, 300L)) &&
+      assertTrue(far.group.paired && far.monsterCurrentHp == 300L && !far.group.hasMonster(3)) &&
+      assertTrue(self.group.paired && self.monsterCurrentHp == 100L && !self.group.hasMonster(4))
+    },
+
+    test("прыжок к герою: пара занята, на месте никого, сооружение, пригвождённый — бой как был") {
+      val b      = SoloPveBattle.fromGroup(trio, hero, List(5L, 6L, 7L))
+      val open   = b.copy(group = b.group.copy(activePos = 4))
+      val second = open.group.others(0)
+      val rooted = open.copy(group = open.group.copy(others = open.group.others.updated(0,
+                     second.copy(effects = second.effects.copy(monsterRootedTurns = 2)))))
+      val tower  = SoloPveBattle.fromGroup(List(monster(Race.Orc, 100L), monster(Race.Construct, 200L)), hero, List(5L, 6L))
+      val towerOpen = tower.copy(group = tower.group.copy(activePos = 4))
+      assertTrue(b.leapAtHero(2) == b) &&
+      assertTrue(open.leapAtHero(7) == open && open.leapAtHero(1) == open) &&
+      assertTrue(rooted.leapAtHero(2) == rooted) &&
+      assertTrue(towerOpen.leapAtHero(2) == towerOpen)
+    },
+
     // ── Единая схема строя ────────────────────────────────────────────────────
     test("схема одна на все бои: одиннадцать мест отряду, пятнадцать врагам") {
       assertTrue(Formation.HeroPlaces == 11 && Formation.MonsterPlaces == 15) &&

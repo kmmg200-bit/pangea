@@ -378,6 +378,19 @@ case class SoloPveBattle(
   def engageArrived: Option[SoloPveBattle] =
     Option.when(!group.paired && group.occupied(group.heroPos))(engage(group.heroPos))
 
+  /** Моб с места `pos` одним прыжком встаёт напротив героя, в пару, — если там
+    * пусто: так он отвечает на удар из дыма (см. BattleState.smokeLeap).
+    * Расстояние не важно — это прыжок, а не шаги. Сооружения, пригвождённые и
+    * кто держит позицию (Некромант) стоят; пара занята, `pos` — место героя или
+    * там никого — бой как был. Прежний активный остаётся на своём месте. */
+  def leapAtHero(pos: Int): SoloPveBattle =
+    if (pos == group.heroPos || group.hasMonster(group.heroPos) || !group.hasMonster(pos)) this
+    else {
+      val engaged = engage(pos)
+      if (!walks(engaged.activeSlot)) this
+      else engaged.copy(group = engaged.group.copy(activePos = group.heroPos))
+    }
+
   /** Напротив героя пусто, а свободный моб есть — он шагает к герою: сам
     * активный, если его никто не держит, иначе ближайший свободный из строя
     * (активный возвращается на своё место). Пара цела или шагать некому — None.
