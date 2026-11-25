@@ -28,9 +28,13 @@ import zio.{Task, ZIO}
   * (`RuneData.burnRarities`).
   *
   * По руне — две вещи: углубить понимание её узорами, как у Казимира (до
-  * потолка по уровню, остаток ждёт на алтаре), и забрать камнями в сумку:
-  * сколько пятёрок — столько больших, остаток — малыми. Что не влезло в сумку,
-  * остаётся на алтаре. Счёт живёт в `home_data` (`HomeData.runes`). */
+  * потолка по уровню, остаток ждёт на алтаре), — числом или сразу сколько
+  * можно, — и забрать камнями в сумку: сколько пятёрок — столько больших,
+  * остаток — малыми. Что не влезло в сумку, остаётся на алтаре. Счёт живёт в
+  * `home_data` (`HomeData.runes`).
+  *
+  * Руна, которая у героя в деле (выжжена на теле или есть на надетой вещи),
+  * помечена в списке ✅; на экране руны — что она делает и где она у героя. */
 case class RuneAltarState(
   heroDao:       HeroDao,
   inventoryRepo: InventoryRepository,
@@ -51,6 +55,7 @@ case class RuneAltarState(
       "AltarBurnSets"   -> Target.Run { (u, _, r) => toggleSets(u, r) },
       "AltarRune"   -> Target.Run { (u, ua, r) => runeScreen(u, ua, r) },
       "AltarDeepen" -> Target.Run { (u, ua, r) => ask(u, ua, RuneAltarState.Deepen, r) },
+      "AltarDeepenAll" -> Target.Run { (u, ua, r) => deepenAll(u, ua, r) },
       "AltarTake"   -> Target.Run { (u, ua, r) => ask(u, ua, RuneAltarState.Take, r) },
       "LeaveAltar"  -> Target.Run { (u, _, _) => clearPending(u).as(StateType.Home) }
     ),
@@ -66,19 +71,27 @@ case class RuneAltarState(
     branch.act(user, ua, renderer)
 
   /** Описание алтаря, сколько на нём узоров, руны кнопками по страницам;
-    * «Положить все руны», «Сдать вещи», «Что сдавать» и «Назад». */
+    * «Положить все руны», «Сдать вещи», «Что сдавать» и «Назад». Руны, что у
+    * героя в деле, — с пометкой ✅ и зелёные; что пометка значит — строкой
+    * над счётом, если такая руна есть на странице. */
   private def menu(user: User, p: Int, renderer: Renderer): Task[StateType] =
-    clearPending(user) *> loadHome(user).flatMap { home =>
+    clearPending(user) *> getHero(user).zip(loadHome(user)).flatMap { case (hero, home) =>
       // Без дома и алтаря нет — обратно к Юноне.
       if (!home.owns) ZIO.succeed(StateType.Home)
       else {
         val runes = RuneAltarState.onAltar(home)
         val total = home.runes.values.sum
+        val used  = RuneAltarState.inUse(hero)
         val (pageRunes, totalPages, cur) = ItemMenu.page(runes, p)
         val buttons = pageRunes.zipWithIndex.map { case ((rune, n), i) =>
-          Choice("AltarRune", ItemMenu.truncate(content.format("home.altar.runeLine", "name" -> rune.label, "n" -> n.toString)),
-            data = Map("k" -> rune.key, "rp" -> cur.toString), row = Some(i))
+          val inUse = used.contains(rune.key)
+          val line  = if (inUse) "home.altar.runeLineInUse" else "home.altar.runeLine"
+          Choice("AltarRune", ItemMenu.truncate(content.format(line, "name" -> rune.label, "n" -> n.toString)),
+            data = Map("k" -> rune.key, "rp" -> cur.toString),
+            color = if (inUse) ChoiceColor.Positive else ChoiceColor.Primary, row = Some(i))
         }
+        val legend = content.text("home.altar.legend") +
+          (if (pageRunes.exists { case (rune, _) => used.contains(rune.key) }) "\n" + content.text("home.altar.inUseLegend") else "")
         val nav = List(
           Option.when(cur > 0)(Choice("AltarMenu", content.text("common.prev"), data = Map("p" -> (cur - 1).toString), row = Some(ItemMenu.NavRow))),
           Option.when(cur < totalPages - 1)(Choice("AltarMenu", content.text("common.next"), data = Map("p" -> (cur + 1).toString), row = Some(ItemMenu.NavRow)))
@@ -90,7 +103,7 @@ case class RuneAltarState(
           Choice("LeaveAltar", content.text("home.house.back"), color = ChoiceColor.Negative, row = Some(ItemMenu.NavRow + 1))
         )
         // Под кнопками только значки — их расшифровка идёт текстом над счётом узоров.
-        val text = content.text("home.altar.text") + "\n\n" + content.text("home.altar.legend") + "\n\n" +
+        val text = content.text("home.altar.text") + "\n\n" + legend + "\n\n" +
           (if (total == 0L) content.text("home.altar.empty") else content.format("home.altar.total", "n" -> total.toString))
         renderer.show(user, Screen(text, buttons ++ nav ++ tail)).as(StateType.RuneAltar)
       }
@@ -189,7 +202,8 @@ case class RuneAltarState(
       }
     } yield res
 
-  /** Экран руны: сколько узоров, сколько выйдет камнями, понимание; углубить,
+  /** Экран руны: что она делает и где она у героя в деле, сколько узоров,
+    * сколько выйдет камнями, понимание и сила; углубить числом или полностью,
     * забрать, назад — на ту страницу списка, с которой руну выбрали. */
   private def runeScreen(user: User, ua: UserAction, renderer: Renderer): Task[StateType] =
     runeScreenOf(user, runeOf(ua), page(ua, "rp"), renderer)
@@ -203,13 +217,23 @@ case class RuneAltarState(
         case None => menu(user, rp, renderer)
         case Some(rune) =>
           val n    = home.runeCount(rune.key)
+          val u    = hero.runes.understandingOf(rune)
           val data = Map("k" -> rune.key, "rp" -> rp.toString)
-          val text = content.format("home.altar.rune", "name" -> rune.label, "n" -> n.toString,
+          val name = RuneAltarState.where(hero, rune) match {
+            case None        => rune.label
+            case Some(place) => content.format("home.altar.runeInUse", "name" -> rune.label,
+                                  "where" -> content.text(s"home.altar.$place"))
+          }
+          // Название и описание — последними: подстановка идёт по очереди, и
+          // скобки внутри описания умения не должны попасть под чужой ключ.
+          val text = content.format("home.altar.rune", "n" -> n.toString,
             "big" -> (n / RuneStone.PiecesPerBig).toString, "small" -> (n % RuneStone.PiecesPerBig).toString,
-            "u" -> hero.runes.understandingOf(rune).toString, "cap" -> Rune.cap(hero.lvl).toString)
+            "u" -> u.toString, "cap" -> Rune.cap(hero.lvl).toString, "strength" -> Rune.strengthText(u),
+            "name" -> name, "desc" -> rune.describeFor(hero))
           renderer.show(user, Screen(text, List(
             Choice("AltarDeepen", content.text("home.altar.deepen"), color = ChoiceColor.Positive, data = data, row = Some(0)),
-            Choice("AltarTake", content.text("home.altar.take"), data = data, row = Some(0)),
+            Choice("AltarDeepenAll", content.text("home.altar.deepenAll"), color = ChoiceColor.Positive, data = data, row = Some(0)),
+            Choice("AltarTake", content.text("home.altar.take"), data = data, row = Some(1)),
             Choice("AltarMenu", content.text("home.house.back"), color = ChoiceColor.Negative,
               data = Map("p" -> rp.toString), row = Some(1))
           ))).as(StateType.RuneAltar)
@@ -259,6 +283,16 @@ case class RuneAltarState(
         case _ => menu(user, 0, renderer)
       }
     }
+
+  /** «Углубить полностью»: без вопроса о числе — все узоры этой руны с алтаря,
+    * сколько примет понимание до потолка по уровню; лишнее остаётся лежать. */
+  private def deepenAll(user: User, ua: UserAction, renderer: Renderer): Task[StateType] = {
+    val rp = page(ua, "rp")
+    clearPending(user) *> (runeOf(ua) match {
+      case None       => say(user, content.text("home.altar.gone"), renderer) *> menu(user, rp, renderer)
+      case Some(rune) => deepen(user, rune, Long.MaxValue, rp, renderer)
+    })
+  }
 
   /** Углубить понимание `asked` узорами с алтаря (не больше, чем лежит) — как у
     * Казимира, до потолка по уровню; лишнее остаётся лежать. */
@@ -359,6 +393,22 @@ object RuneAltarState {
   /** Руны на алтаре — по алфавиту, только те, где узоры есть. */
   def onAltar(home: HomeData): List[(Rune, Long)] =
     home.runes.toList.collect { case (k, n) if n > 0L => Rune.byKey(k).map(_ -> n) }.flatten.sortBy(_._1.label)
+
+  /** Руны, что у героя в деле: выжженные на теле и те, что есть на надетых
+    * вещах, — ключами ([[Rune.key]]). */
+  def inUse(hero: Hero): Set[String] =
+    (hero.runes.branded ++ hero.equipment.allItems.flatMap(Rune.of)).map(_.key).toSet
+
+  /** Где руна у героя в деле — ключ строки в `home.altar`: `onBody` (выжжена на
+    * теле), `onItem` (на надетой вещи), `both`; нигде — `None`. */
+  def where(hero: Hero, rune: Rune): Option[String] = {
+    val onBody = hero.runes.isBranded(rune)
+    val onItem = hero.equipment.allItems.flatMap(Rune.of).contains(rune)
+    if (onBody && onItem) Some("both")
+    else if (onBody) Some("onBody")
+    else if (onItem) Some("onItem")
+    else None
+  }
 
   /** Что алтарь ждёт числом: вложить узоры в понимание или забрать в сумку. */
   val Deepen: String = "deepen"

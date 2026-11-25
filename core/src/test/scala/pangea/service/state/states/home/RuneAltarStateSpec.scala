@@ -1,7 +1,7 @@
 package pangea.service.state.states.home
 
 import io.circe.syntax.EncoderOps
-import pangea.engine.SceneContent
+import pangea.engine.{ChoiceColor, SceneContent}
 import pangea.model.home.HomeData
 import pangea.model.item.{Item, ItemDetails, ItemType, PassiveKind, Rarity}
 import pangea.model.rune.{Rune, RuneData, RuneStone, RuneStoneSize}
@@ -174,7 +174,7 @@ object RuneAltarStateSpec extends ZIOSpecDefault {
         home2  <- homeOf(dao)
       } yield assertTrue(screen.text.contains("На алтаре: 12. В сумку выйдет больших рун — 2, малых — 2.")) &&
               assertTrue(screen.text.contains("Понимание: 25/30")) &&
-              assertTrue(screen.choices.map(_.id) == List("AltarDeepen", "AltarTake", "AltarMenu")) &&
+              assertTrue(screen.choices.map(_.id) == List("AltarDeepen", "AltarDeepenAll", "AltarTake", "AltarMenu")) &&
               // сперва спрашивает, сколько; больше, чем лежит, — берёт сколько есть
               assertTrue(asked.text.contains("Сколько узоров") && asked.text.contains("Напишите число")) &&
               assertTrue(after.runes.understandingOf(cunning) == 30L && home.runeCount(cunning.key) == 7L) &&
@@ -223,6 +223,94 @@ object RuneAltarStateSpec extends ZIOSpecDefault {
               assertTrue(said.contains("В сумку легли: больших рун — 2, малых — 3.")) &&
               assertTrue(got2.count(_.size == RuneStoneSize.Big) == 1 && got2.count(_.size == RuneStoneSize.Small) == 3) &&
               assertTrue(home2.runeCount(cunning.key) == 5L && said2.contains("осталось на алтаре: 5"))
+    },
+
+    test("экран руны: что она делает и сила понимания; руна не в деле — без пометки") {
+      val h = hero(lvl = 10L, runes = RuneData.empty.deepen(cunning, 250L, Rune.cap(10L))._1)
+      for {
+        t <- make(h, Nil, cottage.withRune(cunning.key, 3L))
+        (state, _, _, r) = t
+        _      <- state.action(testUser, tap("AltarRune", "k" -> cunning.key, "rp" -> "0"), r)
+        screen <- last(r)
+      } yield assertTrue(screen.text.startsWith("Хитрый удар\n" + cunning.describeFor(h) + "\n\n")) &&
+              assertTrue(screen.text.contains("Понимание: 250/300, сила " + Rune.strengthText(250L) + ".")) &&
+              assertTrue(!screen.text.contains("✅"))
+    },
+
+    test("«Углубить полностью»: без вопроса — сколько примет понимание до потолка, остаток ждёт; у потолка — так и говорит") {
+      // потолок на 1-м уровне — 30; понимание уже 25, на алтаре 12
+      val h = hero(lvl = 1L, runes = RuneData.empty.deepen(cunning, 25L, Rune.cap(1L))._1)
+      for {
+        t <- make(h, Nil, cottage.withRune(cunning.key, 12L))
+        (state, dao, _, r) = t
+        _      <- state.action(testUser, tap("AltarDeepenAll", "k" -> cunning.key, "rp" -> "0"), r)
+        after  <- dao.getHeroByUserId(userId).map(_.get)
+        home   <- homeOf(dao)
+        said   <- texts(r)
+        back   <- last(r)
+        _      <- state.action(testUser, tap("AltarDeepenAll", "k" -> cunning.key, "rp" -> "0"), r)
+        atCap  <- texts(r)
+        home2  <- homeOf(dao)
+      } yield assertTrue(!said.contains("Напишите число")) &&
+              assertTrue(after.runes.understandingOf(cunning) == 30L && home.runeCount(cunning.key) == 7L) &&
+              assertTrue(said.contains("стало глубже: 30 (+5). На алтаре осталось: 7.")) &&
+              // остаток есть — снова экран руны
+              assertTrue(back.choices.exists(_.id == "AltarDeepenAll")) &&
+              assertTrue(atCap.contains("насколько позволяет опыт (30)") && home2.runeCount(cunning.key) == 7L)
+    },
+
+    test("«Углубить полностью»: узоров меньше, чем места до потолка, — уходят все, и алтарь больше ничего не ждёт") {
+      // потолок на 2-м уровне — 60; понимания нет, на алтаре 12
+      for {
+        t <- make(hero(lvl = 2L), Nil, cottage.withRune(cunning.key, 12L))
+        (state, dao, _, r) = t
+        // сперва нажали «Углубить» (алтарь ждёт число), потом передумали — «полностью»
+        _     <- state.action(testUser, tap("AltarDeepen", "k" -> cunning.key, "rp" -> "0"), r)
+        _     <- state.action(testUser, tap("AltarDeepenAll", "k" -> cunning.key, "rp" -> "0"), r)
+        after <- dao.getHeroByUserId(userId).map(_.get)
+        home  <- homeOf(dao)
+        menu  <- last(r)
+        // число после этого — уже не ответ алтарю
+        _     <- state.action(testUser, typed("5"), r)
+        again <- dao.getHeroByUserId(userId).map(_.get)
+      } yield assertTrue(after.runes.understandingOf(cunning) == 12L && !home.runes.contains(cunning.key)) &&
+              assertTrue(menu.text.contains("Алтарь пуст")) &&
+              assertTrue(again.runes.understandingOf(cunning) == 12L)
+    },
+
+    test("руны в деле — с ✅ и зелёные: выжженная на теле и на надетой вещи; на экране руны — где она") {
+      val other = Rune.Active(Skill.values.filterNot(_ == Skill.CunningStrike).head)
+      // меч с «Хитрым ударом» надет, «Целитель» выжжен на теле
+      val h = hero(runes = RuneData(passive = List(PassiveKind.Healer.entryName)))
+        .copy(equipment = TestFixtures.emptyEquipment.copy(weapon = sword(1L)))
+      val altar = cottage.withRune(cunning.key, 7L).withRune(healer.key, 5L).withRune(other.key, 3L)
+      for {
+        t <- make(h, Nil, altar)
+        (state, _, _, r) = t
+        _      <- state.enter(testUser, r)
+        menu   <- last(r)
+        _      <- state.action(testUser, tap("AltarRune", "k" -> cunning.key, "rp" -> "0"), r)
+        onItem <- last(r)
+        _      <- state.action(testUser, tap("AltarRune", "k" -> healer.key, "rp" -> "0"), r)
+        onBody <- last(r)
+        runes   = menu.choices.filter(_.id == "AltarRune")
+        byKey   = runes.map(c => c.data("k") -> c).toMap
+      } yield assertTrue(byKey(cunning.key).label == "✅ Хитрый удар — 7" && byKey(healer.key).label == "✅ Целитель — 5") &&
+              assertTrue(byKey(other.key).label == s"${other.label} — 3") &&
+              assertTrue(byKey(cunning.key).color == ChoiceColor.Positive && byKey(healer.key).color == ChoiceColor.Positive &&
+                         byKey(other.key).color == ChoiceColor.Primary) &&
+              assertTrue(menu.text.contains("✅ — руна у вас в деле")) &&
+              assertTrue(onItem.text.startsWith("✅ Хитрый удар (на надетой вещи)\n")) &&
+              assertTrue(onBody.text.startsWith("✅ Целитель (выжжена на теле)\n"))
+    },
+
+    test("ни одной руны в деле на странице — строки про ✅ над счётом нет") {
+      for {
+        t <- make(hero(), Nil, cottage.withRune(cunning.key, 3L))
+        (state, _, _, r) = t
+        _    <- state.enter(testUser, r)
+        menu <- last(r)
+      } yield assertTrue(!menu.text.contains("✅") && menu.choices.filter(_.id == "AltarRune").map(_.label) == List("Хитрый удар — 3"))
     },
 
     test("«Назад» с экрана руны — на ту страницу списка, с которой её выбрали") {
